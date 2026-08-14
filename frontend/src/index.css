@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Reset Vite boilerplate layout ───────────────────────────────────────────
+   The Vite template sets a centered max-width column. For the supervisor
+   mobile-first flow we want full-width viewport layout with no side borders.
+─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Fonts — two weights only (regular + medium), sentence case throughout */
+  --font-sans: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
+
+  /* Semantic color tokens (construction / field context) */
+  --color-accent:         #1d4ed8; /* blue-700 — primary actions, selected */
+  --color-accent-light:   #eff6ff; /* blue-50  */
+  --color-success:        #16a34a; /* green-600 */
+  --color-success-light:  #f0fdf4; /* green-50  */
+  --color-warning:        #d97706; /* amber-600 */
+  --color-warning-light:  #fffbeb; /* amber-50  */
+  --color-neutral:        #1e293b; /* slate-800 — body text */
+  --color-surface:        #f8fafc; /* slate-50  — page background */
+  --color-border:         #e2e8f0; /* slate-200 */
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#root {
+  /* Remove Vite template centering — we handle layout per-page */
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  text-align: left;
+  border: none;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--color-neutral);
+  background: var(--color-surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Mobile touch-action: prevent 300ms click delay ─────────────────────── */
+a,
+button,
+input,
+label {
+  touch-action: manipulation;
+}
+
+/* ── Visible keyboard focus rings for all interactive elements ───────────── */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ── Scrollbar hide utility (used on horizontal chip row) ────────────────── */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ── Typography scale — two weights only ─────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-sans);
+  font-weight: 500;      /* medium */
+  margin: 0;
+  color: var(--color-neutral);
+}
+
+p, span, li {
+  font-weight: 400;      /* regular */
+  margin: 0;
+}
+
+/* ── Monospace — for activity code chips ─────────────────────────────────── */
+.font-mono,
+code {
+  font-family: var(--font-mono);
+}
