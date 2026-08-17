@@ -1,0 +1,136 @@
+{
+  "design_system": {
+    "product_name": "Labour Entry System",
+    "visual_anchor": "Flat, borderline-utilitarian mobile-first field UI built on the slate palette with no shadows or gradients, high-contrast semantic status colors (green/amber), blue-700 accent for all interactive affordances, and monospace data tags for activity codes.",
+    "do_not_do": "No drop shadows, no gradients, no rounded-full pill buttons, no Title Case labels (sentence case + uppercase section heads only), no font-weight above 500, no custom colors outside the defined token set.",
+
+    "typography": {
+      "body_font": "'Inter', system-ui, 'Segoe UI', Roboto, sans-serif  (CSS var --font-sans)",
+      "mono_font": "ui-monospace, 'Cascadia Code', Consolas, monospace  (CSS var --font-mono — used only for activity code chips)",
+      "weight_scale": "400 (regular — body text, descriptions) and 500 (medium — headings, labels, stat values, button text). No 600/700/bold found or allowed.",
+      "size_scale": [
+        { "token": "text-xs",  "px": 12, "used_for": "section headings (uppercase tracking-wide), sub-labels (trade group, date), chip descriptions, stepper labels" },
+        { "token": "text-sm",  "px": 14, "used_for": "body instructions, time values, inline action text ('Tap to mark in'), empty-state messages, stat card labels" },
+        { "token": "text-base","px": 16, "used_for": "page titles in step headers (h1), body default (root font-size)" },
+        { "token": "text-lg",  "px": 18, "used_for": "hours numeric input value only" },
+        { "token": "text-xl",  "px": 20, "used_for": "dashboard greeting h1 only" },
+        { "token": "text-3xl", "px": 30, "used_for": "stat card large numeric values only" }
+      ]
+    },
+
+    "color_system": {
+      "surface_tokens": [
+        { "token": "bg-slate-50 / var(--color-surface)",  "hex": "#f8fafc", "used_for": "page background on every screen" },
+        { "token": "bg-white",                            "hex": "#ffffff", "used_for": "card/row background, header background, bottom bar background, default stat card" },
+        { "token": "bg-slate-100",                        "hex": "#f1f5f9", "used_for": "avatar circle background, disabled button fill, in-time read-only chip background" },
+        { "token": "bg-blue-50 / var(--color-accent-light)", "hex": "#eff6ff", "used_for": "selected checkbox row background, text button hover" },
+        { "token": "bg-green-50 / var(--color-success-light)", "hex": "#f0fdf4", "used_for": "checked-in row background, success stat card background, submitted banner" },
+        { "token": "bg-amber-50 / var(--color-warning-light)", "hex": "#fffbeb", "used_for": "warning row background (no check-in), warning stat card background" }
+      ],
+      "text_tokens": [
+        { "token": "text-slate-900 / text-slate-800",     "hex": "#0f172a / #1e293b", "used_for": "primary text — employee names, page titles, stat values. NOTE: reconciled — both map to --color-neutral (#1e293b). Use text-slate-800 as the canonical primary text color; text-slate-900 reserved for large stat values only." },
+        { "token": "text-slate-600",                      "hex": "#475569", "used_for": "secondary text — avatar initials, body instructions, completed-step labels" },
+        { "token": "text-slate-500",                      "hex": "#64748b", "used_for": "muted text — section heading labels, trade group, stat card labels, bottom nav inactive" },
+        { "token": "text-slate-400",                      "hex": "#94a3b8", "used_for": "placeholder/empty-state text, loading indicator, upcoming stepper text, icon tint, time arrow" },
+        { "token": "text-slate-300",                      "hex": "#cbd5e1", "used_for": "arrow separator between in/out time only" }
+      ],
+      "semantic_success": {
+        "bg": "bg-green-50 (#f0fdf4)",
+        "border": "border-green-200 (#bbf7d0)",
+        "text": "text-green-700 (#15803d) for values, text-green-800 (#166534) for banner body, text-green-600 (#16a34a / var(--color-success)) for icons",
+        "used_for": "checked-in state rows, 'X applied' badge, submitted-day banner, success stat cards, submit-complete button fill (bg-green-600)"
+      },
+      "semantic_warning": {
+        "bg": "bg-amber-50 (#fffbeb)",
+        "border": "border-amber-200 (#fde68a)",
+        "text": "text-amber-700 (#b45309) for body, text-amber-800 (#92400e) for stat value, text-amber-500 (#f59e0b) for warning icon",
+        "used_for": "no-check-in warning rows, pending stat card, missing-data alerts"
+      },
+      "accent": {
+        "primary": "bg-blue-700 (#1d4ed8 / var(--color-accent))",
+        "active_press": "bg-blue-800 (#1e40af) — active: state on primary buttons",
+        "submitting": "bg-blue-400 (#60a5fa) — used only for submitting/loading button state",
+        "text": "text-blue-700 (#1d4ed8) — inline action labels ('Tap to mark in', 'Select all'), selected chip text, stepper current-step label, live-hours display",
+        "focus_ring": "ring-blue-600 (#2563eb) — all focus-visible rings consistently use blue-600",
+        "light_surface": "bg-blue-50 (#eff6ff) — hover on unselected chips, selected checkbox row",
+        "light_border": "border-blue-200 (#bfdbfe) — selected checkbox row border, hover:border-blue-300 on chips",
+        "overuse_check": "Accent blue is NOT used for body text, headings, or decorative elements — it is strictly limited to interactive affordances (buttons, selected states, focus rings, inline action text). This is correct."
+      }
+    },
+
+    "component_dna": {
+      "border_radius": {
+        "rounded-lg": "8px — cards, rows, buttons, inputs, banners (the dominant radius)",
+        "rounded-md": "6px — activity chips, back-button icon containers",
+        "rounded-full": "9999px — avatar circles, 'X applied' pill badge only",
+        "rounded": "4px — in/out time mini-chips in CheckoutRow"
+      },
+      "button_style": {
+        "primary": "bg-blue-700 text-white font-medium rounded-lg, min-h-[52px] or min-h-[56px] (RECONCILED: canonical is min-h-[52px]; dashboard CTA was 56px — normalize to 52px for consistency), full-width, active:bg-blue-800, focus-visible ring-2 ring-blue-600 ring-offset-2, transition-colors. Labels are sentence case.",
+        "primary_disabled": "bg-slate-100 text-slate-400 cursor-not-allowed (same shape, muted fill)",
+        "secondary": "border border-slate-200 text-slate-700 font-medium rounded-lg bg-transparent, min-h-[48px], hover:bg-slate-50 active:bg-slate-100. Used for 'Back' buttons.",
+        "dark_secondary": "bg-slate-800 text-white font-medium rounded-lg, min-h-[48px], hover:bg-slate-700 active:bg-slate-900. Used for 'Next: checkout' alongside a secondary 'Back'.",
+        "text_button": "text-blue-700 font-medium text-sm, no border, px-2 py-1 rounded, hover:bg-blue-50 active:bg-blue-100. Used for 'Select all / Deselect all'.",
+        "icon_button": "w-9 h-9 rounded-md flex items-center justify-center, text-slate-600, hover:bg-slate-100 active:bg-slate-200. Used for back arrow."
+      },
+      "input_style": {
+        "text_number": "w-full px-4 py-3 rounded-lg border border-slate-200 bg-white text-slate-800, font-medium text-lg tabular-nums, min-h-[52px], focus:ring-2 ring-blue-600 border-transparent. Placeholder: text-slate-400 font-normal text-base.",
+        "time": "Inline within a container div (border border-slate-200 rounded px-2.5 py-1.5), bg-transparent, text-sm font-medium text-slate-800 tabular-nums, min-h-[32px], no visible border on the input itself.",
+        "checkbox": "w-5 h-5 rounded border-slate-300 text-blue-700 accent-blue-700, embedded in a full-row tappable label."
+      },
+      "card_style": {
+        "stat_card": "rounded-lg border p-4 min-h-[88px] flex flex-col gap-2. Default: bg-white border-slate-200. Semantic variants swap bg and border to green-50/green-200 or amber-50/amber-200. No shadow.",
+        "employee_row": "rounded-lg border border-slate-200 bg-white px-4 py-3, flex items-center gap-3. Avatar initial (w-9 h-9 rounded-full bg-slate-100), name (font-medium text-slate-800), sub-text (text-xs text-slate-500 truncate). No shadow.",
+        "status_row_success": "Same shape as employee_row but bg-green-50 border-green-200, with CheckCircle2 icon (text-green-600) replacing avatar.",
+        "status_row_warning": "Same shape but bg-amber-50 border-amber-200, with AlertTriangle icon (text-amber-500) replacing avatar."
+      },
+      "chip_style": {
+        "activity_chip": "rounded-md border px-3 py-2 min-h-[44px] flex-shrink-0, two-line content: code in font-mono text-sm font-medium, description in text-xs. Unselected: bg-white border-slate-200 text-slate-700, hover:border-blue-300 hover:bg-blue-50. Selected: bg-blue-700 border-blue-700 text-white, description text-blue-100. Horizontally scrollable row with snap-x.",
+        "status_badge": "rounded-full px-2 py-0.5 text-xs font-medium. Success: text-green-700 bg-green-50 border border-green-200. Used for 'X applied' count."
+      }
+    },
+
+    "spacing_scale": [
+      { "value": "0.5 (2px)",   "used_for": "mt-0.5 on chip descriptions, warning sub-text" },
+      { "value": "1 (4px)",     "used_for": "mb-1 on date label above greeting" },
+      { "value": "1.5 (6px)",   "used_for": "gap-1.5 between label + value in time chips" },
+      { "value": "2 (8px)",     "used_for": "space-y-2 for list gaps (employee rows), gap-2 for stat grid, flex gap-2 for button pairs, pb-2 on chip scroller, mb-2 on checkout row inner spacing" },
+      { "value": "2.5 (10px)",  "used_for": "px-2.5 py-1.5 on inline time chips" },
+      { "value": "3 (12px)",    "used_for": "gap-3 for stat grid, gap-3 inside rows (icon-to-text), mb-3 under section headings, space-y-3 on some body lists, py-3 for bottom bar and row vertical padding" },
+      { "value": "4 (16px)",    "used_for": "px-4 horizontal page padding (canonical), p-4 for stat cards, py-4 for header bottom padding, mb-4 between title+stepper, py-4 for primary buttons" },
+      { "value": "5 (20px)",    "used_for": "py-5 / space-y-5 for main content area vertical rhythm, pt-5 for step-page headers" },
+      { "value": "6 (24px)",    "used_for": "pt-6 on dashboard header, pb-24 for body bottom clearance" },
+      { "value": "8 (32px)",    "used_for": "py-8 for empty-state vertical padding, pb-32 on check-in page body" },
+      { "value": "36 (144px)",  "used_for": "pb-36 for body bottom clearance on pages with two-row bottom bars" }
+    ],
+
+    "layout_patterns": {
+      "page_shell": "flex flex-col min-h-screen bg-slate-50 — every page uses this identical wrapper",
+      "header": "bg-white border-b border-slate-200 px-4 — contains title + optional stepper. RECONCILED: dashboard uses pt-6 pb-4, step pages use pt-5 pb-4 — canonical is pt-5 pb-4 for step pages, pt-6 pb-4 for dashboard (intentional: dashboard has more prominent greeting).",
+      "scrollable_body": "flex-1 overflow-y-auto px-4 py-5 — always with enough pb-XX to clear the fixed bottom bar",
+      "fixed_bottom_bar": "fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-4 py-3 — contains primary CTA(s)",
+      "bottom_nav": "Same positioning but with flex tab buttons, active tab gets text-blue-700 border-t-2 border-blue-700"
+    },
+
+    "inconsistencies_reconciled": [
+      {
+        "issue": "Primary button min-height: dashboard CTA uses min-h-[56px], check-in and activity pages use min-h-[52px]",
+        "resolution": "Canonical primary button height is min-h-[52px]. Dashboard CTA should be updated to match. The 56px was an early outlier."
+      },
+      {
+        "issue": "Primary text color flip: stat card uses text-slate-900 for large values, all other primary text uses text-slate-800",
+        "resolution": "text-slate-800 is the canonical primary text color (matches --color-neutral #1e293b). text-slate-900 is allowed ONLY for text-3xl stat values (intentional emphasis on large numbers). Everywhere else, use text-slate-800."
+      },
+      {
+        "issue": "Dashboard header uses pt-6, step-page headers use pt-5",
+        "resolution": "Intentional: dashboard has a more prominent greeting with date above. Canonicalized as: dashboard header pt-6, step-page headers pt-5."
+      },
+      {
+        "issue": "Bottom clearance padding varies: pb-24 (dashboard), pb-32 (check-in), pb-36 (activity, checkout)",
+        "resolution": "Varies by bottom-bar height: single-button bar → pb-24, bar with summary line + button → pb-32, bar with two rows of buttons → pb-36. This is intentional and correct — each value must match its bottom bar height + 16px breathing room."
+      }
+    ],
+
+    "master_instruction": "Build every new screen using the flat, shadow-free, border-outlined component style on a bg-slate-50 page shell with bg-white cards. Use only the slate palette for neutrals (50/100/200/300/400/500/600/700/800/900), blue-700 as the sole interactive accent, green-50→700 for success states, and amber-50→700 for warnings. Limit font-weight to 400 and 500 (Inter), use font-mono only for activity/equipment codes, and keep all labels in sentence case or uppercase-xs section headings — never Title Case. Every interactive element must have min-h-[44px]+, focus-visible:ring-2 ring-blue-600, and transition-colors; every new color, spacing, or radius value not already in design-system.json must be treated as a bug."
+  }
+}
