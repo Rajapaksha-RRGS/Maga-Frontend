@@ -15,12 +15,13 @@
  *     /admin/assignments    → AssignmentsPage
  *     /admin/reports        → ReportsPage
  *   /supervisor         → SupervisorLayout     (protected, role=supervisor)
- *     index             → SupervisorPlaceholderPage (Master Prompt 3 fills this)
+ *     index             → SupervisorFlowPage (4-step daily flow)
  *   *                   → redirect to /login
  *
  * Note: the existing SupervisorFlowPage.tsx is preserved in src/ — it will be
  * integrated under SupervisorLayout in Master Prompt 3.
  */
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
 // Auth
@@ -41,15 +42,40 @@ import CalendarPage from './pages/CalendarPage';
 import AssignmentsPage from './pages/AssignmentsPage';
 import ReportsPage from './pages/ReportsPage';
 
-// Supervisor placeholder
-import SupervisorPlaceholderPage from './pages/SupervisorPlaceholderPage';
+// Supervisor flow
+import SupervisorFlowPage from './SupervisorFlowPage';
+
+// Splash Screen & Showcase
+import SplashScreen from './components/SplashScreen';
+import SplashShowcasePage from './pages/SplashShowcasePage';
 
 export default function App() {
+  const [showInitialSplash, setShowInitialSplash] = useState(true);
+
+  useEffect(() => {
+    // Show startup splash screen for 1.6s on initial app load
+    const timer = setTimeout(() => {
+      setShowInitialSplash(false);
+    }, 1600);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (showInitialSplash) {
+    return (
+      <SplashScreen
+        theme="light"
+        indicatorType="dots"
+        showSubtitle={true}
+      />
+    );
+  }
+
   return (
     <BrowserRouter>
       <Routes>
         {/* ── Public ─────────────────────────────────────────────────────── */}
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/splash" element={<SplashShowcasePage />} />
 
         {/* ── Admin (protected, role=admin) ───────────────────────────────── */}
         <Route element={<ProtectedRoute requiredRole="admin" />}>
@@ -68,8 +94,7 @@ export default function App() {
         {/* ── Supervisor (protected, role=supervisor) ─────────────────────── */}
         <Route element={<ProtectedRoute requiredRole="supervisor" />}>
           <Route path="/supervisor" element={<SupervisorLayout />}>
-            {/* Master Prompt 3 will replace this with the step-flow pages */}
-            <Route index element={<SupervisorPlaceholderPage />} />
+            <Route index element={<SupervisorFlowPage />} />
           </Route>
         </Route>
 

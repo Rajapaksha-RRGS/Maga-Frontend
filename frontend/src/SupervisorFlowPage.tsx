@@ -1,23 +1,18 @@
 import { useState, useEffect } from 'react';
 import { SupervisorDashboardPage } from './pages/SupervisorDashboardPage';
-import { CheckInPage }             from './pages/CheckInPage';
-import { ActivityAssignPage }      from './pages/ActivityAssignPage';
-import { CheckoutSubmitPage }      from './pages/CheckoutSubmitPage';
-import { useAssignedEmployees }    from './features/time-entries/hooks/useAssignedEmployees';
-import { useTimeEntry }            from './features/time-entries/hooks/useTimeEntry';
-import { getActivityCodes }        from './features/time-entries/services/timeEntryService';
-import type { ActivityCode }       from './features/time-entries/services/timeEntryService';
+import { CheckInPage } from './pages/CheckInPage';
+import { ActivityAssignPage } from './pages/ActivityAssignPage';
+import { CheckoutSubmitPage } from './pages/CheckoutSubmitPage';
+import { useAssignedEmployees } from './features/time-entries/hooks/useAssignedEmployees';
+import { useTimeEntry } from './features/time-entries/hooks/useTimeEntry';
+import { getActivityCodes } from './features/time-entries/services/timeEntryService';
+import type { ActivityCode } from './features/time-entries/services/timeEntryService';
+import { useAuth } from './context/AuthContext';
+import { SplashScreen } from './components/SplashScreen';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Step = 'dashboard' | 'checkin' | 'activity' | 'checkout';
-
-// Mock supervisor session (replace with real AuthContext once auth module is built)
-const MOCK_SUPERVISOR = {
-  id: 'sup-mock-001',
-  name: 'Gayan',
-  tenantId: 'tenant-mock-001',
-};
 
 function todayISO(): string {
   return new Date().toISOString().split('T')[0];
@@ -35,16 +30,23 @@ function todayISO(): string {
  * URL stays on /supervisor throughout the entire flow.
  */
 export default function SupervisorFlowPage() {
+  const { user } = useAuth();
   const [step, setStep] = useState<Step>('dashboard');
   const [activityCodes, setActivityCodes] = useState<ActivityCode[]>([]);
 
   const today = todayISO();
 
+  // Derive supervisor context from the authenticated user.
+  // useAuth guarantees `user` is non-null inside a protected route.
+  const supervisorId = user?.id ?? '';
+  const supervisorName = user?.fullName ?? user?.username ?? 'Supervisor';
+  const tenantId = user?.tenantId ?? '';
+
   // ── Data fetching ──────────────────────────────────────────────────────────
   const {
     employees,
     loading: empLoading,
-  } = useAssignedEmployees(MOCK_SUPERVISOR.id, today);
+  } = useAssignedEmployees(supervisorId, today);
 
   const {
     entries,
@@ -57,24 +59,27 @@ export default function SupervisorFlowPage() {
   } = useTimeEntry(employees.map((e) => e.id));
 
   useEffect(() => {
-    getActivityCodes(MOCK_SUPERVISOR.tenantId)
+    if (!tenantId) return;
+    getActivityCodes(tenantId)
       .then(setActivityCodes)
       .catch(console.error);
-  }, []);
+  }, [tenantId]);
 
   // ── Step navigation ────────────────────────────────────────────────────────
   const go = (s: Step) => setStep(s);
 
   function handleSubmit() {
-    submitDay(MOCK_SUPERVISOR.id, today);
+    submitDay(supervisorId, today);
   }
 
   // ── Loading state ──────────────────────────────────────────────────────────
   if (empLoading && step === 'dashboard') {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50">
-        <p className="text-sm text-slate-400">Loading…</p>
-      </div>
+      <SplashScreen
+        theme="light"
+        indicatorType="dots"
+        showSubtitle={true}
+      />
     );
   }
 
@@ -83,7 +88,7 @@ export default function SupervisorFlowPage() {
     case 'dashboard':
       return (
         <SupervisorDashboardPage
-          supervisorName={MOCK_SUPERVISOR.name}
+          supervisorName={supervisorName}
           employees={employees}
           checkedInCount={checkedInCount}
           onStartCheckin={() => go('checkin')}

@@ -15,8 +15,9 @@
  */
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
+import magaLogo from '../../../assets/maga-logo-47321F1221-seeklogo.com.png';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -76,15 +77,17 @@ export default function LoginPage() {
       <div className="w-full max-w-sm bg-white border border-slate-200 rounded-lg px-6 py-8">
 
         {/* Product identity */}
-        <div className="flex flex-col items-center gap-3 mb-8">
-          <div className="w-11 h-11 rounded-lg bg-blue-700 flex items-center justify-center">
-            <Building2 size={22} className="text-white" />
-          </div>
+        <div className="flex flex-col items-center gap-2 mb-6">
+          <img
+            src={magaLogo}
+            alt="MäGA Logo"
+            className="w-36 h-auto object-contain mb-1"
+          />
           <div className="text-center">
-            <h1 className="text-base font-medium text-slate-800">
+            <h1 className="text-sm font-medium tracking-[0.14em] uppercase text-slate-700">
               Labour Entry System
             </h1>
-            <p className="text-sm text-slate-500 mt-0.5">Sign in to your account</p>
+            <p className="text-xs text-slate-500 mt-0.5">Sign in to your account</p>
           </div>
         </div>
 
