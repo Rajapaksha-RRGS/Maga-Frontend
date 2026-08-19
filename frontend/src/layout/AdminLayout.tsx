@@ -141,11 +141,11 @@ export default function AdminLayout() {
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex h-screen h-[100dvh] overflow-hidden bg-slate-50">
 
-      {/* ── Desktop sidebar (hidden on mobile) ─────────────────────────────── */}
+      {/* ── Desktop sidebar (fixed full screen height on md+) ────────────────── */}
       <aside
-        className="hidden md:flex md:flex-col md:w-[200px] bg-gradient-to-b from-[#091D36] via-[#07172B] to-[#051120] border-r border-blue-500/20 shadow-xl flex-shrink-0 text-slate-100"
+        className="hidden md:flex md:flex-col md:w-[200px] h-full bg-gradient-to-b from-[#091D36] via-[#07172B] to-[#051120] border-r border-blue-500/20 shadow-xl flex-shrink-0 text-slate-100 z-20 select-none"
         aria-label="Admin sidebar"
       >
         <SidebarContent
@@ -158,7 +158,7 @@ export default function AdminLayout() {
       {/* Backdrop */}
       {drawerOpen && (
         <div
-          className="fixed inset-0 bg-[#030914]/80 backdrop-blur-sm z-20 md:hidden transition-opacity"
+          className="fixed inset-0 bg-[#030914]/80 backdrop-blur-sm z-30 md:hidden transition-opacity duration-200"
           aria-hidden="true"
           onClick={() => setDrawerOpen(false)}
         />
@@ -167,8 +167,8 @@ export default function AdminLayout() {
       {/* Drawer panel */}
       <aside
         className={[
-          'fixed top-0 left-0 h-full w-[230px] bg-gradient-to-b from-[#091D36] via-[#07172B] to-[#051120] border-r border-blue-500/20 shadow-2xl z-30 flex flex-col text-slate-100',
-          'transform transition-transform duration-200 md:hidden',
+          'fixed inset-y-0 left-0 h-full w-[240px] max-w-[85vw] bg-gradient-to-b from-[#091D36] via-[#07172B] to-[#051120] border-r border-blue-500/20 shadow-2xl z-40 flex flex-col text-slate-100',
+          'transform transition-transform duration-200 ease-in-out md:hidden',
           drawerOpen ? 'translate-x-0' : '-translate-x-full',
         ].join(' ')}
         aria-label="Admin navigation drawer"
@@ -194,11 +194,11 @@ export default function AdminLayout() {
         </div>
       </aside>
 
-      {/* ── Main area ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-col flex-1 min-w-0">
+      {/* ── Main area (Only this area scrolls) ──────────────────────────────── */}
+      <div className="flex flex-col flex-1 h-full min-w-0 overflow-hidden">
 
         {/* Mobile top bar (hamburger + product name) — hidden on md+ */}
-        <header className="md:hidden flex items-center gap-3 bg-[#091D36] border-b border-blue-500/20 px-4 py-3 sticky top-0 z-10 shadow-sm text-white">
+        <header className="md:hidden flex items-center gap-3 bg-[#091D36] border-b border-blue-500/20 px-4 py-3 sticky top-0 z-10 shadow-sm text-white flex-shrink-0">
           <button
             id="admin-hamburger"
             onClick={() => setDrawerOpen(true)}
@@ -219,7 +219,7 @@ export default function AdminLayout() {
         </header>
 
         {/* Page content from nested routes */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 h-full overflow-y-auto focus:outline-none">
           <Outlet />
         </main>
       </div>
