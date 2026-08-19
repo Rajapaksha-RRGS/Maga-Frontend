@@ -33,6 +33,11 @@ CREATE TABLE tenants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   company_name VARCHAR(150) NOT NULL,
   subdomain VARCHAR(50) UNIQUE NOT NULL, -- e.g. 'maga' -> maga.yoursaas.com
+  address_line1 VARCHAR(150),
+  address_line2 VARCHAR(150),
+  phone VARCHAR(50),
+  fax VARCHAR(50),
+  email VARCHAR(100),
   status VARCHAR(20) DEFAULT 'active',
   created_at TIMESTAMP DEFAULT now()
 );

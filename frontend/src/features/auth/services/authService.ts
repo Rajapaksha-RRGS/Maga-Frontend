@@ -12,12 +12,18 @@
  */
 import type { AuthUser } from '../../../context/AuthContext';
 
-// ── Mock data ─────────────────────────────────────────────────────────────────
+// ── Types & Mock data ─────────────────────────────────────────────────────────
 
-interface MockTenant {
+export interface Tenant {
   id: string;
-  name: string;
+  company_name: string;
   subdomain: string;
+  address_line1: string;
+  address_line2: string;
+  phone: string;
+  fax: string;
+  email: string;
+  status?: string;
 }
 
 interface MockUser {
@@ -29,9 +35,29 @@ interface MockUser {
   role: 'admin' | 'supervisor';
 }
 
-const MOCK_TENANTS: MockTenant[] = [
-  { id: 'tenant-001', name: 'Mäga Engineering', subdomain: 'maga' },
-  { id: 'tenant-002', name: 'ABC Constructions', subdomain: 'abc' },
+const MOCK_TENANTS: Tenant[] = [
+  {
+    id: 'tenant-001',
+    company_name: 'Mäga Engineering (Pvt) Ltd',
+    subdomain: 'maga',
+    address_line1: '200, Nawala Road,',
+    address_line2: 'Narahenpita, Colombo 05, Sri Lanka',
+    phone: '+94 11 2808835',
+    fax: '+94 11 2808840',
+    email: 'info@maga.lk',
+    status: 'active',
+  },
+  {
+    id: 'tenant-002',
+    company_name: 'ABC Constructions Ltd',
+    subdomain: 'abc',
+    address_line1: '123, Galle Road,',
+    address_line2: 'Colombo 03, Sri Lanka',
+    phone: '+94 11 2345678',
+    fax: '+94 11 2345679',
+    email: 'contact@abcconstructions.lk',
+    status: 'active',
+  },
 ];
 
 const MOCK_USERS: MockUser[] = [
@@ -121,6 +147,17 @@ export async function login(
     fullName: user.fullName,
     role: user.role,
     tenantId: user.tenantId,
-    tenantName: tenant.name,
+    tenantName: tenant.company_name,
   };
+}
+
+/**
+ * Fetch tenant details by ID (letterhead details).
+ * TODO: Replace with real API call:
+ *   const response = await axios.get(`/api/tenants/${tenantId}`);
+ *   return response.data;
+ */
+export async function getTenantById(tenantId: string): Promise<Tenant | undefined> {
+  await delay(100);
+  return MOCK_TENANTS.find((t) => t.id === tenantId) || MOCK_TENANTS[0];
 }
