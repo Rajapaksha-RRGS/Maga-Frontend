@@ -19,6 +19,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import magaLogo from '../assets/maga-logo-47321F1221-seeklogo.com.png';
 import {
   LayoutDashboard,
   Users,
@@ -31,7 +32,6 @@ import {
   Menu,
   X,
   LogOut,
-  Building2,
 } from 'lucide-react';
 
 // ── Nav item definition ────────────────────────────────────────────────────────
@@ -65,9 +65,13 @@ function SidebarContent({ tenantName, onNavClick, onLogout }: SidebarProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Product / tenant name header */}
-      <div className="flex items-center gap-2.5 px-4 py-5 border-b border-slate-200">
-        <div className="w-7 h-7 rounded bg-blue-700 flex items-center justify-center flex-shrink-0">
-          <Building2 size={15} className="text-white" />
+      <div className="flex items-center gap-2.5 px-4 py-4 border-b border-slate-200">
+        <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 bg-slate-50 border border-slate-200/60 p-0.5">
+          <img
+            src={magaLogo}
+            alt="MäGA Logo"
+            className="w-full h-full object-contain"
+          />
         </div>
         <div className="min-w-0">
           <p className="text-sm font-medium text-slate-800 truncate">
