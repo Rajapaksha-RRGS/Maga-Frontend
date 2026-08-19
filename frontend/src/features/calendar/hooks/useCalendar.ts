@@ -1,5 +1,5 @@
 /**
- * useCalendar.ts — Month navigation, day type assignment, bulk Sunday marking.
+ * useCalendar.ts — Month navigation, fixed day type assignment, bulk marking.
  */
 import { useState, useEffect, useCallback } from 'react';
 import type { CalendarEntry, DayType } from '../services/calendarService';
@@ -49,6 +49,11 @@ export function useCalendar() {
     await load();
   };
 
+  const markAllSaturdays = async () => {
+    await svc.bulkMarkSaturdays(year, month);
+    await load();
+  };
+
   const getDayTypeForDate = (date: string): DayType | undefined => {
     const entry = entries.find((e) => e.date === date);
     if (!entry) return undefined;
@@ -58,7 +63,7 @@ export function useCalendar() {
   return {
     year, month, entries, dayTypes, isLoading,
     prevMonth, nextMonth,
-    setDayTypeForDate, markAllSundays, getDayTypeForDate,
+    setDayTypeForDate, markAllSundays, markAllSaturdays, getDayTypeForDate,
     refresh: load,
   };
 }

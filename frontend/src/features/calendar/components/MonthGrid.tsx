@@ -1,10 +1,6 @@
 /**
  * MonthGrid.tsx — Desktop-first month calendar grid.
- * Each cell shows date + day-type label. Clicking a date opens a day-type picker.
- *
- * Color coding per design-system semantic system:
- *   Normal day = neutral (no tint)
- *   Sunday/Poya/Holiday = amber-tinted with different labels
+ * Each cell shows date + fixed day-type label. Clicking a date opens a day-type picker.
  */
 import { useState } from 'react';
 import type { DayType } from '../services/calendarService';
@@ -24,20 +20,19 @@ function formatDate(y: number, m: number, d: number): string {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-function getDayTypeStyle(dt?: DayType): string {
-  if (!dt) return 'bg-white';
-  if (dt.rateMultiplier > 1) return 'bg-amber-50 border-amber-200';
-  return 'bg-white border-slate-200';
-}
-
-function getDayTypeLabelStyle(dt?: DayType): string {
-  if (!dt) return 'text-slate-400';
-  if (dt.rateMultiplier > 1) return 'text-amber-700 bg-amber-50';
-  return 'text-slate-500';
-}
+const BADGE_STYLES: Record<string, { bg: string; text: string; border: string }> = {
+  'dt-normal':   { bg: 'bg-slate-100',   text: 'text-slate-600',   border: 'border-slate-200/80' },
+  'dt-saturday': { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-blue-200' },
+  'dt-sunday':   { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+  'dt-shutdown': { bg: 'bg-rose-50',    text: 'text-rose-700',    border: 'border-rose-200' },
+  'dt-poya':     { bg: 'bg-amber-50',   text: 'text-amber-700',   border: 'border-amber-200' },
+};
 
 export default function MonthGrid({ year, month, getDayTypeForDate, dayTypes, onSetDayType }: Props) {
   const [pickerDate, setPickerDate] = useState<string | null>(null);
+
+  const today = new Date();
+  const todayStr = formatDate(today.getFullYear(), today.getMonth(), today.getDate());
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDayOfWeek = new Date(year, month, 1).getDay();
@@ -60,49 +55,86 @@ export default function MonthGrid({ year, month, getDayTypeForDate, dayTypes, on
   };
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-visible">
       {/* Weekday headers */}
-      <div className="grid grid-cols-7 border-b border-slate-200">
-        {WEEKDAYS.map((w) => (
-          <div key={w} className="px-1 py-2 text-center text-xs font-medium text-slate-500 uppercase tracking-wide">
+      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/80 rounded-t-xl">
+        {WEEKDAYS.map((w, index) => (
+          <div
+            key={w}
+            className={[
+              'px-2 py-3 text-center text-xs font-semibold uppercase tracking-wider',
+              index === 0 ? 'text-emerald-700' : index === 6 ? 'text-blue-700' : 'text-slate-600',
+            ].join(' ')}
+          >
             {w}
           </div>
         ))}
       </div>
 
       {/* Day cells */}
-      <div className="grid grid-cols-7">
+      <div className="grid grid-cols-7 divide-x divide-y divide-slate-100">
         {cells.map((day, idx) => {
           if (day === null) {
-            return <div key={`blank-${idx}`} className="border-b border-r border-slate-100 min-h-[72px]" />;
+            return <div key={`blank-${idx}`} className="min-h-[85px] bg-slate-50/40" />;
           }
 
           const dateStr = formatDate(year, month, day);
           const dt = getDayTypeForDate(dateStr);
           const isPickerOpen = pickerDate === dateStr;
+          const isToday = dateStr === todayStr;
+          const badge = (dt && BADGE_STYLES[dt.id]) || BADGE_STYLES['dt-normal'];
 
           return (
             <div
               key={day}
               className={[
-                'relative border-b border-r border-slate-100 min-h-[72px] p-1.5 cursor-pointer transition-colors hover:bg-slate-50',
-                getDayTypeStyle(dt),
+                'relative min-h-[85px] p-2 cursor-pointer transition-all duration-150 flex flex-col justify-between group',
+                isToday ? 'bg-blue-50/30 ring-1 ring-inset ring-blue-400' : 'hover:bg-slate-50/80 bg-white',
               ].join(' ')}
               onClick={() => handleDateClick(day)}
             >
-              <span className="text-sm font-medium text-slate-800">{day}</span>
-              {dt && (
-                <span className={['block text-xs mt-0.5 truncate', getDayTypeLabelStyle(dt)].join(' ')}>
-                  {dt.name}
+              {/* Day header: Number + Today indicator */}
+              <div className="flex items-center justify-between">
+                <span
+                  className={[
+                    'text-sm font-semibold inline-flex items-center justify-center w-6 h-6 rounded-full',
+                    isToday ? 'bg-blue-600 text-white font-bold' : 'text-slate-800',
+                  ].join(' ')}
+                >
+                  {day}
                 </span>
-              )}
-              {dt && dt.rateMultiplier > 1 && (
-                <span className="text-xs text-amber-500 font-mono">×{dt.rateMultiplier}</span>
-              )}
+                {isToday && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 bg-blue-100/60 px-1.5 py-0.2 rounded">
+                    Today
+                  </span>
+                )}
+              </div>
 
-              {/* Inline picker */}
+              {/* Day Type Badge */}
+              <div className="mt-2">
+                {dt ? (
+                  <span
+                    className={[
+                      'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium border w-full justify-center truncate',
+                      badge.bg,
+                      badge.text,
+                      badge.border,
+                    ].join(' ')}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70 flex-shrink-0" />
+                    <span className="truncate">{dt.name}</span>
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-300 italic group-hover:text-slate-400">Click to set</span>
+                )}
+              </div>
+
+              {/* Inline DayTypePicker popover */}
               {isPickerOpen && (
-                <div className="absolute top-full left-0 z-20 mt-1" onClick={(e) => e.stopPropagation()}>
+                <div
+                  className="absolute top-12 left-2 z-40"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <DayTypePicker
                     dayTypes={dayTypes}
                     currentId={dt?.id}
