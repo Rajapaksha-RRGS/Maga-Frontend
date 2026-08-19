@@ -23,6 +23,7 @@
  */
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Analytics } from "@vercel/analytics/react";
 
 // Auth
 import ProtectedRoute from './features/auth/components/ProtectedRoute';
@@ -72,6 +73,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <Analytics />
       <Routes>
         {/* ── Public ─────────────────────────────────────────────────────── */}
         <Route path="/login" element={<LoginPage />} />
