@@ -32,11 +32,11 @@ const ASSIGNMENTS: Map<string, Assignment[]> = new Map();
 function initToday() {
   const today = formatDate(new Date());
   ASSIGNMENTS.set(today, [
-    { id: 'asgn-001', date: today, supervisorId: 'user-002', employeeId: 'emp-001' },
-    { id: 'asgn-002', date: today, supervisorId: 'user-002', employeeId: 'emp-002' },
-    { id: 'asgn-003', date: today, supervisorId: 'user-002', employeeId: 'emp-003' },
-    { id: 'asgn-004', date: today, supervisorId: 'sup-002',  employeeId: 'emp-005' },
-    { id: 'asgn-005', date: today, supervisorId: 'sup-002',  employeeId: 'emp-006' },
+    { id: 'asgn-001', date: today, supervisorId: 'user-002', employeeId: 'HI101' },
+    { id: 'asgn-002', date: today, supervisorId: 'user-002', employeeId: 'HI201' },
+    { id: 'asgn-003', date: today, supervisorId: 'user-002', employeeId: 'HI301' },
+    { id: 'asgn-004', date: today, supervisorId: 'sup-002',  employeeId: 'HI501' },
+    { id: 'asgn-005', date: today, supervisorId: 'sup-002',  employeeId: 'HI401' },
   ]);
 }
 
