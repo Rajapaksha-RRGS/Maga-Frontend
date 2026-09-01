@@ -59,7 +59,7 @@ export default function ActivityCodeForm({ activityCode, onSave, onDelete, onCan
       )}
       <div className="flex flex-col gap-1">
         <label htmlFor="ac-code" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Code *</label>
-        <input id="ac-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} className={`${INPUT_CLASS} font-mono`} placeholder="e.g. EW-01" required />
+        <input id="ac-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} className={`${INPUT_CLASS} font-mono`} placeholder="e.g. 00-00-20-10" required />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor="ac-desc" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Description</label>

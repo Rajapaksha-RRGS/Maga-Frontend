@@ -20,19 +20,32 @@ export interface ActivityCode {
 export type ActivityCodeFormData = Omit<ActivityCode, 'id'>;
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-let nextId = 11;
+let nextId = 24;
 
 const CODES: ActivityCode[] = [
-  { id: 'ac-001', code: 'EW-01', description: 'Excavation work' },
-  { id: 'ac-002', code: 'CW-01', description: 'Concrete work' },
-  { id: 'ac-003', code: 'CW-02', description: 'Formwork' },
-  { id: 'ac-004', code: 'CW-03', description: 'Rebar work' },
-  { id: 'ac-005', code: 'MW-01', description: 'Masonry work' },
-  { id: 'ac-006', code: 'PW-01', description: 'Plumbing work' },
-  { id: 'ac-007', code: 'EL-01', description: 'Electrical work' },
-  { id: 'ac-008', code: 'GW-01', description: 'General labour' },
-  { id: 'ac-009', code: 'PT-01', description: 'Painting work' },
-  { id: 'ac-010', code: 'WD-01', description: 'Welding work' },
+  { id: 'ac-001', code: '00-00-10-00', description: 'Other site over head' },
+  { id: 'ac-002', code: '00-00-11-13', description: 'Welfare Facilities - Meals and Tea - for Contractor' },
+  { id: 'ac-003', code: '00-00-11-30', description: 'Salaries and Wages - for Contractor' },
+  { id: 'ac-004', code: '00-00-20-10', description: 'Dayworks - Labour' },
+  { id: 'ac-005', code: '00-00-20-20', description: 'Dayworks - Equipment' },
+  { id: 'ac-006', code: '00-00-20-30', description: 'Dayworks - Materials' },
+  { id: 'ac-007', code: '00-00-50-00', description: 'Head office Overhead' },
+  { id: 'ac-008', code: '00-61-00-00', description: 'Bonds & Guarantees' },
+  { id: 'ac-009', code: '00-61-13-13', description: 'Performance Bond' },
+  { id: 'ac-010', code: '00-61-27-00', description: 'Advance Bond' },
+  { id: 'ac-011', code: '00-62-16-00', description: 'Insurance' },
+  { id: 'ac-012', code: '00-62-16-13', description: "Insurance - Contractor's All Risk (CAR)" },
+  { id: 'ac-013', code: '01-10-10-00', description: 'Excavation & Earthwork' },
+  { id: 'ac-014', code: '01-20-10-00', description: 'Concrete Work - Substructure' },
+  { id: 'ac-015', code: '02-10-10-00', description: 'Formwork - Superstructure' },
+  { id: 'ac-016', code: '02-20-10-00', description: 'Rebar & Steel Reinforcement' },
+  { id: 'ac-017', code: '03-10-10-00', description: 'Masonry Block & Brick Laying' },
+  { id: 'ac-018', code: '03-20-10-00', description: 'Plastering Work' },
+  { id: 'ac-019', code: '04-10-10-00', description: 'Plumbing & Drainage Work' },
+  { id: 'ac-020', code: '04-20-10-00', description: 'Electrical Conduit & Cabling' },
+  { id: 'ac-021', code: '05-10-10-00', description: 'Tile Laying & Finishes' },
+  { id: 'ac-022', code: '05-20-10-00', description: 'Painting & Surface Coating' },
+  { id: 'ac-023', code: '06-10-10-00', description: 'Welding & Structural Steel' },
 ];
 
 export async function getAll(): Promise<ActivityCode[]> {

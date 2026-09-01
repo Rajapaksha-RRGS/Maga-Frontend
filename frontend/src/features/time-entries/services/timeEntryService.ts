@@ -56,14 +56,18 @@ const MOCK_EMPLOYEES: AssignedEmployee[] = [
 ];
 
 const MOCK_ACTIVITY_CODES: ActivityCode[] = [
-  { id: 'ac-01', code: 'E-001', description: 'Excavation' },
-  { id: 'ac-02', code: 'C-010', description: 'Concrete pouring' },
-  { id: 'ac-03', code: 'R-005', description: 'Reinforcement fixing' },
-  { id: 'ac-04', code: 'F-020', description: 'Formwork erection' },
-  { id: 'ac-05', code: 'B-002', description: 'Block laying' },
-  { id: 'ac-06', code: 'P-015', description: 'Plastering' },
-  { id: 'ac-07', code: 'T-008', description: 'Tile fixing' },
-  { id: 'ac-08', code: 'W-003', description: 'Waterproofing' },
+  { id: 'ac-01', code: '00-00-20-10', description: 'Dayworks - Labour' },
+  { id: 'ac-02', code: '01-10-10-00', description: 'Excavation & Earthwork' },
+  { id: 'ac-03', code: '01-20-10-00', description: 'Concrete Work - Substructure' },
+  { id: 'ac-04', code: '02-10-10-00', description: 'Formwork - Superstructure' },
+  { id: 'ac-05', code: '02-20-10-00', description: 'Rebar & Steel Reinforcement' },
+  { id: 'ac-06', code: '03-10-10-00', description: 'Masonry Block & Brick Laying' },
+  { id: 'ac-07', code: '03-20-10-00', description: 'Plastering Work' },
+  { id: 'ac-08', code: '04-10-10-00', description: 'Plumbing & Drainage Work' },
+  { id: 'ac-09', code: '04-20-10-00', description: 'Electrical Conduit & Cabling' },
+  { id: 'ac-10', code: '05-10-10-00', description: 'Tile Laying & Finishes' },
+  { id: 'ac-11', code: '05-20-10-00', description: 'Painting & Surface Coating' },
+  { id: 'ac-12', code: '06-10-10-00', description: 'Welding & Structural Steel' },
 ];
 
 // ─── Service functions ────────────────────────────────────────────────────────
