@@ -8,7 +8,8 @@ import type { Equipment } from '../services/equipmentService';
 interface Props { data: Equipment[]; onRowClick: (e: Equipment) => void; }
 
 const columns: Column<Equipment>[] = [
-  { header: 'Name', accessor: 'name', render: (e) => <span className="font-medium">{e.name}</span> },
+  { header: 'Code', accessor: 'code', render: (e) => <span className="font-mono text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{e.code}</span> },
+  { header: 'Name', accessor: 'name', render: (e) => <span className="font-medium text-slate-800">{e.name}</span> },
   { header: 'Type', accessor: 'type' },
   { header: 'Status', accessor: 'status', render: (e) => <StatusBadge status={e.status} /> },
 ];

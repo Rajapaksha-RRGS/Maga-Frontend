@@ -15,25 +15,30 @@ const INPUT_CLASS =
   'w-full px-4 py-3 rounded-lg border border-slate-200 bg-white text-slate-800 text-sm min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-colors placeholder:text-slate-400';
 
 export default function EquipmentForm({ equipment, onSave, onDeactivate, onCancel }: Props) {
+  const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [type, setType] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (equipment) { setName(equipment.name); setType(equipment.type); }
-    else { setName(''); setType(''); }
+    if (equipment) { setCode(equipment.code || ''); setName(equipment.name); setType(equipment.type); }
+    else { setCode(''); setName(''); setType(''); }
   }, [equipment]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!code.trim() || !name.trim()) return;
     setIsSaving(true);
-    try { await onSave({ name: name.trim(), type: type.trim() }); }
+    try { await onSave({ code: code.trim().toUpperCase(), name: name.trim(), type: type.trim() }); }
     finally { setIsSaving(false); }
   };
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <label htmlFor="equip-code" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Code *</label>
+        <input id="equip-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} className={`${INPUT_CLASS} font-mono`} placeholder="e.g. MACM0075" required />
+      </div>
       <div className="flex flex-col gap-1">
         <label htmlFor="equip-name" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Name *</label>
         <input id="equip-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className={INPUT_CLASS} placeholder="Equipment name" required />

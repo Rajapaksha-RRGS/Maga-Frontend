@@ -1,7 +1,7 @@
 /**
  * SlidePanel.tsx
  *
- * Modern clean blue slide-in overlay panel.
+ * Modern clean blue centered Pop-up Modal screen.
  * Automatically styles all child forms (inputs, labels, buttons, pickers)
  * to match the modern blue theme.
  */
@@ -35,39 +35,38 @@ export default function SlidePanel({ open, onClose, title, children }: SlidePane
     }
   }, [open]);
 
-  return (
-    <>
-      {/* Backdrop */}
-      {open && (
-        <div
-          className="fixed inset-0 bg-[#051120]/75 backdrop-blur-[2px] z-40 transition-opacity duration-300"
-          aria-hidden="true"
-          onClick={onClose}
-        />
-      )}
+  if (!open) return null;
 
-      {/* Panel */}
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-[#051120]/80 backdrop-blur-sm transition-opacity duration-300"
+        aria-hidden="true"
+        onClick={onClose}
+      />
+
+      {/* Centered Modal Screen */}
       <div
         ref={panelRef}
         role="dialog"
-        aria-modal={open}
+        aria-modal="true"
         aria-label={title}
         tabIndex={-1}
         className={[
-          'fixed top-0 right-0 h-full w-full max-w-md bg-gradient-to-b from-[#0e243f] via-[#0b1c33] to-[#081527] text-blue-50 border-l border-blue-500/25 shadow-2xl shadow-blue-950/80 z-50',
-          'flex flex-col transform transition-transform duration-200 ease-out',
-          open ? 'translate-x-0' : 'translate-x-full',
+          'relative w-full max-w-lg max-h-[90vh] bg-gradient-to-b from-[#0e243f] via-[#0b1c33] to-[#081527] text-blue-50 border border-blue-500/30 rounded-2xl shadow-2xl shadow-blue-950/90 z-50',
+          'flex flex-col transform transition-all duration-200 ease-out scale-100 opacity-100 overflow-hidden',
         ].join(' ')}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-blue-400/15 bg-[#122b4a]/70 backdrop-blur-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-blue-400/20 bg-[#122b4a]/80 backdrop-blur-md">
           <div className="flex items-center gap-2.5">
             <span className="w-2.5 h-2.5 rounded-full bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.8)] animate-pulse" />
             <h2 className="text-base font-semibold text-white tracking-wide">{title}</h2>
           </div>
           <button
             onClick={onClose}
-            aria-label="Close panel"
+            aria-label="Close modal"
             className="w-9 h-9 rounded-lg flex items-center justify-center text-blue-200/70 hover:text-white hover:bg-blue-500/20 active:bg-blue-500/30 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none"
           >
             <X size={18} />
@@ -77,7 +76,7 @@ export default function SlidePanel({ open, onClose, title, children }: SlidePane
         {/* Content with theme cascade for all child form elements */}
         <div
           className={[
-            'flex-1 overflow-y-auto px-5 py-6',
+            'flex-1 overflow-y-auto px-6 py-6',
             // Labels
             '[&_label]:text-blue-200/90 [&_label]:font-medium',
             // Text, Number, Password Inputs & Textarea
@@ -111,6 +110,6 @@ export default function SlidePanel({ open, onClose, title, children }: SlidePane
           {children}
         </div>
       </div>
-    </>
+    </div>
   );
 }

@@ -19,7 +19,7 @@ export function useEquipment() {
 
   const filtered = items.filter((e) => {
     const q = search.toLowerCase();
-    return !q || e.name.toLowerCase().includes(q) || e.type.toLowerCase().includes(q);
+    return !q || (e.code && e.code.toLowerCase().includes(q)) || e.name.toLowerCase().includes(q) || e.type.toLowerCase().includes(q);
   });
 
   const add = async (data: EquipmentFormData) => { await svc.create(data); await load(); };

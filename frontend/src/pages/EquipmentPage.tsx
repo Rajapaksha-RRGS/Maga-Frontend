@@ -11,7 +11,7 @@ import EquipmentForm from '../features/equipment/components/EquipmentForm';
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
-import type { Equipment } from '../features/equipment/services/equipmentService';
+import type { Equipment, EquipmentFormData } from '../features/equipment/services/equipmentService';
 
 export default function EquipmentPage() {
   const { filtered, isLoading, search, setSearch, add, edit, remove } = useEquipment();
@@ -22,7 +22,7 @@ export default function EquipmentPage() {
   const openEdit = (e: Equipment) => { setEditing(e); setPanelOpen(true); };
   const close = () => { setPanelOpen(false); setEditing(null); };
 
-  const handleSave = async (data: { name: string; type: string }) => {
+  const handleSave = async (data: EquipmentFormData) => {
     if (editing) await edit(editing.id, data); else await add(data);
     close();
   };

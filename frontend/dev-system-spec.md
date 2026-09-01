@@ -1,4 +1,5 @@
 # Dev System Spec
+
 # Labour Entry System — Dev System Spec
 
 > Reference document for building the system module by module. Follow this spec strictly for consistency across modules — same pattern used in Module 1 (Auth) applies to every subsequent module.
@@ -13,16 +14,56 @@ A web-based labour entry / attendance system replacing a manual Excel workflow. 
 
 ---
 
+## 2. User Requirements
+
+Admin ට පුළුවන් වෙන්න ඕන
+
+Employees, Equipment, Activity Codes create/edit/deactivate කරන්න
+Supervisors ලාව create කරන්න (login account සමඟ)
+Employees ලාව supervisors ලාට assign කරන්න,
+
+දවසින් දවස වෙනස් කරන්න පුළුවන් විදිහට
+Calendar එකේ date එකකට day type (Normal/Sunday/Poya/Holiday) assign කරන්න
+
+Report generate කරන්න (Summary, Day & OT Summary, BP Bill, ERP Upload)
+Reports Excel එකට export කරගන්න
+
+අද assign නොකළ employees ලා සහ submit නොකළ supervisors ලා dashboard එකේම බලාගන්න
+
+දින range/employee/supervisor/business partner/activity code අනුව reports filter කරන්න
+
+## 3. Supervisor ට පුළුවන් වෙන්න ඕන
+
+තමන්ට අද assign වුන employees ලා list එකක් විදිහට බලාගන්න
+අදාළ දවසට assign වෙන employeelage daily attendance (In/Out time) දාන්න
+
+Employee කෙනෙක්ගේ hours, activity code අනුව පැය ගණන බෙදලා දාන්න
+එක employee කෙනෙක්ට activity code කිහිපයකට hours split කරන්න පුළුවන් වෙන්න
+
+Additional Hours (අමතර පැය) record කරන්න
+
+දවසේ day type එක (holiday rate) අවශ්‍ය නම් override කරන්න
+
+දවසේ entry ඔක්කොම අවසානයේ submit කරලා lock කරන්න
+
+## 4. System එකට පුළුවන් වෙන්න ඕන
+
+Company කිහිපයකටම (multi-tenant SaaS) එකම system එකෙන්ම service දෙන්න,data වෙන වෙනම isolate කරලා
+
+එක employee කෙනෙක්ට එක supervisor විතරයි දවසකට assign වෙන්න ඉඩ දෙන්න
+
+Desktop (Admin) සහ mobile browser (Supervisor) දෙකෙන්ම access කරන්න පුළුවන් වෙන්න Role අනුව (Admin/Supervisor) access control කරන්න
+
 ## 2. Tech stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | React + Tailwind CSS (responsive, mobile + desktop from one codebase) |
-| Backend | Node.js + Express |
-| Database | PostgreSQL |
-| Auth | JWT + bcrypt, role-based (`admin`, `supervisor`) |
-| Excel export | `exceljs` |
-| Packaging | Docker (frontend, backend, db as separate containers via `docker-compose`) — keeps deployment portable across AWS / Azure / GCP / self-hosted |
+| Layer        | Technology                                                                                                                                    |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend     | React + Tailwind CSS (responsive, mobile + desktop from one codebase)                                                                         |
+| Backend      | Node.js + Express                                                                                                                             |
+| Database     | PostgreSQL                                                                                                                                    |
+| Auth         | JWT + bcrypt, role-based (`admin`, `supervisor`)                                                                                              |
+| Excel export | `exceljs`                                                                                                                                     |
+| Packaging    | Docker (frontend, backend, db as separate containers via `docker-compose`) — keeps deployment portable across AWS / Azure / GCP / self-hosted |
 
 ---
 
@@ -134,6 +175,7 @@ CREATE INDEX idx_assignments_tenant_date ON daily_assignments(tenant_id, date);
 ```
 
 **Key relationships**
+
 - `daily_assignments.supervisor_id` → `users.id` (the logged-in supervisor account, not an employee record)
 - `users.employee_id` is nullable — only set when a supervisor is also a tracked worker
 - `time_entries.effective_day_type_id` defaults from `calendar` on entry creation but can be overridden per employee per day (e.g. Sunday treated as Normal Day for a specific worker)
@@ -141,6 +183,7 @@ CREATE INDEX idx_assignments_tenant_date ON daily_assignments(tenant_id, date);
 - Every core table carries `tenant_id`. All previously-global unique constraints (username, activity code, calendar date) are now scoped to `(tenant_id, ...)` so two tenants can reuse the same username or activity code without conflict
 
 **Tenant isolation (two layers)**
+
 1. **App layer** — a backend middleware resolves `tenant_id` from the logged-in user's session (or subdomain) and injects it into every query automatically, so individual developers never have to remember to filter by hand.
 2. **Database layer (optional, Supabase)** — Postgres Row Level Security (RLS) policies enforce the same isolation at the DB level as a second safety net, e.g. `USING (tenant_id = current_setting('app.current_tenant')::uuid)`.
 
@@ -283,6 +326,7 @@ Rule: `pages/*` only assembles components from `features/*` — no business logi
   "general_remarks": "Multi-tenant SaaS: this narrative applies per tenant company (e.g. Mäga Engineering), not to a single client. Two core personas: (1) Admin — desktop-first, sets up data and reviews reports; (2) Supervisor — mobile-first, field-based, needs a fast low-friction daily entry flow (accordion card UI)."
 }
 ```
+
 ## Section 7 — UI/UX Decisions
 
 ### Design System Reference
