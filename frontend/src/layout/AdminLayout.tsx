@@ -49,7 +49,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Activity codes', to: '/admin/activity-codes', icon: <Tag size={18} /> },
   { label: 'Supervisors',    to: '/admin/supervisors',  icon: <UserCog size={18} /> },
   { label: 'Calendar',       to: '/admin/calendar',     icon: <CalendarDays size={18} /> },
-  { label: 'Assignment',     to: '/admin/assignments',  icon: <ClipboardList size={18} /> },
+  { label: 'Assign',     to: '/admin/assignments',  icon: <ClipboardList size={18} /> },
   { label: 'Reports',        to: '/admin/reports',      icon: <BarChart3 size={18} /> },
 ];
 
