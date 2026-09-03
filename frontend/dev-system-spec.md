@@ -54,7 +54,23 @@ Company කිහිපයකටම (multi-tenant SaaS) එකම system එක�
 
 Desktop (Admin) සහ mobile browser (Supervisor) දෙකෙන්ම access කරන්න පුළුවන් වෙන්න Role අනුව (Admin/Supervisor) access control කරන්න
 
-## 2. Tech stack
+## 5. කළමනාකාරිත්වයට (Management) ලැබෙන වාර්තා 4 (Live Exportable Reports)
+
+- **Summary Report (වැටුප් සාරාංශ වාර්තාව)**:
+  එක් එක් සේවකයා මාසය තුළ වැඩ කළ මුළු දින ගණන, Normal Hours, OT Hours, Total Hours සහ මුළු එකතුව එකවර බලාගත හැක.
+
+- **Day & OT Summary Matrix (දිනපතා පැමිණීමේ Matrix එක)**:
+  මාසයේ 1 වනදා සිට 31 වනදා දක්වා දිනපතා සේවකයා වැඩ කළේද (1/0) සහ කළ OT පැය ගණන Sheet එකක් ආකාරයෙන් බලාගත හැක.
+
+- **BP Bill Report (Business Partner බිල්පත)**:
+  කොන්ත්‍රාත් සමාගම් (Mäga, Alpha, Beta) අනුව වර්ගීකරණය කර, Hours, Payment, 10% Overhead සහ Net Amount ගණනය කර Excel එකක් ලෙස ලබාදේ.
+
+- **ERP Upload Export (IFS / SAP Integration)**:
+  සමාගමේ ප්‍රධාන ERP පද්ධතියට කෙලින්ම Import කළ හැකි නිවැරදි ආකෘතියෙන් (CSV/XLSX) Data සකසා දේ.
+
+---
+
+## 6. Tech stack
 
 | Layer        | Technology                                                                                                                                    |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -67,7 +83,7 @@ Desktop (Admin) සහ mobile browser (Supervisor) දෙකෙන්ම access 
 
 ---
 
-## 3. Database schema
+## 7. Database schema
 
 ```sql
 CREATE TABLE tenants (
@@ -191,7 +207,7 @@ CREATE INDEX idx_assignments_tenant_date ON daily_assignments(tenant_id, date);
 
 ---
 
-## 4. Module list (build order)
+## 8. Module list (build order)
 
 1. Auth & login (JWT, role-based, `users` table)
 2. Admin — master data (Employees, Equipment, Activity Codes)
@@ -202,7 +218,7 @@ CREATE INDEX idx_assignments_tenant_date ON daily_assignments(tenant_id, date);
 
 ---
 
-## 5. Backend folder structure
+## 9. Backend folder structure
 
 ```
 backend/
@@ -239,7 +255,7 @@ Each module folder follows the same 3-file pattern: `*.controller.js` (handles r
 
 ---
 
-## 6. Frontend folder structure (feature-based)
+## 10. Frontend folder structure (feature-based)
 
 ```
 frontend/
@@ -282,7 +298,7 @@ Rule: `pages/*` only assembles components from `features/*` — no business logi
 
 ---
 
-## 7. UI/UX decisions locked in
+## 11. UI/UX decisions locked in
 
 - **Supervisor time entry screen**: assigned employees shown as a card list. Tapping a card expands it accordion-style in place to reveal the In/Out/Activity form — no modal, no route change. Saving an entry auto-collapses the card and shows a saved indicator (e.g. checkmark) on the card.
 - **Day type**: system auto-fills `effective_day_type_id` from the `calendar` table for the selected date, shown as a badge (e.g. "Sunday — OT applies"). Supervisor can override it per employee per entry.
@@ -290,7 +306,7 @@ Rule: `pages/*` only assembles components from `features/*` — no business logi
 
 ---
 
-## 8. Future extensions (not in current scope, schema-compatible)
+## 12. Future extensions (not in current scope, schema-compatible)
 
 - Site-level separation within a tenant: add `sites` table + `site_id` FK on `employees`, `daily_assignments`, `time_entries` — for tenants running multiple project locations under one company.
 
@@ -327,7 +343,7 @@ Rule: `pages/*` only assembles components from `features/*` — no business logi
 }
 ```
 
-## Section 7 — UI/UX Decisions
+## 14. UI/UX Decisions
 
 ### Design System Reference
 

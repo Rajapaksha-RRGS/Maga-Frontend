@@ -21,18 +21,25 @@ export default function EmployeeCardList({ data, onCardClick }: EmployeeCardList
           onClick={() => onCardClick(emp)}
           className="w-full text-left rounded-lg border border-slate-200 bg-white px-4 py-3 flex items-center gap-3 transition-colors hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-600"
         >
-          {/* Avatar initial */}
-          <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
-            <span className="text-sm font-medium text-slate-600">
-              {emp.callingName.charAt(0)}
-            </span>
+          {/* Avatar / Code badge */}
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 font-mono text-xs font-semibold flex items-center justify-center flex-shrink-0 border border-blue-100">
+            {emp.employeeCode || emp.id}
           </div>
 
           {/* Info */}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-slate-800">{emp.callingName}</p>
-            <p className="text-xs text-slate-500 truncate">
-              {emp.tradeGroup} · {emp.businessPartner}
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-slate-800 truncate">{emp.tradeGroup}</p>
+              <span className="text-xs text-slate-400">·</span>
+              <span className="text-xs font-mono font-medium text-slate-700">
+                {emp.dailyRate != null ? `Rs. ${Number(emp.dailyRate).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : ''}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 truncate mt-0.5">
+              NIC: {emp.nicNo || '—'} {emp.epfNo ? `· EPF: ${emp.epfNo}` : ''}
+            </p>
+            <p className="text-xs text-slate-400 truncate">
+              {emp.businessPartner}
             </p>
           </div>
 

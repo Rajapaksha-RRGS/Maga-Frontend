@@ -33,6 +33,9 @@ import LoginPage from './features/auth/pages/LoginPage';
 import AdminLayout from './layout/AdminLayout';
 import SupervisorLayout from './layout/SupervisorLayout';
 
+//usertable 
+import UseTable from './components/user';
+
 // Admin pages
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import EmployeesPage from './pages/EmployeesPage';
@@ -78,6 +81,7 @@ export default function App() {
         {/* ── Public ─────────────────────────────────────────────────────── */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/splash" element={<SplashShowcasePage />} />
+        <Route path="/users" element={<UseTable />} />
 
         {/* ── Admin (protected, role=admin) ───────────────────────────────── */}
         <Route element={<ProtectedRoute requiredRole="admin" />}>

@@ -52,7 +52,12 @@ export function useEmployees(): UseEmployeesReturn {
     const matchesSearch =
       !q ||
       e.callingName.toLowerCase().includes(q) ||
-      e.fullName.toLowerCase().includes(q);
+      e.fullName.toLowerCase().includes(q) ||
+      (e.employeeCode && e.employeeCode.toLowerCase().includes(q)) ||
+      (e.id && e.id.toLowerCase().includes(q)) ||
+      (e.tradeGroup && e.tradeGroup.toLowerCase().includes(q)) ||
+      (e.nicNo && e.nicNo.toLowerCase().includes(q)) ||
+      (e.businessPartner && e.businessPartner.toLowerCase().includes(q));
     const matchesBP = !businessPartnerFilter || e.businessPartner === businessPartnerFilter;
     const matchesTG = !tradeGroupFilter || e.tradeGroup === tradeGroupFilter;
     return matchesSearch && matchesBP && matchesTG;

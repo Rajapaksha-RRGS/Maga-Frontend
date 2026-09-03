@@ -88,7 +88,7 @@ export default function EmployeesPage() {
           <SearchInput
             value={search}
             onChange={setSearch}
-            placeholder="Search by name…"
+            placeholder="Search by Trade Group, NIC, Code, or Name…"
           />
         </div>
         <EmployeeFilters

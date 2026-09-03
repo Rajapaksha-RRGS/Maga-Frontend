@@ -14,15 +14,27 @@
 
 export interface Employee {
   id: string;
+  employeeCode?: string;
   callingName: string;
   fullName: string;
   businessPartner: string;
   tradeGroup: string;
   nicNo: string;
+  dailyRate?: number;
+  epfNo?: string;
   status: 'active' | 'inactive';
 }
 
-export type EmployeeFormData = Omit<Employee, 'id' | 'status'>;
+export interface EmployeeFormData {
+  employeeCode?: string;
+  callingName?: string;
+  fullName?: string;
+  businessPartner: string;
+  tradeGroup: string;
+  nicNo: string;
+  dailyRate: number;
+  epfNo?: string;
+}
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 
@@ -31,6 +43,25 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 999;
 
 const EMPLOYEES: Employee[] = [
+  // ── Site Labour Details (from Master Labour List) ───────────────────────────
+  { id: 'HK030', employeeCode: 'HK030', callingName: 'HK030', fullName: 'Lab Helper HK030', businessPartner: 'Maga', tradeGroup: 'Lab Helper', nicNo: '961173612V', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK031', employeeCode: 'HK031', callingName: 'HK031', fullName: 'Lab Helper HK031', businessPartner: 'Maga', tradeGroup: 'Lab Helper', nicNo: '200531503866', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HI258', employeeCode: 'HI258', callingName: 'HI258', fullName: 'Cook HI258', businessPartner: 'Maga', tradeGroup: 'Cook', nicNo: '197235100210', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK032', employeeCode: 'HK032', callingName: 'HK032', fullName: 'Helper HK032', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '200307101128', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK033', employeeCode: 'HK033', callingName: 'HK033', fullName: 'Helper HK033', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '200635000602', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK034', employeeCode: 'HK034', callingName: 'HK034', fullName: 'Helper HK034', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '922513082V', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK035', employeeCode: 'HK035', callingName: 'HK035', fullName: 'Helper HK035', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '200130701719', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HI911', employeeCode: 'HI911', callingName: 'HI911', fullName: 'Helper HI911', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '950082836V', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HI265', employeeCode: 'HI265', callingName: 'HI265', fullName: 'Helper HI265', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '710734364V', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK121', employeeCode: 'HK121', callingName: 'HK121', fullName: 'Helper HK121', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '921853670V', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK122', employeeCode: 'HK122', callingName: 'HK122', fullName: 'Helper HK122', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '198212803752', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK123', employeeCode: 'HK123', callingName: 'HK123', fullName: 'Helper HK123', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '198709902610', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK124', employeeCode: 'HK124', callingName: 'HK124', fullName: 'Charge Hand HK124', businessPartner: 'Maga', tradeGroup: 'Charge Hand', nicNo: '982990386V', dailyRate: 1600.00, epfNo: '', status: 'active' },
+  { id: 'HI394', employeeCode: 'HI394', callingName: 'HI394', fullName: 'Carpentor HI394', businessPartner: 'Maga', tradeGroup: 'Carpentor', nicNo: '853454435V', dailyRate: 1600.00, epfNo: '', status: 'active' },
+  { id: 'HK947', employeeCode: 'HK947', callingName: 'HK947', fullName: 'Helper HK947', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '200607304610', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HL056', employeeCode: 'HL056', callingName: 'HL056', fullName: 'Helper HL056', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '200800501773', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HK948', employeeCode: 'HK948', callingName: 'HK948', fullName: 'Helper HK948', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '892215006V', dailyRate: 1400.00, epfNo: '', status: 'active' },
+  { id: 'HL057', employeeCode: 'HL057', callingName: 'HL057', fullName: 'Helper HL057', businessPartner: 'Maga', tradeGroup: 'Helper', nicNo: '200421204651', dailyRate: 1400.00, epfNo: '', status: 'active' },
   // ── Masons (100 Series) ───────────────────────────────────────────────────
   { id: 'HI101', callingName: '101', fullName: 'Kamal Perera',            businessPartner: 'Maga Engineering',    tradeGroup: 'Mason',          nicNo: '881234567V', status: 'active' },
   { id: 'HI102', callingName: '102', fullName: 'Lakmal Dissanayake',      businessPartner: 'Beta Projects',       tradeGroup: 'Mason',          nicNo: '891234573V', status: 'active' },
@@ -154,19 +185,39 @@ const EMPLOYEES: Employee[] = [
 
 export async function getAll(): Promise<Employee[]> {
   await delay(300);
-  return [...EMPLOYEES];
+  return EMPLOYEES.map((e) => ({
+    ...e,
+    employeeCode: e.employeeCode || e.id,
+    dailyRate: e.dailyRate !== undefined ? e.dailyRate : 1400,
+    epfNo: e.epfNo ?? '',
+  }));
 }
 
 export async function getById(id: string): Promise<Employee | undefined> {
   await delay(200);
-  return EMPLOYEES.find((e) => e.id === id);
+  const emp = EMPLOYEES.find((e) => e.id === id);
+  if (!emp) return undefined;
+  return {
+    ...emp,
+    employeeCode: emp.employeeCode || emp.id,
+    dailyRate: emp.dailyRate !== undefined ? emp.dailyRate : 1400,
+    epfNo: emp.epfNo ?? '',
+  };
 }
 
 export async function create(data: EmployeeFormData): Promise<Employee> {
   await delay(400);
+  const code = data.employeeCode || (data.callingName ? `HI${data.callingName}` : `HI${String(nextId++).padStart(3, '0')}`);
   const emp: Employee = {
-    id: data.callingName ? `HI${data.callingName}` : `HI${String(nextId++).padStart(3, '0')}`,
-    ...data,
+    id: code,
+    employeeCode: code,
+    callingName: data.callingName || code,
+    fullName: data.fullName || code,
+    businessPartner: data.businessPartner || 'Maga',
+    tradeGroup: data.tradeGroup || 'General labour',
+    nicNo: data.nicNo || '',
+    dailyRate: data.dailyRate !== undefined ? Number(data.dailyRate) : 1400,
+    epfNo: data.epfNo || '',
     status: 'active',
   };
   EMPLOYEES.push(emp);
@@ -177,7 +228,13 @@ export async function update(id: string, data: Partial<EmployeeFormData>): Promi
   await delay(400);
   const idx = EMPLOYEES.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error('Employee not found');
-  EMPLOYEES[idx] = { ...EMPLOYEES[idx], ...data };
+  EMPLOYEES[idx] = {
+    ...EMPLOYEES[idx],
+    ...data,
+    employeeCode: data.employeeCode || EMPLOYEES[idx].employeeCode || EMPLOYEES[idx].id,
+    dailyRate: data.dailyRate !== undefined ? Number(data.dailyRate) : (EMPLOYEES[idx].dailyRate ?? 1400),
+    epfNo: data.epfNo !== undefined ? data.epfNo : (EMPLOYEES[idx].epfNo ?? ''),
+  };
   return EMPLOYEES[idx];
 }
 
