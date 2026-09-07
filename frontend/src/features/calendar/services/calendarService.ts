@@ -1,8 +1,14 @@
 /**
  * calendarService.ts
  *
- * Service for fixed calendar day types and monthly schedule entries.
- * Fixed Day Types: Normal Day, Saturday, Sunday, Shutdown, Poya / Holiday.
+ * Real API service for calendar day types and monthly schedule entries connected to backend PostgreSQL,
+ * with fallback to mock data when backend is offline.
+ *
+ * Backend endpoints:
+ *   GET  /api/calendar/day-types
+ *   GET  /api/calendar?year=&month=
+ *   POST /api/calendar/set-day
+ *   POST /api/calendar/batch-set
  */
 
 export interface DayType {
@@ -17,6 +23,7 @@ export interface CalendarEntry {
   dayTypeId: string;
 }
 
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const FIXED_DAY_TYPES: DayType[] = [
@@ -27,7 +34,7 @@ export const FIXED_DAY_TYPES: DayType[] = [
   { id: 'dt-poya',     name: 'Poya / Holiday', code: 'poya',     rateMultiplier: 1.5 },
 ];
 
-// Calendar entries keyed by date string
+// In-memory fallback calendar entries keyed by date string
 const CALENDAR: Map<string, string> = new Map(); // date → dayTypeId
 
 function formatDate(d: Date): string {
@@ -56,16 +63,40 @@ function initCalendarForMonth(year: number, month: number) {
 const now = new Date();
 initCalendarForMonth(now.getFullYear(), now.getMonth());
 
-// ── Day types (Fixed list) ───────────────────────────────────────────────────
+// ── 1. Day types ─────────────────────────────────────────────────────────────
 
 export async function getDayTypes(): Promise<DayType[]> {
+  try {
+    const res = await fetch(`${API_URL}/calendar/day-types`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using mock day types:', err);
+  }
+
   await delay(100);
   return [...FIXED_DAY_TYPES];
 }
 
-// ── Calendar entries ──────────────────────────────────────────────────────────
+// ── 2. Calendar entries ──────────────────────────────────────────────────────
 
 export async function getCalendarMonth(year: number, month: number): Promise<CalendarEntry[]> {
+  try {
+    const res = await fetch(`${API_URL}/calendar?year=${year}&month=${month}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using mock calendar month:', err);
+  }
+
   await delay(150);
   initCalendarForMonth(year, month);
   const entries: CalendarEntry[] = [];
@@ -82,34 +113,79 @@ export async function getCalendarMonth(year: number, month: number): Promise<Cal
 }
 
 export async function setCalendarDayType(date: string, dayTypeId: string): Promise<void> {
-  await delay(100);
+  // Update local cache immediately
   CALENDAR.set(date, dayTypeId);
+
+  try {
+    await fetch(`${API_URL}/calendar/set-day`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, dayTypeId }),
+    });
+  } catch (err) {
+    console.warn('Backend unavailable, saved calendar day locally:', err);
+  }
 }
 
 export async function bulkMarkSundays(year: number, month: number): Promise<number> {
-  await delay(200);
-  let count = 0;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const entries: CalendarEntry[] = [];
+
+  // Get Sunday dayTypeId from backend day-types if available
+  const types = await getDayTypes();
+  const sunType = types.find((t) => t.code === 'sunday') || { id: 'dt-sunday' };
+
+  let count = 0;
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d);
     if (date.getDay() === 0) {
-      CALENDAR.set(formatDate(date), 'dt-sunday');
+      const dateStr = formatDate(date);
+      CALENDAR.set(dateStr, sunType.id);
+      entries.push({ date: dateStr, dayTypeId: sunType.id });
       count++;
     }
   }
+
+  try {
+    await fetch(`${API_URL}/calendar/batch-set`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    });
+  } catch (err) {
+    console.warn('Backend unavailable, marked sundays locally:', err);
+  }
+
   return count;
 }
 
 export async function bulkMarkSaturdays(year: number, month: number): Promise<number> {
-  await delay(200);
-  let count = 0;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const entries: CalendarEntry[] = [];
+
+  const types = await getDayTypes();
+  const satType = types.find((t) => t.code === 'saturday') || { id: 'dt-saturday' };
+
+  let count = 0;
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d);
     if (date.getDay() === 6) {
-      CALENDAR.set(formatDate(date), 'dt-saturday');
+      const dateStr = formatDate(date);
+      CALENDAR.set(dateStr, satType.id);
+      entries.push({ date: dateStr, dayTypeId: satType.id });
       count++;
     }
   }
+
+  try {
+    await fetch(`${API_URL}/calendar/batch-set`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    });
+  } catch (err) {
+    console.warn('Backend unavailable, marked saturdays locally:', err);
+  }
+
   return count;
 }

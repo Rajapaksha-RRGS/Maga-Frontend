@@ -21,10 +21,12 @@ export default function AssignmentsPage() {
           selectedDate={hook.selectedDate}
           onDateChange={hook.setSelectedDate}
           onCopyPreviousDay={hook.copyPreviousDay}
+          onCopyFromDate={hook.copyFromSpecificDate}
           supervisors={hook.supervisors}
           tradeGroups={hook.tradeGroups}
           businessPartners={hook.businessPartners}
           onBulkAssign={hook.bulkAssignByGroup}
+          getRecentGangSummaries={hook.getRecentGangSummaries}
         />
       </div>
 

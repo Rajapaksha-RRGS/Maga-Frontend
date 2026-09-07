@@ -1,16 +1,33 @@
 /**
  * reportService.ts — Service layer for the multi-tab Reports module.
  *
- * Supported report types:
- *   1. Summary            → GET /api/reports/summary
- *   2. Day & OT Summary   → GET /api/reports/day-ot-summary
- *   3. BP Bill            → GET /api/reports/bp-bill
- *   4. ERP Upload Export  → GET /api/reports/erp-upload
- *   5. Export to Excel    → GET /api/reports/:type/export
+ * Backend endpoints:
+ *   GET /api/reports/filter-options  → business partners + activity codes
+ *   GET /api/reports/summary         → getSummaryReport()
+ *   GET /api/reports/day-ot-summary  → getDayOtSummaryReport()
+ *   GET /api/reports/bp-bill         → getBpBillReport()
+ *   GET /api/reports/erp-upload      → getErpUploadReport()
  *
- * All mock functions simulate realistic network latency and data filtering.
- * TODO: Replace mock implementations with actual Axios calls to backend endpoints.
+ * All functions fall back to mock data when backend is unavailable.
  */
+
+import { getDayTypeRule } from '../../../utils/overtimeCalculator';
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+function buildParams(f: ReportFilters): string {
+  const p = new URLSearchParams();
+  if (f.dateFrom) p.set('dateFrom', f.dateFrom);
+  if (f.dateTo) p.set('dateTo', f.dateTo);
+  if (f.employeeQuery) p.set('employeeQuery', f.employeeQuery);
+  if (f.businessPartner) p.set('businessPartner', f.businessPartner);
+  if (f.activityCode) p.set('activityCode', f.activityCode);
+  return p.toString();
+}
+let _fOpts: {businessPartners: string[]; activityCodes: {code: string; description: string}[]} | null = null;
+async function loadFOpts() {
+  if (_fOpts) return _fOpts;
+  try { const r = await fetch(API_URL + '/reports/filter-options'); if (r.ok) { _fOpts = await r.json(); return _fOpts; } } catch (_) {}
+  return null;
+}
 
 export type ReportType = 'summary' | 'day-ot-summary' | 'bp-bill' | 'erp-upload';
 
@@ -189,11 +206,15 @@ function getDateRange(from?: string, to?: string): string[] {
 
 // ── Filter Options ───────────────────────────────────────────────────────────
 
-export function getBusinessPartnerOptions(): string[] {
+export async function getBusinessPartnerOptions(): Promise<string[]> {
+  const o = await loadFOpts();
+  if (o?.businessPartners?.length) return o.businessPartners;
   return ['Mäga Engineering', 'Alpha Constructions', 'Beta Projects'];
 }
 
-export function getActivityCodeOptions(): { code: string; description: string }[] {
+export async function getActivityCodeOptions(): Promise<{ code: string; description: string }[]> {
+  const o = await loadFOpts();
+  if (o?.activityCodes?.length) return o.activityCodes;
   return [...SEED_ACTIVITIES];
 }
 
@@ -206,6 +227,10 @@ export function getActivityCodeOptions(): { code: string; description: string }[
  *   return data;
  */
 export async function getSummaryReport(filters: ReportFilters): Promise<SummaryReportResponse> {
+  try {
+    const _r = await fetch(API_URL + '/reports/summary?' + buildParams(filters));
+    if (_r.ok) { const _d = await _r.json(); if (_d?.items) return _d as SummaryReportResponse; }
+  } catch (_e) { console.warn('Backend unavailable, using mock summary report:', _e); }
   await delay(350);
 
   const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
@@ -264,6 +289,10 @@ export async function getSummaryReport(filters: ReportFilters): Promise<SummaryR
  *   return data;
  */
 export async function getDayOtSummaryReport(filters: ReportFilters): Promise<DayOtSummaryResponse> {
+  try {
+    const _r = await fetch(API_URL + '/reports/day-ot-summary?' + buildParams(filters));
+    if (_r.ok) { const _d = await _r.json(); if (_d?.items) return _d as DayOtSummaryResponse; }
+  } catch (_e) { console.warn('Backend unavailable, using mock day-ot-summary report:', _e); }
   await delay(400);
 
   const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
@@ -344,6 +373,10 @@ export async function getDayOtSummaryReport(filters: ReportFilters): Promise<Day
  *   return data;
  */
 export async function getBpBillReport(filters: ReportFilters): Promise<BpBillResponse> {
+  try {
+    const _r = await fetch(API_URL + '/reports/bp-bill?' + buildParams(filters));
+    if (_r.ok) { const _d = await _r.json(); if (_d?.groups) return _d as BpBillResponse; }
+  } catch (_e) { console.warn('Backend unavailable, using mock bp-bill report:', _e); }
   await delay(400);
 
   const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
@@ -445,26 +478,33 @@ export async function getBpBillReport(filters: ReportFilters): Promise<BpBillRes
 // ── 4. GET ERP Upload Export Preview ─────────────────────────────────────────
 
 const MOCK_ERP_ROWS: ErpUploadRow[] = [
-  { id: 'erp-001', employeeId: 'HI101', employeeName: 'Kamal Perera',          date: '2026-08-01', activityCode: '01-10-10-00', activityDescription: 'Excavation & Earthwork',       hours: 8, overtimeHours: 0,   remarks: 'Main foundation trench' },
-  { id: 'erp-002', employeeId: 'HI101', employeeName: 'Kamal Perera',          date: '2026-08-02', activityCode: '01-20-10-00', activityDescription: 'Concrete Work - Substructure', hours: 8, overtimeHours: 2,   remarks: 'Overtime approved for pour' },
-  { id: 'erp-003', employeeId: 'HI201', employeeName: 'Nimal Silva',           date: '2026-08-01', activityCode: '02-10-10-00', activityDescription: 'Formwork - Superstructure',    hours: 8, overtimeHours: 0,   remarks: 'Column formwork assembly' },
-  { id: 'erp-004', employeeId: 'HI201', employeeName: 'Nimal Silva',           date: '2026-08-02', activityCode: '02-10-10-00', activityDescription: 'Formwork - Superstructure',    hours: 8, overtimeHours: 1.5, remarks: 'Completed beam brackets' },
-  { id: 'erp-005', employeeId: 'HI301', employeeName: 'Sunil Fernando',        date: '2026-08-01', activityCode: '04-20-10-00', activityDescription: 'Electrical Conduit & Cabling', hours: 8, overtimeHours: 0,   remarks: 'Conduit laying Level 2' },
-  { id: 'erp-006', employeeId: 'HI301', employeeName: 'Sunil Fernando',        date: '2026-08-02', activityCode: '04-20-10-00', activityDescription: 'Electrical Conduit & Cabling', hours: 6, overtimeHours: 0,   remarks: 'Left early for site medical check' },
-  { id: 'erp-007', employeeId: 'HI601', employeeName: 'Chaminda Rajapakse',    date: '2026-08-01', activityCode: '00-00-20-10', activityDescription: 'Dayworks - Labour',           hours: 8, overtimeHours: 0,   remarks: 'Site clearing' },
-  { id: 'erp-008', employeeId: 'HI601', employeeName: 'Chaminda Rajapakse',    date: '2026-08-02', activityCode: '00-00-20-10', activityDescription: 'Dayworks - Labour',           hours: 8, overtimeHours: 0,   remarks: 'Material transfer' },
-  { id: 'erp-009', employeeId: 'HI501', employeeName: 'Ruwan Jayawardena',     date: '2026-08-01', activityCode: '04-10-10-00', activityDescription: 'Plumbing & Drainage Work',    hours: 8, overtimeHours: 1,   remarks: 'Pressure testing pipe grid' },
-  { id: 'erp-010', employeeId: 'HI401', employeeName: 'Pradeep Bandara',       date: '2026-08-01', activityCode: '06-10-10-00', activityDescription: 'Welding & Structural Steel',   hours: 8, overtimeHours: 0,   remarks: 'Steel truss joints' },
-  { id: 'erp-011', employeeId: 'HI401', employeeName: 'Pradeep Bandara',       date: '2026-08-02', activityCode: '06-10-10-00', activityDescription: 'Welding & Structural Steel',   hours: 8, overtimeHours: 2,   remarks: 'Night shift structural reinforcement' },
-  { id: 'erp-012', employeeId: 'HI102', employeeName: 'Lakmal Dissanayake',    date: '2026-08-01', activityCode: '03-10-10-00', activityDescription: 'Masonry Block & Brick Laying', hours: 8, overtimeHours: 0,   remarks: 'Partition walling Block B' },
-  { id: 'erp-013', employeeId: 'HI202', employeeName: 'Asanka Kumara',         date: '2026-08-01', activityCode: '02-20-10-00', activityDescription: 'Rebar & Steel Reinforcement',  hours: 7, overtimeHours: 0,   remarks: 'Cut and bend station' },
-  { id: 'erp-014', employeeId: 'HI202', employeeName: 'Asanka Kumara',         date: '2026-08-02', activityCode: '02-20-10-00', activityDescription: 'Rebar & Steel Reinforcement',  hours: 8, overtimeHours: 0,   remarks: 'Beam cage fabrication' },
-  { id: 'erp-015', employeeId: 'HI302', employeeName: 'Dinesh Wickramasinghe',  date: '2026-08-01', activityCode: '04-20-10-00', activityDescription: 'Electrical Conduit & Cabling', hours: 8, overtimeHours: 0,   remarks: 'Main DB panel cable routing' },
-  { id: 'erp-016', employeeId: 'HI602', employeeName: 'Roshan Gunawardena',     date: '2026-08-02', activityCode: '00-00-20-10', activityDescription: 'Dayworks - Labour',           hours: 8, overtimeHours: 0,   remarks: 'Scaffolding assistance' },
-  { id: 'erp-017', employeeId: 'HI502', employeeName: 'Tharanga Abeysekara',   date: '2026-08-01', activityCode: '04-10-10-00', activityDescription: 'Plumbing & Drainage Work',    hours: 8, overtimeHours: 0,   remarks: 'Riser duct vertical stack' },
-  { id: 'erp-018', employeeId: 'HI103', employeeName: 'Sampath Ranasinghe',    date: '2026-08-02', activityCode: '03-20-10-00', activityDescription: 'Plastering Work',             hours: 8, overtimeHours: 1,   remarks: 'Plastering external facade' },
-  { id: 'erp-019', employeeId: 'HI603', employeeName: 'Udara Liyanage',        date: '2026-08-01', activityCode: '00-00-20-10', activityDescription: 'Dayworks - Labour',           hours: 8, overtimeHours: 0,   remarks: 'Safety railing installation support' },
-  { id: 'erp-020', employeeId: 'HI203', employeeName: 'Ajith Mendis',          date: '2026-08-02', activityCode: '02-10-10-00', activityDescription: 'Formwork - Superstructure',    hours: 8, overtimeHours: 0,   remarks: 'Slab soffit shuttering' },
+  // ── Records from Labour Entry Sheet (Photo Sample - August 2026) ───────────
+  { id: 'erp-photo-01', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-08-01', activityCode: '00-00-11-11-M', activityDescription: 'Road Sub-base Preparation', hours: 2.5, overtimeHours: 0, remarks: '' },
+  { id: 'erp-photo-02', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-08-01', activityCode: '00-00-11-12',   activityDescription: 'Aggregate Base Laying',       hours: 3.0, overtimeHours: 0, remarks: '' },
+  { id: 'erp-photo-03', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-08-01', activityCode: '00-00-11-16-M', activityDescription: 'Asphalt Compaction',          hours: 2.0, overtimeHours: 0, remarks: '' },
+  { id: 'erp-photo-04', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-08-01', activityCode: '00-00-11-34',   activityDescription: 'Drainage Culvert Work',       hours: 5.0, overtimeHours: 0, remarks: '' },
+  { id: 'erp-photo-05', employeeId: 'HK031', employeeName: 'Lab Helper HK031', date: '2026-08-01', activityCode: '00-00-11-34',   activityDescription: 'Drainage Culvert Work',       hours: 12.5, overtimeHours: 0, remarks: '' },
+  // ── Existing General Records (with total hours inclusive of OT) ─────────────
+  { id: 'erp-001', employeeId: 'HI101', employeeName: 'Kamal Perera',          date: '2026-08-01', activityCode: '01-10-10-00', activityDescription: 'Excavation & Earthwork',       hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-002', employeeId: 'HI101', employeeName: 'Kamal Perera',          date: '2026-08-02', activityCode: '01-20-10-00', activityDescription: 'Concrete Work - Substructure', hours: 10.0, overtimeHours: 2.0, remarks: '' },
+  { id: 'erp-003', employeeId: 'HI201', employeeName: 'Nimal Silva',           date: '2026-08-01', activityCode: '02-10-10-00', activityDescription: 'Formwork - Superstructure',    hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-004', employeeId: 'HI201', employeeName: 'Nimal Silva',           date: '2026-08-02', activityCode: '02-10-10-00', activityDescription: 'Formwork - Superstructure',    hours: 9.5, overtimeHours: 1.5, remarks: '' },
+  { id: 'erp-005', employeeId: 'HI301', employeeName: 'Sunil Fernando',        date: '2026-08-01', activityCode: '04-20-10-00', activityDescription: 'Electrical Conduit & Cabling', hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-006', employeeId: 'HI301', employeeName: 'Sunil Fernando',        date: '2026-08-02', activityCode: '04-20-10-00', activityDescription: 'Electrical Conduit & Cabling', hours: 6.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-007', employeeId: 'HI601', employeeName: 'Chaminda Rajapakse',    date: '2026-08-01', activityCode: '00-00-20-10', activityDescription: 'Dayworks - Labour',           hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-008', employeeId: 'HI601', employeeName: 'Chaminda Rajapakse',    date: '2026-08-02', activityCode: '00-00-20-10', activityDescription: 'Dayworks - Labour',           hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-009', employeeId: 'HI501', employeeName: 'Ruwan Jayawardena',     date: '2026-08-01', activityCode: '04-10-10-00', activityDescription: 'Plumbing & Drainage Work',    hours: 9.0, overtimeHours: 1.0, remarks: '' },
+  { id: 'erp-010', employeeId: 'HI401', employeeName: 'Pradeep Bandara',       date: '2026-08-01', activityCode: '06-10-10-00', activityDescription: 'Welding & Structural Steel',   hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-011', employeeId: 'HI401', employeeName: 'Pradeep Bandara',       date: '2026-08-02', activityCode: '06-10-10-00', activityDescription: 'Welding & Structural Steel',   hours: 10.0, overtimeHours: 2.0, remarks: '' },
+  { id: 'erp-012', employeeId: 'HI102', employeeName: 'Lakmal Dissanayake',    date: '2026-08-01', activityCode: '03-10-10-00', activityDescription: 'Masonry Block & Brick Laying', hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-013', employeeId: 'HI202', employeeName: 'Asanka Kumara',         date: '2026-08-01', activityCode: '02-20-10-00', activityDescription: 'Rebar & Steel Reinforcement',  hours: 7.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-014', employeeId: 'HI202', employeeName: 'Asanka Kumara',         date: '2026-08-02', activityCode: '02-20-10-00', activityDescription: 'Rebar & Steel Reinforcement',  hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-015', employeeId: 'HI302', employeeName: 'Dinesh Wickramasinghe',  date: '2026-08-01', activityCode: '04-20-10-00', activityDescription: 'Electrical Conduit & Cabling', hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-016', employeeId: 'HI602', employeeName: 'Roshan Gunawardena',     date: '2026-08-02', activityCode: '00-00-20-10', activityDescription: 'Dayworks - Labour',           hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-017', employeeId: 'HI502', employeeName: 'Tharanga Abeysekara',   date: '2026-08-01', activityCode: '04-10-10-00', activityDescription: 'Plumbing & Drainage Work',    hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-018', employeeId: 'HI103', employeeName: 'Sampath Ranasinghe',    date: '2026-08-02', activityCode: '03-20-10-00', activityDescription: 'Plastering Work',             hours: 9.0, overtimeHours: 1.0, remarks: '' },
+  { id: 'erp-019', employeeId: 'HI603', employeeName: 'Udara Liyanage',        date: '2026-08-01', activityCode: '00-00-20-10', activityDescription: 'Dayworks - Labour',           hours: 8.0, overtimeHours: 0,   remarks: '' },
+  { id: 'erp-020', employeeId: 'HI203', employeeName: 'Ajith Mendis',          date: '2026-08-02', activityCode: '02-10-10-00', activityDescription: 'Formwork - Superstructure',    hours: 8.0, overtimeHours: 0,   remarks: '' },
 ];
 
 /**
@@ -474,9 +514,14 @@ const MOCK_ERP_ROWS: ErpUploadRow[] = [
  *   return data;
  */
 export async function getErpUploadReport(filters: ReportFilters): Promise<ErpUploadResponse> {
+  try {
+    const _r = await fetch(API_URL + '/reports/erp-upload?' + buildParams(filters));
+    if (_r.ok) { const _d = await _r.json(); if (_d?.rows) return _d as ErpUploadResponse; }
+  } catch (_e) { console.warn('Backend unavailable, using mock ERP upload report:', _e); }
   await delay(350);
 
-  const rows = MOCK_ERP_ROWS.filter((r) => {
+  // Filter raw activity rows by filters
+  const filtered = MOCK_ERP_ROWS.filter((r) => {
     if (filters.dateFrom && r.date < filters.dateFrom) return false;
     if (filters.dateTo && r.date > filters.dateTo) return false;
     if (filters.employeeQuery && !r.employeeName.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
@@ -488,14 +533,74 @@ export async function getErpUploadReport(filters: ReportFilters): Promise<ErpUpl
     return true;
   });
 
-  const totalHours = rows.reduce((s, r) => s + r.hours, 0);
-  const totalOtHours = rows.reduce((s, r) => s + r.overtimeHours, 0);
+  // Group by Employee + Date
+  const groups: { [key: string]: ErpUploadRow[] } = {};
+  filtered.forEach((r) => {
+    const key = `${r.employeeId}___${r.date}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(r);
+  });
+
+  const finalRows: ErpUploadRow[] = [];
+  let totalHours = 0;
+  let totalOtHours = 0;
+
+  Object.values(groups).forEach((groupRows) => {
+    const first = groupRows[0];
+    const totalDayHours = groupRows
+      .filter((r) => r.activityCode.toUpperCase() !== 'OT')
+      .reduce((s, r) => s + (r.hours || 0), 0);
+
+    // 1. Regular Activity lines (with full activity hours)
+    groupRows
+      .filter((r) => r.activityCode.toUpperCase() !== 'OT')
+      .forEach((r) => {
+        finalRows.push({
+          ...r,
+          overtimeHours: 0, // Activity line holds standard hours
+        });
+        totalHours += r.hours || 0;
+      });
+
+    // 2. OT Line underneath based on Calendar Site Overtime rules:
+    // - Sunday / Poya / Holiday: 100% of all hours are Overtime (standardCap = 0)
+    // - Saturday: Half-day up to 13:00 (standardCap = 6.0), hours > 6.0 are Overtime
+    // - Normal Day: Standard 8.0 hrs, hours > 8.0 are Overtime
+    const { standardCap, isAllOvertime, dayTypeLabel } = getDayTypeRule(first.date);
+    let otHours = 0;
+    const explicitOt = groupRows.find((r) => r.activityCode.toUpperCase() === 'OT');
+    if (explicitOt) {
+      otHours = explicitOt.overtimeHours || explicitOt.hours || 0;
+    } else if (isAllOvertime) {
+      otHours = totalDayHours;
+    } else if (totalDayHours > standardCap) {
+      otHours = parseFloat((totalDayHours - standardCap).toFixed(2));
+    } else {
+      const explicitSum = groupRows.reduce((s, r) => s + (r.overtimeHours || 0), 0);
+      if (explicitSum > 0) otHours = explicitSum;
+    }
+
+    if (otHours > 0) {
+      finalRows.push({
+        id: `erp-ot-${first.employeeId}-${first.date}`,
+        employeeId: first.employeeId,
+        employeeName: first.employeeName,
+        date: first.date,
+        activityCode: 'OT',
+        activityDescription: isAllOvertime ? `${dayTypeLabel} Overtime` : `Overtime (> ${standardCap}.0 Hours)`,
+        hours: 0,
+        overtimeHours: otHours,
+        remarks: '',
+      });
+      totalOtHours += otHours;
+    }
+  });
 
   return {
-    rows,
+    rows: finalRows,
     totalHours,
     totalOtHours,
-    rowCount: rows.length,
+    rowCount: finalRows.length,
   };
 }
 

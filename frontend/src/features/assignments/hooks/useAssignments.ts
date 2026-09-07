@@ -103,6 +103,11 @@ export function useAssignments() {
     await load();
   };
 
+  const copyFromSpecificDate = async (sourceDate: string, supervisorIds?: string[]) => {
+    await svc.copyFromDate(sourceDate, selectedDate, supervisorIds);
+    await load();
+  };
+
   const bulkAssignByGroup = async (
     supervisorId: string,
     filter: { tradeGroup?: string; businessPartner?: string }
@@ -123,7 +128,8 @@ export function useAssignments() {
     businessPartners: getBusinessPartners(),
     tradeGroups: getTradeGroups(),
     assignToSupervisor, unassignEmployee,
-    copyPreviousDay, bulkAssignByGroup,
+    copyPreviousDay, copyFromSpecificDate, bulkAssignByGroup,
+    getRecentGangSummaries: svc.getRecentGangSummaries,
     refresh: load,
   };
 }

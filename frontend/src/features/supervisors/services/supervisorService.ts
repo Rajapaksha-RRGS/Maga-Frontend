@@ -1,14 +1,14 @@
 /**
  * supervisorService.ts
  *
- * Mock service for supervisor user management.
- * Supervisors are users with role='supervisor' in the users table.
+ * Real API service for supervisor user management connected to backend PostgreSQL,
+ * with fallback to mock data when backend is offline.
  *
- * TODO: Replace with real API calls:
- *   getAll()         → GET    /api/supervisors
- *   create(data)     → POST   /api/supervisors
- *   resetPassword()  → POST   /api/supervisors/:id/reset-password
- *   deactivate()     → PATCH  /api/supervisors/:id/status
+ * Backend endpoints:
+ *   GET    /api/supervisors
+ *   POST   /api/supervisors
+ *   POST   /api/supervisors/:id/reset-password
+ *   PATCH  /api/supervisors/:id/status
  */
 import * as empSvc from '../../employees/services/employeeService';
 import type { Employee } from '../../employees/services/employeeService';
@@ -29,16 +29,16 @@ export interface SupervisorCreateData {
   linkedEmployeeId: string | null;
 }
 
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 4;
 
 const SUPERVISORS: Supervisor[] = [
-  { id: 'user-002', fullName: 'Kamal Perera',        username: 'supervisor1',  status: 'active', linkedEmployeeId: 'emp-001', linkedEmployeeName: 'Kamal Perera' },
-  { id: 'sup-002',  fullName: 'Ruwan Jayasinghe',    username: 'supervisor2',  status: 'active', linkedEmployeeId: null, linkedEmployeeName: null },
-  { id: 'sup-003',  fullName: 'Chaminda Wijesekara', username: 'supervisor3',  status: 'active', linkedEmployeeId: null, linkedEmployeeName: null },
+  { id: 'sup-001', fullName: 'Ruwan Jayasinghe (Site Supervisor)', username: 'supervisor1', status: 'active', linkedEmployeeId: null, linkedEmployeeName: null },
+  { id: 'sup-002', fullName: 'Chaminda Wijesekara (Site Supervisor)', username: 'supervisor2', status: 'active', linkedEmployeeId: null, linkedEmployeeName: null },
+  { id: 'sup-003', fullName: 'Nimal Bandara (Site Supervisor)', username: 'supervisor3', status: 'active', linkedEmployeeId: null, linkedEmployeeName: null },
 ];
 
-/** Generate a random temporary password */
 function generateTempPassword(): string {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
   let pw = '';
@@ -47,12 +47,54 @@ function generateTempPassword(): string {
 }
 
 export async function getAll(): Promise<Supervisor[]> {
+  try {
+    const res = await fetch(`${API_URL}/supervisors`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map((s: any) => ({
+          id: s.id,
+          fullName: s.fullName,
+          username: s.username,
+          status: s.status || 'active',
+          linkedEmployeeId: s.linkedEmployeeId || s.employeeId || null,
+          linkedEmployeeName: s.linkedEmployeeName || null,
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using fallback supervisors:', err);
+  }
   await delay(300);
   return [...SUPERVISORS];
 }
 
 /** Returns the supervisor and the generated temporary password (shown once). */
 export async function create(data: SupervisorCreateData): Promise<{ supervisor: Supervisor; tempPassword: string }> {
+  try {
+    const res = await fetch(`${API_URL}/supervisors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (res.ok) {
+      const result = await res.json();
+      return {
+        supervisor: {
+          id: result.supervisor.id,
+          fullName: result.supervisor.fullName,
+          username: result.supervisor.username,
+          status: result.supervisor.status || 'active',
+          linkedEmployeeId: data.linkedEmployeeId,
+          linkedEmployeeName: result.linkedEmployeeName || null,
+        },
+        tempPassword: result.tempPassword,
+      };
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using local supervisor creation:', err);
+  }
+
   await delay(400);
   const tempPassword = generateTempPassword();
   let linkedName: string | null = null;
@@ -74,18 +116,59 @@ export async function create(data: SupervisorCreateData): Promise<{ supervisor: 
 
 /** Returns the new temporary password (shown once). */
 export async function resetPassword(id: string): Promise<string> {
+  try {
+    const res = await fetch(`${API_URL}/supervisors/${encodeURIComponent(id)}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.tempPassword;
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, resetting password locally:', err);
+  }
+
   await delay(400);
-  const idx = SUPERVISORS.findIndex((s) => s.id === id);
-  if (idx === -1) throw new Error('Supervisor not found');
   return generateTempPassword();
 }
 
 export async function deactivate(id: string): Promise<Supervisor> {
+  try {
+    const res = await fetch(`${API_URL}/supervisors/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'inactive' }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      return {
+        id: updated.id,
+        fullName: updated.fullName,
+        username: updated.username,
+        status: 'inactive',
+        linkedEmployeeId: updated.employeeId || null,
+        linkedEmployeeName: null,
+      };
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, deactivating supervisor locally:', err);
+  }
+
   await delay(300);
   const idx = SUPERVISORS.findIndex((s) => s.id === id);
-  if (idx === -1) throw new Error('Supervisor not found');
-  SUPERVISORS[idx].status = 'inactive';
-  return SUPERVISORS[idx];
+  if (idx !== -1) {
+    SUPERVISORS[idx].status = 'inactive';
+    return SUPERVISORS[idx];
+  }
+  return {
+    id,
+    fullName: 'Supervisor',
+    username: 'supervisor',
+    status: 'inactive',
+    linkedEmployeeId: null,
+    linkedEmployeeName: null,
+  };
 }
 
 /** Get all active employees for the "link to employee" picker */

@@ -1,7 +1,7 @@
 # MäGA Labour Entry & Site Management System
 
 <div align="center">
-  <img src="src/assets/maga-logo-47321F1221-seeklogo.com.png" alt="MäGA Engineering Logo" width="160" />
+  <img src="frontend/src/assets/maga-logo-47321F1221-seeklogo.com.png" alt="MäGA Engineering Logo" width="160" />
   <p><strong>Enterprise Multi-Tenant SaaS for Construction Labour Tracking, Field Attendance & Reporting</strong></p>
 
   [![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react&logoColor=black)](https://react.dev/)
@@ -65,46 +65,47 @@ Built with a **Multi-Tenant SaaS architecture**, it provides isolated tenant spa
 ## 📂 Project Architecture
 
 ```plaintext
-frontend/
-├── public/                      # Static assets served directly
-├── src/
-│   ├── assets/                  # Brand assets (MäGA Logo, Hero banners)
-│   ├── components/              # Shared UI components
-│   │   ├── SlidePanel.tsx       # Slide-in modal panel (Navy & Blue theme)
-│   │   ├── SplashScreen.tsx     # Animated entrance splash screen
-│   │   └── ...
-│   ├── context/                 # Application Context Providers
-│   │   └── AuthContext.tsx      # Multi-tenant Auth state & session storage
-│   ├── features/                # Domain-driven feature modules
-│   │   ├── activity-codes/      # Activity code CRUD & tables
-│   │   ├── assignments/         # Daily labour assignment engine
-│   │   ├── auth/                # Login, credentials, tenant validation
-│   │   ├── calendar/            # Calendar & holiday schedules
-│   │   ├── dashboard/           # Admin analytics & metrics
-│   │   ├── employees/           # Employee management & forms
-│   │   ├── equipment/           # Equipment tracking & forms
-│   │   ├── reports/             # Aggregated shift & payroll reporting
-│   │   └── supervisors/         # Supervisor accounts & employee links
-│   ├── layout/                  # Page shell layouts
-│   │   ├── AdminLayout.tsx      # Fixed viewport Admin layout
-│   │   └── SupervisorLayout.tsx # Mobile-optimized field layout
-│   ├── pages/                   # Application route views
-│   ├── lib/                     # Utilities & API helpers
-│   ├── App.tsx                  # Root router configuration
-│   ├── main.tsx                 # Entrypoint
-│   └── index.css                # Global Tailwind CSS & custom design tokens
-├── .env                         # Local environment variables
-├── .env.example                 # Environment configuration template
-├── package.json                 # Project dependencies and npm scripts
-├── tsconfig.json                # TypeScript compiler configuration
-└── vite.config.ts               # Vite bundler configuration
+Maga-Frontend/
+└── frontend/
+    ├── public/                      # Static assets served directly
+    ├── src/
+    │   ├── assets/                  # Brand assets (MäGA Logo, Hero banners)
+    │   ├── components/              # Shared UI components
+    │   │   ├── SlidePanel.tsx       # Slide-in modal panel (Navy & Blue theme)
+    │   │   ├── SplashScreen.tsx     # Animated entrance splash screen
+    │   │   └── ...
+    │   ├── context/                 # Application Context Providers
+    │   │   └── AuthContext.tsx      # Multi-tenant Auth state & session storage
+    │   ├── features/                # Domain-driven feature modules
+    │   │   ├── activity-codes/      # Activity code CRUD & tables
+    │   │   ├── assignments/         # Daily labour assignment engine
+    │   │   ├── auth/                # Login, credentials, tenant validation
+    │   │   ├── calendar/            # Calendar & holiday schedules
+    │   │   ├── dashboard/           # Admin analytics & metrics
+    │   │   ├── employees/           # Employee management & forms
+    │   │   ├── equipment/           # Equipment tracking & forms
+    │   │   ├── reports/             # Aggregated shift & payroll reporting
+    │   │   └── supervisors/         # Supervisor accounts & employee links
+    │   ├── layout/                  # Page shell layouts
+    │   │   ├── AdminLayout.tsx      # Fixed viewport Admin layout
+    │   │   └── SupervisorLayout.tsx # Mobile-optimized field layout
+    │   ├── pages/                   # Application route views
+    │   ├── lib/                     # Utilities & API helpers
+    │   ├── App.tsx                  # Root router configuration
+    │   ├── main.tsx                 # Entrypoint
+    │   └── index.css                # Global Tailwind CSS & custom design tokens
+    ├── .env                         # Local environment variables
+    ├── .env.example                 # Environment configuration template
+    ├── package.json                 # Project dependencies and npm scripts
+    ├── tsconfig.json                # TypeScript compiler configuration
+    └── vite.config.ts               # Vite bundler configuration
 ```
 
 ---
 
 ## ⚙️ Environment Variables
 
-Create a `.env` file in the root of `frontend/`:
+Create a `.env` file in `frontend/`:
 
 ```env
 # API Gateway / Backend Base URL
@@ -148,11 +149,11 @@ Open your browser and navigate to `http://localhost:5173`.
 To create an optimized, minified production bundle:
 
 ```bash
-# Run TypeScript typecheck and Vite production build
+cd frontend
 npm run build
 ```
 
-The compiled assets will be output to the `dist/` directory.
+The compiled assets will be output to the `frontend/dist/` directory.
 
 ### Preview Production Build Locally
 ```bash
@@ -172,7 +173,7 @@ server {
     listen 80;
     server_name labour.maga.lk;
 
-    root /var/www/maga-frontend/dist;
+    root /var/www/maga-frontend/frontend/dist;
     index index.html;
 
     # Gzip Compression
@@ -211,9 +212,9 @@ server {
 # Stage 1: Build static bundle
 FROM node:20-alpine AS builder
 WORKDIR /app
-COPY package*.json ./
+COPY frontend/package*.json ./
 RUN npm ci
-COPY . .
+COPY frontend/ .
 RUN npm run build
 
 # Stage 2: Serve via Nginx

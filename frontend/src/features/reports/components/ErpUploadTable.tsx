@@ -70,42 +70,68 @@ export default function ErpUploadTable({ data }: Props) {
             </thead>
 
             <tbody className="divide-y divide-slate-100 font-sans">
-              {rows.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-50/80 transition-colors text-xs">
-                  <td className="px-4 py-3">
-                    <span className="font-medium text-slate-800">{row.employeeName}</span>
-                    <span className="block text-[10px] font-mono text-slate-400">{row.employeeId}</span>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-slate-600 text-xs">
-                    {row.date}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-xs font-medium text-slate-800">
-                        {row.activityCode}
-                      </span>
-                      <span className="text-slate-500 text-xs truncate max-w-[180px]">
-                        {row.activityDescription}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-800 font-medium">
-                    {row.hours.toFixed(1)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {row.overtimeHours > 0 ? (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200/80 font-medium">
-                        +{row.overtimeHours.toFixed(1)}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">0.0</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-slate-500 italic">
-                    {row.remarks || '—'}
-                  </td>
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const isOtRow = row.activityCode.toUpperCase() === 'OT';
+
+                return (
+                  <tr
+                    key={row.id}
+                    className={`transition-colors text-xs ${
+                      isOtRow
+                        ? 'bg-amber-50/50 hover:bg-amber-50/80 font-medium'
+                        : 'hover:bg-slate-50/80'
+                    }`}
+                  >
+                    <td className="px-4 py-3">
+                      <span className="font-medium text-slate-800">{row.employeeName}</span>
+                      <span className="block text-[10px] font-mono text-slate-400">{row.employeeId}</span>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-slate-600 text-xs">
+                      {row.date}
+                    </td>
+                    <td className="px-4 py-3">
+                      {isOtRow ? (
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-100 border border-amber-300 font-mono text-xs font-bold text-amber-900">
+                            OT
+                          </span>
+                          <span className="text-amber-700 text-xs italic font-sans">
+                            Overtime (&gt; 8.0 hrs)
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-xs font-medium text-slate-800">
+                            {row.activityCode}
+                          </span>
+                          <span className="text-slate-500 text-xs truncate max-w-[180px]">
+                            {row.activityDescription}
+                          </span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-slate-800 font-medium">
+                      {isOtRow ? (
+                        <span className="text-slate-300">—</span>
+                      ) : (
+                        row.hours.toFixed(2)
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {isOtRow && row.overtimeHours > 0 ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold">
+                          +{row.overtimeHours.toFixed(2)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 italic">
+                      {row.remarks || '—'}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
 
             <tfoot>

@@ -682,27 +682,51 @@ export async function exportBpBillToExcel(
 export async function exportErpUploadToExcel(
   data: ErpUploadResponse,
   tenant: Tenant,
-  preparedBy: string,
-  filters: ReportFilters
+  _preparedBy: string,
+  _filters: ReportFilters
 ): Promise<void> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Labour Entry System';
-  const ws = workbook.addWorksheet('ERP Upload Export');
+  const ws = workbook.addWorksheet('Upload Details');
 
-  // Letterhead
-  applyLetterhead(ws, 'ERP UPLOAD EXPORT', tenant, preparedBy, filters);
+  // Dotted border style matching construction Excel sheet
+  const DOTTED_BORDER: Partial<ExcelJS.Borders> = {
+    top: { style: 'dotted', color: { argb: 'FF94A3B8' } },
+    left: { style: 'dotted', color: { argb: 'FF94A3B8' } },
+    bottom: { style: 'dotted', color: { argb: 'FF94A3B8' } },
+    right: { style: 'dotted', color: { argb: 'FF94A3B8' } },
+  };
 
+  // Row 2: "Upload Details" Purple Banner (matching exact photo header)
+  ws.mergeCells('A2:F2');
+  const bannerCell = ws.getCell('A2');
+  bannerCell.value = 'Upload Details';
+  bannerCell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF6B21A8' } };
+  bannerCell.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFF3E8FF' }, // Soft Purple
+  };
+  bannerCell.alignment = { vertical: 'middle', horizontal: 'center' };
+  bannerCell.border = {
+    top: { style: 'thin', color: { argb: 'FFC084FC' } },
+    bottom: { style: 'thin', color: { argb: 'FFC084FC' } },
+    left: { style: 'thin', color: { argb: 'FFC084FC' } },
+    right: { style: 'thin', color: { argb: 'FFC084FC' } },
+  };
+  ws.getRow(2).height = 26;
+
+  // Row 4: Column Headers
   const headers = [
-    'Employee Name',
+    'Employee',
     'Date',
-    'Activity Code',
-    'Activity Description',
+    'Activity',
     'Hours',
     'Overtime Hours',
     'Remarks',
   ];
 
-  const headerRow = ws.getRow(9);
+  const headerRow = ws.getRow(4);
   headerRow.values = headers;
   headerRow.height = 24;
 
@@ -717,46 +741,88 @@ export async function exportErpUploadToExcel(
     cell.border = THIN_BORDER;
   });
 
-  // Freeze panes below Row 9
-  ws.views = [{ state: 'frozen', ySplit: 9 }];
+  // Freeze panes below Row 4
+  ws.views = [{ state: 'frozen', ySplit: 4 }];
 
-  // Column Widths
+  // Column Widths (6 columns matching photo)
   ws.columns = [
-    { width: 24 }, // Employee Name
+    { width: 16 }, // Employee (ID)
     { width: 14 }, // Date
-    { width: 16 }, // Activity Code
-    { width: 26 }, // Activity Description
+    { width: 22 }, // Activity
     { width: 12 }, // Hours
     { width: 16 }, // Overtime Hours
-    { width: 35 }, // Remarks
+    { width: 16 }, // Remarks
   ];
 
-  let currentRow = 10;
-  data.rows.forEach((rowItem) => {
+  // Helper to format Date to DD-MM-YYYY
+  const formatDisplayDate = (d: string) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      const [yyyy, mm, dd] = d.split('-');
+      return `${dd}-${mm}-${yyyy}`;
+    }
+    return d;
+  };
+
+  interface FormattedExportRow {
+    employeeId: string;
+    date: string;
+    activityCode: string;
+    hours: number | null;
+    overtimeHours: number | null;
+    remarks: string;
+  }
+
+  const exportRows: FormattedExportRow[] = [];
+  let grandTotalHours = 0;
+  let grandTotalOtHours = 0;
+
+  // Map each row directly from report data
+  data.rows.forEach((r) => {
+    const isOt = r.activityCode.toUpperCase() === 'OT';
+    exportRows.push({
+      employeeId: r.employeeId,
+      date: formatDisplayDate(r.date),
+      activityCode: r.activityCode,
+      hours: isOt ? null : r.hours,
+      overtimeHours: isOt ? r.overtimeHours : null,
+      remarks: '',
+    });
+
+    if (!isOt) grandTotalHours += r.hours || 0;
+    if (isOt) grandTotalOtHours += r.overtimeHours || 0;
+  });
+
+  let currentRow = 5;
+  exportRows.forEach((rowItem) => {
     const row = ws.getRow(currentRow);
+    const isOt = rowItem.activityCode.toUpperCase() === 'OT';
+
     row.values = [
-      rowItem.employeeName,
+      rowItem.employeeId,
       rowItem.date,
       rowItem.activityCode,
-      rowItem.activityDescription,
-      rowItem.hours,
-      rowItem.overtimeHours,
-      rowItem.remarks,
+      rowItem.hours !== null ? rowItem.hours : '',
+      rowItem.overtimeHours !== null ? rowItem.overtimeHours : '',
+      '',
     ];
 
     row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
     row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
-    row.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' };
-    row.getCell(4).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(3).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(4).alignment = { horizontal: 'right', vertical: 'middle' };
+    if (rowItem.hours !== null) row.getCell(4).numFmt = '0.00';
     row.getCell(5).alignment = { horizontal: 'right', vertical: 'middle' };
-    row.getCell(5).numFmt = '0.00';
-    row.getCell(6).alignment = { horizontal: 'right', vertical: 'middle' };
-    row.getCell(6).numFmt = '0.00';
-    row.getCell(7).alignment = { horizontal: 'left', vertical: 'middle' };
+    if (rowItem.overtimeHours !== null) row.getCell(5).numFmt = '0.00';
+    row.getCell(6).alignment = { horizontal: 'left', vertical: 'middle' };
 
     row.eachCell({ includeEmpty: true }, (cell) => {
-      cell.font = { name: 'Calibri', size: 9, color: { argb: 'FF1E293B' } };
-      cell.border = THIN_BORDER;
+      cell.font = {
+        name: 'Calibri',
+        size: 9.5,
+        bold: isOt,
+        color: { argb: isOt ? 'FF9A3412' : 'FF0F172A' },
+      };
+      cell.border = DOTTED_BORDER;
     });
 
     currentRow++;
@@ -765,12 +831,11 @@ export async function exportErpUploadToExcel(
   // Totals Row
   const totalRow = ws.getRow(currentRow);
   totalRow.values = [
-    `TOTAL (${data.rowCount} Rows)`,
+    `TOTAL (${exportRows.length} Rows)`,
     '',
     '',
-    '',
-    data.totalHours,
-    data.totalOtHours,
+    grandTotalHours,
+    grandTotalOtHours,
     '',
   ];
   totalRow.height = 22;
@@ -783,12 +848,9 @@ export async function exportErpUploadToExcel(
       fgColor: { argb: 'FFE2E8F0' },
     };
     cell.border = THIN_BORDER;
-    if (idx === 5 || idx === 6) cell.numFmt = '0.00';
+    if (idx === 4 || idx === 5) cell.numFmt = '0.00';
   });
 
-  // Footer
-  applyFooter(ws, currentRow, 7);
-
-  const filename = `${tenant.subdomain}-erp-upload-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  const filename = `${tenant.subdomain}-upload-details-${new Date().toISOString().slice(0, 10)}.xlsx`;
   await downloadWorkbook(workbook, filename);
 }

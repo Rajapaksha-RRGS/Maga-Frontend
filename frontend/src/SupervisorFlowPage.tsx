@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { SupervisorDashboardPage } from './pages/SupervisorDashboardPage';
 import { CheckInPage } from './pages/CheckInPage';
-import { ActivityAssignPage } from './pages/ActivityAssignPage';
+import { ActivityDistributionPage } from './pages/ActivityDistributionPage';
 import { CheckoutSubmitPage } from './pages/CheckoutSubmitPage';
 import { useAssignedEmployees } from './features/time-entries/hooks/useAssignedEmployees';
 import { useTimeEntry } from './features/time-entries/hooks/useTimeEntry';
@@ -12,7 +12,7 @@ import { SplashScreen } from './components/SplashScreen';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Step = 'dashboard' | 'checkin' | 'activity' | 'checkout';
+type Step = 'dashboard' | 'checkin' | 'checkout' | 'activity';
 
 function todayISO(): string {
   return new Date().toISOString().split('T')[0];
@@ -21,11 +21,13 @@ function todayISO(): string {
 // ─── SupervisorFlowPage ───────────────────────────────────────────────────────
 
 /**
- * SupervisorFlowPage — single-route container for the 4-screen daily flow.
+ * SupervisorFlowPage — single-route container for the daily flow.
  *
- * Manages:
- *  - currentStep state (no route transitions — instant step switches)
- *  - Passes employee data and time-entry callbacks down to each page
+ * Flow (Method 1 - Construction End-of-Day Hour Distribution):
+ *  1. Dashboard -> Start Check-in
+ *  2. Check-in (In-time 07:00 recorded)
+ *  3. Check-out (Out-time 17:30 recorded -> established total shift duration)
+ *  4. Activities & OT (Split total hours across multiple site tasks + auto OT calculation)
  *
  * URL stays on /supervisor throughout the entire flow.
  */
@@ -52,11 +54,12 @@ export default function SupervisorFlowPage() {
     entries,
     submitStatus,
     checkIn,
-    setActivity,
+    setEmployeeActivities,
+    bulkSetActivities,
     setOutTime,
     submitDay,
     checkedInCount,
-  } = useTimeEntry(employees.map((e) => e.id));
+  } = useTimeEntry(employees.map((e) => e.id), supervisorId);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -102,17 +105,6 @@ export default function SupervisorFlowPage() {
           entries={entries}
           onCheckIn={checkIn}
           onBack={() => go('dashboard')}
-          onNext={() => go('activity')}
-        />
-      );
-
-    case 'activity':
-      return (
-        <ActivityAssignPage
-          employees={employees}
-          activityCodes={activityCodes}
-          onSetActivity={setActivity}
-          onBack={() => go('checkin')}
           onNext={() => go('checkout')}
         />
       );
@@ -123,9 +115,25 @@ export default function SupervisorFlowPage() {
           employees={employees}
           entries={entries}
           submitStatus={submitStatus}
+          date={today}
           onOutTimeChange={setOutTime}
+          onNext={() => go('activity')}
+          onBack={() => go('checkin')}
+        />
+      );
+
+    case 'activity':
+      return (
+        <ActivityDistributionPage
+          employees={employees}
+          activityCodes={activityCodes}
+          entries={entries}
+          date={today}
+          submitStatus={submitStatus}
+          onUpdateActivities={setEmployeeActivities}
+          onBulkUpdateActivities={bulkSetActivities}
           onSubmit={handleSubmit}
-          onBack={() => go('activity')}
+          onBack={() => go('checkout')}
         />
       );
   }

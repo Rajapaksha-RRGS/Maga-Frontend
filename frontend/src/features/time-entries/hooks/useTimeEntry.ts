@@ -1,19 +1,26 @@
 import { useState, useCallback } from 'react';
+import { useAuth } from '../../../context/AuthContext';
 import {
   checkInEmployee,
-  saveTimeEntry,
+  assignActivityBulk,
   submitDay as submitDayService,
 } from '../services/timeEntryService';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface ActivityHourItem {
+  activityId: string;
+  hours: number;
+}
+
 export interface EmployeeEntryState {
   employeeId: string;
   inTime: string | null;       // "HH:mm" or null if not checked in
   outTime: string | null;      // "HH:mm" or null
-  activityId: string | null;
-  hours: number | null;
-  saved: boolean;              // true after saveTimeEntry resolves
+  activityId: string | null;   // Primary/legacy activity
+  hours: number | null;        // Total activity hours
+  activities: ActivityHourItem[]; // Multi-activity list for Method 1
+  saved: boolean;              // true after backend sync
 }
 
 export type SubmitStatus = 'idle' | 'submitting' | 'submitted' | 'error';
@@ -23,6 +30,8 @@ interface UseTimeEntryReturn {
   submitStatus: SubmitStatus;
   checkIn: (employeeId: string) => void;
   setActivity: (employeeIds: string[], activityId: string, hours: number) => void;
+  setEmployeeActivities: (employeeId: string, activities: ActivityHourItem[]) => void;
+  bulkSetActivities: (employeeIds: string[], activities: ActivityHourItem[]) => void;
   setOutTime: (employeeId: string, outTime: string) => void;
   submitDay: (supervisorId: string, date: string) => Promise<void>;
   checkedInCount: number;
@@ -31,11 +40,13 @@ interface UseTimeEntryReturn {
 
 /**
  * Manages the mutable time-entry state for all employees across the
- * 4-screen daily entry flow. All business operations (check-in, activity
- * assignment, out-time, submit) live here — page components only call
- * these callbacks.
+ * daily entry flow. Supports Check-in, Check-out, Multi-Activity distribution,
+ * and Day submission.
  */
-export function useTimeEntry(employeeIds: string[]): UseTimeEntryReturn {
+export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseTimeEntryReturn {
+  const { user } = useAuth();
+  const effectiveSupervisorId = supervisorId || user?.id || '';
+
   const [entries, setEntries] = useState<Record<string, EmployeeEntryState>>(
     () => Object.fromEntries(
       employeeIds.map((id) => [
@@ -46,6 +57,7 @@ export function useTimeEntry(employeeIds: string[]): UseTimeEntryReturn {
           outTime: null,
           activityId: null,
           hours: null,
+          activities: [],
           saved: false,
         },
       ])
@@ -53,8 +65,6 @@ export function useTimeEntry(employeeIds: string[]): UseTimeEntryReturn {
   );
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>('idle');
 
-  // Re-initialise entries when employee list changes (e.g. after refetch)
-  // without blowing away any state already set for known employees.
   const ensureEntries = useCallback(
     (ids: string[]) => {
       setEntries((prev) => {
@@ -68,6 +78,7 @@ export function useTimeEntry(employeeIds: string[]): UseTimeEntryReturn {
               outTime: null,
               activityId: null,
               hours: null,
+              activities: [],
               saved: false,
             };
             changed = true;
@@ -79,61 +90,30 @@ export function useTimeEntry(employeeIds: string[]): UseTimeEntryReturn {
     []
   );
 
-  // Call this whenever employeeIds list changes to sync state keys
   if (employeeIds.some((id) => !entries[id])) {
     ensureEntries(employeeIds);
   }
 
-  // ── Check-in ──────────────────────────────────────────────────────────────
+  // ── 1. Check-in ────────────────────────────────────────────────────────────
 
   const checkIn = useCallback(
     (employeeId: string) => {
       const now = new Date();
       const inTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-      // Optimistic UI update
       setEntries((prev) => ({
         ...prev,
         [employeeId]: { ...prev[employeeId], inTime },
       }));
 
-      // Fire-and-forget API stub
-      // TODO: handle error (show toast / retry) when real API is wired
-      checkInEmployee(employeeId, 'mock-supervisor-id', todayISO(), inTime).catch(
+      checkInEmployee(employeeId, effectiveSupervisorId, todayISO(), inTime).catch(
         console.error
       );
     },
-    []
+    [effectiveSupervisorId]
   );
 
-  // ── Activity assignment ────────────────────────────────────────────────────
-
-  const setActivity = useCallback(
-    (employeeIds: string[], activityId: string, hours: number) => {
-      setEntries((prev) => {
-        const next = { ...prev };
-        employeeIds.forEach((id) => {
-          next[id] = { ...next[id], activityId, hours, saved: false };
-        });
-        return next;
-      });
-
-      // Persist each entry (fire-and-forget stubs)
-      // TODO: handle errors when real API is wired
-      employeeIds.forEach((id) => {
-        saveTimeEntry({
-          employeeId: id,
-          supervisorId: 'mock-supervisor-id',
-          date: todayISO(),
-          activityId,
-          hours,
-        }).catch(console.error);
-      });
-    },
-    []
-  );
-
-  // ── Out-time ──────────────────────────────────────────────────────────────
+  // ── 2. Out-time ────────────────────────────────────────────────────────────
 
   const setOutTime = useCallback((employeeId: string, outTime: string) => {
     setEntries((prev) => ({
@@ -142,13 +122,118 @@ export function useTimeEntry(employeeIds: string[]): UseTimeEntryReturn {
     }));
   }, []);
 
-  // ── Submit day ────────────────────────────────────────────────────────────
+  // ── 3. Single Activity Assignment (Legacy support) ─────────────────────────
+
+  const setActivity = useCallback(
+    (employeeIds: string[], activityId: string, hours: number) => {
+      setEntries((prev) => {
+        const next = { ...prev };
+        employeeIds.forEach((id) => {
+          next[id] = {
+            ...next[id],
+            activityId,
+            hours,
+            activities: [{ activityId, hours }],
+            saved: false,
+          };
+        });
+        return next;
+      });
+
+      assignActivityBulk({
+        employeeIds,
+        activityId,
+        hours,
+        date: todayISO(),
+      })
+        .then(() => {
+          setEntries((prev) => {
+            const next = { ...prev };
+            employeeIds.forEach((id) => {
+              if (next[id]) next[id] = { ...next[id], saved: true };
+            });
+            return next;
+          });
+        })
+        .catch(console.error);
+    },
+    []
+  );
+
+  // ── 4. Multi-Activity Distribution for an Employee (Method 1) ─────────────
+
+  const setEmployeeActivities = useCallback(
+    (employeeId: string, activities: ActivityHourItem[]) => {
+      const totalHours = activities.reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
+      const primaryActivityId = activities[0]?.activityId || null;
+
+      setEntries((prev) => ({
+        ...prev,
+        [employeeId]: {
+          ...prev[employeeId],
+          activities,
+          hours: totalHours,
+          activityId: primaryActivityId,
+          saved: false,
+        },
+      }));
+
+      // Sync activities to backend
+      activities.forEach((act) => {
+        if (act.activityId && act.hours > 0) {
+          assignActivityBulk({
+            employeeIds: [employeeId],
+            activityId: act.activityId,
+            hours: act.hours,
+            date: todayISO(),
+          }).catch(console.error);
+        }
+      });
+    },
+    []
+  );
+
+  // ── 5. Bulk Multi-Activity Distribution for Multiple Employees ─────────────
+
+  const bulkSetActivities = useCallback(
+    (employeeIds: string[], activities: ActivityHourItem[]) => {
+      const totalHours = activities.reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
+      const primaryActivityId = activities[0]?.activityId || null;
+
+      setEntries((prev) => {
+        const next = { ...prev };
+        employeeIds.forEach((id) => {
+          next[id] = {
+            ...next[id],
+            activities: [...activities],
+            hours: totalHours,
+            activityId: primaryActivityId,
+            saved: false,
+          };
+        });
+        return next;
+      });
+
+      activities.forEach((act) => {
+        if (act.activityId && act.hours > 0) {
+          assignActivityBulk({
+            employeeIds,
+            activityId: act.activityId,
+            hours: act.hours,
+            date: todayISO(),
+          }).catch(console.error);
+        }
+      });
+    },
+    []
+  );
+
+  // ── 6. Submit Day ──────────────────────────────────────────────────────────
 
   const submitDay = useCallback(
     async (supervisorId: string, date: string) => {
       setSubmitStatus('submitting');
       try {
-        // TODO: replace stub with real API call when backend is ready
         await submitDayService({ supervisorId, date });
         setSubmitStatus('submitted');
       } catch (err) {
@@ -159,8 +244,6 @@ export function useTimeEntry(employeeIds: string[]): UseTimeEntryReturn {
     []
   );
 
-  // ── Derived values ────────────────────────────────────────────────────────
-
   const checkedInCount = Object.values(entries).filter((e) => e.inTime !== null).length;
   const assignedCount = employeeIds.length;
 
@@ -169,14 +252,14 @@ export function useTimeEntry(employeeIds: string[]): UseTimeEntryReturn {
     submitStatus,
     checkIn,
     setActivity,
+    setEmployeeActivities,
+    bulkSetActivities,
     setOutTime,
     submitDay,
     checkedInCount,
     assignedCount,
   };
 }
-
-// ─── Helper ───────────────────────────────────────────────────────────────────
 
 function todayISO(): string {
   return new Date().toISOString().split('T')[0];

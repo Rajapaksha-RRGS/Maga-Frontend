@@ -8,25 +8,27 @@ interface CheckoutSubmitPageProps {
   employees: AssignedEmployee[];
   entries: Record<string, EmployeeEntryState>;
   submitStatus: SubmitStatus;
+  date?: string;
   onOutTimeChange: (employeeId: string, outTime: string) => void;
-  onSubmit: () => void;
+  onSubmit?: () => void;
+  onNext?: () => void;
   onBack: () => void;
 }
 
 /**
- * CheckoutSubmitPage (step 3 of 3).
- * Shows one CheckoutRow per employee. On submit, locks all inputs.
+ * CheckoutSubmitPage (step 2 of 3 in Method 1).
+ * Shows one CheckoutRow per employee to enter evening out-time and preview shift hours.
  * Non-blocking: employees without a check-in show a warning row but
- * do not prevent submission.
- *
- * Desktop: centered max-w-lg column; bottom action bar stays within that column.
+ * do not prevent proceeding.
  */
 export function CheckoutSubmitPage({
   employees,
   entries,
   submitStatus,
+  date,
   onOutTimeChange,
   onSubmit,
+  onNext,
   onBack,
 }: CheckoutSubmitPageProps) {
   const submitted = submitStatus === 'submitted' || submitStatus === 'submitting';
@@ -89,6 +91,7 @@ export function CheckoutSubmitPage({
                       employee={emp}
                       checkInTime={entry?.inTime ?? null}
                       outTime={entry?.outTime ?? null}
+                      date={date}
                       onOutTimeChange={onOutTimeChange}
                       submitted={submitted}
                     />
@@ -118,41 +121,45 @@ export function CheckoutSubmitPage({
               Back
             </button>
 
-            {/* Submit / submitted */}
-            <button
-              type="button"
-              onClick={isSubmitted ? undefined : onSubmit}
-              disabled={isSubmitting || isSubmitted}
-              className={[
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium',
-                'min-h-[48px] transition-colors',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
-                isSubmitted
-                  ? 'bg-green-600 text-white cursor-default focus-visible:ring-green-600'
-                  : isSubmitting
-                  ? 'bg-blue-400 text-white cursor-wait focus-visible:ring-blue-600'
-                  : 'bg-blue-700 text-white active:bg-blue-800 focus-visible:ring-blue-600',
-              ].join(' ')}
-              aria-live="polite"
-              aria-label={
-                isSubmitted
-                  ? 'Day submitted'
-                  : isSubmitting
-                  ? 'Submitting…'
-                  : 'Submit day'
-              }
-            >
-              {isSubmitted ? (
-                <>
-                  <CheckCircle2 size={18} aria-hidden="true" />
-                  Day submitted
-                </>
-              ) : isSubmitting ? (
-                'Submitting…'
-              ) : (
-                'Submit day'
-              )}
-            </button>
+            {/* Next: Activities & OT or Submit fallback */}
+            {onNext ? (
+              <button
+                type="button"
+                onClick={onNext}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium min-h-[48px] transition-colors bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              >
+                <span>Next: Activities & OT</span>
+                <span aria-hidden="true">→</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={isSubmitted ? undefined : onSubmit}
+                disabled={isSubmitting || isSubmitted}
+                className={[
+                  'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium',
+                  'min-h-[48px] transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+                  isSubmitted
+                    ? 'bg-green-600 text-white cursor-default focus-visible:ring-green-600'
+                    : isSubmitting
+                    ? 'bg-blue-400 text-white cursor-wait focus-visible:ring-blue-600'
+                    : 'bg-blue-700 text-white active:bg-blue-800 focus-visible:ring-blue-600',
+                ].join(' ')}
+                aria-live="polite"
+              >
+                {isSubmitted ? (
+                  <>
+                    <CheckCircle2 size={18} aria-hidden="true" />
+                    Day submitted
+                  </>
+                ) : isSubmitting ? (
+                  'Submitting…'
+                ) : (
+                  'Submit day'
+                )}
+              </button>
+            )}
           </div>
         </div>
 

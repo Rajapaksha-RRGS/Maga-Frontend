@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const assignmentController_1 = require("../controllers/assignmentController");
+const router = (0, express_1.Router)();
+router.get('/', assignmentController_1.getAssignmentsForDate);
+router.get('/recent-gangs', assignmentController_1.getRecentGangSummaries);
+router.post('/', assignmentController_1.assignEmployees);
+router.post('/copy', assignmentController_1.copyGangsFromDate);
+router.delete('/:id', assignmentController_1.unassignEmployee);
+exports.default = router;

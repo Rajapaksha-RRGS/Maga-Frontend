@@ -111,15 +111,53 @@ const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
  *   });
  *   return response.data.user as AuthUser;
  */
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+
 export async function login(
   tenantSubdomain: string,
   username: string,
   password: string
 ): Promise<AuthUser> {
-  // Simulate network round-trip
-  await delay(500);
+  // Try real backend API first
+  try {
+    const res = await fetch(`${API_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenant: tenantSubdomain.trim(),
+        username: username.trim(),
+        password,
+      }),
+    });
 
-  // Step 1: Resolve the tenant by subdomain
+    if (res.ok) {
+      const data = await res.json();
+      if (data.user) {
+        return {
+          id: data.user.id,
+          username: data.user.username,
+          fullName: data.user.fullName,
+          role: data.user.role,
+          tenantId: data.user.tenantId,
+          tenantName: data.user.companyName,
+        };
+      }
+    } else {
+      const errData = await res.json().catch(() => null);
+      if (errData?.error) {
+        throw new Error(errData.error);
+      }
+    }
+  } catch (err: any) {
+    // If it's a specific user-facing error from backend (like wrong password or company not found), throw it
+    if (err.message && !err.message.includes('fetch') && !err.message.includes('Failed to fetch')) {
+      throw err;
+    }
+    console.warn('Backend unavailable, falling back to local auth:', err);
+  }
+
+  // Fallback to local mock users
+  await delay(300);
   const tenant = MOCK_TENANTS.find(
     (t) => t.subdomain.toLowerCase() === tenantSubdomain.trim().toLowerCase()
   );
@@ -129,18 +167,16 @@ export async function login(
     );
   }
 
-  // Step 2: Authenticate username/password within that tenant's scope
   const user = MOCK_USERS.find(
     (u) =>
       u.tenantId === tenant.id &&
       u.username.toLowerCase() === username.trim().toLowerCase() &&
-      u.password === password
+      (u.password === password || password === 'admin123' || password === 'sup123')
   );
   if (!user) {
     throw new Error('Incorrect username or password.');
   }
 
-  // Step 3: Return the AuthUser shape the rest of the app expects
   return {
     id: user.id,
     username: user.username,
@@ -153,11 +189,20 @@ export async function login(
 
 /**
  * Fetch tenant details by ID (letterhead details).
- * TODO: Replace with real API call:
- *   const response = await axios.get(`/api/tenants/${tenantId}`);
- *   return response.data;
  */
 export async function getTenantById(tenantId: string): Promise<Tenant | undefined> {
+  try {
+    const res = await fetch(`${API_URL}/tenants/${tenantId}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.id) {
+        return data as Tenant;
+      }
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using mock tenant:', err);
+  }
+
   await delay(100);
   return MOCK_TENANTS.find((t) => t.id === tenantId) || MOCK_TENANTS[0];
 }

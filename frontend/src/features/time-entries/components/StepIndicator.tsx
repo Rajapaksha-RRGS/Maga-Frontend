@@ -1,14 +1,14 @@
 import { Check } from 'lucide-react';
 
-export type StepKey = 'checkin' | 'activity' | 'checkout';
+export type StepKey = 'checkin' | 'checkout' | 'activity';
 
 const STEPS: { key: StepKey; label: string }[] = [
   { key: 'checkin',  label: 'Check-in' },
-  { key: 'activity', label: 'Activity' },
   { key: 'checkout', label: 'Checkout' },
+  { key: 'activity', label: 'Activities & OT' },
 ];
 
-const ORDER: StepKey[] = ['checkin', 'activity', 'checkout'];
+const ORDER: StepKey[] = ['checkin', 'checkout', 'activity'];
 
 interface StepIndicatorProps {
   currentStep: StepKey;

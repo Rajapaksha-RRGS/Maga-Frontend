@@ -7,7 +7,7 @@
  *   - Async report generation per tab
  *   - Excel export file download trigger
  */
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import type {
   ReportType,
   ReportFilters,
@@ -44,9 +44,14 @@ export function useReports() {
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [hasQueried, setHasQueried] = useState<boolean>(false);
 
-  // Static options for dropdown filters
-  const businessPartners = useMemo(() => svc.getBusinessPartnerOptions(), []);
-  const activityCodes = useMemo(() => svc.getActivityCodeOptions(), []);
+  // Options for dropdown filters
+  const [businessPartners, setBusinessPartners] = useState<string[]>([]);
+  const [activityCodes, setActivityCodes] = useState<{ code: string; description: string }[]>([]);
+
+  useEffect(() => {
+    svc.getBusinessPartnerOptions().then(setBusinessPartners);
+    svc.getActivityCodeOptions().then(setActivityCodes);
+  }, []);
 
   // Update a single filter field
   const updateFilter = useCallback((key: keyof ReportFilters, value: string) => {

@@ -1,14 +1,14 @@
 /**
  * activityCodeService.ts
  *
- * Mock service for activity code CRUD. Construction-domain codes.
- * Includes client-side uniqueness validation for code within tenant.
+ * Real API service for Activity Code CRUD connected to backend PostgreSQL,
+ * with fallback to in-memory mock data when backend is offline.
  *
- * TODO: Replace with real API calls:
- *   getAll()     → GET    /api/activity-codes
- *   create(data) → POST   /api/activity-codes
- *   update(data) → PUT    /api/activity-codes/:id
- *   delete(id)   → DELETE /api/activity-codes/:id
+ * Backend endpoints:
+ *   GET    /api/activity-codes       -> getAll()
+ *   POST   /api/activity-codes       -> create(data)
+ *   PUT    /api/activity-codes/:id   -> update(id, data)
+ *   DELETE /api/activity-codes/:id   -> remove(id)
  */
 
 export interface ActivityCode {
@@ -19,6 +19,7 @@ export interface ActivityCode {
 
 export type ActivityCodeFormData = Omit<ActivityCode, 'id'>;
 
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 24;
 
@@ -49,11 +50,26 @@ const CODES: ActivityCode[] = [
 ];
 
 export async function getAll(): Promise<ActivityCode[]> {
+  try {
+    const res = await fetch(`${API_URL}/activity-codes`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length >= 0) {
+        return data.map((item: any) => ({
+          id: item.id,
+          code: item.code,
+          description: item.description || item.code,
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using fallback activity codes:', err);
+  }
   await delay(300);
   return [...CODES];
 }
 
-/** Check if a code string is already in use (client-side uniqueness check) */
+/** Check if a code string is already in use (client-side uniqueness check for offline mode) */
 export function isCodeUnique(code: string, excludeId?: string): boolean {
   return !CODES.some(
     (c) => c.code.toLowerCase() === code.toLowerCase() && c.id !== excludeId
@@ -61,6 +77,22 @@ export function isCodeUnique(code: string, excludeId?: string): boolean {
 }
 
 export async function create(data: ActivityCodeFormData): Promise<ActivityCode> {
+  try {
+    const res = await fetch(`${API_URL}/activity-codes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (res.ok) {
+      const item = await res.json();
+      return { id: item.id, code: item.code, description: item.description || item.code };
+    }
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.error || `Activity code "${data.code}" already exists.`);
+  } catch (err) {
+    if (err instanceof Error && !err.message.includes('fetch') && !err.message.includes('Failed to fetch')) throw err;
+    console.warn('Backend unavailable, creating activity code locally:', err);
+  }
   await delay(400);
   if (!isCodeUnique(data.code)) {
     throw new Error(`Activity code "${data.code}" already exists.`);
@@ -74,6 +106,22 @@ export async function create(data: ActivityCodeFormData): Promise<ActivityCode> 
 }
 
 export async function update(id: string, data: Partial<ActivityCodeFormData>): Promise<ActivityCode> {
+  try {
+    const res = await fetch(`${API_URL}/activity-codes/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (res.ok) {
+      const item = await res.json();
+      return { id: item.id, code: item.code, description: item.description || item.code };
+    }
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.error || `Activity code "${data.code}" already exists.`);
+  } catch (err) {
+    if (err instanceof Error && !err.message.includes('fetch') && !err.message.includes('Failed to fetch')) throw err;
+    console.warn('Backend unavailable, updating activity code locally:', err);
+  }
   await delay(400);
   const idx = CODES.findIndex((c) => c.id === id);
   if (idx === -1) throw new Error('Activity code not found');
@@ -85,6 +133,17 @@ export async function update(id: string, data: Partial<ActivityCodeFormData>): P
 }
 
 export async function remove(id: string): Promise<void> {
+  try {
+    const res = await fetch(`${API_URL}/activity-codes/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) return;
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.error || 'Failed to delete activity code');
+  } catch (err) {
+    if (err instanceof Error && !err.message.includes('fetch') && !err.message.includes('Failed to fetch')) throw err;
+    console.warn('Backend unavailable, removing activity code locally:', err);
+  }
   await delay(300);
   const idx = CODES.findIndex((c) => c.id === id);
   if (idx === -1) throw new Error('Activity code not found');

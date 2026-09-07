@@ -1,13 +1,16 @@
 /**
  * equipmentService.ts
  *
- * Mock service for equipment CRUD. Construction-domain equipment.
+ * Real API service for equipment CRUD connected to backend PostgreSQL,
+ * with fallback to mock data when backend is offline.
  *
- * TODO: Replace each function body with real API calls:
- *   getAll()     → GET    /api/equipment
- *   create(data) → POST   /api/equipment
- *   update(data) → PUT    /api/equipment/:id
- *   deactivate() → PATCH  /api/equipment/:id/status
+ * Backend endpoints:
+ *   GET    /api/equipment
+ *   GET    /api/equipment/:id
+ *   POST   /api/equipment
+ *   PUT    /api/equipment/:id
+ *   PATCH  /api/equipment/:id/status
+ *   DELETE /api/equipment/:id
  */
 
 export interface Equipment {
@@ -20,6 +23,7 @@ export interface Equipment {
 
 export type EquipmentFormData = Omit<Equipment, 'id' | 'status'>;
 
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 15;
 
@@ -40,12 +44,64 @@ const EQUIPMENT: Equipment[] = [
   { id: 'equip-014', code: 'MWEL0091', name: 'WELDING MACHINE INVERTER 400A', type: 'Welding',          status: 'inactive' },
 ];
 
+function mapEquipment(item: any): Equipment {
+  return {
+    id: item.id,
+    code: item.code || '',
+    name: item.name,
+    type: item.type || '',
+    status: item.status === 'inactive' ? 'inactive' : 'active',
+  };
+}
+
 export async function getAll(): Promise<Equipment[]> {
+  try {
+    const res = await fetch(`${API_URL}/equipment`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data.map(mapEquipment);
+      }
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using mock equipment list:', err);
+  }
+
   await delay(300);
   return [...EQUIPMENT];
 }
 
+export async function getById(id: string): Promise<Equipment> {
+  try {
+    const res = await fetch(`${API_URL}/equipment/${id}`);
+    if (res.ok) {
+      const data = await res.json();
+      return mapEquipment(data);
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using mock equipment detail:', err);
+  }
+
+  const found = EQUIPMENT.find((e) => e.id === id);
+  if (!found) throw new Error('Equipment not found');
+  return found;
+}
+
 export async function create(data: EquipmentFormData): Promise<Equipment> {
+  try {
+    const res = await fetch(`${API_URL}/equipment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (res.ok) {
+      const created = await res.json();
+      return mapEquipment(created);
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, saving equipment locally:', err);
+  }
+
   await delay(400);
   const item: Equipment = {
     id: `equip-${String(nextId++).padStart(3, '0')}`,
@@ -57,6 +113,20 @@ export async function create(data: EquipmentFormData): Promise<Equipment> {
 }
 
 export async function update(id: string, data: Partial<EquipmentFormData>): Promise<Equipment> {
+  try {
+    const res = await fetch(`${API_URL}/equipment/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      return mapEquipment(updated);
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, updating equipment locally:', err);
+  }
+
   await delay(400);
   const idx = EQUIPMENT.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error('Equipment not found');
@@ -65,9 +135,37 @@ export async function update(id: string, data: Partial<EquipmentFormData>): Prom
 }
 
 export async function deactivate(id: string): Promise<Equipment> {
+  try {
+    const res = await fetch(`${API_URL}/equipment/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'inactive' }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      return mapEquipment(updated);
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, deactivating equipment locally:', err);
+  }
+
   await delay(300);
   const idx = EQUIPMENT.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error('Equipment not found');
   EQUIPMENT[idx].status = 'inactive';
   return EQUIPMENT[idx];
+}
+
+export async function deleteEquipment(id: string): Promise<void> {
+  try {
+    const res = await fetch(`${API_URL}/equipment/${id}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) return;
+  } catch (err) {
+    console.warn('Backend unavailable, deleting equipment locally:', err);
+  }
+
+  const idx = EQUIPMENT.findIndex((e) => e.id === id);
+  if (idx !== -1) EQUIPMENT.splice(idx, 1);
 }

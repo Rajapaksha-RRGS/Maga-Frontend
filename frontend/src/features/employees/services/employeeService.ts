@@ -1,15 +1,21 @@
 /**
  * employeeService.ts
  *
- * Mock service for employee CRUD. In-memory data scoped to tenant-001
- * (Mäga Engineering). All functions simulate network delay.
+ * Real API service for employee CRUD connected to backend PostgreSQL,
+ * with fallback to in-memory mock data when backend is offline.
  *
- * TODO: Replace each function body with real API calls:
- *   getAll()     → GET    /api/employees
- *   getById(id)  → GET    /api/employees/:id
- *   create(data) → POST   /api/employees
- *   update(data) → PUT    /api/employees/:id
- *   deactivate() → PATCH  /api/employees/:id/status
+ * Backend endpoints:
+ *   GET    /api/employees          → getAll()
+ *   GET    /api/employees/:id      → getById(id)
+ *   POST   /api/employees          → create(data)
+ *   PUT    /api/employees/:id      → update(id, data)
+ *   PATCH  /api/employees/:id/status → deactivate(id)
+ *   DELETE /api/employees/:id      → deleteEmployee(id)
+ *
+ * Field mapping note:
+ *   Backend returns `businessPartner: { id, name, ... }` (Prisma include).
+ *   Frontend Employee interface uses `businessPartner: string` (the name).
+ *   The `mapEmployee()` helper handles this flattening.
  */
 
 export interface Employee {
@@ -36,11 +42,30 @@ export interface EmployeeFormData {
   epfNo?: string;
 }
 
-// ── Mock data ─────────────────────────────────────────────────────────────────
-
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-let nextId = 999;
+// ── Backend response mapper ───────────────────────────────────────────────────
+// Backend returns `businessPartner` as a nested object { id, name, ... } when
+// using Prisma `include`. Frontend Employee interface uses `businessPartner: string`.
+function mapEmployee(raw: any): Employee {
+  return {
+    id: raw.id,
+    employeeCode: raw.employeeCode || raw.employee_code || raw.id,
+    callingName: raw.callingName || raw.calling_name || '',
+    fullName: raw.fullName || raw.full_name || '',
+    // Backend returns nested businessPartner object OR just a string name
+    businessPartner:
+      typeof raw.businessPartner === 'object' && raw.businessPartner !== null
+        ? raw.businessPartner.name
+        : (raw.businessPartner as string) || '',
+    tradeGroup: raw.tradeGroup || raw.trade_group || '',
+    nicNo: raw.nicNo || raw.nic_no || '',
+    dailyRate: raw.dailyRate !== undefined ? Number(raw.dailyRate) : 1400,
+    epfNo: raw.epfNo || raw.epf_no || '',
+    status: raw.status === 'inactive' ? 'inactive' : 'active',
+  };
+}
 
 const EMPLOYEES: Employee[] = [
   // ── Site Labour Details (from Master Labour List) ───────────────────────────
@@ -184,6 +209,17 @@ const EMPLOYEES: Employee[] = [
 // ── Service functions ─────────────────────────────────────────────────────────
 
 export async function getAll(): Promise<Employee[]> {
+  try {
+    const res = await fetch(`${API_URL}/employees`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length >= 0) {
+        return data.map(mapEmployee);
+      }
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, using fallback employees:', err);
+  }
   await delay(300);
   return EMPLOYEES.map((e) => ({
     ...e,
@@ -194,6 +230,16 @@ export async function getAll(): Promise<Employee[]> {
 }
 
 export async function getById(id: string): Promise<Employee | undefined> {
+  try {
+    const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}`);
+    if (res.ok) {
+      const data = await res.json();
+      return mapEmployee(data);
+    }
+    if (res.status === 404) return undefined;
+  } catch (err) {
+    console.warn('Backend unavailable, using fallback employee lookup:', err);
+  }
   await delay(200);
   const emp = EMPLOYEES.find((e) => e.id === id);
   if (!emp) return undefined;
@@ -206,25 +252,39 @@ export async function getById(id: string): Promise<Employee | undefined> {
 }
 
 export async function create(data: EmployeeFormData): Promise<Employee> {
-  await delay(400);
-  const code = data.employeeCode || (data.callingName ? `HI${data.callingName}` : `HI${String(nextId++).padStart(3, '0')}`);
-  const emp: Employee = {
-    id: code,
-    employeeCode: code,
-    callingName: data.callingName || code,
-    fullName: data.fullName || code,
-    businessPartner: data.businessPartner || 'Maga',
-    tradeGroup: data.tradeGroup || 'General labour',
-    nicNo: data.nicNo || '',
-    dailyRate: data.dailyRate !== undefined ? Number(data.dailyRate) : 1400,
-    epfNo: data.epfNo || '',
-    status: 'active',
-  };
-  EMPLOYEES.push(emp);
-  return emp;
+  try {
+    const response = await fetch(`${API_URL}/employees`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const errData = await response.json().catch(() => null);
+      throw new Error(errData?.error || 'Failed to create employee');
+    }
+    const newEmployee = await response.json();
+    return mapEmployee(newEmployee);
+  } catch (error) {
+    console.error('Error creating employee:', error);
+    throw error;
+  }
 }
 
 export async function update(id: string, data: Partial<EmployeeFormData>): Promise<Employee> {
+  try {
+    const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (res.ok) {
+      return mapEmployee(await res.json());
+    }
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.error || 'Failed to update employee');
+  } catch (err) {
+    console.warn('Backend unavailable, updating employee locally:', err);
+  }
   await delay(400);
   const idx = EMPLOYEES.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error('Employee not found');
@@ -239,6 +299,18 @@ export async function update(id: string, data: Partial<EmployeeFormData>): Promi
 }
 
 export async function deactivate(id: string): Promise<Employee> {
+  try {
+    const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'inactive' }),
+    });
+    if (res.ok) {
+      return mapEmployee(await res.json());
+    }
+  } catch (err) {
+    console.warn('Backend unavailable, deactivating employee locally:', err);
+  }
   await delay(300);
   const idx = EMPLOYEES.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error('Employee not found');
@@ -246,12 +318,28 @@ export async function deactivate(id: string): Promise<Employee> {
   return EMPLOYEES[idx];
 }
 
-/** Unique business partners for filter dropdowns */
+/** Delete an employee by ID */
+export async function deleteEmployee(id: string): Promise<void> {
+  try {
+    const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) return;
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.error || 'Failed to delete employee');
+  } catch (err) {
+    console.warn('Backend unavailable, removing employee locally:', err);
+  }
+  const idx = EMPLOYEES.findIndex((e) => e.id === id);
+  if (idx !== -1) EMPLOYEES.splice(idx, 1);
+}
+
+/** Unique business partners for filter dropdowns — derived from loaded data */
 export function getBusinessPartners(): string[] {
   return [...new Set(EMPLOYEES.map((e) => e.businessPartner))].sort();
 }
 
-/** Unique trade groups for filter dropdowns */
+/** Unique trade groups for filter dropdowns — derived from loaded data */
 export function getTradeGroups(): string[] {
   return [...new Set(EMPLOYEES.map((e) => e.tradeGroup))].sort();
 }

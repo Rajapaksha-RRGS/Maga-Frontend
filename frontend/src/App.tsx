@@ -39,6 +39,7 @@ import UseTable from './components/user';
 // Admin pages
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import EmployeesPage from './pages/EmployeesPage';
+import BusinessPartnersPage from './pages/BusinessPartnersPage';
 import EquipmentPage from './pages/EquipmentPage';
 import ActivityCodesPage from './pages/ActivityCodesPage';
 import SupervisorsPage from './pages/SupervisorsPage';
@@ -87,8 +88,9 @@ export default function App() {
         <Route element={<ProtectedRoute requiredRole="admin" />}>
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminDashboardPage />} />
-            <Route path="employees"     element={<EmployeesPage />} />
-            <Route path="equipment"     element={<EquipmentPage />} />
+            <Route path="employees"         element={<EmployeesPage />} />
+            <Route path="business-partners" element={<BusinessPartnersPage />} />
+            <Route path="equipment"         element={<EquipmentPage />} />
             <Route path="activity-codes" element={<ActivityCodesPage />} />
             <Route path="supervisors"   element={<SupervisorsPage />} />
             <Route path="calendar"      element={<CalendarPage />} />

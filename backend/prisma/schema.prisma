@@ -1,0 +1,233 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. TENANTS (SaaS Companies / Organizations)
+// ─────────────────────────────────────────────────────────────────────────────
+model Tenant {
+  id           String   @id @default(uuid())
+  companyName  String   @map("company_name")
+  subdomain    String   @unique // e.g. 'maga' -> maga.yoursaas.com
+  addressLine1 String?  @map("address_line1")
+  addressLine2 String?  @map("address_line2")
+  phone        String?
+  fax          String?
+  email        String?
+  status       String   @default("active") // "active" | "suspended"
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  users            User[]
+  businessPartners BusinessPartner[]
+  employees        Employee[]
+  equipment        Equipment[]
+  activityCodes    ActivityCode[]
+  dayTypes         DayType[]
+  calendarDays     CalendarDay[]
+  assignments      DailyAssignment[]
+  timeEntries      TimeEntry[]
+
+  @@map("tenants")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. USERS (Authentication & Role-based Access)
+// ─────────────────────────────────────────────────────────────────────────────
+model User {
+  id                 String   @id @default(uuid())
+  tenantId           String   @map("tenant_id")
+  username           String
+  passwordHash       String   @map("password_hash")
+  fullName           String   @map("full_name")
+  role               String   // "admin" | "supervisor"
+  employeeId         String?  @map("employee_id") // Optional link if supervisor is also a worker
+  mustChangePassword Boolean  @default(true) @map("must_change_password")
+  status             String   @default("active")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignments DailyAssignment[] // Daily assignments managed by this supervisor
+  timeEntries TimeEntry[]       // Daily time entries submitted by this supervisor
+
+  @@unique([tenantId, username]) // Username unique within a tenant
+  @@index([tenantId])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. BUSINESS PARTNERS (Contractors & Subcontractors)
+// ─────────────────────────────────────────────────────────────────────────────
+model BusinessPartner {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  code          String   // e.g. "BP1004093"
+  name          String   // e.g. "Aruna Builders (Pvt) Ltd"
+  contactPerson String?  @map("contact_person")
+  phone         String?
+  email         String?
+  address       String?
+  status        String   @default("active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employees Employee[]
+
+  @@unique([tenantId, code]) // Code unique within tenant
+  @@index([tenantId])
+  @@map("business_partners")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. EMPLOYEES (Master Labour List)
+// ─────────────────────────────────────────────────────────────────────────────
+model Employee {
+  id                String   @id @default(uuid())
+  tenantId          String   @map("tenant_id")
+  employeeCode      String?  @map("employee_code") // e.g. "HK030", "HI101"
+  callingName       String   @map("calling_name")
+  fullName          String?  @map("full_name")
+  tradeGroup        String?  @map("trade_group")   // Mason, Carpenter, Lab Helper
+  nicNo             String?  @map("nic_no")
+  dailyRate         Decimal  @default(1400.00) @map("daily_rate") @db.Decimal(10, 2)
+  epfNo             String?  @map("epf_no")
+  status            String   @default("active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  businessPartnerId String?  @map("business_partner_id")
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  businessPartner BusinessPartner?  @relation(fields: [businessPartnerId], references: [id])
+  assignments     DailyAssignment[]
+  timeEntries     TimeEntry[]
+
+  @@unique([tenantId, employeeCode])
+  @@index([tenantId])
+  @@map("employees")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. EQUIPMENT (Machinery & Tools)
+// ─────────────────────────────────────────────────────────────────────────────
+model Equipment {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  code      String?
+  name      String
+  type      String?
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  timeEntries TimeEntry[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("equipment")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. ACTIVITY CODES (Project Tasks)
+// ─────────────────────────────────────────────────────────────────────────────
+model ActivityCode {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  code        String   // e.g. "00-00-11-11-M", "01-10-10-00"
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  timeEntries TimeEntry[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("activity_codes")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. DAY TYPES & HOLIDAY CALENDAR
+// ─────────────────────────────────────────────────────────────────────────────
+model DayType {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  name           String   // Normal Day, Sunday, Poya, Public Holiday
+  rateMultiplier Decimal  @default(1.00) @map("rate_multiplier") @db.Decimal(3, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  calendarDays CalendarDay[]
+  timeEntries  TimeEntry[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("day_types")
+}
+
+model CalendarDay {
+  tenantId  String   @map("tenant_id")
+  date      DateTime @db.Date
+  dayTypeId String   @map("day_type_id")
+  remarks   String?
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  dayType DayType @relation(fields: [dayTypeId], references: [id])
+
+  @@id([tenantId, date]) // Primary key scoped per tenant
+  @@map("calendar")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. DAILY ASSIGNMENTS (Admin assigns Employee to Supervisor)
+// ─────────────────────────────────────────────────────────────────────────────
+model DailyAssignment {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  date         DateTime @db.Date
+  supervisorId String   @map("supervisor_id")
+  employeeId   String   @map("employee_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supervisor User     @relation(fields: [supervisorId], references: [id])
+  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([tenantId, date, employeeId]) // One employee assigned to only ONE supervisor per day per tenant
+  @@index([tenantId, date])
+  @@map("daily_assignments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. TIME ENTRIES (Daily Attendance, Activities & Overtime)
+// ─────────────────────────────────────────────────────────────────────────────
+model TimeEntry {
+  id                 String    @id @default(uuid())
+  tenantId           String    @map("tenant_id")
+  employeeId         String    @map("employee_id")
+  supervisorId       String    @map("supervisor_id")
+  date               DateTime  @db.Date
+  activityId         String    @map("activity_id")
+  equipmentId        String?   @map("equipment_id")
+  effectiveDayTypeId String    @map("effective_day_type_id")
+  inTime             String?   @map("in_time") // e.g. "07:00"
+  outTime            String?   @map("out_time") // e.g. "20:50"
+  hours              Decimal   @default(0.00) @db.Decimal(5, 2)
+  overtimeHours      Decimal   @default(0.00) @map("overtime_hours") @db.Decimal(5, 2)
+  remarks            String?
+  status             String    @default("draft") // "draft" | "submitted"
+  submittedAt        DateTime? @map("submitted_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee         Employee     @relation(fields: [employeeId], references: [id])
+  supervisor       User         @relation(fields: [supervisorId], references: [id])
+  activity         ActivityCode @relation(fields: [activityId], references: [id])
+  equipment        Equipment?   @relation(fields: [equipmentId], references: [id])
+  effectiveDayType DayType      @relation(fields: [effectiveDayTypeId], references: [id])
+
+  @@index([tenantId, date])
+  @@map("time_entries")
+}

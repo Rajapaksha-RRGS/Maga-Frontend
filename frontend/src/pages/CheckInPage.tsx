@@ -99,7 +99,7 @@ export function CheckInPage({
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2',
             ].join(' ')}
           >
-            Next: activity
+            Next: Check-out →
           </button>
         </div>
 

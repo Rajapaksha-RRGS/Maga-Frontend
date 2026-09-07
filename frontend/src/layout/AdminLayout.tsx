@@ -29,6 +29,7 @@ import {
   CalendarDays,
   ClipboardList,
   BarChart3,
+  Building2,
   Menu,
   X,
   LogOut,
@@ -43,14 +44,15 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Dashboard',      to: '/admin',              icon: <LayoutDashboard size={18} /> },
-  { label: 'Employees',      to: '/admin/employees',    icon: <Users size={18} /> },
-  { label: 'Equipment',      to: '/admin/equipment',    icon: <Wrench size={18} /> },
-  { label: 'Activity codes', to: '/admin/activity-codes', icon: <Tag size={18} /> },
-  { label: 'Supervisors',    to: '/admin/supervisors',  icon: <UserCog size={18} /> },
-  { label: 'Calendar',       to: '/admin/calendar',     icon: <CalendarDays size={18} /> },
-  { label: 'Assign',     to: '/admin/assignments',  icon: <ClipboardList size={18} /> },
-  { label: 'Reports',        to: '/admin/reports',      icon: <BarChart3 size={18} /> },
+  { label: 'Dashboard',         to: '/admin',                   icon: <LayoutDashboard size={18} /> },
+  { label: 'Employees',         to: '/admin/employees',         icon: <Users size={18} /> },
+  { label: 'Business partners', to: '/admin/business-partners', icon: <Building2 size={18} /> },
+  { label: 'Equipment',         to: '/admin/equipment',         icon: <Wrench size={18} /> },
+  { label: 'Activity codes',    to: '/admin/activity-codes',    icon: <Tag size={18} /> },
+  { label: 'Supervisors',       to: '/admin/supervisors',       icon: <UserCog size={18} /> },
+  { label: 'Calendar',          to: '/admin/calendar',          icon: <CalendarDays size={18} /> },
+  { label: 'Assign',            to: '/admin/assignments',       icon: <ClipboardList size={18} /> },
+  { label: 'Reports',           to: '/admin/reports',           icon: <BarChart3 size={18} /> },
 ];
 
 // ── Sidebar content ────────────────────────────────────────────────────────────

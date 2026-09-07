@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const calendarController_1 = require("../controllers/calendarController");
+const router = (0, express_1.Router)();
+router.get('/day-types', calendarController_1.getDayTypes);
+router.get('/', calendarController_1.getCalendarMonth);
+router.post('/set-day', calendarController_1.setCalendarDay);
+router.post('/batch-set', calendarController_1.batchSetCalendarDays);
+exports.default = router;
