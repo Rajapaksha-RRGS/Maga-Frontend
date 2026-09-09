@@ -14,7 +14,7 @@
 export interface DayType {
   id: string;
   name: string;
-  code: 'normal' | 'saturday' | 'sunday' | 'shutdown' | 'poya';
+  code: 'normal' | 'saturday' | 'sunday' | 'shutdown' | 'public_holiday';
   rateMultiplier?: number;
 }
 
@@ -31,7 +31,7 @@ export const FIXED_DAY_TYPES: DayType[] = [
   { id: 'dt-saturday', name: 'Saturday',       code: 'saturday', rateMultiplier: 1.0 },
   { id: 'dt-sunday',   name: 'Sunday',         code: 'sunday',   rateMultiplier: 1.5 },
   { id: 'dt-shutdown', name: 'Shutdown',       code: 'shutdown', rateMultiplier: 1.0 },
-  { id: 'dt-poya',     name: 'Poya / Holiday', code: 'poya',     rateMultiplier: 1.5 },
+  { id: 'dt-holiday',  name: 'Public Holiday', code: 'public_holiday', rateMultiplier: 2.0 },
 ];
 
 // In-memory fallback calendar entries keyed by date string
@@ -188,4 +188,30 @@ export async function bulkMarkSaturdays(year: number, month: number): Promise<nu
   }
 
   return count;
+}
+
+export async function getEffectiveDayTypeForDate(dateStr: string): Promise<DayType | undefined> {
+  try {
+    const d = new Date(dateStr);
+    const year = d.getFullYear();
+    const month = d.getMonth();
+    const [types, entries] = await Promise.all([
+      getDayTypes(),
+      getCalendarMonth(year, month),
+    ]);
+
+    const entry = entries.find((e) => e.date === dateStr);
+    if (entry) {
+      const found = types.find((t) => t.id === entry.dayTypeId);
+      if (found) return found;
+    }
+
+    const dow = d.getDay();
+    if (dow === 0) return types.find((t) => t.code === 'sunday') || types[2];
+    if (dow === 6) return types.find((t) => t.code === 'saturday') || types[1];
+    return types.find((t) => t.code === 'normal') || types[0];
+  } catch (err) {
+    console.warn('Error fetching day type for date:', err);
+    return undefined;
+  }
 }

@@ -25,14 +25,27 @@ async function getDayTypeRulesAndId(tenantId, date) {
     });
     if (calendarDay && calendarDay.dayType) {
         const name = calendarDay.dayType.name.toLowerCase();
-        const isHoliday = name.includes('poya') ||
-            name.includes('holiday') ||
-            name.includes('sunday') ||
-            name.includes('shutdown');
+        if (name.includes('sunday') || name.includes('public holiday') || name.includes('holiday') || name.includes('poya')) {
+            return {
+                effectiveDayTypeId: calendarDay.dayTypeId,
+                standardHoursCap: 0.0,
+                isAllOvertime: true,
+                dayTypeName: calendarDay.dayType.name,
+            };
+        }
+        if (name.includes('saturday')) {
+            return {
+                effectiveDayTypeId: calendarDay.dayTypeId,
+                standardHoursCap: 6.0,
+                isAllOvertime: false,
+                dayTypeName: calendarDay.dayType.name,
+            };
+        }
+        // Shutdown and Normal Day follow Normal Day rules (8.0 hours cap, >8h is OT)
         return {
             effectiveDayTypeId: calendarDay.dayTypeId,
-            standardHoursCap: isHoliday ? 0.0 : 8.0,
-            isAllOvertime: isHoliday,
+            standardHoursCap: 8.0,
+            isAllOvertime: false,
             dayTypeName: calendarDay.dayType.name,
         };
     }

@@ -1,5 +1,6 @@
 import { AlertTriangle } from 'lucide-react';
 import type { AssignedEmployee } from '../services/timeEntryService';
+import type { DayType } from '../../calendar/services/calendarService';
 import { calculateShiftBreakdown, formatDecimalHours } from '../../../utils/overtimeCalculator';
 
 interface CheckoutRowProps {
@@ -7,6 +8,7 @@ interface CheckoutRowProps {
   checkInTime: string | null;   // "HH:mm" or null if never checked in
   outTime: string | null;       // "HH:mm" or null
   date?: string;                // "YYYY-MM-DD"
+  dayType?: DayType;
   onOutTimeChange: (employeeId: string, outTime: string) => void;
   submitted: boolean;           // locks all inputs after day submit
 }
@@ -24,6 +26,7 @@ export function CheckoutRow({
   checkInTime,
   outTime,
   date,
+  dayType,
   onOutTimeChange,
   submitted,
 }: CheckoutRowProps) {
@@ -53,7 +56,7 @@ export function CheckoutRow({
   }
 
   // ── Live hours & Overtime calculation using Site Rules ────────────────────
-  const breakdown = outTime ? calculateShiftBreakdown(effectiveDate, checkInTime, outTime) : null;
+  const breakdown = outTime ? calculateShiftBreakdown(effectiveDate, checkInTime, outTime, dayType?.name) : null;
 
   return (
     <div className="px-4 py-3 rounded-lg bg-white border border-slate-200">

@@ -1,13 +1,3 @@
-/**
- * AuthContext.tsx
- *
- * Holds the authenticated user state for the entire app.
- * Provides login(), logout(), and the current user object to all consumers.
- *
- * Multi-tenant design: login resolves a tenant (company) first, then
- * authenticates a username/password within that tenant's scope.
- * See dev-system-spec.md §3 for the rationale.
- */
 import {
   createContext,
   useContext,
@@ -16,8 +6,6 @@ import {
   type ReactNode,
 } from 'react';
 import { login as authLogin } from '../features/auth/services/authService';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 export type Role = 'admin' | 'supervisor';
 
@@ -45,13 +33,9 @@ interface AuthContextValue {
   logout: () => void;
 }
 
-// ── Context ───────────────────────────────────────────────────────────────────
-
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const STORAGE_KEY = 'les_auth_user'; // LES = Labour Entry System
-
-// ── Provider ──────────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'les_auth_user';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -76,8 +60,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     username: string,
     password: string
   ): Promise<void> => {
-    // authService.login resolves the tenant, authenticates, and returns an AuthUser.
-    // It will throw with a user-facing message on any failure.
     const loggedInUser = await authLogin(tenant, username, password);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedInUser));
     setUser(loggedInUser);
@@ -103,8 +85,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     </AuthContext.Provider>
   );
 }
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);

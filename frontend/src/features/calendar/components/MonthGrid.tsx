@@ -21,11 +21,17 @@ function formatDate(y: number, m: number, d: number): string {
 }
 
 const BADGE_STYLES: Record<string, { bg: string; text: string; border: string }> = {
-  'dt-normal':   { bg: 'bg-slate-100',   text: 'text-slate-600',   border: 'border-slate-200/80' },
-  'dt-saturday': { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-blue-200' },
-  'dt-sunday':   { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
-  'dt-shutdown': { bg: 'bg-rose-50',    text: 'text-rose-700',    border: 'border-rose-200' },
-  'dt-poya':     { bg: 'bg-amber-50',   text: 'text-amber-700',   border: 'border-amber-200' },
+  'dt-normal':      { bg: 'bg-slate-100',   text: 'text-slate-600',   border: 'border-slate-200/80' },
+  'normal':         { bg: 'bg-slate-100',   text: 'text-slate-600',   border: 'border-slate-200/80' },
+  'dt-saturday':    { bg: 'bg-blue-50',     text: 'text-blue-700',    border: 'border-blue-200' },
+  'saturday':       { bg: 'bg-blue-50',     text: 'text-blue-700',    border: 'border-blue-200' },
+  'dt-sunday':      { bg: 'bg-emerald-50',  text: 'text-emerald-700', border: 'border-emerald-200' },
+  'sunday':         { bg: 'bg-emerald-50',  text: 'text-emerald-700', border: 'border-emerald-200' },
+  'dt-shutdown':    { bg: 'bg-rose-50',     text: 'text-rose-700',    border: 'border-rose-200' },
+  'shutdown':       { bg: 'bg-rose-50',     text: 'text-rose-700',    border: 'border-rose-200' },
+  'dt-holiday':     { bg: 'bg-amber-50',    text: 'text-amber-700',   border: 'border-amber-200' },
+  'public_holiday': { bg: 'bg-amber-50',    text: 'text-amber-700',   border: 'border-amber-200' },
+  'dt-poya':        { bg: 'bg-amber-50',    text: 'text-amber-700',   border: 'border-amber-200' },
 };
 
 export default function MonthGrid({ year, month, getDayTypeForDate, dayTypes, onSetDayType }: Props) {
@@ -82,7 +88,7 @@ export default function MonthGrid({ year, month, getDayTypeForDate, dayTypes, on
           const dt = getDayTypeForDate(dateStr);
           const isPickerOpen = pickerDate === dateStr;
           const isToday = dateStr === todayStr;
-          const badge = (dt && BADGE_STYLES[dt.id]) || BADGE_STYLES['dt-normal'];
+          const badge = (dt && (BADGE_STYLES[dt.id] || (dt.code && BADGE_STYLES[dt.code]))) || BADGE_STYLES['dt-normal'];
 
           return (
             <div

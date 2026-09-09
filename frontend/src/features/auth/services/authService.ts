@@ -59,8 +59,8 @@ export async function login(
     console.warn('Backend unavailable, falling back to local auth:', err);
   }
 
+  throw new Error('Unable to sign in. Please check your credentials or network connection.');
 }
-
 
 export async function getTenantById(tenantId: string): Promise<Tenant | undefined> {
   try {
@@ -75,4 +75,5 @@ export async function getTenantById(tenantId: string): Promise<Tenant | undefine
     console.warn('Backend unavailable, using mock tenant:', err);
   }
 
+  return undefined;
 }

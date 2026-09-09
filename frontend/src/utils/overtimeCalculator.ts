@@ -4,21 +4,22 @@
  * Construction Site Working Hours & Overtime (OT) Engine:
  *
  * 1. Normal Day (Mon - Fri):
- *    - Work starts at 07:00 AM.
  *    - Standard shift: 8.0 hours.
  *    - Hours above 8.0 are credited as Overtime (OT).
  *
  * 2. Saturday (Half-Day):
- *    - Work starts at 07:00 AM.
  *    - Standard morning shift: 6.0 hours (up to 1:00 PM / 13:00).
  *    - Work past 13:00 or above 6.0 hours is credited as Overtime (OT).
  *
- * 3. Sunday (Rest Day):
- *    - Work starts at 07:00 AM.
+ * 3. Sunday:
  *    - Standard normal shift: 0.0 hours.
  *    - ENTIRE DAY IS OVERTIME: 100% of all hours worked are Overtime (OT).
  *
- * 4. Poya / Public Holiday:
+ * 4. Shutdown:
+ *    - Follows Normal Day rules: 8.0 hours standard shift.
+ *    - Hours above 8.0 are credited as Overtime (OT).
+ *
+ * 5. Public Holiday:
  *    - Standard normal shift: 0.0 hours.
  *    - ENTIRE DAY IS OVERTIME: 100% of all hours worked are Overtime (OT).
  */
@@ -42,17 +43,22 @@ export function getDayTypeRule(
   // Check explicit day type override (e.g. from calendar)
   if (explicitDayType) {
     const lower = explicitDayType.toLowerCase();
-    if (lower.includes('sunday') || lower.includes('poya') || lower.includes('holiday') || lower.includes('shutdown')) {
-      return { standardCap: 0.0, isAllOvertime: true, dayTypeLabel: explicitDayType };
+    if (lower.includes('sunday')) {
+      return { standardCap: 0.0, isAllOvertime: true, dayTypeLabel: 'Sunday (Full OT)' };
+    }
+    if (lower.includes('public holiday') || lower.includes('holiday') || lower.includes('poya')) {
+      return { standardCap: 0.0, isAllOvertime: true, dayTypeLabel: 'Public Holiday (Full OT)' };
     }
     if (lower.includes('saturday')) {
       return { standardCap: 6.0, isAllOvertime: false, dayTypeLabel: 'Saturday (Half-day)' };
+    }
+    if (lower.includes('shutdown')) {
+      return { standardCap: 8.0, isAllOvertime: false, dayTypeLabel: 'Shutdown (Normal Day Rules)' };
     }
     return { standardCap: 8.0, isAllOvertime: false, dayTypeLabel: 'Normal Day' };
   }
 
   // Determine from day of the week
-  // UTC or local date parsing
   const d = new Date(dateStr);
   const dayOfWeek = d.getUTCDay();
 

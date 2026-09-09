@@ -3,6 +3,7 @@ import { ArrowLeft, Plus, Trash2, CheckCircle2, Clock, Users, Layers } from 'luc
 import { StepIndicator } from '../features/time-entries/components/StepIndicator';
 import type { AssignedEmployee, ActivityCode } from '../features/time-entries/services/timeEntryService';
 import type { EmployeeEntryState, SubmitStatus, ActivityHourItem } from '../features/time-entries/hooks/useTimeEntry';
+import type { DayType } from '../features/calendar/services/calendarService';
 import { getDayTypeRule, timeToMinutes, formatDecimalHours } from '../utils/overtimeCalculator';
 
 interface ActivityDistributionPageProps {
@@ -10,6 +11,7 @@ interface ActivityDistributionPageProps {
   activityCodes: ActivityCode[];
   entries: Record<string, EmployeeEntryState>;
   date: string;
+  dayType?: DayType;
   submitStatus: SubmitStatus;
   onUpdateActivities: (employeeId: string, activities: ActivityHourItem[]) => void;
   onBulkUpdateActivities: (employeeIds: string[], activities: ActivityHourItem[]) => void;
@@ -22,6 +24,7 @@ export function ActivityDistributionPage({
   activityCodes,
   entries,
   date,
+  dayType,
   submitStatus,
   onUpdateActivities,
   onBulkUpdateActivities,
@@ -29,7 +32,7 @@ export function ActivityDistributionPage({
   onBack,
 }: ActivityDistributionPageProps) {
   const bulkSelectId = useId();
-  const dayRule = getDayTypeRule(date);
+  const dayRule = getDayTypeRule(date, dayType?.name);
   const isSubmitted = submitStatus === 'submitted';
   const isSubmitting = submitStatus === 'submitting';
 

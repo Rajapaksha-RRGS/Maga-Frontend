@@ -7,6 +7,8 @@ import { useAssignedEmployees } from './features/time-entries/hooks/useAssignedE
 import { useTimeEntry } from './features/time-entries/hooks/useTimeEntry';
 import { getActivityCodes } from './features/time-entries/services/timeEntryService';
 import type { ActivityCode } from './features/time-entries/services/timeEntryService';
+import { getEffectiveDayTypeForDate } from './features/calendar/services/calendarService';
+import type { DayType } from './features/calendar/services/calendarService';
 import { useAuth } from './context/AuthContext';
 import { SplashScreen } from './components/SplashScreen';
 
@@ -35,6 +37,7 @@ export default function SupervisorFlowPage() {
   const { user } = useAuth();
   const [step, setStep] = useState<Step>('dashboard');
   const [activityCodes, setActivityCodes] = useState<ActivityCode[]>([]);
+  const [dayType, setDayType] = useState<DayType | undefined>(undefined);
 
   const today = todayISO();
 
@@ -67,6 +70,12 @@ export default function SupervisorFlowPage() {
       .then(setActivityCodes)
       .catch(console.error);
   }, [tenantId]);
+
+  useEffect(() => {
+    getEffectiveDayTypeForDate(today)
+      .then(setDayType)
+      .catch(console.error);
+  }, [today]);
 
   // ── Step navigation ────────────────────────────────────────────────────────
   const go = (s: Step) => setStep(s);
@@ -116,6 +125,7 @@ export default function SupervisorFlowPage() {
           entries={entries}
           submitStatus={submitStatus}
           date={today}
+          dayType={dayType}
           onOutTimeChange={setOutTime}
           onNext={() => go('activity')}
           onBack={() => go('checkin')}
@@ -129,6 +139,7 @@ export default function SupervisorFlowPage() {
           activityCodes={activityCodes}
           entries={entries}
           date={today}
+          dayType={dayType}
           submitStatus={submitStatus}
           onUpdateActivities={setEmployeeActivities}
           onBulkUpdateActivities={bulkSetActivities}

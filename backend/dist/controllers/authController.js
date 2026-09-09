@@ -9,6 +9,7 @@ const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const SECRET_KEY = process.env.JWT_SECRET;
 const login = async (req, res) => {
+    console.log("API CALLED");
     try {
         const { tenantId, username, password } = req.body;
         // validation 
@@ -16,8 +17,8 @@ const login = async (req, res) => {
             res.status(400).json({ error: "Please provide tenant, username and password" });
             return;
         }
-        const tenant = await prisma_1.default.user.findUnique({
-            where: { tenantId: tenantId }
+        const tenant = await prisma_1.default.tenant.findUnique({
+            where: { subdomain: tenantId }
         });
         if (!tenant || tenant.status !== 'active') {
             res.status(400).json({ error: "Invalid Tenant orInactive Tenant" });
@@ -25,7 +26,7 @@ const login = async (req, res) => {
         }
         // check for user
         const user = await prisma_1.default.user.findUnique({
-            where: { tenantId_username: { tenantId, username } }
+            where: { tenantId_username: { tenantId: tenant.id, username: username } }
         });
         // if no user
         if (!user || user.status !== 'active') {

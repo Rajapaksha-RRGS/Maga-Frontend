@@ -4,19 +4,19 @@ import { getDefaultTenantId } from './employeeController';
 
 // Standard 5 fixed day types used in construction
 const DEFAULT_DAY_TYPES = [
-  { name: 'Normal day',     code: 'normal',   rateMultiplier: 1.0 },
-  { name: 'Saturday',       code: 'saturday', rateMultiplier: 1.0 },
-  { name: 'Sunday',         code: 'sunday',   rateMultiplier: 1.5 },
-  { name: 'Shutdown',       code: 'shutdown', rateMultiplier: 1.0 },
-  { name: 'Poya / Holiday', code: 'poya',     rateMultiplier: 1.5 },
+  { name: 'Normal Day',     code: 'normal',         rateMultiplier: 1.0 },
+  { name: 'Saturday',       code: 'saturday',       rateMultiplier: 1.0 },
+  { name: 'Sunday',         code: 'sunday',         rateMultiplier: 1.5 },
+  { name: 'Shutdown',       code: 'shutdown',       rateMultiplier: 1.0 },
+  { name: 'Public Holiday', code: 'public_holiday', rateMultiplier: 2.0 },
 ];
 
-function deriveCode(name: string): 'normal' | 'saturday' | 'sunday' | 'shutdown' | 'poya' {
+function deriveCode(name: string): 'normal' | 'saturday' | 'sunday' | 'shutdown' | 'public_holiday' {
   const lower = name.toLowerCase();
   if (lower.includes('sunday')) return 'sunday';
   if (lower.includes('saturday')) return 'saturday';
   if (lower.includes('shutdown')) return 'shutdown';
-  if (lower.includes('poya') || lower.includes('holiday')) return 'poya';
+  if (lower.includes('public holiday') || lower.includes('holiday') || lower.includes('poya')) return 'public_holiday';
   return 'normal';
 }
 

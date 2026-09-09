@@ -3,12 +3,14 @@ import { StepIndicator } from '../features/time-entries/components/StepIndicator
 import { CheckoutRow }   from '../features/time-entries/components/CheckoutRow';
 import type { AssignedEmployee }   from '../features/time-entries/services/timeEntryService';
 import type { EmployeeEntryState, SubmitStatus } from '../features/time-entries/hooks/useTimeEntry';
+import type { DayType } from '../features/calendar/services/calendarService';
 
 interface CheckoutSubmitPageProps {
   employees: AssignedEmployee[];
   entries: Record<string, EmployeeEntryState>;
   submitStatus: SubmitStatus;
   date?: string;
+  dayType?: DayType;
   onOutTimeChange: (employeeId: string, outTime: string) => void;
   onSubmit?: () => void;
   onNext?: () => void;
@@ -26,6 +28,7 @@ export function CheckoutSubmitPage({
   entries,
   submitStatus,
   date,
+  dayType,
   onOutTimeChange,
   onSubmit,
   onNext,
@@ -92,6 +95,7 @@ export function CheckoutSubmitPage({
                       checkInTime={entry?.inTime ?? null}
                       outTime={entry?.outTime ?? null}
                       date={date}
+                      dayType={dayType}
                       onOutTimeChange={onOutTimeChange}
                       submitted={submitted}
                     />
