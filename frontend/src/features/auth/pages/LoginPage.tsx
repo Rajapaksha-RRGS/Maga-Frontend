@@ -1,18 +1,3 @@
-/**
- * LoginPage.tsx
- *
- * Public login page. Resolves the tenant (company) first, then authenticates
- * username/password within that tenant's scope — matching the multi-tenant
- * login flow in dev-system-spec.md §3.
- *
- * On success: admin → /admin, supervisor → /supervisor.
- *
- * Styled strictly per design-system.json:
- *   - bg-slate-50 page shell, bg-white card
- *   - Flat, no shadows — border-slate-200 outlines only
- *   - blue-700 primary button, slate palette inputs
- *   - Sentence case labels, font-weight 400/500 only
- */
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
@@ -41,21 +26,7 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       await login(tenant, username, password);
-      // login() sets the user in context; read role from the resolved user
-      // by navigating — ProtectedRoute will redirect if needed, but we
-      // do a best-effort route here using the auth service result implicitly.
-      // We get the role from context after login sets it — re-read via a
-      // small indirection: navigate to a role-agnostic path and let
-      // ProtectedRoute sort it out, OR we read from context.
-      // Simpler: we re-read after login resolves.
-      //
-      // Because login() is async and setState is synchronous inside AuthContext,
-      // we need to get the role from the service result. We do this by reading
-      // the user out of localStorage (which authService just wrote) for a
-      // clean single-source read — or we pass role back from context.
-      //
-      // Chosen approach: read from localStorage immediately after login().
-      // This avoids a second render cycle before we can navigate.
+      
       const stored = localStorage.getItem('les_auth_user');
       if (stored) {
         const u = JSON.parse(stored) as { role: 'admin' | 'supervisor' };

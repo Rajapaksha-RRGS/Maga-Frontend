@@ -46,7 +46,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard',         to: '/admin',                   icon: <LayoutDashboard size={18} /> },
-  { label: 'Tenants & Admins',  to: '/admin/tenants',           icon: <Layers size={18} /> },
+  { label: 'Projects & Admins', to: '/admin/tenants',           icon: <Layers size={18} /> },
   { label: 'Employees',         to: '/admin/employees',         icon: <Users size={18} /> },
   { label: 'Business partners', to: '/admin/business-partners', icon: <Building2 size={18} /> },
   { label: 'Equipment',         to: '/admin/equipment',         icon: <Wrench size={18} /> },

@@ -89,11 +89,11 @@ export default function TenantsPage() {
           <div className="flex items-center gap-2">
             <Building2 size={20} className="text-blue-700" />
             <h1 className="text-base font-medium text-slate-800">
-              Tenants & Organizations
+              Projects & Site Admins
             </h1>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Register new tenant companies and manage their initial admin login accounts.
+            Manage construction project sites, project codes (M-Code), and site admin login accounts.
           </p>
         </div>
 
@@ -103,7 +103,7 @@ export default function TenantsPage() {
           className="flex items-center justify-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 flex-shrink-0"
         >
           <Plus size={16} />
-          <span>Register tenant</span>
+          <span>Register project</span>
         </button>
       </div>
 
@@ -173,7 +173,7 @@ export default function TenantsPage() {
           <SearchInput
             value={search}
             onChange={setSearch}
-            placeholder="Search by company, subdomain, or admin…"
+            placeholder="Search by project code, project name, or site admin…"
           />
         </div>
 
@@ -198,10 +198,10 @@ export default function TenantsPage() {
       {/* ── Data Views (Table for desktop, Cards for mobile) ───── */}
       {isLoading ? (
         <div className="py-16 text-center text-slate-400 text-sm">
-          Loading tenant records…
+          Loading project records…
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState message="No tenant organizations match your query." />
+        <EmptyState message="No project sites match your query." />
       ) : (
         <>
           <TenantTable
@@ -223,7 +223,7 @@ export default function TenantsPage() {
       <SlidePanel
         open={panelOpen}
         onClose={closePanel}
-        title={editingTenant ? 'Edit Tenant Information' : 'Register New Tenant & Admin'}
+        title={editingTenant ? 'Edit Project Details' : 'Register New Project & Site Admin'}
       >
         <TenantForm
           initialTenant={editingTenant}

@@ -25,11 +25,11 @@ export default function TenantTable({
 }: TenantTableProps) {
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-slate-200 bg-white">
-      <table className="w-full text-left border-collapse" aria-label="Tenant Organizations">
+      <table className="w-full text-left border-collapse" aria-label="Projects">
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50/70 text-slate-500 text-xs font-medium uppercase tracking-wide">
-            <th className="py-3 px-4">Organization & Subdomain</th>
-            <th className="py-3 px-4">Primary Admin</th>
+            <th className="py-3 px-4">Project</th>
+            <th className="py-3 px-4">Site Admin</th>
             <th className="py-3 px-4">Contact Info</th>
             <th className="py-3 px-4">Users</th>
             <th className="py-3 px-4">Status</th>
@@ -39,18 +39,17 @@ export default function TenantTable({
         <tbody className="divide-y divide-slate-100 text-sm">
           {tenants.map((t) => (
             <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-              {/* Company & Subdomain */}
+              {/* Project (Code - Name) */}
               <td className="py-3 px-4">
                 <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-slate-800">{t.companyName}</span>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="inline-flex items-center font-mono text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                      {t.subdomain}
+                  <span className="font-semibold text-slate-900 text-sm">
+                    {t.subdomain} - {t.companyName}
+                  </span>
+                  {t.addressLine1 && (
+                    <span className="text-xs text-slate-500 truncate max-w-[320px]">
+                      {t.addressLine1}
                     </span>
-                    <span className="text-xs text-slate-400">
-                      .{window.location.hostname}
-                    </span>
-                  </div>
+                  )}
                 </div>
               </td>
 

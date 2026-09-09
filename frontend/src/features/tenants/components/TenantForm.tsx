@@ -67,23 +67,6 @@ export default function TenantForm({
     }
   }, [initialTenant]);
 
-  const handleSubdomainChange = (val: string) => {
-    // lowercase alphanumeric + hyphens only
-    const clean = val.toLowerCase().replace(/[^a-z0-9-]/g, '');
-    setSubdomain(clean);
-  };
-
-  const handleAutoFillSubdomain = () => {
-    if (!companyName.trim()) return;
-    const clean = companyName
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-    setSubdomain(clean);
-  };
-
   const handleRegeneratePassword = () => {
     setAdminPassword(generateTempPassword());
   };
@@ -145,46 +128,18 @@ export default function TenantForm({
         </div>
       )}
 
-      {/* ── Section 1: Organization Details ───────────────────────── */}
+      {/* ── Section 1: Project Details ───────────────────────── */}
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2 text-xs font-medium text-slate-500 uppercase tracking-wide">
           <Building2 size={14} className="text-blue-700" />
-          <span>Organization details</span>
+          <span>Project details</span>
         </div>
 
-        {/* Company Name */}
+        {/* Project Code (M-Code) */}
         <div className="flex flex-col gap-1">
-          <label htmlFor="tenant-company" className="text-xs font-medium text-slate-700">
-            Company name *
+          <label htmlFor="tenant-subdomain" className="text-xs font-medium text-slate-700">
+            Project code (M-Code / 9-digit code) *
           </label>
-          <input
-            id="tenant-company"
-            type="text"
-            required
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
-            onBlur={!isEditing && !subdomain ? handleAutoFillSubdomain : undefined}
-            placeholder="e.g. Mäga Engineering (Pvt) Ltd"
-            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 bg-white text-slate-800 text-sm min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent focus:outline-none"
-          />
-        </div>
-
-        {/* Subdomain (Read-only on edit) */}
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
-            <label htmlFor="tenant-subdomain" className="text-xs font-medium text-slate-700">
-              Subdomain identifier *
-            </label>
-            {!isEditing && (
-              <button
-                type="button"
-                onClick={handleAutoFillSubdomain}
-                className="text-[11px] text-blue-700 hover:underline"
-              >
-                Auto-generate
-              </button>
-            )}
-          </div>
           <div className="relative flex items-center">
             <input
               id="tenant-subdomain"
@@ -192,16 +147,37 @@ export default function TenantForm({
               required
               disabled={isEditing}
               value={subdomain}
-              onChange={(e) => handleSubdomainChange(e.target.value)}
-              placeholder="e.g. maga"
+              onChange={(e) => setSubdomain(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
+              placeholder="e.g. 531M, 521M, 403M, M00000403, M0000376B"
               className={`w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm font-mono min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent focus:outline-none ${
                 isEditing ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : 'bg-white text-slate-800'
               }`}
             />
           </div>
           <span className="text-[11px] text-slate-500">
-            Preview URL: <span className="font-mono text-blue-700">{subdomain || 'company'}.{window.location.hostname}</span>
+            Internal project code format (e.g. <strong>531M</strong>, <strong>M00000403</strong>, <strong>M0000376B</strong>)
           </span>
+        </div>
+
+        {/* Project Name */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="tenant-company" className="text-xs font-medium text-slate-700">
+            Project name *
+          </label>
+          <input
+            id="tenant-company"
+            type="text"
+            required
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+            placeholder="e.g. Walgama Diyagama Road, Kandy Road, SEEP"
+            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 bg-white text-slate-800 text-sm min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent focus:outline-none"
+          />
+          {subdomain && companyName && (
+            <span className="text-[11px] text-slate-500">
+              Display title: <strong className="text-slate-800">{subdomain} - {companyName}</strong>
+            </span>
+          )}
         </div>
 
         {/* Email & Phone */}
@@ -340,9 +316,9 @@ export default function TenantForm({
           {isSubmitting ? (
             <span>Saving…</span>
           ) : isEditing ? (
-            <span>Update tenant</span>
+            <span>Update project</span>
           ) : (
-            <span>Register tenant & admin</span>
+            <span>Register project & site admin</span>
           )}
         </button>
       </div>

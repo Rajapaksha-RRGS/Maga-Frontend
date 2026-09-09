@@ -20,11 +20,11 @@ interface TenantStatsProps {
 export default function TenantStats({ stats }: TenantStatsProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-      {/* 1. Total Tenants */}
+      {/* 1. Total Projects */}
       <div className="rounded-lg border border-slate-200 bg-white p-4 min-h-[88px] flex flex-col justify-between">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Registered Tenants
+            Registered Projects
           </span>
           <Building2 size={16} className="text-slate-400" />
         </div>
@@ -32,15 +32,15 @@ export default function TenantStats({ stats }: TenantStatsProps) {
           <span className="text-3xl font-medium text-slate-900 tabular-nums">
             {stats.total}
           </span>
-          <span className="text-xs text-slate-500">companies</span>
+          <span className="text-xs text-slate-500">project sites</span>
         </div>
       </div>
 
-      {/* 2. Active Tenants (Semantic Green) */}
+      {/* 2. Active Projects (Semantic Green) */}
       <div className="rounded-lg border border-green-200 bg-green-50/70 p-4 min-h-[88px] flex flex-col justify-between">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wide text-green-700">
-            Active Organizations
+            Active Projects
           </span>
           <CheckCircle2 size={16} className="text-green-600" />
         </div>
@@ -56,7 +56,7 @@ export default function TenantStats({ stats }: TenantStatsProps) {
       <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 min-h-[88px] flex flex-col justify-between">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wide text-blue-700">
-            Company Admins
+            Site Admins
           </span>
           <ShieldCheck size={16} className="text-blue-600" />
         </div>
@@ -64,7 +64,7 @@ export default function TenantStats({ stats }: TenantStatsProps) {
           <span className="text-3xl font-medium text-blue-900 tabular-nums">
             {stats.totalAdmins}
           </span>
-          <span className="text-xs text-blue-700">admin accounts</span>
+          <span className="text-xs text-blue-700">site admin accounts</span>
         </div>
       </div>
     </div>

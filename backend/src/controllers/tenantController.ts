@@ -164,23 +164,23 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
 
     if (!companyName?.trim() || !subdomain?.trim() || !adminFullName?.trim() || !adminUsername?.trim()) {
       res.status(400).json({
-        error: 'Company name, subdomain, admin full name, and admin username are required.',
+        error: 'Project name, project code (M-Code), admin full name, and admin username are required.',
       });
       return;
     }
 
-    const cleanSubdomain = subdomain.toLowerCase().trim().replace(/[^a-z0-9-]/g, '');
+    const cleanSubdomain = subdomain.toUpperCase().trim().replace(/[^A-Z0-9-]/g, '');
     if (!cleanSubdomain) {
-      res.status(400).json({ error: 'Invalid subdomain format. Use letters, numbers, and hyphens only.' });
+      res.status(400).json({ error: 'Invalid project code format. Use letters, numbers, and hyphens only (e.g. 531M, M00000403).' });
       return;
     }
 
-    // Check if subdomain exists
+    // Check if project code exists
     const existing = await prisma.tenant.findUnique({
       where: { subdomain: cleanSubdomain },
     });
     if (existing) {
-      res.status(409).json({ error: `Subdomain "${cleanSubdomain}" is already in use by another organization.` });
+      res.status(409).json({ error: `Project code "${cleanSubdomain}" is already registered.` });
       return;
     }
 

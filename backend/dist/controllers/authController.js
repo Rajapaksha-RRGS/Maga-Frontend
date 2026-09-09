@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.login = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const SECRET_KEY = process.env.JWT_SECRET;
 const login = async (req, res) => {
     try {
@@ -15,8 +16,8 @@ const login = async (req, res) => {
             res.status(400).json({ error: "Please provide tenant, username and password" });
             return;
         }
-        const tenant = await prisma_1.default.tenant.findUnique({
-            where: { id: tenantId }
+        const tenant = await prisma_1.default.user.findUnique({
+            where: { tenantId: tenantId }
         });
         if (!tenant || tenant.status !== 'active') {
             res.status(400).json({ error: "Invalid Tenant orInactive Tenant" });
@@ -33,8 +34,33 @@ const login = async (req, res) => {
         }
         //compare password
         const isMatch = await bcrypt_1.default.compare(password, user.passwordHash);
+        if (!isMatch) {
+            res.status(401).json({ error: "Invalid Credentials" });
+            return;
+        }
+        const token = jsonwebtoken_1.default.sign({
+            userId: user.id,
+            tenantId: tenant.id,
+            role: user.role,
+            fullName: user.fullName,
+            companyName: tenant.companyName,
+        }, SECRET_KEY || 'supersecret', {
+            expiresIn: '1h'
+        });
+        // Remove password hash before sending user data
+        const { passwordHash, ...safeUser } = user;
+        res.json({
+            "success": true,
+            "message": "Login Successful",
+            token: token,
+            user: safeUser
+        });
+        return;
     }
     catch (error) {
+        console.error('Login failed:', error);
+        res.status(500).json({ error: 'Internal server error during login' });
+        return;
     }
 };
 exports.login = login;

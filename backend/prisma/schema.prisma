@@ -11,7 +11,7 @@ datasource db {
 // 1. TENANTS (SaaS Companies / Organizations)
 // ─────────────────────────────────────────────────────────────────────────────
 model Tenant {
-  id           String   @id @default(uuid())
+  id           String   @id @default(uuid()) 
   companyName  String   @map("company_name")
   subdomain    String   @unique // e.g. 'maga' -> maga.yoursaas.com
   addressLine1 String?  @map("address_line1")
