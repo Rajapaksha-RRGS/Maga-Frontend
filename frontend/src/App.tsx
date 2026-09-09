@@ -38,6 +38,7 @@ import UseTable from './components/user';
 
 // Admin pages
 import AdminDashboardPage from './pages/AdminDashboardPage';
+import TenantsPage from './pages/TenantsPage';
 import EmployeesPage from './pages/EmployeesPage';
 import BusinessPartnersPage from './pages/BusinessPartnersPage';
 import EquipmentPage from './pages/EquipmentPage';
@@ -88,6 +89,7 @@ export default function App() {
         <Route element={<ProtectedRoute requiredRole="admin" />}>
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminDashboardPage />} />
+            <Route path="tenants"           element={<TenantsPage />} />
             <Route path="employees"         element={<EmployeesPage />} />
             <Route path="business-partners" element={<BusinessPartnersPage />} />
             <Route path="equipment"         element={<EquipmentPage />} />
