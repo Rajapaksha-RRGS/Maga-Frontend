@@ -7,7 +7,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import type { Employee, EmployeeFormData } from '../services/employeeService';
-import * as svc from '../services/employeeService';
+import * as employeeService from '../services/employeeService';
 
 interface UseEmployeesReturn {
   employees: Employee[];
@@ -37,7 +37,7 @@ export function useEmployees(): UseEmployeesReturn {
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await svc.getAll();
+      const data = await employeeService.getAll();
       setEmployees(data);
     } finally {
       setIsLoading(false);
@@ -64,17 +64,17 @@ export function useEmployees(): UseEmployeesReturn {
   });
 
   const addEmployee = async (data: EmployeeFormData) => {
-    await svc.create(data);
+    await employeeService.create(data);
     await load();
   };
 
   const updateEmployee = async (id: string, data: Partial<EmployeeFormData>) => {
-    await svc.update(id, data);
+    await employeeService.update(id, data);
     await load();
   };
 
   const deactivateEmployee = async (id: string) => {
-    await svc.deactivate(id);
+    await employeeService.deactivate(id);
     await load();
   };
 
@@ -88,8 +88,8 @@ export function useEmployees(): UseEmployeesReturn {
     setBusinessPartnerFilter,
     tradeGroupFilter,
     setTradeGroupFilter,
-    businessPartners: svc.getBusinessPartners(),
-    tradeGroups: svc.getTradeGroups(),
+    businessPartners: employeeService.getBusinessPartners(),
+    tradeGroups: employeeService.getTradeGroups(),
     addEmployee,
     updateEmployee,
     deactivateEmployee,
