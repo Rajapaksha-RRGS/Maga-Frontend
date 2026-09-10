@@ -92,34 +92,19 @@ export default function ErpUploadTable({ data }: Props) {
                     <td className="px-4 py-3 font-mono text-slate-600 text-xs">
                       {row.date}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 font-mono text-xs">
                       {isOtRow ? (
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-100 border border-amber-300 font-mono text-xs font-bold text-amber-900">
-                            OT
-                          </span>
-                          <span className="text-amber-700 text-xs italic font-sans">
-                            Overtime (&gt; 8.0 hrs)
-                          </span>
-                        </div>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-100 border border-amber-300 font-bold text-amber-900">
+                          OT
+                        </span>
                       ) : isZidleRow ? (
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-100 border border-rose-300 font-mono text-xs font-bold text-rose-800">
-                            ZIDLE
-                          </span>
-                          <span className="text-rose-700 text-xs italic font-sans">
-                            Idle / Balancing Hours
-                          </span>
-                        </div>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-100 border border-rose-300 font-bold text-rose-800">
+                          ZIDLE
+                        </span>
                       ) : (
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-xs font-medium text-slate-800">
-                            {row.activityCode}
-                          </span>
-                          <span className="text-slate-500 text-xs truncate max-w-[180px]">
-                            {row.activityDescription}
-                          </span>
-                        </div>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-medium text-slate-800">
+                          {row.activityCode}
+                        </span>
                       )}
                     </td>
                     <td className={`px-4 py-3 text-right tabular-nums font-medium ${
