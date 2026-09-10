@@ -8,10 +8,11 @@ import type {
   TenantUpdateInput,
 } from '../services/tenantService';
 import * as svc from '../services/tenantService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 export function useTenants() {
-  const [tenants, setTenants] = useState<TenantRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [tenants, setTenants] = useState<TenantRecord[]>(() => cacheManager.get<TenantRecord[]>('tenants:list') || []);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !cacheManager.get<TenantRecord[]>('tenants:list'));
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -24,8 +25,10 @@ export function useTenants() {
     password: string;
   } | null>(null);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh || !cacheManager.get('tenants:list')) {
+      setIsLoading(true);
+    }
     setError(null);
     try {
       const data = await svc.getAllTenants();

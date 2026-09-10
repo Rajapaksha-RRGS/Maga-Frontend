@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Employee, EmployeeFormData } from '../services/employeeService';
 import * as employeeService from '../services/employeeService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 interface UseEmployeesReturn {
   employees: Employee[];
@@ -33,8 +34,9 @@ interface UseEmployeesReturn {
 }
 
 export function useEmployees(): UseEmployeesReturn {
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const cached = cacheManager.get<Employee[]>('employees:list:{}');
+  const [employees, setEmployees] = useState<Employee[]>(() => cached || []);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !cached);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [businessPartnerFilter, setBusinessPartnerFilter] = useState('');
@@ -42,7 +44,9 @@ export function useEmployees(): UseEmployeesReturn {
   const [statusFilter, setStatusFilter] = useState('');
 
   const load = useCallback(async (forceRefresh = false) => {
-    setIsLoading(true);
+    if (forceRefresh || !cacheManager.get('employees:list:{}')) {
+      setIsLoading(true);
+    }
     setError(null);
     try {
       const data = await employeeService.getAll(undefined, forceRefresh);

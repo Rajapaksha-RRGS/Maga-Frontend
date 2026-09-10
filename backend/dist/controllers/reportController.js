@@ -89,36 +89,48 @@ const getSummaryReport = async (req, res) => {
             const empId = entry.employeeId;
             const existing = empMap.get(empId);
             const dateKey = entry.date.toISOString().split('T')[0];
-            const normalH = Number(entry.hours);
+            const entryHours = Number(entry.hours);
             const otH = Number(entry.overtimeHours);
             if (!existing) {
                 empMap.set(empId, {
                     employeeId: empId,
+                    employeeCode: entry.employee.employeeCode || '',
+                    callingName: entry.employee.callingName || '',
                     employeeName: entry.employee.fullName || entry.employee.callingName,
                     tradeGroup: entry.employee.tradeGroup || '',
                     businessPartner: entry.employee.businessPartner?.name || '',
                     dates: new Set([dateKey]),
-                    normalHours: normalH,
+                    totalHours: entryHours,
                     otHours: otH,
                 });
             }
             else {
                 existing.dates.add(dateKey);
-                existing.normalHours += normalH;
+                existing.totalHours += entryHours;
                 existing.otHours += otH;
             }
         }
-        const items = Array.from(empMap.values()).map((e, idx) => ({
-            id: `sum-${idx}`,
-            employeeId: e.employeeId,
-            employeeName: e.employeeName,
-            tradeGroup: e.tradeGroup,
-            businessPartner: e.businessPartner,
-            totalDays: e.dates.size,
-            totalNormalHours: Math.round(e.normalHours * 100) / 100,
-            totalOtHours: Math.round(e.otHours * 100) / 100,
-            totalHours: Math.round((e.normalHours + e.otHours) * 100) / 100,
-        }));
+        const items = Array.from(empMap.values()).map((e, idx) => {
+            const empIdentifier = e.employeeCode || e.callingName || e.employeeName || e.employeeId;
+            const totalHours = Math.round(e.totalHours * 100) / 100;
+            const totalOtHours = Math.round(e.otHours * 100) / 100;
+            const totalNormalHours = Math.max(0, Math.round((totalHours - totalOtHours) * 100) / 100);
+            return {
+                id: `sum-${idx}`,
+                employeeId: e.employeeId,
+                employeeCode: e.employeeCode,
+                callingName: e.callingName,
+                employeeName: e.employeeName,
+                employeeIdentifier: empIdentifier,
+                tradeGroup: e.tradeGroup,
+                businessPartner: e.businessPartner,
+                totalDays: e.dates.size,
+                totalNormalHours,
+                totalOtHours,
+                totalEffectiveHours: totalHours,
+                totalHours,
+            };
+        });
         const totals = items.reduce((acc, curr) => ({
             employeeCount: acc.employeeCount + 1,
             totalDays: acc.totalDays + curr.totalDays,
@@ -577,8 +589,26 @@ const getRunningChartReport = async (req, res) => {
             const activitiesDisplay = activities.length > 0
                 ? activities.map((a) => `${a.code} (${a.hours.toFixed(1)}h)`).join(', ')
                 : '—';
-            const totalDayHours = activities.reduce((sum, a) => sum + a.hours, 0) ||
+            let breakHours = Number(groupEntries.find((e) => e.breakHours !== null)?.breakHours) || 0;
+            if (breakHours === 0 && inTime !== '—' && outTime !== '—') {
+                const [inH, inM] = inTime.split(':').map(Number);
+                const [outH, outM] = outTime.split(':').map(Number);
+                const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+                if (diffMins >= 300) {
+                    breakHours = 1.0;
+                }
+            }
+            let totalDayHours = activities.reduce((sum, a) => sum + a.hours, 0) ||
                 groupEntries.reduce((sum, e) => sum + (Number(e.hours) || 0), 0);
+            if (totalDayHours === 0 && inTime !== '—' && outTime !== '—') {
+                const [inH, inM] = inTime.split(':').map(Number);
+                const [outH, outM] = outTime.split(':').map(Number);
+                const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+                if (diffMins > 0) {
+                    const grossHours = Math.round((diffMins / 60) * 100) / 100;
+                    totalDayHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
+                }
+            }
             const { standardCap, isAllOvertime } = getDayTypeRule(dateKey);
             let workHours = 0;
             let otHours = 0;
@@ -587,15 +617,19 @@ const getRunningChartReport = async (req, res) => {
                 otHours = totalDayHours;
             }
             else {
-                workHours = Math.min(totalDayHours, standardCap);
-                otHours = totalDayHours > standardCap ? totalDayHours - standardCap : 0;
+                const explicitOt = groupEntries.reduce((s, e) => s + (Number(e.overtimeHours) || 0), 0);
+                if (explicitOt > 0) {
+                    otHours = Math.min(totalDayHours, explicitOt);
+                    workHours = Math.max(0, totalDayHours - otHours);
+                }
+                else {
+                    workHours = Math.min(totalDayHours, standardCap);
+                    otHours = totalDayHours > standardCap ? totalDayHours - standardCap : 0;
+                }
             }
-            const explicitOt = groupEntries.reduce((s, e) => s + (Number(e.overtimeHours) || 0), 0);
-            if (explicitOt > otHours)
-                otHours = explicitOt;
             workHours = Math.round(workHours * 100) / 100;
             otHours = Math.round(otHours * 100) / 100;
-            const totalHours = Math.round((workHours + otHours) * 100) / 100;
+            const totalHours = Math.round(totalDayHours * 100) / 100;
             grandWorkHours += workHours;
             grandOtHours += otHours;
             grandTotalHours += totalHours;
@@ -610,6 +644,7 @@ const getRunningChartReport = async (req, res) => {
                 businessPartner: first.employee.businessPartner?.name || 'Direct',
                 inTime,
                 outTime,
+                breakHours,
                 workHours,
                 otHours,
                 totalHours,

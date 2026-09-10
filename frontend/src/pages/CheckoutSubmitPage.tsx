@@ -119,6 +119,16 @@ export function CheckoutSubmitPage({
             </div>
           )}
 
+          {/* Warning banner if checked-in workers are missing checkout */}
+          {employees.some((e) => entries[e.id]?.inTime && !entries[e.id]?.outTime) && !isSubmitted && (
+            <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+              <span className="font-semibold text-amber-900">Attention:</span>
+              <span>
+                {employees.filter((e) => entries[e.id]?.inTime && !entries[e.id]?.outTime).length} worker(s) checked in but have no check-out time. Please record their Out Time before proceeding to Activities.
+              </span>
+            </div>
+          )}
+
           {employees.length === 0 ? (
             <p className="text-sm text-slate-400 py-8 text-center">No workers assigned.</p>
           ) : (
@@ -167,7 +177,12 @@ export function CheckoutSubmitPage({
               <button
                 type="button"
                 onClick={onNext}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium min-h-[48px] transition-colors bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                disabled={
+                  isSubmitted ||
+                  employees.filter((e) => entries[e.id]?.inTime && entries[e.id]?.outTime).length === 0 ||
+                  employees.some((e) => entries[e.id]?.inTime && !entries[e.id]?.outTime)
+                }
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium min-h-[48px] transition-colors bg-blue-700 hover:bg-blue-800 active:bg-blue-900 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
               >
                 <span>Next: Activities & OT</span>
                 <span aria-hidden="true">→</span>

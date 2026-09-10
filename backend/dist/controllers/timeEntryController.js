@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.submitDay = exports.getTimeEntries = exports.upsertTimeEntry = exports.assignActivityBulk = exports.checkOutEmployee = exports.checkInEmployee = exports.getAssignedEmployees = void 0;
 exports.getDayTypeRulesAndId = getDayTypeRulesAndId;
+exports.computeBreakHours = computeBreakHours;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
 const getParam = (param) => {
@@ -111,6 +112,16 @@ function parseDate(dateStr) {
     const clean = dateStr.split('T')[0];
     const [year, month, day] = clean.split('-').map(Number);
     return new Date(Date.UTC(year, month - 1, day));
+}
+// Helper: compute lunch break hours based on inTime & outTime
+// Construction rule: shifts >= 5.0 hours (300 mins) have 1.0 hour lunch deducted; shifts < 5.0h have 0.0 deducted.
+function computeBreakHours(inTime, outTime) {
+    if (!inTime || !outTime)
+        return 0;
+    const [inH, inM] = inTime.split(':').map(Number);
+    const [outH, outM] = outTime.split(':').map(Number);
+    const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+    return diffMins >= 300 ? 1.0 : 0.0;
 }
 // 1. Get assigned employees for supervisor & date
 const getAssignedEmployees = async (req, res) => {
@@ -293,15 +304,17 @@ const checkOutEmployee = async (req, res) => {
             },
         });
         if (existingEntries.length > 0) {
+            const inTime = existingEntries.find((e) => e.inTime)?.inTime;
+            const breakHours = computeBreakHours(inTime, outTime);
             await prisma_1.default.timeEntry.updateMany({
                 where: {
                     tenantId,
                     employeeId,
                     date: entryDate,
                 },
-                data: { outTime },
+                data: { outTime, breakHours },
             });
-            res.json({ success: true, employeeId, outTime, count: existingEntries.length });
+            res.json({ success: true, employeeId, outTime, breakHours, count: existingEntries.length });
             return;
         }
         // If no record exists yet, create one with outTime
@@ -386,6 +399,27 @@ const assignActivityBulk = async (req, res) => {
             res.status(403).json({ error: 'Cannot update activities: Daily records have already been submitted and locked.' });
             return;
         }
+        // Validate that all employees have both inTime and outTime recorded before assigning activities
+        const shiftCheckRecords = await prisma_1.default.timeEntry.findMany({
+            where: {
+                tenantId,
+                date: targetDate,
+                employeeId: { in: employeeIds },
+            },
+            include: { employee: true },
+        });
+        for (const empId of employeeIds) {
+            const records = shiftCheckRecords.filter((e) => e.employeeId === empId);
+            const hasIn = records.some((e) => e.inTime);
+            const hasOut = records.some((e) => e.outTime);
+            if (!hasIn || !hasOut) {
+                const empName = records[0]?.employee?.callingName || records[0]?.employee?.fullName || empId;
+                res.status(400).json({
+                    error: `Cannot assign activity: Worker "${empName}" must have both Check-in and Check-out recorded first.`,
+                });
+                return;
+            }
+        }
         const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
         // Resolve supervisor ID
         let finalSupervisorId = supervisorId;
@@ -425,6 +459,7 @@ const assignActivityBulk = async (req, res) => {
             // Preserve check-in and checkout times from any existing entries
             const preservedInTime = existingEntries.find((e) => e.inTime)?.inTime || null;
             const preservedOutTime = existingEntries.find((e) => e.outTime)?.outTime || null;
+            const breakHours = computeBreakHours(preservedInTime, preservedOutTime);
             // Construction site OT rules:
             // - Sunday / Poya / Holiday: 100% of all hours are Overtime (standardCap = 0)
             // - Saturday: Half-day 07:00 to 13:00 (standardCap = 6.0), hours > 6.0 are Overtime
@@ -449,6 +484,7 @@ const assignActivityBulk = async (req, res) => {
                     data: {
                         hours: numHours,
                         overtimeHours,
+                        breakHours,
                         inTime: existingActivityEntry.inTime || preservedInTime,
                         outTime: existingActivityEntry.outTime || preservedOutTime,
                         equipmentId: equipmentId || existingActivityEntry.equipmentId,
@@ -467,6 +503,7 @@ const assignActivityBulk = async (req, res) => {
                             activityId,
                             hours: numHours,
                             overtimeHours,
+                            breakHours,
                             inTime: placeholder.inTime || preservedInTime,
                             outTime: placeholder.outTime || preservedOutTime,
                             equipmentId: equipmentId || placeholder.equipmentId,
@@ -489,6 +526,7 @@ const assignActivityBulk = async (req, res) => {
                             outTime: preservedOutTime,
                             hours: numHours,
                             overtimeHours,
+                            breakHours,
                             remarks: remarks || null,
                             status: 'draft',
                         },
@@ -532,14 +570,18 @@ const upsertTimeEntry = async (req, res) => {
                 date: targetDate,
             },
         });
+        const finalInTime = inTime ?? existing?.inTime ?? null;
+        const finalOutTime = outTime ?? existing?.outTime ?? null;
+        const breakHours = computeBreakHours(finalInTime, finalOutTime);
         if (existing) {
             const updated = await prisma_1.default.timeEntry.update({
                 where: { id: existing.id },
                 data: {
                     hours: numHours,
                     overtimeHours,
-                    inTime: inTime ?? existing.inTime,
-                    outTime: outTime ?? existing.outTime,
+                    breakHours,
+                    inTime: finalInTime,
+                    outTime: finalOutTime,
                     equipmentId: equipmentId ?? existing.equipmentId,
                     remarks: remarks ?? existing.remarks,
                 },
@@ -558,8 +600,9 @@ const upsertTimeEntry = async (req, res) => {
                 date: targetDate,
                 hours: numHours,
                 overtimeHours,
-                inTime: inTime || null,
-                outTime: outTime || null,
+                breakHours,
+                inTime: finalInTime,
+                outTime: finalOutTime,
                 remarks: remarks || null,
                 status: 'draft',
             },
@@ -633,6 +676,26 @@ const submitDay = async (req, res) => {
                 select: { id: true, fullName: true, username: true },
             })
             : null;
+        // Validate: Verify that all draft entries being submitted have valid inTime and outTime
+        const incompleteDrafts = await prisma_1.default.timeEntry.findMany({
+            where: {
+                ...whereClause,
+                OR: [
+                    { inTime: null },
+                    { outTime: null },
+                ],
+            },
+            include: {
+                employee: true,
+            },
+        });
+        if (incompleteDrafts.length > 0) {
+            const names = Array.from(new Set(incompleteDrafts.map((e) => e.employee.callingName || e.employee.fullName || e.employeeId))).join(', ');
+            res.status(400).json({
+                error: `Cannot submit day: The following worker(s) do not have complete Check-in and Check-out recorded: ${names}. All workers must have both In Time and Out Time before submitting.`,
+            });
+            return;
+        }
         const submittedAt = new Date();
         const updated = await prisma_1.default.timeEntry.updateMany({
             where: whereClause,

@@ -4,7 +4,7 @@ import { StepIndicator, type StepKey } from '../features/time-entries/components
 import type { AssignedEmployee, ActivityCode } from '../features/time-entries/services/timeEntryService';
 import type { EmployeeEntryState, SubmitStatus, ActivityHourItem, SubmittedInfo } from '../features/time-entries/hooks/useTimeEntry';
 import type { DayType } from '../features/calendar/services/calendarService';
-import { getDayTypeRule, timeToMinutes, formatDecimalHours } from '../utils/overtimeCalculator';
+import { getDayTypeRule, timeToMinutes, formatDecimalHours, calculateBreakHours } from '../utils/overtimeCalculator';
 
 interface ActivityDistributionPageProps {
   employees: AssignedEmployee[];
@@ -49,14 +49,18 @@ export function ActivityDistributionPage({
     { activityId: activityCodes[0]?.id || '', hours: dayRule.isAllOvertime ? 0 : Math.min(8, dayRule.standardCap) },
   ]);
 
-  // Filter only workers with check-in recorded
-  const checkedInWorkers = employees.filter((e) => entries[e.id]?.inTime);
+  // Filter only workers with BOTH check-in AND check-out recorded
+  const checkedInWorkers = employees.filter((e) => entries[e.id]?.inTime && entries[e.id]?.outTime);
+  const missingCheckoutWorkers = employees.filter((e) => entries[e.id]?.inTime && !entries[e.id]?.outTime);
 
-  // Helper: compute total shift hours from inTime & outTime
+  // Helper: compute effective shift hours from inTime & outTime (with 1h lunch deduction if gross >= 5.0h)
   const getShiftHours = (inTime: string | null, outTime: string | null): number => {
     if (!inTime || !outTime) return 0;
     const diff = timeToMinutes(outTime) - timeToMinutes(inTime);
-    return diff > 0 ? Math.round((diff / 60) * 100) / 100 : 0;
+    if (diff <= 0) return 0;
+    const grossHours = Math.round((diff / 60) * 100) / 100;
+    const breakHours = calculateBreakHours(grossHours);
+    return Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
   };
 
   // Helper: Get or initialize activities for an employee
@@ -65,10 +69,11 @@ export function ActivityDistributionPage({
     if (entry?.activities && entry.activities.length > 0) {
       return entry.activities;
     }
-    // Default to 1 activity row with standard hours
     const defaultActivityId = entry?.activityId || activityCodes[0]?.id || '';
     const shiftHours = getShiftHours(entry?.inTime, entry?.outTime);
-    const defaultHours = dayRule.isAllOvertime ? shiftHours : Math.min(shiftHours || 8, dayRule.standardCap);
+    const defaultHours = shiftHours > 0
+      ? (dayRule.isAllOvertime ? shiftHours : Math.min(shiftHours, dayRule.standardCap))
+      : 0;
     return [{ activityId: defaultActivityId, hours: defaultHours }];
   };
 
@@ -367,12 +372,22 @@ export function ActivityDistributionPage({
             </div>
           )}
 
+          {/* Incomplete shifts warning */}
+          {missingCheckoutWorkers.length > 0 && !isSubmitted && (
+            <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+              <span className="font-semibold text-amber-900">Incomplete Shifts:</span>
+              <span>
+                {missingCheckoutWorkers.length} worker(s) checked in but have no check-out time. You must go back to Checkout and record Out Time for all workers before submitting.
+              </span>
+            </div>
+          )}
+
           {/* List of Workers with Dynamic Activity Hour Distribution */}
           {checkedInWorkers.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
               <Clock size={36} className="mx-auto text-slate-300 mb-2" />
-              <p className="text-sm font-medium text-slate-700">No checked-in workers for today.</p>
-              <p className="text-xs text-slate-400 mt-1">Go back to Check-in to record morning arrival.</p>
+              <p className="text-sm font-medium text-slate-700">No completed shifts for today.</p>
+              <p className="text-xs text-slate-400 mt-1">Workers must have both Check-in and Check-out recorded to distribute activities.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -410,8 +425,13 @@ export function ActivityDistributionPage({
                       {/* Shift Hours & Status Pill */}
                       <div className="text-right flex-shrink-0">
                         <div className="flex items-center gap-1.5 justify-end">
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
-                            Shift: {formatDecimalHours(shiftHours)}
+                          {entry?.inTime && entry?.outTime && (timeToMinutes(entry.outTime) - timeToMinutes(entry.inTime)) >= 300 && (
+                            <span className="text-[10px] font-medium text-slate-500 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded" title="1-hour lunch break deducted">
+                              -1h lunch
+                            </span>
+                          )}
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
+                            Effective: {formatDecimalHours(shiftHours)}
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
@@ -535,13 +555,14 @@ export function ActivityDistributionPage({
             <button
               type="button"
               onClick={onSubmit}
-              disabled={isSubmitting || isSubmitted || checkedInWorkers.length === 0}
+              disabled={isSubmitting || isSubmitted || checkedInWorkers.length === 0 || missingCheckoutWorkers.length > 0}
               className={[
                 'font-medium text-sm rounded-lg px-4 min-h-[52px] transition-colors flex-[2] text-white',
                 isSubmitted
                   ? 'bg-green-600'
                   : 'bg-blue-700 hover:bg-blue-800 active:bg-blue-900 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed',
               ].join(' ')}
+              title={missingCheckoutWorkers.length > 0 ? 'All workers must have check-out time recorded before submitting' : undefined}
             >
               {isSubmitted
                 ? '✓ Day Submitted'

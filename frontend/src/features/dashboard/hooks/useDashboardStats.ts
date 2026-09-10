@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback } from 'react';
 import * as empSvc from '../../employees/services/employeeService';
 import * as supSvc from '../../supervisors/services/supervisorService';
 import * as asgnSvc from '../../assignments/services/assignmentService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 interface AttentionItem {
   id: string;
@@ -31,7 +32,8 @@ function formatDate(d: Date): string {
 }
 
 export function useDashboardStats(): DashboardStats {
-  const [stats, setStats] = useState<DashboardStats>({
+  const cached = cacheManager.get<DashboardStats>('dashboard:stats');
+  const [stats, setStats] = useState<DashboardStats>(() => cached ?? {
     totalEmployees: 0,
     activeSupervisors: 0,
     unassignedToday: 0,
@@ -40,7 +42,10 @@ export function useDashboardStats(): DashboardStats {
     isLoading: true,
   });
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh || !cacheManager.get('dashboard:stats')) {
+      setStats((prev) => ({ ...prev, isLoading: true }));
+    }
     try {
       const today = formatDate(new Date());
       const [employees, supervisors, assignments] = await Promise.all([
@@ -90,14 +95,16 @@ export function useDashboardStats(): DashboardStats {
         });
       }
 
-      setStats({
+      const newStats: DashboardStats = {
         totalEmployees: activeEmps.length,
         activeSupervisors: activeSups.length,
         unassignedToday: unassignedEmps.length,
         pendingSubmissions,
         attentionItems,
         isLoading: false,
-      });
+      };
+      cacheManager.set('dashboard:stats', newStats);
+      setStats(newStats);
     } catch {
       setStats((prev) => ({ ...prev, isLoading: false }));
     }

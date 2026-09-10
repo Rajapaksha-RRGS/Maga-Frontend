@@ -9,15 +9,19 @@ import type {
   BusinessPartnerFormData,
 } from '../services/businessPartnerService';
 import * as bpService from '../services/businessPartnerService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 export function useBusinessPartners() {
-  const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const cached = cacheManager.get<BusinessPartner[]>('business-partners:list');
+  const [partners, setPartners] = useState<BusinessPartner[]>(() => cached || []);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !cached);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh || !cacheManager.get('business-partners:list')) {
+      setIsLoading(true);
+    }
     try {
       const data = await bpService.getAll();
       setPartners(data);

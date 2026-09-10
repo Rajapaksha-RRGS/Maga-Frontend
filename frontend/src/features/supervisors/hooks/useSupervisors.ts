@@ -5,16 +5,20 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Supervisor, SupervisorCreateData } from '../services/supervisorService';
 import type { Employee } from '../../employees/services/employeeService';
 import * as svc from '../services/supervisorService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 export function useSupervisors() {
-  const [supervisors, setSupervisors] = useState<Supervisor[]>([]);
+  const cachedSups = cacheManager.get<Supervisor[]>('supervisors:list');
+  const [supervisors, setSupervisors] = useState<Supervisor[]>(() => cachedSups || []);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !cachedSups);
   const [search, setSearch] = useState('');
   const [tempPasswordResult, setTempPasswordResult] = useState<{ name: string; password: string } | null>(null);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh || !cacheManager.get('supervisors:list')) {
+      setIsLoading(true);
+    }
     try {
       const [sups, emps] = await Promise.all([svc.getAll(), svc.getAvailableEmployees()]);
       setSupervisors(sups);

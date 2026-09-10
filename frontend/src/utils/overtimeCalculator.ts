@@ -25,12 +25,25 @@
  */
 
 export interface OvertimeBreakdown {
-  totalHours: number;
+  grossHours: number;
+  breakHours: number;
+  effectiveHours: number;
+  totalHours: number; // alias for effectiveHours
   normalHours: number;
   overtimeHours: number;
   standardCap: number;
   isAllOvertime: boolean;
   dayTypeLabel: string;
+}
+
+/**
+ * Determine the lunch break deduction based on shift gross hours.
+ * Business Rule:
+ * - Shifts < 5.0 hours: No lunch break deducted (0.0 hr).
+ * - Shifts >= 5.0 hours: 1.0 hour deducted for lunch break (on all days: Mon-Sun).
+ */
+export function calculateBreakHours(grossHours: number): number {
+  return grossHours >= 5.0 ? 1.0 : 0.0;
 }
 
 /**
@@ -81,26 +94,36 @@ export function getDayTypeRule(
 export function calculateDailyHoursAndOT(
   dateStr: string,
   totalHours: number,
-  explicitDayType?: string
+  explicitDayType?: string,
+  breakHours: number = 0,
+  grossHours?: number
 ): OvertimeBreakdown {
+  const effectiveHours = totalHours;
+  const gross = grossHours !== undefined ? grossHours : effectiveHours + breakHours;
   const { standardCap, isAllOvertime, dayTypeLabel } = getDayTypeRule(dateStr, explicitDayType);
 
   if (isAllOvertime) {
     return {
-      totalHours,
+      grossHours: gross,
+      breakHours,
+      effectiveHours,
+      totalHours: effectiveHours,
       normalHours: 0.0,
-      overtimeHours: totalHours,
+      overtimeHours: effectiveHours,
       standardCap,
       isAllOvertime: true,
       dayTypeLabel,
     };
   }
 
-  const normalHours = Math.min(totalHours, standardCap);
-  const overtimeHours = Math.max(0, totalHours - standardCap);
+  const normalHours = Math.min(effectiveHours, standardCap);
+  const overtimeHours = Math.max(0, effectiveHours - standardCap);
 
   return {
-    totalHours,
+    grossHours: gross,
+    breakHours,
+    effectiveHours,
+    totalHours: effectiveHours,
     normalHours,
     overtimeHours,
     standardCap,
@@ -127,8 +150,9 @@ export function formatDecimalHours(decHours: number): string {
 }
 
 /**
- * Given check-in time and check-out time (e.g. "07:00" and "17:00"),
- * calculates live total hours, normal hours, and overtime hours according to site rules.
+ * Given check-in time and check-out time (e.g. "07:00" and "20:00"),
+ * calculates live gross hours, lunch break deduction (if >= 5h), effective hours,
+ * normal hours, and overtime hours according to site rules.
  */
 export function calculateShiftBreakdown(
   dateStr: string,
@@ -142,6 +166,9 @@ export function calculateShiftBreakdown(
 
   if (diffMins <= 0) return null;
 
-  const totalHours = Math.round((diffMins / 60) * 100) / 100;
-  return calculateDailyHoursAndOT(dateStr, totalHours, explicitDayType);
+  const grossHours = Math.round((diffMins / 60) * 100) / 100;
+  const breakHours = calculateBreakHours(grossHours);
+  const effectiveHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
+
+  return calculateDailyHoursAndOT(dateStr, effectiveHours, explicitDayType, breakHours, grossHours);
 }

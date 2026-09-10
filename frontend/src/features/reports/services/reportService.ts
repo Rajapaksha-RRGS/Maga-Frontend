@@ -45,12 +45,16 @@ export interface ReportFilters {
 export interface SummaryReportItem {
   id: string;
   employeeId: string;
+  employeeCode?: string;
+  callingName?: string;
+  employeeIdentifier?: string;
   employeeName: string;
   tradeGroup: string;
   businessPartner: string;
   totalDays: number;
   totalNormalHours: number;
   totalOtHours: number;
+  totalEffectiveHours?: number;
   totalHours: number;
 }
 
@@ -167,6 +171,7 @@ export interface RunningChartItem {
   businessPartner: string;
   inTime: string;
   outTime: string;
+  breakHours?: number;
   workHours: number;
   otHours: number;
   totalHours: number;
@@ -270,7 +275,35 @@ export async function getSummaryReport(filters: ReportFilters): Promise<SummaryR
   return cacheManager.fetchWithCache(cacheKey, async () => {
     try {
       const _r = await fetch(API_URL + '/reports/summary?' + buildParams(filters));
-      if (_r.ok) { const _d = await _r.json(); if (_d?.items) return _d as SummaryReportResponse; }
+      if (_r.ok) {
+        const _d = await _r.json();
+        if (_d?.items) {
+          const sanitizedItems: SummaryReportItem[] = _d.items.map((item: any) => {
+            let effective = item.totalEffectiveHours ?? item.totalHours;
+            let normal = item.totalNormalHours;
+            const ot = Number(item.totalOtHours) || 0;
+            // Guard against legacy backend where normalHours was shift total and ot was added on top
+            if (item.totalHours === normal + ot && normal > 0 && ot > 0 && !item.totalEffectiveHours) {
+              effective = normal;
+              normal = Math.max(0, effective - ot);
+            }
+            return {
+              ...item,
+              totalNormalHours: normal,
+              totalOtHours: ot,
+              totalEffectiveHours: effective,
+              totalHours: effective,
+            };
+          });
+          const totals = {
+            ..._d.totals,
+            totalHours: sanitizedItems.reduce((s, i) => s + i.totalHours, 0),
+            totalNormalHours: sanitizedItems.reduce((s, i) => s + i.totalNormalHours, 0),
+            totalOtHours: sanitizedItems.reduce((s, i) => s + i.totalOtHours, 0),
+          };
+          return { items: sanitizedItems, totals };
+        }
+      }
     } catch (_e) { console.warn('Backend unavailable, using mock summary report:', _e); }
     await delay(350);
 

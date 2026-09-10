@@ -4,17 +4,23 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { CalendarEntry, DayType } from '../services/calendarService';
 import * as svc from '../services/calendarService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 export function useCalendar() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth()); // 0-indexed
-  const [entries, setEntries] = useState<CalendarEntry[]>([]);
-  const [dayTypes, setDayTypes] = useState<DayType[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
+  const monthKey = `calendar:month:${year}:${month}`;
+  const [entries, setEntries] = useState<CalendarEntry[]>(() => cacheManager.get<CalendarEntry[]>(monthKey) || []);
+  const [dayTypes, setDayTypes] = useState<DayType[]>(() => cacheManager.get<DayType[]>('calendar:day-types') || []);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !cacheManager.get(monthKey) || !cacheManager.get('calendar:day-types'));
+
+  const load = useCallback(async (forceRefresh = false) => {
+    const currentMonthKey = `calendar:month:${year}:${month}`;
+    if (forceRefresh || !cacheManager.get(currentMonthKey) || !cacheManager.get('calendar:day-types')) {
+      setIsLoading(true);
+    }
     try {
       const [e, dt] = await Promise.all([
         svc.getCalendarMonth(year, month),

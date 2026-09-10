@@ -382,6 +382,13 @@ export function useTimeEntry(
 
   const submitDay = useCallback(
     async (supId: string, dt: string) => {
+      // Validate that all checked-in workers have check-out time recorded
+      const missingCheckout = Object.values(entries).filter((e) => e.inTime && !e.outTime);
+      if (missingCheckout.length > 0) {
+        alert('Cannot submit day: All checked-in workers must have their check-out time recorded before submission.');
+        return;
+      }
+
       setSubmitStatus('submitting');
       try {
         const res = await submitDayService({ supervisorId: supId, date: dt });

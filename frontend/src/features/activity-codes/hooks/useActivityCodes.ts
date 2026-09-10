@@ -4,15 +4,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { ActivityCode, ActivityCodeFormData } from '../services/activityCodeService';
 import * as svc from '../services/activityCodeService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 export function useActivityCodes() {
-  const [items, setItems] = useState<ActivityCode[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const cached = cacheManager.get<ActivityCode[]>('activity-codes:list');
+  const [items, setItems] = useState<ActivityCode[]>(() => cached || []);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !cached);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh || !cacheManager.get('activity-codes:list')) {
+      setIsLoading(true);
+    }
     try { setItems(await svc.getAll()); } finally { setIsLoading(false); }
   }, []);
 

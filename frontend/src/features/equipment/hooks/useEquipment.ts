@@ -4,15 +4,23 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Equipment, EquipmentFormData } from '../services/equipmentService';
 import * as svc from '../services/equipmentService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 export function useEquipment() {
-  const [items, setItems] = useState<Equipment[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [items, setItems] = useState<Equipment[]>(() => cacheManager.get<Equipment[]>('equipment:list') || []);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !cacheManager.get<Equipment[]>('equipment:list'));
   const [search, setSearch] = useState('');
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    try { setItems(await svc.getAll()); } finally { setIsLoading(false); }
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh || !cacheManager.get('equipment:list')) {
+      setIsLoading(true);
+    }
+    try {
+      const data = await svc.getAll();
+      setItems(data);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);

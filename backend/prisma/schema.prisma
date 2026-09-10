@@ -216,6 +216,7 @@ model TimeEntry {
   outTime            String?   @map("out_time") // e.g. "20:50"
   hours              Decimal   @default(0.00) @db.Decimal(5, 2)
   overtimeHours      Decimal   @default(0.00) @map("overtime_hours") @db.Decimal(5, 2)
+  breakHours         Decimal   @default(0.00) @map("break_hours") @db.Decimal(4, 2)
   remarks            String?
   status             String    @default("draft") // "draft" | "submitted"
   submittedAt        DateTime? @map("submitted_at")

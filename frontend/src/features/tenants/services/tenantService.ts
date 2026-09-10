@@ -59,6 +59,7 @@ export interface TenantUpdateInput {
 }
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 
 // Initial fallback mock data for testing if backend is offline
 const MOCK_TENANTS: TenantRecord[] = [
@@ -162,18 +163,20 @@ export function generateTempPassword(): string {
 }
 
 export async function getAllTenants(): Promise<TenantRecord[]> {
-  try {
-    const res = await fetch(`${API_URL}/tenants`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
+  return cacheManager.fetchWithCache('tenants:list', async () => {
+    try {
+      const res = await fetch(`${API_URL}/tenants`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data;
+        }
       }
+    } catch (err) {
+      console.warn('Backend unavailable, using mock tenant data', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using mock tenant data', err);
-  }
-  return localTenants;
+    return localTenants;
+  });
 }
 
 export async function registerTenant(
@@ -188,6 +191,7 @@ export async function registerTenant(
 
     if (res.ok) {
       const data = await res.json();
+      cacheManager.invalidate('tenants');
       return {
         tenant: data.tenant,
         tempPassword: data.tempPassword,
@@ -223,6 +227,7 @@ export async function registerTenant(
       },
     };
     localTenants = [newTenant, ...localTenants];
+    cacheManager.invalidate('tenants');
     return { tenant: newTenant, tempPassword };
   }
 }
@@ -238,6 +243,7 @@ export async function updateTenant(
       body: JSON.stringify(input),
     });
     if (res.ok) {
+      cacheManager.invalidate('tenants');
       return await res.json();
     }
   } catch (err) {
@@ -247,6 +253,7 @@ export async function updateTenant(
   localTenants = localTenants.map((t) =>
     t.id === id ? { ...t, ...input } : t
   );
+  cacheManager.invalidate('tenants');
   const found = localTenants.find((t) => t.id === id);
   if (!found) throw new Error('Tenant not found');
   return found;
@@ -263,6 +270,7 @@ export async function toggleTenantStatus(
       body: JSON.stringify({ status: newStatus }),
     });
     if (res.ok) {
+      cacheManager.invalidate('tenants');
       return await res.json();
     }
   } catch (err) {
@@ -272,6 +280,7 @@ export async function toggleTenantStatus(
   localTenants = localTenants.map((t) =>
     t.id === id ? { ...t, status: newStatus } : t
   );
+  cacheManager.invalidate('tenants');
   const found = localTenants.find((t) => t.id === id);
   if (!found) throw new Error('Tenant not found');
   return found;

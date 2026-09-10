@@ -201,14 +201,14 @@ export async function exportSummaryToExcel(
 
   // Column headers at Row 9
   const headers = [
-    'Employee Name',
+    'Employee Code',
     'Trade Group',
     'Business Partner',
-    'Total Days',
+    'Number of Work Days',
     'Normal Hours',
-    'OT Hours',
-    'Total Hours',
-    'Signature', // Blank signature column
+    'Total OT',
+    'Total Effective Hours',
+    'Signature', // Blank signature column at the end of each row
   ];
 
   const headerRow = ws.getRow(9);
@@ -231,24 +231,25 @@ export async function exportSummaryToExcel(
 
   // Column Widths
   ws.columns = [
-    { width: 26 }, // Employee Name
+    { width: 22 }, // Employee Code
     { width: 18 }, // Trade Group
     { width: 24 }, // Business Partner
-    { width: 14 }, // Total Days
-    { width: 14 }, // Normal Hours
-    { width: 14 }, // OT Hours
-    { width: 15 }, // Total Hours
-    { width: 20 }, // Signature (blank)
+    { width: 20 }, // Number of Work Days
+    { width: 16 }, // Normal Hours
+    { width: 16 }, // Total OT
+    { width: 22 }, // Total Effective Hours
+    { width: 24 }, // Signature (blank)
   ];
 
   // Data rows start at Row 10
   let currentRow = 10;
   data.items.forEach((item) => {
+    const empDisplay = item.employeeCode || item.callingName || item.employeeName || item.employeeId;
     const row = ws.getRow(currentRow);
     row.values = [
-      item.employeeName,
-      item.tradeGroup,
-      item.businessPartner,
+      empDisplay,
+      item.tradeGroup || '—',
+      item.businessPartner || 'Direct',
       item.totalDays,
       item.totalNormalHours,
       item.totalOtHours,
@@ -300,11 +301,11 @@ export async function exportSummaryToExcel(
     };
     cell.border = THIN_BORDER;
     if (colNumber === 4) cell.numFmt = '0';
-    if (colNumber >= 5 && colNumber <= 7) cell.numFmt = '0.00';
+    if (colNumber === 5 || colNumber === 6) cell.numFmt = '0.00';
   });
 
   // Footer
-  applyFooter(ws, currentRow, 8);
+  applyFooter(ws, currentRow, 7);
 
   const filename = `${tenant.subdomain}-summary-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
   await downloadWorkbook(workbook, filename);

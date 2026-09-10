@@ -24,6 +24,7 @@ export interface Equipment {
 export type EquipmentFormData = Omit<Equipment, 'id' | 'status'>;
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 15;
 
@@ -55,36 +56,40 @@ function mapEquipment(item: any): Equipment {
 }
 
 export async function getAll(): Promise<Equipment[]> {
-  try {
-    const res = await fetch(`${API_URL}/equipment`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        return data.map(mapEquipment);
+  return cacheManager.fetchWithCache('equipment:list', async () => {
+    try {
+      const res = await fetch(`${API_URL}/equipment`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          return data.map(mapEquipment);
+        }
       }
+    } catch (err) {
+      console.warn('Backend unavailable, using mock equipment list:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using mock equipment list:', err);
-  }
 
-  await delay(300);
-  return [...EQUIPMENT];
+    await delay(300);
+    return [...EQUIPMENT];
+  });
 }
 
 export async function getById(id: string): Promise<Equipment> {
-  try {
-    const res = await fetch(`${API_URL}/equipment/${id}`);
-    if (res.ok) {
-      const data = await res.json();
-      return mapEquipment(data);
+  return cacheManager.fetchWithCache(`equipment:id:${id}`, async () => {
+    try {
+      const res = await fetch(`${API_URL}/equipment/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        return mapEquipment(data);
+      }
+    } catch (err) {
+      console.warn('Backend unavailable, using mock equipment detail:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using mock equipment detail:', err);
-  }
 
-  const found = EQUIPMENT.find((e) => e.id === id);
-  if (!found) throw new Error('Equipment not found');
-  return found;
+    const found = EQUIPMENT.find((e) => e.id === id);
+    if (!found) throw new Error('Equipment not found');
+    return found;
+  });
 }
 
 export async function create(data: EquipmentFormData): Promise<Equipment> {
@@ -96,6 +101,7 @@ export async function create(data: EquipmentFormData): Promise<Equipment> {
     });
     if (res.ok) {
       const created = await res.json();
+      cacheManager.invalidate('equipment');
       return mapEquipment(created);
     }
   } catch (err) {
@@ -109,6 +115,7 @@ export async function create(data: EquipmentFormData): Promise<Equipment> {
     status: 'active',
   };
   EQUIPMENT.push(item);
+  cacheManager.invalidate('equipment');
   return item;
 }
 
@@ -121,6 +128,7 @@ export async function update(id: string, data: Partial<EquipmentFormData>): Prom
     });
     if (res.ok) {
       const updated = await res.json();
+      cacheManager.invalidate('equipment');
       return mapEquipment(updated);
     }
   } catch (err) {
@@ -131,6 +139,7 @@ export async function update(id: string, data: Partial<EquipmentFormData>): Prom
   const idx = EQUIPMENT.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error('Equipment not found');
   EQUIPMENT[idx] = { ...EQUIPMENT[idx], ...data };
+  cacheManager.invalidate('equipment');
   return EQUIPMENT[idx];
 }
 
@@ -143,6 +152,7 @@ export async function deactivate(id: string): Promise<Equipment> {
     });
     if (res.ok) {
       const updated = await res.json();
+      cacheManager.invalidate('equipment');
       return mapEquipment(updated);
     }
   } catch (err) {
@@ -153,6 +163,7 @@ export async function deactivate(id: string): Promise<Equipment> {
   const idx = EQUIPMENT.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error('Equipment not found');
   EQUIPMENT[idx].status = 'inactive';
+  cacheManager.invalidate('equipment');
   return EQUIPMENT[idx];
 }
 
@@ -161,11 +172,15 @@ export async function deleteEquipment(id: string): Promise<void> {
     const res = await fetch(`${API_URL}/equipment/${id}`, {
       method: 'DELETE',
     });
-    if (res.ok) return;
+    if (res.ok) {
+      cacheManager.invalidate('equipment');
+      return;
+    }
   } catch (err) {
     console.warn('Backend unavailable, deleting equipment locally:', err);
   }
 
   const idx = EQUIPMENT.findIndex((e) => e.id === id);
   if (idx !== -1) EQUIPMENT.splice(idx, 1);
+  cacheManager.invalidate('equipment');
 }

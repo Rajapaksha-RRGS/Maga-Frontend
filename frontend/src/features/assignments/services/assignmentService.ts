@@ -35,6 +35,7 @@ export interface RecentGangSummary {
 }
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 10;
 
@@ -78,24 +79,26 @@ function initMockData() {
 initMockData();
 
 export async function getForDate(date: string): Promise<Assignment[]> {
-  try {
-    const res = await fetch(`${API_URL}/assignments?date=${encodeURIComponent(date)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        return data.map((a: any) => ({
-          id: a.id,
-          date: a.date || date,
-          supervisorId: a.supervisorId,
-          employeeId: a.employeeId,
-        }));
+  return cacheManager.fetchWithCache(`assignments:date:${date}`, async () => {
+    try {
+      const res = await fetch(`${API_URL}/assignments?date=${encodeURIComponent(date)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          return data.map((a: any) => ({
+            id: a.id,
+            date: a.date || date,
+            supervisorId: a.supervisorId,
+            employeeId: a.employeeId,
+          }));
+        }
       }
+    } catch (err) {
+      console.warn('Backend unavailable, using fallback assignments:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using fallback assignments:', err);
-  }
-  await delay(200);
-  return [...(ASSIGNMENTS.get(date) ?? [])];
+    await delay(200);
+    return [...(ASSIGNMENTS.get(date) ?? [])];
+  });
 }
 
 export async function assign(date: string, supervisorId: string, employeeIds: string[]): Promise<Assignment[]> {
@@ -107,6 +110,8 @@ export async function assign(date: string, supervisorId: string, employeeIds: st
     });
     if (res.ok) {
       const data = await res.json();
+      cacheManager.invalidate('assignments');
+      cacheManager.invalidate('dashboard');
       return data.assignments || [];
     }
   } catch (err) {
@@ -128,6 +133,8 @@ export async function assign(date: string, supervisorId: string, employeeIds: st
     created.push(a);
   }
   ASSIGNMENTS.set(date, existing);
+  cacheManager.invalidate('assignments');
+  cacheManager.invalidate('dashboard');
   return created;
 }
 
@@ -136,7 +143,11 @@ export async function unassign(date: string, assignmentId: string): Promise<void
     const res = await fetch(`${API_URL}/assignments/${encodeURIComponent(assignmentId)}`, {
       method: 'DELETE',
     });
-    if (res.ok) return;
+    if (res.ok) {
+      cacheManager.invalidate('assignments');
+      cacheManager.invalidate('dashboard');
+      return;
+    }
   } catch (err) {
     console.warn('Backend unavailable, unassigning locally:', err);
   }
@@ -144,6 +155,8 @@ export async function unassign(date: string, assignmentId: string): Promise<void
   await delay(200);
   const existing = ASSIGNMENTS.get(date) ?? [];
   ASSIGNMENTS.set(date, existing.filter((a) => a.id !== assignmentId));
+  cacheManager.invalidate('assignments');
+  cacheManager.invalidate('dashboard');
 }
 
 export async function copyFromDate(sourceDate: string, destDate: string, supervisorIds?: string[]): Promise<number> {
@@ -155,6 +168,8 @@ export async function copyFromDate(sourceDate: string, destDate: string, supervi
     });
     if (res.ok) {
       const data = await res.json();
+      cacheManager.invalidate('assignments');
+      cacheManager.invalidate('dashboard');
       return data.copiedCount ?? 0;
     }
   } catch (err) {
@@ -180,6 +195,8 @@ export async function copyFromDate(sourceDate: string, destDate: string, supervi
     }
   }
   ASSIGNMENTS.set(destDate, destExisting);
+  cacheManager.invalidate('assignments');
+  cacheManager.invalidate('dashboard');
   return count;
 }
 
@@ -247,9 +264,11 @@ export async function getAssignmentContext(): Promise<{
   employees: Employee[];
   supervisors: Supervisor[];
 }> {
-  const [employees, supervisors] = await Promise.all([empSvc.getAll(), supSvc.getAll()]);
-  return {
-    employees: employees.filter((e) => e.status === 'active'),
-    supervisors: supervisors.filter((s) => s.status === 'active'),
-  };
+  return cacheManager.fetchWithCache('assignments:context', async () => {
+    const [employees, supervisors] = await Promise.all([empSvc.getAll(), supSvc.getAll()]);
+    return {
+      employees: employees.filter((e) => e.status === 'active'),
+      supervisors: supervisors.filter((s) => s.status === 'active'),
+    };
+  });
 }

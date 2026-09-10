@@ -24,6 +24,7 @@ export interface CalendarEntry {
 }
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const FIXED_DAY_TYPES: DayType[] = [
@@ -66,55 +67,60 @@ initCalendarForMonth(now.getFullYear(), now.getMonth());
 // ── 1. Day types ─────────────────────────────────────────────────────────────
 
 export async function getDayTypes(): Promise<DayType[]> {
-  try {
-    const res = await fetch(`${API_URL}/calendar/day-types`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
+  return cacheManager.fetchWithCache('calendar:day-types', async () => {
+    try {
+      const res = await fetch(`${API_URL}/calendar/day-types`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data;
+        }
       }
+    } catch (err) {
+      console.warn('Backend unavailable, using mock day types:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using mock day types:', err);
-  }
 
-  await delay(100);
-  return [...FIXED_DAY_TYPES];
+    await delay(100);
+    return [...FIXED_DAY_TYPES];
+  });
 }
 
 // ── 2. Calendar entries ──────────────────────────────────────────────────────
 
 export async function getCalendarMonth(year: number, month: number): Promise<CalendarEntry[]> {
-  try {
-    const res = await fetch(`${API_URL}/calendar?year=${year}&month=${month}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
+  return cacheManager.fetchWithCache(`calendar:month:${year}:${month}`, async () => {
+    try {
+      const res = await fetch(`${API_URL}/calendar?year=${year}&month=${month}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data;
+        }
       }
+    } catch (err) {
+      console.warn('Backend unavailable, using mock calendar month:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using mock calendar month:', err);
-  }
 
-  await delay(150);
-  initCalendarForMonth(year, month);
-  const entries: CalendarEntry[] = [];
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  for (let d = 1; d <= daysInMonth; d++) {
-    const date = new Date(year, month, d);
-    const key = formatDate(date);
-    entries.push({
-      date: key,
-      dayTypeId: CALENDAR.get(key) ?? (date.getDay() === 0 ? 'dt-sunday' : date.getDay() === 6 ? 'dt-saturday' : 'dt-normal'),
-    });
-  }
-  return entries;
+    await delay(150);
+    initCalendarForMonth(year, month);
+    const entries: CalendarEntry[] = [];
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(year, month, d);
+      const key = formatDate(date);
+      entries.push({
+        date: key,
+        dayTypeId: CALENDAR.get(key) ?? (date.getDay() === 0 ? 'dt-sunday' : date.getDay() === 6 ? 'dt-saturday' : 'dt-normal'),
+      });
+    }
+    return entries;
+  });
 }
 
 export async function setCalendarDayType(date: string, dayTypeId: string): Promise<void> {
   // Update local cache immediately
   CALENDAR.set(date, dayTypeId);
+  cacheManager.invalidate('calendar');
 
   try {
     await fetch(`${API_URL}/calendar/set-day`, {
@@ -128,6 +134,7 @@ export async function setCalendarDayType(date: string, dayTypeId: string): Promi
 }
 
 export async function bulkMarkSundays(year: number, month: number): Promise<number> {
+  cacheManager.invalidate('calendar');
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const entries: CalendarEntry[] = [];
 
@@ -160,6 +167,7 @@ export async function bulkMarkSundays(year: number, month: number): Promise<numb
 }
 
 export async function bulkMarkSaturdays(year: number, month: number): Promise<number> {
+  cacheManager.invalidate('calendar');
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const entries: CalendarEntry[] = [];
 

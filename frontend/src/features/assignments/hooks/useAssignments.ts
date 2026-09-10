@@ -8,6 +8,7 @@ import type { Employee } from '../../employees/services/employeeService';
 import type { Supervisor } from '../../supervisors/services/supervisorService';
 import * as svc from '../services/assignmentService';
 import { getBusinessPartners, getTradeGroups } from '../../employees/services/employeeService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 function formatDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -20,18 +21,26 @@ function prevDateStr(dateStr: string): string {
 }
 
 export function useAssignments() {
-  const [selectedDate, setSelectedDate] = useState(formatDate(new Date()));
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [supervisors, setSupervisors] = useState<Supervisor[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const initialDate = formatDate(new Date());
+  const [selectedDate, setSelectedDate] = useState(initialDate);
+
+  const initialAsgn = cacheManager.get<Assignment[]>(`assignments:date:${initialDate}`) || [];
+  const initialCtx = cacheManager.get<{ employees: Employee[]; supervisors: Supervisor[] }>('assignments:context');
+
+  const [assignments, setAssignments] = useState<Assignment[]>(initialAsgn);
+  const [employees, setEmployees] = useState<Employee[]>(initialCtx?.employees || []);
+  const [supervisors, setSupervisors] = useState<Supervisor[]>(initialCtx?.supervisors || []);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !cacheManager.get(`assignments:date:${initialDate}`) || !initialCtx);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set());
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [employeeBPFilter, setEmployeeBPFilter] = useState('');
   const [employeeTGFilter, setEmployeeTGFilter] = useState('');
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
+  const load = useCallback(async (forceRefresh = false) => {
+    const hasCachedData = cacheManager.get(`assignments:date:${selectedDate}`) && cacheManager.get('assignments:context');
+    if (forceRefresh || !hasCachedData) {
+      setIsLoading(true);
+    }
     try {
       const [asgn, ctx] = await Promise.all([
         svc.getForDate(selectedDate),

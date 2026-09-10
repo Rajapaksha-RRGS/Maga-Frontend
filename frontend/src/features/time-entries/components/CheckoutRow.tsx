@@ -71,10 +71,18 @@ export function CheckoutRow({
 
         {/* Live Hours & OT Badge */}
         {breakdown && (
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+            {breakdown.breakHours > 0 && (
+              <span
+                className="text-[11px] font-medium text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded"
+                title={`${formatDecimalHours(breakdown.grossHours)} gross - 1h lunch = ${formatDecimalHours(breakdown.effectiveHours)} effective`}
+              >
+                -1h lunch
+              </span>
+            )}
             {breakdown.isAllOvertime ? (
               <span className="text-xs font-semibold px-2 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200">
-                {formatDecimalHours(breakdown.totalHours)} (Full OT)
+                {formatDecimalHours(breakdown.effectiveHours)} (Full OT)
               </span>
             ) : breakdown.overtimeHours > 0 ? (
               <div className="flex items-center gap-1 text-xs">
@@ -87,7 +95,7 @@ export function CheckoutRow({
               </div>
             ) : (
               <span className="text-sm font-medium text-blue-700 tabular-nums">
-                {formatDecimalHours(breakdown.totalHours)}
+                {formatDecimalHours(breakdown.effectiveHours)}
               </span>
             )}
           </div>
