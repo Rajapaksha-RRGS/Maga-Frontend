@@ -14,7 +14,7 @@ export interface Tenant {
 }
 
 
-const API_URL = import.meta.env.VITE_API_BASE_URL;
+import { API_URL } from '../../../config/api';
 
 export async function login(
   tenantSubdomain: string,

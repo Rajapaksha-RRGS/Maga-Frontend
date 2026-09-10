@@ -1,4 +1,4 @@
-﻿/**
+/**
  * businessPartnerService.ts
  *
  * Real API service for Business Partners (contractors & subcontractors)
@@ -38,7 +38,7 @@ export interface BusinessPartnerFormData {
   status?: 'active' | 'inactive';
 }
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_URL } from '../../../config/api';
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Backend response mapper

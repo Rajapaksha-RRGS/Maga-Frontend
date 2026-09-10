@@ -19,7 +19,7 @@ export interface ActivityCode {
 
 export type ActivityCodeFormData = Omit<ActivityCode, 'id'>;
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_URL } from '../../../config/api';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 24;
 

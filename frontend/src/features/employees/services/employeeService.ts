@@ -44,7 +44,7 @@ export interface EmployeeFormData {
   epfNo?: string;
 }
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_URL } from '../../../config/api';
 
 
 function mapEmployee(raw: any): Employee {

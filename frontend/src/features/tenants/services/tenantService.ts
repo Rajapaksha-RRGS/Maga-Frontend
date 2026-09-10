@@ -58,7 +58,7 @@ export interface TenantUpdateInput {
   email?: string;
 }
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_URL } from '../../../config/api';
 
 // Initial fallback mock data for testing if backend is offline
 const MOCK_TENANTS: TenantRecord[] = [
