@@ -35,6 +35,10 @@ app.use('/api/equipment', equipmentRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/tenants', tenantRoutes);
 
+app.get('/', (req, res) => {
+  res.json({ status: "success", message: "Maga Backend API is running perfectly!" });
+});
+
 // Health check endpoint
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({
