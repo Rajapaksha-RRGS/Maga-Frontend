@@ -1,7 +1,4 @@
-/**
- * EmployeeCardList.tsx — Mobile card rendering for employee list.
- * Visible below md only (hidden on md+ via CardList).
- */
+
 import CardList from '../../../components/CardList';
 import StatusBadge from '../../../components/StatusBadge';
 import type { Employee } from '../services/employeeService';
