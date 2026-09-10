@@ -19,7 +19,16 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middlewares
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://v0-shaders-landing-page-pearl-xi.vercel.app', // Frontend URL එක
+    'http://localhost:5173',
+    'http://localhost:3000',
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 
 // API Routes
@@ -34,17 +43,6 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/equipment', equipmentRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/tenants', tenantRoutes);
-
-app.use(cors({
-  origin: [
-    'https://v0-shaders-landing-page-pearl-xi.vercel.app', // Frontend URL එක
-    'http://localhost:5173',
-    'http://localhost:3000'
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
 
 app.get('/', (req, res) => {
   res.json({ status: "success", message: "Maga Backend API is running perfectly!" });

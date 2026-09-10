@@ -21,7 +21,16 @@ dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5000;
 // Middlewares
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin: [
+        'https://v0-shaders-landing-page-pearl-xi.vercel.app', // Frontend URL එක
+        'http://localhost:5173',
+        'http://localhost:3000',
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express_1.default.json());
 // API Routes
 app.use('/api/auth', authRoutes_1.default);
@@ -35,6 +44,9 @@ app.use('/api/reports', reportRoutes_1.default);
 app.use('/api/equipment', equipmentRoutes_1.default);
 app.use('/api/calendar', calendarRoutes_1.default);
 app.use('/api/tenants', tenantRoutes_1.default);
+app.get('/', (req, res) => {
+    res.json({ status: "success", message: "Maga Backend API is running perfectly!" });
+});
 // Health check endpoint
 app.get('/api/health', (req, res) => {
     res.json({
@@ -52,3 +64,4 @@ app.listen(PORT, () => {
     console.log(`📋 Health Check: http://localhost:${PORT}/api/health`);
     console.log(`👥 Employees API: http://localhost:${PORT}/api/employees`);
 });
+exports.default = app;
