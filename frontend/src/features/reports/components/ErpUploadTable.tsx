@@ -72,6 +72,7 @@ export default function ErpUploadTable({ data }: Props) {
             <tbody className="divide-y divide-slate-100 font-sans">
               {rows.map((row) => {
                 const isOtRow = row.activityCode.toUpperCase() === 'OT';
+                const isZidleRow = row.activityCode.toUpperCase() === 'ZIDLE';
 
                 return (
                   <tr
@@ -79,6 +80,8 @@ export default function ErpUploadTable({ data }: Props) {
                     className={`transition-colors text-xs ${
                       isOtRow
                         ? 'bg-amber-50/50 hover:bg-amber-50/80 font-medium'
+                        : isZidleRow
+                        ? 'bg-rose-50/40 hover:bg-rose-50/70 font-medium'
                         : 'hover:bg-slate-50/80'
                     }`}
                   >
@@ -99,6 +102,15 @@ export default function ErpUploadTable({ data }: Props) {
                             Overtime (&gt; 8.0 hrs)
                           </span>
                         </div>
+                      ) : isZidleRow ? (
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-100 border border-rose-300 font-mono text-xs font-bold text-rose-800">
+                            ZIDLE
+                          </span>
+                          <span className="text-rose-700 text-xs italic font-sans">
+                            Idle / Balancing Hours
+                          </span>
+                        </div>
                       ) : (
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-xs font-medium text-slate-800">
@@ -110,9 +122,15 @@ export default function ErpUploadTable({ data }: Props) {
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-800 font-medium">
+                    <td className={`px-4 py-3 text-right tabular-nums font-medium ${
+                      isZidleRow ? 'text-rose-700 font-bold' : 'text-slate-800'
+                    }`}>
                       {isOtRow ? (
                         <span className="text-slate-300">—</span>
+                      ) : isZidleRow ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-100/90 border border-rose-300 text-rose-700 font-mono text-xs font-bold">
+                          {row.hours < 0 ? `(${Math.abs(row.hours).toFixed(2)})` : `(${row.hours.toFixed(2)})`}
+                        </span>
                       ) : (
                         row.hours.toFixed(2)
                       )}

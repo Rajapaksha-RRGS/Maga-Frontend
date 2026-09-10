@@ -483,6 +483,25 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
       const dateKey = first.date.toISOString().split('T')[0];
       const { standardCap, isAllOvertime, label } = getDayTypeRule(dateKey);
 
+      // Determine physical shift effective hours (Gross hours - Lunch break)
+      const inTime = groupEntries.find((e) => e.inTime)?.inTime;
+      const outTime = groupEntries.find((e) => e.outTime)?.outTime;
+      let shiftEffectiveHours = 0;
+
+      if (inTime && outTime) {
+        const [inH, inM] = inTime.split(':').map(Number);
+        const [outH, outM] = outTime.split(':').map(Number);
+        const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+        if (diffMins > 0) {
+          const grossH = diffMins / 60;
+          let breakH = Number(groupEntries.find((e) => e.breakHours !== null)?.breakHours) || 0;
+          if (breakH === 0 && grossH >= 5.0) {
+            breakH = 1.0;
+          }
+          shiftEffectiveHours = Math.max(0, Math.round((grossH - breakH) * 100) / 100);
+        }
+      }
+
       let totalDayHours = 0;
 
       // Regular activity rows
@@ -503,12 +522,32 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
         totalHours += hours;
       }
 
-      // Calculate OT line based on day type calendar rules
+      // ── ZIDLE Balancing Row ────────────────────────────────────────────────
+      // When sum of activity hours exceeds actual physical effective shift hours,
+      // an offsetting ZIDLE line with negative hours balances the ERP record.
+      if (shiftEffectiveHours > 0 && totalDayHours > shiftEffectiveHours) {
+        const excessHours = Math.round((totalDayHours - shiftEffectiveHours) * 100) / 100;
+        finalRows.push({
+          id: `erp-zidle-${first.employeeId}-${dateKey}`,
+          employeeId: first.employee.employeeCode || first.employeeId,
+          employeeName: first.employee.fullName || first.employee.callingName,
+          date: dateKey,
+          activityCode: 'ZIDLE',
+          activityDescription: 'Idle / Balancing Hours',
+          hours: -excessHours,
+          overtimeHours: 0,
+          remarks: 'Balancing adjustment (exceeds effective shift)',
+        });
+        totalHours -= excessHours;
+      }
+
+      // Calculate OT line based on day type calendar rules on the effective hours
+      const effectiveForOt = shiftEffectiveHours > 0 ? shiftEffectiveHours : totalDayHours;
       let otHours = 0;
       if (isAllOvertime) {
-        otHours = totalDayHours; // Sunday/Holiday: 100% OT
-      } else if (totalDayHours > standardCap) {
-        otHours = parseFloat((totalDayHours - standardCap).toFixed(2));
+        otHours = effectiveForOt; // Sunday/Holiday: 100% OT
+      } else if (effectiveForOt > standardCap) {
+        otHours = parseFloat((effectiveForOt - standardCap).toFixed(2));
       }
 
       // Also check explicit overtimeHours stored in entries

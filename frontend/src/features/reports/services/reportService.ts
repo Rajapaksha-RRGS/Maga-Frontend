@@ -559,12 +559,11 @@ export async function getBpBillReport(filters: ReportFilters): Promise<BpBillRes
 // ── 4. GET ERP Upload Export Preview ─────────────────────────────────────────
 
 const MOCK_ERP_ROWS: ErpUploadRow[] = [
-  // ── Records from Labour Entry Sheet (Photo Sample - August 2026) ───────────
-  { id: 'erp-photo-01', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-08-01', activityCode: '00-00-11-11-M', activityDescription: 'Road Sub-base Preparation', hours: 2.5, overtimeHours: 0, remarks: '' },
-  { id: 'erp-photo-02', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-08-01', activityCode: '00-00-11-12',   activityDescription: 'Aggregate Base Laying',       hours: 3.0, overtimeHours: 0, remarks: '' },
-  { id: 'erp-photo-03', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-08-01', activityCode: '00-00-11-16-M', activityDescription: 'Asphalt Compaction',          hours: 2.0, overtimeHours: 0, remarks: '' },
-  { id: 'erp-photo-04', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-08-01', activityCode: '00-00-11-34',   activityDescription: 'Drainage Culvert Work',       hours: 5.0, overtimeHours: 0, remarks: '' },
-  { id: 'erp-photo-05', employeeId: 'HK031', employeeName: 'Lab Helper HK031', date: '2026-08-01', activityCode: '00-00-11-34',   activityDescription: 'Drainage Culvert Work',       hours: 12.5, overtimeHours: 0, remarks: '' },
+  // ── Records from Labour Entry Sheet (Photo Sample - July/August 2026) ───────────
+  { id: 'erp-photo-01', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-07-30', activityCode: '00-00-11-12-M', activityDescription: 'Aggregate Base Laying',       hours: 5.0,  overtimeHours: 0, remarks: '' },
+  { id: 'erp-photo-02', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-07-30', activityCode: '00-00-11-34',   activityDescription: 'Drainage Culvert Work',       hours: 11.5, overtimeHours: 0, remarks: '' },
+  { id: 'erp-photo-03', employeeId: 'HK030', employeeName: 'Lab Helper HK030', date: '2026-07-30', activityCode: 'ZIDLE',         activityDescription: 'Idle / Balancing Hours',       hours: -5.0, overtimeHours: 0, remarks: 'Balancing adjustment' },
+  { id: 'erp-photo-05', employeeId: 'HK031', employeeName: 'Lab Helper HK031', date: '2026-07-30', activityCode: '00-00-11-34',   activityDescription: 'Drainage Culvert Work',       hours: 11.5, overtimeHours: 0, remarks: '' },
   // ── Existing General Records (with total hours inclusive of OT) ─────────────
   { id: 'erp-001', employeeId: 'HI101', employeeName: 'Kamal Perera',          date: '2026-08-01', activityCode: '01-10-10-00', activityDescription: 'Excavation & Earthwork',       hours: 8.0, overtimeHours: 0,   remarks: '' },
   { id: 'erp-002', employeeId: 'HI101', employeeName: 'Kamal Perera',          date: '2026-08-02', activityCode: '01-20-10-00', activityDescription: 'Concrete Work - Substructure', hours: 10.0, overtimeHours: 2.0, remarks: '' },

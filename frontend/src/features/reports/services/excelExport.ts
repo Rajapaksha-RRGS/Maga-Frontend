@@ -798,6 +798,7 @@ export async function exportErpUploadToExcel(
   exportRows.forEach((rowItem) => {
     const row = ws.getRow(currentRow);
     const isOt = rowItem.activityCode.toUpperCase() === 'OT';
+    const isZidle = rowItem.activityCode.toUpperCase() === 'ZIDLE';
 
     row.values = [
       rowItem.employeeId,
@@ -812,7 +813,7 @@ export async function exportErpUploadToExcel(
     row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
     row.getCell(3).alignment = { horizontal: 'left', vertical: 'middle' };
     row.getCell(4).alignment = { horizontal: 'right', vertical: 'middle' };
-    if (rowItem.hours !== null) row.getCell(4).numFmt = '0.00';
+    if (rowItem.hours !== null) row.getCell(4).numFmt = '0.00;[Red](0.00)';
     row.getCell(5).alignment = { horizontal: 'right', vertical: 'middle' };
     if (rowItem.overtimeHours !== null) row.getCell(5).numFmt = '0.00';
     row.getCell(6).alignment = { horizontal: 'left', vertical: 'middle' };
@@ -821,11 +822,28 @@ export async function exportErpUploadToExcel(
       cell.font = {
         name: 'Calibri',
         size: 9.5,
-        bold: isOt,
-        color: { argb: isOt ? 'FF9A3412' : 'FF0F172A' },
+        bold: isOt || isZidle,
+        color: { argb: isOt ? 'FF9A3412' : isZidle ? 'FF4338CA' : 'FF0F172A' },
       };
       cell.border = DOTTED_BORDER;
     });
+
+    // Special styling for ZIDLE hours cell: Red background with white text matching photo
+    if (isZidle) {
+      const zidleHoursCell = row.getCell(4);
+      zidleHoursCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFDC2626' }, // Red background
+      };
+      zidleHoursCell.font = {
+        name: 'Calibri',
+        size: 9.5,
+        bold: true,
+        color: { argb: 'FFFFFFFF' }, // White bold text
+      };
+      zidleHoursCell.numFmt = '0.00;(0.00)';
+    }
 
     currentRow++;
   });
