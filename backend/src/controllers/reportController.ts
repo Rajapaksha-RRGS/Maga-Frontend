@@ -560,3 +560,155 @@ export const getReportFilterOptions = async (req: Request, res: Response): Promi
     res.status(500).json({ error: 'Failed to fetch filter options' });
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. RUNNING CHART REPORT
+// GET /api/reports/running-chart?dateFrom=&dateTo=&employeeQuery=&businessPartner=&activityCode=&tenantId=
+// ─────────────────────────────────────────────────────────────────────────────
+export const getRunningChartReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const dateFrom = qStr(req.query.dateFrom);
+    const dateTo = qStr(req.query.dateTo);
+    const employeeQuery = qStr(req.query.employeeQuery);
+    const businessPartner = qStr(req.query.businessPartner);
+    const activityCode = qStr(req.query.activityCode);
+
+    const dateFilter = buildDateFilter(dateFrom, dateTo);
+
+    const entries = await prisma.timeEntry.findMany({
+      where: {
+        tenantId,
+        ...(dateFilter ? { date: dateFilter } : {}),
+        ...(businessPartner
+          ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
+          : {}),
+        ...(employeeQuery
+          ? {
+              employee: {
+                OR: [
+                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+                  { fullName: { contains: employeeQuery, mode: 'insensitive' } },
+                  { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
+                ],
+              },
+            }
+          : {}),
+        ...(activityCode
+          ? { activity: { code: { contains: activityCode, mode: 'insensitive' } } }
+          : {}),
+      },
+      include: {
+        employee: { include: { businessPartner: true } },
+        supervisor: { select: { id: true, fullName: true, username: true } },
+        activity: { select: { id: true, code: true, description: true } },
+      },
+      orderBy: [{ date: 'desc' }, { employee: { employeeCode: 'asc' } }],
+    });
+
+    // Group by EmployeeId + Date
+    const grouped = new Map<string, typeof entries>();
+    for (const entry of entries) {
+      const dateKey = entry.date.toISOString().split('T')[0];
+      const key = `${entry.employeeId}___${dateKey}`;
+      const list = grouped.get(key) || [];
+      list.push(entry);
+      grouped.set(key, list);
+    }
+
+    const items = [];
+    let grandWorkHours = 0;
+    let grandOtHours = 0;
+    let grandTotalHours = 0;
+
+    for (const [key, groupEntries] of grouped.entries()) {
+      const first = groupEntries[0];
+      const dateKey = first.date.toISOString().split('T')[0];
+
+      // Resolve In / Out time
+      const inTime = groupEntries.find((e) => e.inTime)?.inTime || '—';
+      const outTime = groupEntries.find((e) => e.outTime)?.outTime || '—';
+
+      // Activities breakdown
+      const activitiesMap = new Map<string, { code: string; description: string; hours: number }>();
+      for (const e of groupEntries) {
+        const code = e.activity?.code || '00-00-11-11-M';
+        const desc = e.activity?.description || code;
+        const h = Number(e.hours) || 0;
+        if (h > 0) {
+          const prev = activitiesMap.get(code) || { code, description: desc, hours: 0 };
+          prev.hours += h;
+          activitiesMap.set(code, prev);
+        }
+      }
+
+      const activities = Array.from(activitiesMap.values()).map((a) => ({
+        code: a.code,
+        description: a.description,
+        hours: Math.round(a.hours * 100) / 100,
+      }));
+
+      const activitiesDisplay = activities.length > 0
+        ? activities.map((a) => `${a.code} (${a.hours.toFixed(1)}h)`).join(', ')
+        : '—';
+
+      const totalDayHours = activities.reduce((sum, a) => sum + a.hours, 0) ||
+        groupEntries.reduce((sum, e) => sum + (Number(e.hours) || 0), 0);
+
+      const { standardCap, isAllOvertime } = getDayTypeRule(dateKey);
+      let workHours = 0;
+      let otHours = 0;
+
+      if (isAllOvertime) {
+        workHours = 0;
+        otHours = totalDayHours;
+      } else {
+        workHours = Math.min(totalDayHours, standardCap);
+        otHours = totalDayHours > standardCap ? totalDayHours - standardCap : 0;
+      }
+
+      const explicitOt = groupEntries.reduce((s, e) => s + (Number(e.overtimeHours) || 0), 0);
+      if (explicitOt > otHours) otHours = explicitOt;
+
+      workHours = Math.round(workHours * 100) / 100;
+      otHours = Math.round(otHours * 100) / 100;
+      const totalHours = Math.round((workHours + otHours) * 100) / 100;
+
+      grandWorkHours += workHours;
+      grandOtHours += otHours;
+      grandTotalHours += totalHours;
+
+      const supervisorName = first.supervisor?.fullName ||
+        (first.supervisor?.username ? `@${first.supervisor.username}` : 'Site Supervisor');
+
+      items.push({
+        id: `rc-${key}`,
+        date: dateKey,
+        supervisorName,
+        employeeCode: first.employee.employeeCode || first.employeeId,
+        callingName: first.employee.callingName || first.employee.fullName || '—',
+        businessPartner: first.employee.businessPartner?.name || 'Direct',
+        inTime,
+        outTime,
+        workHours,
+        otHours,
+        totalHours,
+        activities,
+        activitiesDisplay,
+      });
+    }
+
+    res.json({
+      items,
+      totals: {
+        totalRecords: items.length,
+        totalWorkHours: Math.round(grandWorkHours * 100) / 100,
+        totalOtHours: Math.round(grandOtHours * 100) / 100,
+        totalHours: Math.round(grandTotalHours * 100) / 100,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching running chart report:', error);
+    res.status(500).json({ error: 'Failed to generate running chart report' });
+  }
+};

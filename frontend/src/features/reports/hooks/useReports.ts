@@ -15,6 +15,7 @@ import type {
   DayOtSummaryResponse,
   BpBillResponse,
   ErpUploadResponse,
+  RunningChartResponse,
 } from '../services/reportService';
 import * as svc from '../services/reportService';
 
@@ -39,6 +40,7 @@ export function useReports() {
   const [dayOtData, setDayOtData] = useState<DayOtSummaryResponse | null>(null);
   const [bpBillData, setBpBillData] = useState<BpBillResponse | null>(null);
   const [erpData, setErpData] = useState<ErpUploadResponse | null>(null);
+  const [runningChartData, setRunningChartData] = useState<RunningChartResponse | null>(null);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -97,6 +99,9 @@ export function useReports() {
       } else if (activeTab === 'erp-upload') {
         const res = await svc.getErpUploadReport(filters);
         setErpData(res);
+      } else if (activeTab === 'running-chart') {
+        const res = await svc.getRunningChartReport(filters);
+        setRunningChartData(res);
       }
     } catch (err) {
       console.error('Failed to run report query:', err);
@@ -136,8 +141,9 @@ export function useReports() {
     if (activeTab === 'day-ot-summary') return !!dayOtData && dayOtData.items.length > 0;
     if (activeTab === 'bp-bill') return !!bpBillData && bpBillData.groups.length > 0;
     if (activeTab === 'erp-upload') return !!erpData && erpData.rows.length > 0;
+    if (activeTab === 'running-chart') return !!runningChartData && runningChartData.items.length > 0;
     return false;
-  }, [activeTab, summaryData, dayOtData, bpBillData, erpData]);
+  }, [activeTab, summaryData, dayOtData, bpBillData, erpData, runningChartData]);
 
   return {
     activeTab,
@@ -159,5 +165,6 @@ export function useReports() {
     dayOtData,
     bpBillData,
     erpData,
+    runningChartData,
   };
 }

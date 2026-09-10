@@ -1,8 +1,8 @@
-import { useState, useId } from 'react';
-import { ArrowLeft, Plus, Trash2, CheckCircle2, Clock, Users, Layers } from 'lucide-react';
-import { StepIndicator } from '../features/time-entries/components/StepIndicator';
+import { useState, useEffect, useId } from 'react';
+import { ArrowLeft, Home, Plus, Trash2, CheckCircle2, Clock, Users, Layers } from 'lucide-react';
+import { StepIndicator, type StepKey } from '../features/time-entries/components/StepIndicator';
 import type { AssignedEmployee, ActivityCode } from '../features/time-entries/services/timeEntryService';
-import type { EmployeeEntryState, SubmitStatus, ActivityHourItem } from '../features/time-entries/hooks/useTimeEntry';
+import type { EmployeeEntryState, SubmitStatus, ActivityHourItem, SubmittedInfo } from '../features/time-entries/hooks/useTimeEntry';
 import type { DayType } from '../features/calendar/services/calendarService';
 import { getDayTypeRule, timeToMinutes, formatDecimalHours } from '../utils/overtimeCalculator';
 
@@ -13,10 +13,13 @@ interface ActivityDistributionPageProps {
   date: string;
   dayType?: DayType;
   submitStatus: SubmitStatus;
+  submittedInfo?: SubmittedInfo | null;
   onUpdateActivities: (employeeId: string, activities: ActivityHourItem[]) => void;
   onBulkUpdateActivities: (employeeIds: string[], activities: ActivityHourItem[]) => void;
   onSubmit: () => void;
   onBack: () => void;
+  onGoDashboard?: () => void;
+  onStepClick?: (step: StepKey) => void;
 }
 
 export function ActivityDistributionPage({
@@ -26,10 +29,13 @@ export function ActivityDistributionPage({
   date,
   dayType,
   submitStatus,
+  submittedInfo,
   onUpdateActivities,
   onBulkUpdateActivities,
   onSubmit,
   onBack,
+  onGoDashboard,
+  onStepClick,
 }: ActivityDistributionPageProps) {
   const bulkSelectId = useId();
   const dayRule = getDayTypeRule(date, dayType?.name);
@@ -74,6 +80,25 @@ export function ActivityDistributionPage({
     });
     return map;
   });
+
+  // Keep localActivities synced when entries are loaded from backend
+  useEffect(() => {
+    setLocalActivities((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      employees.forEach((emp) => {
+        const empActivities = entries[emp.id]?.activities;
+        if (empActivities && empActivities.length > 0) {
+          next[emp.id] = empActivities;
+          changed = true;
+        } else if (!next[emp.id]) {
+          next[emp.id] = getEmployeeActivities(emp.id);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [entries, employees]);
 
   const handleHourChange = (empId: string, index: number, hours: number) => {
     const current = localActivities[empId] ? [...localActivities[empId]] : [{ activityId: activityCodes[0]?.id || '', hours: 0 }];
@@ -142,46 +167,79 @@ export function ActivityDistributionPage({
   return (
     <div className="flex flex-col min-h-screen bg-slate-50">
       <div className="flex flex-col flex-1 w-full max-w-lg mx-auto">
-        {/* ── Header ───────────────────────────────────────────────────────── */}
-        <header className="bg-white border-b border-slate-200 px-4 pt-5 pb-4 sticky top-0 z-20">
-          <div className="flex items-center gap-3 mb-4">
-            <button
-              type="button"
-              onClick={onBack}
-              disabled={isSubmitting || isSubmitted}
-              className="w-9 h-9 flex items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 active:bg-slate-200 transition-colors flex-shrink-0 disabled:opacity-40"
-              aria-label="Back to checkout"
-            >
-              <ArrowLeft size={20} />
-            </button>
+        {/* ── Header (Mobile-optimized) ────────────────────────────────────── */}
+        <header className="bg-white border-b border-slate-200 px-4 pt-3.5 pb-3 sticky top-0 z-20 shadow-xs">
+          <div className="flex items-center justify-between gap-2.5 mb-3">
+            {/* Dual navigation icon buttons */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button
+                type="button"
+                onClick={onBack}
+                disabled={isSubmitting}
+                className="w-8 h-8 rounded-lg flex items-center justify-center border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 active:bg-slate-200 transition-colors shadow-xs focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-40"
+                title="Back"
+                aria-label="Back"
+              >
+                <ArrowLeft size={17} />
+              </button>
+
+              {onGoDashboard && (
+                <button
+                  type="button"
+                  onClick={onGoDashboard}
+                  disabled={isSubmitting}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center border border-slate-200 bg-white text-slate-600 hover:text-blue-700 hover:bg-blue-50 hover:border-blue-200 active:bg-blue-100 transition-colors shadow-xs focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-40"
+                  title="Dashboard"
+                  aria-label="Return to Dashboard"
+                >
+                  <Home size={15} />
+                </button>
+              )}
+            </div>
+
+            {/* Title & subtitle */}
             <div className="min-w-0 flex-1">
-              <h1 className="text-base font-medium text-slate-800">Distribute Activities & OT</h1>
-              <p className="text-xs text-slate-500 truncate">
-                {dayRule.dayTypeLabel} • Standard: {dayRule.standardCap}h
+              <h1 className="text-sm sm:text-base font-semibold text-slate-900 leading-tight truncate">
+                Activities & Overtime
+              </h1>
+              <p className="text-[11px] text-slate-500 truncate">
+                {dayRule.dayTypeLabel} • Standard {dayRule.standardCap}h
               </p>
             </div>
-            {/* Bulk Button Trigger */}
-            <button
-              type="button"
-              onClick={() => setShowBulkModal(!showBulkModal)}
-              className="flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors flex-shrink-0"
-            >
-              <Users size={14} />
-              <span>Bulk Split</span>
-            </button>
+
+            {/* Bulk Button Trigger (only shown when editing is allowed) */}
+            {!isSubmitted && (
+              <button
+                type="button"
+                onClick={() => setShowBulkModal(!showBulkModal)}
+                className="flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1.5 rounded-lg transition-colors flex-shrink-0 shadow-xs"
+                title="Bulk Activity Split"
+              >
+                <Users size={13} />
+                <span>Bulk</span>
+              </button>
+            )}
           </div>
-          <StepIndicator currentStep="activity" />
+          <StepIndicator currentStep="activity" onStepClick={onStepClick} />
         </header>
 
         {/* ── Main Body ────────────────────────────────────────────────────── */}
         <main className="flex-1 overflow-y-auto px-4 py-5 pb-40 space-y-4">
           {/* Submitted banner */}
           {isSubmitted && (
-            <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-green-50 border border-green-200">
-              <CheckCircle2 size={20} className="text-green-600 flex-shrink-0" />
-              <p className="text-sm font-medium text-green-800">
-                Daily attendance & activities submitted and locked successfully.
-              </p>
+            <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-green-50 border border-green-200">
+              <CheckCircle2 size={20} className="text-green-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-green-800">
+                  Daily attendance & activities submitted and locked successfully.
+                </p>
+                {submittedInfo?.supervisorName && (
+                  <p className="text-xs text-green-700 mt-1">
+                    Submitted by <strong>{submittedInfo.supervisorName}</strong>
+                    {submittedInfo.username && <span> (@{submittedInfo.username})</span>}
+                  </p>
+                )}
+              </div>
             </div>
           )}
 

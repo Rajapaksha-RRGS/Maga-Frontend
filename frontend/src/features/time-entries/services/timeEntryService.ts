@@ -138,6 +138,94 @@ export async function checkInEmployee(
   return { employeeId, inTime };
 }
 
+export interface BackendTimeEntry {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  supervisorId: string;
+  date: string;
+  activityId: string;
+  inTime: string | null;
+  outTime: string | null;
+  hours: number | string;
+  overtimeHours: number | string;
+  remarks: string | null;
+  status: 'draft' | 'submitted';
+  submittedAt: string | null;
+  activity?: {
+    id: string;
+    code: string;
+    description: string | null;
+  };
+  supervisor?: {
+    id: string;
+    fullName: string;
+    username: string;
+  };
+}
+
+export interface SubmitDayResponse {
+  success: boolean;
+  submittedCount?: number;
+  submittedAt?: string;
+  supervisor?: {
+    id: string;
+    fullName: string;
+    username: string;
+  } | null;
+  message?: string;
+}
+
+/**
+ * Fetch existing time entries for a date and supervisor from the backend.
+ */
+export async function getTimeEntries(
+  supervisorId?: string,
+  date?: string
+): Promise<BackendTimeEntry[]> {
+  try {
+    const params = new URLSearchParams();
+    if (supervisorId) params.append('supervisorId', supervisorId);
+    if (date) params.append('date', date);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetch(`${API_URL}/time-entries${query}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to fetch time entries from backend:', err);
+  }
+  return [];
+}
+
+/**
+ * Record check-out time for an employee.
+ */
+export async function checkOutEmployee(
+  employeeId: string,
+  supervisorId: string,
+  date: string,
+  outTime: string
+): Promise<{ employeeId: string; outTime: string }> {
+  try {
+    const res = await fetch(`${API_URL}/time-entries/check-out`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId, supervisorId, date, outTime }),
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Failed to record check-out on backend:', err);
+  }
+  return { employeeId, outTime };
+}
+
 /**
  * Bulk assign an activity code and hours to multiple employees (ActivityAssignPage).
  */
@@ -185,7 +273,7 @@ export async function saveTimeEntry(
  */
 export async function submitDay(
   payload: SubmitDayPayload
-): Promise<{ success: boolean; message?: string }> {
+): Promise<SubmitDayResponse> {
   try {
     const res = await fetch(`${API_URL}/time-entries/submit`, {
       method: 'POST',

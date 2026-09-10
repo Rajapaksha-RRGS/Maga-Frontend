@@ -29,7 +29,7 @@ async function loadFOpts() {
   return null;
 }
 
-export type ReportType = 'summary' | 'day-ot-summary' | 'bp-bill' | 'erp-upload';
+export type ReportType = 'summary' | 'day-ot-summary' | 'bp-bill' | 'erp-upload' | 'running-chart';
 
 export interface ReportFilters {
   dateFrom?: string;
@@ -148,6 +148,40 @@ export interface ErpUploadResponse {
 
 /** Backward compatibility alias for legacy imports */
 export type ReportRow = ErpUploadRow;
+
+// ── 5. Running Chart Report Types ───────────────────────────────────────────
+
+export interface RunningChartActivity {
+  code: string;
+  description?: string;
+  hours: number;
+}
+
+export interface RunningChartItem {
+  id: string;
+  date: string;
+  supervisorName: string;
+  employeeCode: string;
+  callingName: string;
+  businessPartner: string;
+  inTime: string;
+  outTime: string;
+  workHours: number;
+  otHours: number;
+  totalHours: number;
+  activities: RunningChartActivity[];
+  activitiesDisplay: string;
+}
+
+export interface RunningChartResponse {
+  items: RunningChartItem[];
+  totals: {
+    totalRecords: number;
+    totalWorkHours: number;
+    totalOtHours: number;
+    totalHours: number;
+  };
+}
 
 // ── Helper & Seed Mock Data ──────────────────────────────────────────────────
 
@@ -604,7 +638,81 @@ export async function getErpUploadReport(filters: ReportFilters): Promise<ErpUpl
   };
 }
 
-// ── 5. Excel Export Service ──────────────────────────────────────────────────
+// ── 5. GET Running Chart Report ──────────────────────────────────────────────
+
+export async function getRunningChartReport(filters: ReportFilters): Promise<RunningChartResponse> {
+  try {
+    const _r = await fetch(API_URL + '/reports/running-chart?' + buildParams(filters));
+    if (_r.ok) {
+      const _d = await _r.json();
+      if (_d?.items) return _d as RunningChartResponse;
+    }
+  } catch (_e) {
+    console.warn('Backend unavailable, using mock running chart report:', _e);
+  }
+  await delay(350);
+
+  // Fallback mock using seed employees & activities
+  const dates = getDateRange(filters.dateFrom, filters.dateTo);
+  const items: RunningChartItem[] = [];
+  let grandWorkHours = 0;
+  let grandOtHours = 0;
+  let grandTotalHours = 0;
+
+  SEED_EMPLOYEES.slice(0, 10).forEach((emp, empIdx) => {
+    dates.slice(0, 5).forEach((date, dateIdx) => {
+      const dayRule = getDayTypeRule(date);
+      const isAbsent = (empIdx + dateIdx) % 7 === 0;
+      if (isAbsent) return;
+
+      const act1 = SEED_ACTIVITIES[empIdx % SEED_ACTIVITIES.length];
+      const act2 = SEED_ACTIVITIES[(empIdx + 1) % SEED_ACTIVITIES.length];
+
+      const act1Hours = 4.0;
+      const act2Hours = (empIdx % 2 === 0) ? 4.5 : 4.0;
+      const totalDayHours = act1Hours + act2Hours;
+
+      const workHours = dayRule.isAllOvertime ? 0 : Math.min(totalDayHours, dayRule.standardCap);
+      const otHours = dayRule.isAllOvertime ? totalDayHours : (totalDayHours > dayRule.standardCap ? totalDayHours - dayRule.standardCap : 0);
+      const totalHours = workHours + otHours;
+
+      grandWorkHours += workHours;
+      grandOtHours += otHours;
+      grandTotalHours += totalHours;
+
+      items.push({
+        id: `mock-rc-${emp.id}-${date}`,
+        date,
+        supervisorName: empIdx % 2 === 0 ? 'Gayan Kumara' : 'Sunil Perera',
+        employeeCode: emp.id.toUpperCase(),
+        callingName: emp.name,
+        businessPartner: emp.partner,
+        inTime: '07:00',
+        outTime: otHours > 0 ? '17:30' : '17:00',
+        workHours,
+        otHours,
+        totalHours,
+        activities: [
+          { code: act1.code, description: act1.description, hours: act1Hours },
+          { code: act2.code, description: act2.description, hours: act2Hours },
+        ],
+        activitiesDisplay: `${act1.code} (${act1Hours.toFixed(1)}h), ${act2.code} (${act2Hours.toFixed(1)}h)`,
+      });
+    });
+  });
+
+  return {
+    items,
+    totals: {
+      totalRecords: items.length,
+      totalWorkHours: Math.round(grandWorkHours * 100) / 100,
+      totalOtHours: Math.round(grandOtHours * 100) / 100,
+      totalHours: Math.round(grandTotalHours * 100) / 100,
+    },
+  };
+}
+
+// ── 6. Excel Export Service ──────────────────────────────────────────────────
 
 import type { Tenant } from '../../auth/services/authService';
 import {
@@ -612,28 +720,11 @@ import {
   exportDayOtSummaryToExcel,
   exportBpBillToExcel,
   exportErpUploadToExcel,
+  exportRunningChartToExcel,
 } from './excelExport';
 
 /**
  * Trigger Excel file download.
- * Calls backend GET /api/reports/:type/export with active filters and streams file.
- *
- * TODO: Replace with real API call:
- *   const response = await axios.get(`/api/reports/${type}/export`, {
- *     params: filters,
- *     responseType: 'blob',
- *   });
- *   const blob = new Blob([response.data], {
- *     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
- *   });
- *   const url = window.URL.createObjectURL(blob);
- *   const a = document.createElement('a');
- *   a.href = url;
- *   a.download = `${tenant.subdomain}-${type}-report-${Date.now()}.xlsx`;
- *   document.body.appendChild(a);
- *   a.click();
- *   window.URL.revokeObjectURL(url);
- *   document.body.removeChild(a);
  */
 export async function exportReport(
   type: ReportType,
@@ -653,6 +744,9 @@ export async function exportReport(
   } else if (type === 'erp-upload') {
     const data = await getErpUploadReport(filters);
     await exportErpUploadToExcel(data, tenant, preparedBy, filters);
+  } else if (type === 'running-chart') {
+    const data = await getRunningChartReport(filters);
+    await exportRunningChartToExcel(data, tenant, preparedBy, filters);
   }
 }
 
@@ -661,4 +755,5 @@ export {
   exportDayOtSummaryToExcel,
   exportBpBillToExcel,
   exportErpUploadToExcel,
+  exportRunningChartToExcel,
 };

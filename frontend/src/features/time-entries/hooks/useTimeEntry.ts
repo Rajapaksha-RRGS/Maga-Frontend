@@ -1,10 +1,21 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import {
   checkInEmployee,
+  checkOutEmployee,
   assignActivityBulk,
+  getTimeEntries,
   submitDay as submitDayService,
+  type BackendTimeEntry,
 } from '../services/timeEntryService';
+
+function todayISO(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,9 +36,17 @@ export interface EmployeeEntryState {
 
 export type SubmitStatus = 'idle' | 'submitting' | 'submitted' | 'error';
 
+export interface SubmittedInfo {
+  supervisorName: string;
+  username: string;
+  submittedAt: string | null;
+}
+
 interface UseTimeEntryReturn {
   entries: Record<string, EmployeeEntryState>;
   submitStatus: SubmitStatus;
+  submittedInfo: SubmittedInfo | null;
+  isLoadingEntries: boolean;
   checkIn: (employeeId: string) => void;
   setActivity: (employeeIds: string[], activityId: string, hours: number) => void;
   setEmployeeActivities: (employeeId: string, activities: ActivityHourItem[]) => void;
@@ -40,55 +59,141 @@ interface UseTimeEntryReturn {
 
 /**
  * Manages the mutable time-entry state for all employees across the
- * daily entry flow. Supports Check-in, Check-out, Multi-Activity distribution,
- * and Day submission.
+ * daily entry flow. Automatically restores saved entries from backend on mount,
+ * supports Check-in, Check-out, Multi-Activity distribution, and Day submission.
  */
-export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseTimeEntryReturn {
+export function useTimeEntry(
+  employeeIds: string[],
+  supervisorId?: string,
+  date?: string
+): UseTimeEntryReturn {
   const { user } = useAuth();
   const effectiveSupervisorId = supervisorId || user?.id || '';
+  const effectiveDate = date || todayISO();
 
-  const [entries, setEntries] = useState<Record<string, EmployeeEntryState>>(
-    () => Object.fromEntries(
-      employeeIds.map((id) => [
-        id,
-        {
-          employeeId: id,
-          inTime: null,
-          outTime: null,
-          activityId: null,
-          hours: null,
-          activities: [],
-          saved: false,
-        },
-      ])
-    )
-  );
+  const [entries, setEntries] = useState<Record<string, EmployeeEntryState>>({});
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>('idle');
+  const [submittedInfo, setSubmittedInfo] = useState<SubmittedInfo | null>(null);
+  const [isLoadingEntries, setIsLoadingEntries] = useState<boolean>(true);
 
-  const ensureEntries = useCallback(
-    (ids: string[]) => {
-      setEntries((prev) => {
-        const next = { ...prev };
-        let changed = false;
-        ids.forEach((id) => {
-          if (!next[id]) {
-            next[id] = {
-              employeeId: id,
-              inTime: null,
-              outTime: null,
-              activityId: null,
-              hours: null,
-              activities: [],
-              saved: false,
-            };
-            changed = true;
-          }
-        });
-        return changed ? next : prev;
+  // Helper to ensure blank entries exist for all assigned employees
+  const ensureEntries = useCallback((ids: string[]) => {
+    setEntries((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      ids.forEach((id) => {
+        if (!next[id]) {
+          next[id] = {
+            employeeId: id,
+            inTime: null,
+            outTime: null,
+            activityId: null,
+            hours: null,
+            activities: [],
+            saved: false,
+          };
+          changed = true;
+        }
       });
-    },
-    []
-  );
+      return changed ? next : prev;
+    });
+  }, []);
+
+  // ── Load existing saved entries from backend ────────────────────────────────
+  useEffect(() => {
+    if (!effectiveSupervisorId) {
+      setIsLoadingEntries(false);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingEntries(true);
+
+    getTimeEntries(effectiveSupervisorId, effectiveDate)
+      .then((records: BackendTimeEntry[]) => {
+        if (!isMounted) return;
+
+        // Check if any record is marked as submitted
+        const submittedRecord = records.find((r) => r.status === 'submitted');
+        if (submittedRecord) {
+          setSubmitStatus('submitted');
+          setSubmittedInfo({
+            supervisorName: submittedRecord.supervisor?.fullName || user?.fullName || 'Supervisor',
+            username: submittedRecord.supervisor?.username || user?.username || '',
+            submittedAt: submittedRecord.submittedAt,
+          });
+        } else {
+          setSubmitStatus('idle');
+          setSubmittedInfo(null);
+        }
+
+        // Group records by employeeId
+        const recordsByEmp: Record<string, BackendTimeEntry[]> = {};
+        records.forEach((rec) => {
+          if (!recordsByEmp[rec.employeeId]) {
+            recordsByEmp[rec.employeeId] = [];
+          }
+          recordsByEmp[rec.employeeId].push(rec);
+        });
+
+        setEntries((prev) => {
+          const next: Record<string, EmployeeEntryState> = { ...prev };
+
+          // 1. Initialize all assigned employees
+          employeeIds.forEach((empId) => {
+            if (!next[empId]) {
+              next[empId] = {
+                employeeId: empId,
+                inTime: null,
+                outTime: null,
+                activityId: null,
+                hours: null,
+                activities: [],
+                saved: false,
+              };
+            }
+          });
+
+          // 2. Overlay loaded backend data
+          Object.entries(recordsByEmp).forEach(([empId, empRecords]) => {
+            const firstWithInTime = empRecords.find((r) => r.inTime)?.inTime || null;
+            const firstWithOutTime = empRecords.find((r) => r.outTime)?.outTime || null;
+
+            const activities: ActivityHourItem[] = empRecords
+              .filter((r) => Number(r.hours) > 0)
+              .map((r) => ({
+                activityId: r.activityId,
+                hours: Number(r.hours),
+              }));
+
+            const totalHours = activities.reduce((sum, a) => sum + a.hours, 0);
+            const primaryActivityId = activities[0]?.activityId || empRecords[0]?.activityId || null;
+
+            next[empId] = {
+              employeeId: empId,
+              inTime: firstWithInTime,
+              outTime: firstWithOutTime,
+              activityId: primaryActivityId,
+              hours: totalHours > 0 ? totalHours : null,
+              activities,
+              saved: true,
+            };
+          });
+
+          return next;
+        });
+      })
+      .catch((err) => {
+        console.error('Failed to load existing time entries:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingEntries(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [effectiveSupervisorId, effectiveDate, employeeIds.join(',')]);
 
   if (employeeIds.some((id) => !entries[id])) {
     ensureEntries(employeeIds);
@@ -98,37 +203,56 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
 
   const checkIn = useCallback(
     (employeeId: string) => {
+      if (submitStatus === 'submitted') {
+        console.warn('Cannot check in: Day entries are already submitted and locked.');
+        return;
+      }
+
       const now = new Date();
       const inTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
       setEntries((prev) => ({
         ...prev,
-        [employeeId]: { ...prev[employeeId], inTime },
+        [employeeId]: { ...prev[employeeId], inTime, saved: true },
       }));
 
-      checkInEmployee(employeeId, effectiveSupervisorId, todayISO(), inTime).catch(
+      checkInEmployee(employeeId, effectiveSupervisorId, effectiveDate, inTime).catch(
         console.error
       );
     },
-    [effectiveSupervisorId]
+    [effectiveSupervisorId, effectiveDate, submitStatus]
   );
 
   // ── 2. Out-time ────────────────────────────────────────────────────────────
 
-  const setOutTime = useCallback((employeeId: string, outTime: string) => {
-    setEntries((prev) => ({
-      ...prev,
-      [employeeId]: { ...prev[employeeId], outTime },
-    }));
-  }, []);
+  const setOutTime = useCallback(
+    (employeeId: string, outTime: string) => {
+      if (submitStatus === 'submitted') {
+        console.warn('Cannot record checkout: Day entries are already submitted and locked.');
+        return;
+      }
+
+      setEntries((prev) => ({
+        ...prev,
+        [employeeId]: { ...prev[employeeId], outTime, saved: true },
+      }));
+
+      checkOutEmployee(employeeId, effectiveSupervisorId, effectiveDate, outTime).catch(
+        console.error
+      );
+    },
+    [effectiveSupervisorId, effectiveDate, submitStatus]
+  );
 
   // ── 3. Single Activity Assignment (Legacy support) ─────────────────────────
 
   const setActivity = useCallback(
-    (employeeIds: string[], activityId: string, hours: number) => {
+    (employeeIdsToSet: string[], activityId: string, hours: number) => {
+      if (submitStatus === 'submitted') return;
+
       setEntries((prev) => {
         const next = { ...prev };
-        employeeIds.forEach((id) => {
+        employeeIdsToSet.forEach((id) => {
           next[id] = {
             ...next[id],
             activityId,
@@ -141,15 +265,16 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
       });
 
       assignActivityBulk({
-        employeeIds,
+        employeeIds: employeeIdsToSet,
         activityId,
         hours,
-        date: todayISO(),
+        date: effectiveDate,
+        supervisorId: effectiveSupervisorId,
       })
         .then(() => {
           setEntries((prev) => {
             const next = { ...prev };
-            employeeIds.forEach((id) => {
+            employeeIdsToSet.forEach((id) => {
               if (next[id]) next[id] = { ...next[id], saved: true };
             });
             return next;
@@ -157,13 +282,18 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
         })
         .catch(console.error);
     },
-    []
+    [effectiveDate, effectiveSupervisorId, submitStatus]
   );
 
   // ── 4. Multi-Activity Distribution for an Employee (Method 1) ─────────────
 
   const setEmployeeActivities = useCallback(
     (employeeId: string, activities: ActivityHourItem[]) => {
+      if (submitStatus === 'submitted') {
+        console.warn('Cannot update activities: Day entries are already submitted and locked.');
+        return;
+      }
+
       const totalHours = activities.reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
       const primaryActivityId = activities[0]?.activityId || null;
 
@@ -185,24 +315,33 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
             employeeIds: [employeeId],
             activityId: act.activityId,
             hours: act.hours,
-            date: todayISO(),
-          }).catch(console.error);
+            date: effectiveDate,
+            supervisorId: effectiveSupervisorId,
+          })
+            .then(() => {
+              setEntries((prev) => ({
+                ...prev,
+                [employeeId]: { ...prev[employeeId], saved: true },
+              }));
+            })
+            .catch(console.error);
         }
       });
     },
-    []
+    [effectiveDate, effectiveSupervisorId, submitStatus]
   );
 
   // ── 5. Bulk Multi-Activity Distribution for Multiple Employees ─────────────
 
   const bulkSetActivities = useCallback(
-    (employeeIds: string[], activities: ActivityHourItem[]) => {
+    (employeeIdsToSet: string[], activities: ActivityHourItem[]) => {
+      if (submitStatus === 'submitted') return;
       const totalHours = activities.reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
       const primaryActivityId = activities[0]?.activityId || null;
 
       setEntries((prev) => {
         const next = { ...prev };
-        employeeIds.forEach((id) => {
+        employeeIdsToSet.forEach((id) => {
           next[id] = {
             ...next[id],
             activities: [...activities],
@@ -217,31 +356,54 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
       activities.forEach((act) => {
         if (act.activityId && act.hours > 0) {
           assignActivityBulk({
-            employeeIds,
+            employeeIds: employeeIdsToSet,
             activityId: act.activityId,
             hours: act.hours,
-            date: todayISO(),
-          }).catch(console.error);
+            date: effectiveDate,
+            supervisorId: effectiveSupervisorId,
+          })
+            .then(() => {
+              setEntries((prev) => {
+                const next = { ...prev };
+                employeeIdsToSet.forEach((id) => {
+                  if (next[id]) next[id] = { ...next[id], saved: true };
+                });
+                return next;
+              });
+            })
+            .catch(console.error);
         }
       });
     },
-    []
+    [effectiveDate, effectiveSupervisorId]
   );
 
   // ── 6. Submit Day ──────────────────────────────────────────────────────────
 
   const submitDay = useCallback(
-    async (supervisorId: string, date: string) => {
+    async (supId: string, dt: string) => {
       setSubmitStatus('submitting');
       try {
-        await submitDayService({ supervisorId, date });
+        const res = await submitDayService({ supervisorId: supId, date: dt });
         setSubmitStatus('submitted');
+        setSubmittedInfo({
+          supervisorName: res.supervisor?.fullName || user?.fullName || 'Supervisor',
+          username: res.supervisor?.username || user?.username || '',
+          submittedAt: res.submittedAt || new Date().toISOString(),
+        });
+        setEntries((prev) => {
+          const next = { ...prev };
+          Object.keys(next).forEach((id) => {
+            if (next[id]) next[id] = { ...next[id], saved: true };
+          });
+          return next;
+        });
       } catch (err) {
         console.error('submitDay failed', err);
         setSubmitStatus('error');
       }
     },
-    []
+    [user]
   );
 
   const checkedInCount = employeeIds.filter((id) => entries[id]?.inTime != null).length;
@@ -250,6 +412,8 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
   return {
     entries,
     submitStatus,
+    submittedInfo,
+    isLoadingEntries,
     checkIn,
     setActivity,
     setEmployeeActivities,
@@ -259,12 +423,4 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
     checkedInCount,
     assignedCount,
   };
-}
-
-function todayISO(): string {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }

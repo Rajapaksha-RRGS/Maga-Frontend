@@ -13,6 +13,7 @@ import type {
   DayOtSummaryResponse,
   BpBillResponse,
   ErpUploadResponse,
+  RunningChartResponse,
 } from './reportService';
 
 // ── Formatting Helpers ───────────────────────────────────────────────────────
@@ -852,5 +853,157 @@ export async function exportErpUploadToExcel(
   });
 
   const filename = `${tenant.subdomain}-upload-details-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  await downloadWorkbook(workbook, filename);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. EXPORT RUNNING CHART TO EXCEL
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function exportRunningChartToExcel(
+  data: RunningChartResponse,
+  tenant: Tenant,
+  preparedBy: string,
+  filters: ReportFilters
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = preparedBy;
+  workbook.created = new Date();
+
+  const ws = workbook.addWorksheet('Running Chart', {
+    views: [{ state: 'frozen', ySplit: 9 }],
+  });
+
+  applyLetterhead(ws, 'DAILY LABOUR RUNNING CHART', tenant, preparedBy, filters);
+
+  // Column Headers at Row 9
+  const headers = [
+    'Date',
+    'Supervisor Name',
+    'EMP No.',
+    'Calling Name',
+    'Business Partner',
+    'In Time',
+    'Out Time',
+    'Work Hours',
+    'OT Hours',
+    'Total Hours',
+    'Activity Breakdown (Code & Hours)',
+  ];
+
+  const headerRow = ws.getRow(9);
+  headerRow.values = headers;
+  headerRow.height = 24;
+
+  headerRow.eachCell((cell) => {
+    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1E3A8A' }, // Corporate navy
+    };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    cell.border = THIN_BORDER;
+  });
+
+  // Column Widths
+  ws.columns = [
+    { width: 13 }, // Date
+    { width: 22 }, // Supervisor Name
+    { width: 14 }, // EMP No
+    { width: 20 }, // Calling Name
+    { width: 20 }, // Business Partner
+    { width: 11 }, // In Time
+    { width: 11 }, // Out Time
+    { width: 13 }, // Work Hours
+    { width: 13 }, // OT Hours
+    { width: 13 }, // Total Hours
+    { width: 44 }, // Activity Breakdown
+  ];
+
+  let currentRow = 10;
+  let grandWork = 0;
+  let grandOt = 0;
+  let grandTotal = 0;
+
+  data.items.forEach((item) => {
+    const row = ws.getRow(currentRow);
+    row.height = 20;
+
+    row.values = [
+      item.date,
+      item.supervisorName,
+      item.employeeCode,
+      item.callingName,
+      item.businessPartner,
+      item.inTime,
+      item.outTime,
+      item.workHours,
+      item.otHours,
+      item.totalHours,
+      item.activitiesDisplay,
+    ];
+
+    row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(2).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(4).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(5).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(6).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(7).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(8).alignment = { horizontal: 'right', vertical: 'middle' };
+    row.getCell(9).alignment = { horizontal: 'right', vertical: 'middle' };
+    row.getCell(10).alignment = { horizontal: 'right', vertical: 'middle' };
+    row.getCell(11).alignment = { horizontal: 'left', vertical: 'middle' };
+
+    row.getCell(8).numFmt = '0.00';
+    row.getCell(9).numFmt = '0.00';
+    row.getCell(10).numFmt = '0.00';
+
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { name: 'Calibri', size: 9.5, color: { argb: 'FF0F172A' } };
+      cell.border = THIN_BORDER;
+    });
+
+    grandWork += item.workHours;
+    grandOt += item.otHours;
+    grandTotal += item.totalHours;
+    currentRow++;
+  });
+
+  // Totals Row
+  const totalRow = ws.getRow(currentRow);
+  totalRow.values = [
+    `TOTAL (${data.items.length} Records)`,
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    grandWork,
+    grandOt,
+    grandTotal,
+    '',
+  ];
+  totalRow.height = 22;
+
+  totalRow.eachCell({ includeEmpty: true }, (cell, idx) => {
+    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE2E8F0' },
+    };
+    cell.border = THIN_BORDER;
+    if (idx >= 8 && idx <= 10) {
+      cell.numFmt = '0.00';
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    }
+  });
+
+  applyFooter(ws, currentRow, 11);
+
+  const filename = `${tenant.subdomain}-running-chart-${new Date().toISOString().slice(0, 10)}.xlsx`;
   await downloadWorkbook(workbook, filename);
 }

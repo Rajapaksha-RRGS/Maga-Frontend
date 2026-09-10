@@ -60,13 +60,15 @@ export default function SupervisorFlowPage() {
   const {
     entries,
     submitStatus,
+    submittedInfo,
+    isLoadingEntries,
     checkIn,
     setEmployeeActivities,
     bulkSetActivities,
     setOutTime,
     submitDay,
     checkedInCount,
-  } = useTimeEntry(employees.map((e) => e.id), supervisorId);
+  } = useTimeEntry(employees.map((e) => e.id), supervisorId, today);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -89,7 +91,7 @@ export default function SupervisorFlowPage() {
   }
 
   // ── Loading state ──────────────────────────────────────────────────────────
-  if (empLoading && step === 'dashboard') {
+  if ((empLoading || isLoadingEntries) && step === 'dashboard') {
     return (
       <SplashScreen
         theme="light"
@@ -106,8 +108,13 @@ export default function SupervisorFlowPage() {
         <SupervisorDashboardPage
           supervisorName={supervisorName}
           employees={employees}
+          entries={entries}
           checkedInCount={checkedInCount}
+          submitStatus={submitStatus}
+          submittedInfo={submittedInfo}
           onStartCheckin={() => go('checkin')}
+          onContinueCheckout={() => go('checkout')}
+          onContinueActivities={() => go('activity')}
         />
       );
 
@@ -116,9 +123,13 @@ export default function SupervisorFlowPage() {
         <CheckInPage
           employees={employees}
           entries={entries}
+          submitStatus={submitStatus}
+          submittedInfo={submittedInfo}
           onCheckIn={checkIn}
           onBack={() => go('dashboard')}
           onNext={() => go('checkout')}
+          onGoDashboard={() => go('dashboard')}
+          onStepClick={(s) => go(s)}
         />
       );
 
@@ -128,11 +139,14 @@ export default function SupervisorFlowPage() {
           employees={employees}
           entries={entries}
           submitStatus={submitStatus}
+          submittedInfo={submittedInfo}
           date={today}
           dayType={dayType}
           onOutTimeChange={setOutTime}
           onNext={() => go('activity')}
           onBack={() => go('checkin')}
+          onGoDashboard={() => go('dashboard')}
+          onStepClick={(s) => go(s)}
         />
       );
 
@@ -145,10 +159,13 @@ export default function SupervisorFlowPage() {
           date={today}
           dayType={dayType}
           submitStatus={submitStatus}
+          submittedInfo={submittedInfo}
           onUpdateActivities={setEmployeeActivities}
           onBulkUpdateActivities={bulkSetActivities}
           onSubmit={handleSubmit}
           onBack={() => go('checkout')}
+          onGoDashboard={() => go('dashboard')}
+          onStepClick={(s) => go(s)}
         />
       );
   }

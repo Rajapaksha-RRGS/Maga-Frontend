@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.submitDay = exports.getTimeEntries = exports.upsertTimeEntry = exports.assignActivityBulk = exports.checkInEmployee = exports.getAssignedEmployees = void 0;
+exports.submitDay = exports.getTimeEntries = exports.upsertTimeEntry = exports.assignActivityBulk = exports.checkOutEmployee = exports.checkInEmployee = exports.getAssignedEmployees = void 0;
 exports.getDayTypeRulesAndId = getDayTypeRulesAndId;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
@@ -173,23 +173,85 @@ const checkInEmployee = async (req, res) => {
         }
         const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const entryDate = parseDate(date);
-        // Check if a time entry already exists for this employee and date
-        const existing = await prisma_1.default.timeEntry.findFirst({
+        // Strict lock: Check if records for this employee or supervisor are already submitted
+        const submittedCheck = await prisma_1.default.timeEntry.findFirst({
+            where: {
+                tenantId,
+                date: entryDate,
+                status: 'submitted',
+                OR: [
+                    { employeeId },
+                    ...(supervisorId ? [{ supervisorId }] : []),
+                ],
+            },
+        });
+        if (submittedCheck) {
+            res.status(403).json({ error: 'Cannot check in: Daily attendance has already been submitted and locked.' });
+            return;
+        }
+        // Check if time entries already exist for this employee and date
+        const existingEntries = await prisma_1.default.timeEntry.findMany({
             where: {
                 tenantId,
                 employeeId,
                 date: entryDate,
             },
         });
-        if (existing) {
-            const updated = await prisma_1.default.timeEntry.update({
-                where: { id: existing.id },
+        if (existingEntries.length > 0) {
+            await prisma_1.default.timeEntry.updateMany({
+                where: {
+                    tenantId,
+                    employeeId,
+                    date: entryDate,
+                },
                 data: { inTime },
             });
-            res.json({ success: true, employeeId, inTime, entryId: updated.id });
+            res.json({ success: true, employeeId, inTime, count: existingEntries.length });
             return;
         }
-        res.json({ success: true, employeeId, inTime });
+        // If no existing record, create an initial draft time entry with inTime
+        let defaultActivity = await prisma_1.default.activityCode.findFirst({
+            where: { tenantId },
+            orderBy: { code: 'asc' },
+        });
+        if (!defaultActivity) {
+            defaultActivity = await prisma_1.default.activityCode.create({
+                data: {
+                    tenantId,
+                    code: '00-00-11-11-M',
+                    description: 'Direct Labour Works',
+                },
+            });
+        }
+        let finalSupervisorId = supervisorId;
+        if (!finalSupervisorId) {
+            const assignment = await prisma_1.default.dailyAssignment.findFirst({
+                where: { tenantId, employeeId, date: entryDate },
+            });
+            finalSupervisorId = assignment?.supervisorId;
+        }
+        if (!finalSupervisorId) {
+            const supUser = await prisma_1.default.user.findFirst({
+                where: { tenantId, role: 'supervisor' },
+            });
+            finalSupervisorId = supUser?.id;
+        }
+        const { effectiveDayTypeId } = await getDayTypeRulesAndId(tenantId, entryDate);
+        const created = await prisma_1.default.timeEntry.create({
+            data: {
+                tenantId,
+                employeeId,
+                supervisorId: finalSupervisorId || '',
+                activityId: defaultActivity.id,
+                effectiveDayTypeId,
+                date: entryDate,
+                inTime,
+                hours: 0,
+                overtimeHours: 0,
+                status: 'draft',
+            },
+        });
+        res.json({ success: true, employeeId, inTime, entryId: created.id });
     }
     catch (error) {
         console.error('Error in checkInEmployee:', error);
@@ -197,6 +259,101 @@ const checkInEmployee = async (req, res) => {
     }
 };
 exports.checkInEmployee = checkInEmployee;
+// 2.1 Check-out employee
+const checkOutEmployee = async (req, res) => {
+    try {
+        const { employeeId, supervisorId, date, outTime } = req.body;
+        if (!employeeId || !outTime) {
+            res.status(400).json({ error: 'employeeId and outTime are required' });
+            return;
+        }
+        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const entryDate = parseDate(date);
+        // Strict lock: Check if records for this employee or supervisor are already submitted
+        const submittedCheck = await prisma_1.default.timeEntry.findFirst({
+            where: {
+                tenantId,
+                date: entryDate,
+                status: 'submitted',
+                OR: [
+                    { employeeId },
+                    ...(supervisorId ? [{ supervisorId }] : []),
+                ],
+            },
+        });
+        if (submittedCheck) {
+            res.status(403).json({ error: 'Cannot record checkout: Daily attendance has already been submitted and locked.' });
+            return;
+        }
+        const existingEntries = await prisma_1.default.timeEntry.findMany({
+            where: {
+                tenantId,
+                employeeId,
+                date: entryDate,
+            },
+        });
+        if (existingEntries.length > 0) {
+            await prisma_1.default.timeEntry.updateMany({
+                where: {
+                    tenantId,
+                    employeeId,
+                    date: entryDate,
+                },
+                data: { outTime },
+            });
+            res.json({ success: true, employeeId, outTime, count: existingEntries.length });
+            return;
+        }
+        // If no record exists yet, create one with outTime
+        let defaultActivity = await prisma_1.default.activityCode.findFirst({
+            where: { tenantId },
+            orderBy: { code: 'asc' },
+        });
+        if (!defaultActivity) {
+            defaultActivity = await prisma_1.default.activityCode.create({
+                data: {
+                    tenantId,
+                    code: '00-00-11-11-M',
+                    description: 'Direct Labour Works',
+                },
+            });
+        }
+        let finalSupervisorId = supervisorId;
+        if (!finalSupervisorId) {
+            const assignment = await prisma_1.default.dailyAssignment.findFirst({
+                where: { tenantId, employeeId, date: entryDate },
+            });
+            finalSupervisorId = assignment?.supervisorId;
+        }
+        if (!finalSupervisorId) {
+            const supUser = await prisma_1.default.user.findFirst({
+                where: { tenantId, role: 'supervisor' },
+            });
+            finalSupervisorId = supUser?.id;
+        }
+        const { effectiveDayTypeId } = await getDayTypeRulesAndId(tenantId, entryDate);
+        const created = await prisma_1.default.timeEntry.create({
+            data: {
+                tenantId,
+                employeeId,
+                supervisorId: finalSupervisorId || '',
+                activityId: defaultActivity.id,
+                effectiveDayTypeId,
+                date: entryDate,
+                outTime,
+                hours: 0,
+                overtimeHours: 0,
+                status: 'draft',
+            },
+        });
+        res.json({ success: true, employeeId, outTime, entryId: created.id });
+    }
+    catch (error) {
+        console.error('Error in checkOutEmployee:', error);
+        res.status(500).json({ error: 'Failed to record check-out' });
+    }
+};
+exports.checkOutEmployee = checkOutEmployee;
 // 3. Bulk Activity Assignment (Main logic for ActivityAssignPage)
 const assignActivityBulk = async (req, res) => {
     try {
@@ -216,6 +373,19 @@ const assignActivityBulk = async (req, res) => {
         }
         const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
+        // Strict lock: Check if records for this supervisor or date are already submitted
+        const submittedCheck = await prisma_1.default.timeEntry.findFirst({
+            where: {
+                tenantId,
+                date: targetDate,
+                status: 'submitted',
+                ...(supervisorId ? { supervisorId } : {}),
+            },
+        });
+        if (submittedCheck) {
+            res.status(403).json({ error: 'Cannot update activities: Daily records have already been submitted and locked.' });
+            return;
+        }
         const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
         // Resolve supervisor ID
         let finalSupervisorId = supervisorId;
@@ -252,6 +422,9 @@ const assignActivityBulk = async (req, res) => {
             });
             const previousHours = existingEntries.reduce((acc, curr) => acc + Number(curr.hours), 0);
             const newTotalHours = previousHours + numHours;
+            // Preserve check-in and checkout times from any existing entries
+            const preservedInTime = existingEntries.find((e) => e.inTime)?.inTime || null;
+            const preservedOutTime = existingEntries.find((e) => e.outTime)?.outTime || null;
             // Construction site OT rules:
             // - Sunday / Poya / Holiday: 100% of all hours are Overtime (standardCap = 0)
             // - Saturday: Half-day 07:00 to 13:00 (standardCap = 6.0), hours > 6.0 are Overtime
@@ -276,6 +449,8 @@ const assignActivityBulk = async (req, res) => {
                     data: {
                         hours: numHours,
                         overtimeHours,
+                        inTime: existingActivityEntry.inTime || preservedInTime,
+                        outTime: existingActivityEntry.outTime || preservedOutTime,
                         equipmentId: equipmentId || existingActivityEntry.equipmentId,
                         remarks: remarks || existingActivityEntry.remarks,
                     },
@@ -283,22 +458,43 @@ const assignActivityBulk = async (req, res) => {
                 createdEntries.push(updated);
             }
             else {
-                const created = await prisma_1.default.timeEntry.create({
-                    data: {
-                        tenantId,
-                        employeeId: empId,
-                        supervisorId: finalSupervisorId,
-                        activityId,
-                        equipmentId: equipmentId || null,
-                        effectiveDayTypeId,
-                        date: targetDate,
-                        hours: numHours,
-                        overtimeHours,
-                        remarks: remarks || null,
-                        status: 'draft',
-                    },
-                });
-                createdEntries.push(created);
+                // If there was a zero-hour placeholder entry with another activityId, we can update or replace it
+                const placeholder = existingEntries.find((e) => Number(e.hours) === 0 && e.activityId !== activityId);
+                if (placeholder) {
+                    const updated = await prisma_1.default.timeEntry.update({
+                        where: { id: placeholder.id },
+                        data: {
+                            activityId,
+                            hours: numHours,
+                            overtimeHours,
+                            inTime: placeholder.inTime || preservedInTime,
+                            outTime: placeholder.outTime || preservedOutTime,
+                            equipmentId: equipmentId || placeholder.equipmentId,
+                            remarks: remarks || placeholder.remarks,
+                        },
+                    });
+                    createdEntries.push(updated);
+                }
+                else {
+                    const created = await prisma_1.default.timeEntry.create({
+                        data: {
+                            tenantId,
+                            employeeId: empId,
+                            supervisorId: finalSupervisorId,
+                            activityId,
+                            equipmentId: equipmentId || null,
+                            effectiveDayTypeId,
+                            date: targetDate,
+                            inTime: preservedInTime,
+                            outTime: preservedOutTime,
+                            hours: numHours,
+                            overtimeHours,
+                            remarks: remarks || null,
+                            status: 'draft',
+                        },
+                    });
+                    createdEntries.push(created);
+                }
             }
         }
         res.status(201).json({
@@ -431,16 +627,25 @@ const submitDay = async (req, res) => {
         if (supervisorId) {
             whereClause.supervisorId = supervisorId;
         }
+        const supervisor = supervisorId
+            ? await prisma_1.default.user.findUnique({
+                where: { id: supervisorId },
+                select: { id: true, fullName: true, username: true },
+            })
+            : null;
+        const submittedAt = new Date();
         const updated = await prisma_1.default.timeEntry.updateMany({
             where: whereClause,
             data: {
                 status: 'submitted',
-                submittedAt: new Date(),
+                submittedAt,
             },
         });
         res.json({
             success: true,
             submittedCount: updated.count,
+            submittedAt: submittedAt.toISOString(),
+            supervisor: supervisor ? { id: supervisor.id, fullName: supervisor.fullName, username: supervisor.username } : null,
             message: `Successfully submitted ${updated.count} daily time entry record(s).`,
         });
     }

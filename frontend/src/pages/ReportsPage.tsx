@@ -17,6 +17,7 @@ import SummaryTable from '../features/reports/components/SummaryTable';
 import DayOtSummaryTable from '../features/reports/components/DayOtSummaryTable';
 import BpBillTable from '../features/reports/components/BpBillTable';
 import ErpUploadTable from '../features/reports/components/ErpUploadTable';
+import RunningChartTable from '../features/reports/components/RunningChartTable';
 import EmptyState from '../components/EmptyState';
 
 export default function ReportsPage() {
@@ -39,6 +40,7 @@ export default function ReportsPage() {
     dayOtData,
     bpBillData,
     erpData,
+    runningChartData,
   } = useReports();
 
   return (
@@ -130,6 +132,10 @@ export default function ReportsPage() {
 
           {activeTab === 'erp-upload' && erpData && (
             <ErpUploadTable data={erpData} />
+          )}
+
+          {activeTab === 'running-chart' && runningChartData && (
+            <RunningChartTable data={runningChartData} />
           )}
         </div>
       )}

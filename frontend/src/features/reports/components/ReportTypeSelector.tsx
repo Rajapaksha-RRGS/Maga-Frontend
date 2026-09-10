@@ -8,7 +8,7 @@
  *   - min-h-[44px], focus-visible:ring-2 ring-blue-600
  */
 import type { ReportType } from '../services/reportService';
-import { BarChart3, CalendarRange, Receipt, FileUp } from 'lucide-react';
+import { BarChart3, CalendarRange, Receipt, FileUp, Clock3 } from 'lucide-react';
 
 interface Props {
   activeTab: ReportType;
@@ -26,6 +26,7 @@ const TABS: TabOption[] = [
   { id: 'day-ot-summary', label: 'Day & OT Summary',   icon: <CalendarRange size={16} /> },
   { id: 'bp-bill',        label: 'BP Bill',            icon: <Receipt size={16} /> },
   { id: 'erp-upload',     label: 'ERP Upload Export',  icon: <FileUp size={16} /> },
+  { id: 'running-chart',  label: 'Running Chart',      icon: <Clock3 size={16} /> },
 ];
 
 export default function ReportTypeSelector({ activeTab, onTabChange }: Props) {
