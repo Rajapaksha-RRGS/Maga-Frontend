@@ -20,17 +20,24 @@ const tenantRoutes_1 = __importDefault(require("./routes/tenantRoutes"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5000;
-// Middlewares
+// 1. Crash-proof CORS Middleware
 app.use((0, cors_1.default)({
-    origin: [
-        'https://v0-shaders-landing-page-pearl-xi.vercel.app', // Frontend URL එක
-        'http://localhost:5173',
-        'http://localhost:3000',
-    ],
+    origin: true, // Automatically reflects request origin (Vercel, localhost, etc.)
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
+// 2. Preflight (OPTIONS) requests handler (Express 5 safe - avoids app.options('*') crash)
+app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') {
+        res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+        res.header('Access-Control-Allow-Credentials', 'true');
+        return res.status(200).end();
+    }
+    next();
+});
 app.use(express_1.default.json());
 // API Routes
 app.use('/api/auth', authRoutes_1.default);
