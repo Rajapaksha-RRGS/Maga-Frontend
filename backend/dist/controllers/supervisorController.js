@@ -3,7 +3,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateSupervisorStatus = exports.resetSupervisorPassword = exports.createSupervisor = exports.getAllSupervisors = void 0;
+exports.deleteSupervisor = exports.updateSupervisorStatus = exports.resetSupervisorPassword = exports.createSupervisor = exports.getAllSupervisors = void 0;
+const bcrypt_1 = __importDefault(require("bcrypt"));
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
 function generateTempPassword() {
@@ -78,6 +79,7 @@ const createSupervisor = async (req, res) => {
         }
         const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const tempPassword = generateTempPassword();
+        const hashedPassword = await bcrypt_1.default.hash(tempPassword, 10);
         const resolvedEmployeeId = linkedEmployeeId || employeeId || null;
         const newSupervisor = await prisma_1.default.user.create({
             data: {
@@ -85,7 +87,7 @@ const createSupervisor = async (req, res) => {
                 fullName: fullName.trim(),
                 username: username.trim().toLowerCase(),
                 role: "supervisor",
-                passwordHash: tempPassword,
+                passwordHash: hashedPassword,
                 employeeId: resolvedEmployeeId,
                 status: "active",
                 mustChangePassword: true,
@@ -128,10 +130,11 @@ const resetSupervisorPassword = async (req, res) => {
     try {
         const id = req.params.id || '';
         const tempPassword = generateTempPassword();
+        const hashedPassword = await bcrypt_1.default.hash(tempPassword, 10);
         const update = await prisma_1.default.user.update({
             where: { id },
             data: {
-                passwordHash: tempPassword,
+                passwordHash: hashedPassword,
                 mustChangePassword: true,
             },
         });
@@ -171,3 +174,31 @@ const updateSupervisorStatus = async (req, res) => {
     }
 };
 exports.updateSupervisorStatus = updateSupervisorStatus;
+const deleteSupervisor = async (req, res) => {
+    try {
+        const id = req.params.id || '';
+        const supervisor = await prisma_1.default.user.findUnique({
+            where: { id },
+        });
+        if (!supervisor) {
+            res.status(404).json({ message: "Supervisor not found" });
+            return;
+        }
+        // Clean up any assigned tasks or time entries if linked
+        await prisma_1.default.dailyAssignment.deleteMany({ where: { supervisorId: id } });
+        await prisma_1.default.timeEntry.deleteMany({ where: { supervisorId: id } });
+        await prisma_1.default.user.delete({
+            where: { id },
+        });
+        res.json({ message: "Supervisor deleted successfully" });
+    }
+    catch (error) {
+        console.error("Error deleting supervisor:", error);
+        if (error.code === 'P2025') {
+            res.status(404).json({ message: "Supervisor not found" });
+            return;
+        }
+        res.status(500).json({ message: "Failed to delete supervisor" });
+    }
+};
+exports.deleteSupervisor = deleteSupervisor;

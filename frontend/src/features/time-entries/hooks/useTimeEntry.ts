@@ -244,7 +244,7 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
     []
   );
 
-  const checkedInCount = Object.values(entries).filter((e) => e.inTime !== null).length;
+  const checkedInCount = employeeIds.filter((id) => entries[id]?.inTime != null).length;
   const assignedCount = employeeIds.length;
 
   return {
@@ -262,5 +262,9 @@ export function useTimeEntry(employeeIds: string[], supervisorId?: string): UseT
 }
 
 function todayISO(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }

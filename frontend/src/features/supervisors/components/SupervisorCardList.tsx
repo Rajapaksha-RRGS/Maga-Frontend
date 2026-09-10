@@ -3,7 +3,7 @@
  */
 import CardList from '../../../components/CardList';
 import StatusBadge from '../../../components/StatusBadge';
-import { KeyRound, UserX } from 'lucide-react';
+import { KeyRound, UserX, Trash2 } from 'lucide-react';
 import type { Supervisor } from '../services/supervisorService';
 
 interface Props {
@@ -11,9 +11,10 @@ interface Props {
   onCardClick: (s: Supervisor) => void;
   onResetPassword: (id: string) => void;
   onDeactivate: (id: string) => void;
+  onDelete?: (id: string) => void;
 }
 
-export default function SupervisorCardList({ data, onCardClick, onResetPassword, onDeactivate }: Props) {
+export default function SupervisorCardList({ data, onCardClick, onResetPassword, onDeactivate, onDelete }: Props) {
   return (
     <CardList data={data} keyField="id" renderCard={(sup) => (
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
@@ -41,6 +42,20 @@ export default function SupervisorCardList({ data, onCardClick, onResetPassword,
             {sup.status === 'active' && (
               <button onClick={() => onDeactivate(sup.id)} title="Deactivate" className="w-9 h-9 rounded-md flex items-center justify-center text-slate-600 hover:bg-slate-100 transition-colors">
                 <UserX size={14} />
+              </button>
+            )}
+            {onDelete && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm(`Are you sure you want to delete supervisor "${sup.fullName}"?`)) {
+                    onDelete(sup.id);
+                  }
+                }}
+                title="Delete"
+                className="w-9 h-9 rounded-md flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 size={14} />
               </button>
             )}
           </div>

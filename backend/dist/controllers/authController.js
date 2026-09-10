@@ -17,16 +17,20 @@ const login = async (req, res) => {
             res.status(400).json({ error: "Please provide tenant, username and password" });
             return;
         }
+        const cleanTenant = String(tenantId).trim();
+        const cleanUsername = String(username).trim().toLowerCase();
         const tenant = await prisma_1.default.tenant.findUnique({
-            where: { subdomain: tenantId }
+            where: { subdomain: cleanTenant }
         });
         if (!tenant || tenant.status !== 'active') {
-            res.status(400).json({ error: "Invalid Tenant orInactive Tenant" });
+            res.status(400).json({ error: "Invalid Tenant or Inactive Tenant" });
             return;
         }
         // check for user
         const user = await prisma_1.default.user.findUnique({
-            where: { tenantId_username: { tenantId: tenant.id, username: username } }
+            where: {
+                tenantId_username: { tenantId: tenant.id, username: cleanUsername }
+            }
         });
         // if no user
         if (!user || user.status !== 'active') {
@@ -51,10 +55,13 @@ const login = async (req, res) => {
         // Remove password hash before sending user data
         const { passwordHash, ...safeUser } = user;
         res.json({
-            "success": true,
-            "message": "Login Successful",
+            success: true,
+            message: "Login Successful",
             token: token,
-            user: safeUser
+            user: {
+                ...safeUser,
+                companyName: tenant.companyName,
+            }
         });
         return;
     }

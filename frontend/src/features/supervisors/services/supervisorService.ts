@@ -176,3 +176,15 @@ export async function getAvailableEmployees(): Promise<Employee[]> {
   const all = await empSvc.getAll();
   return all.filter((e) => e.status === 'active');
 }
+
+/** Delete supervisor by ID */
+export async function deleteSupervisor(id: string): Promise<void> {
+  const res = await fetch(`${API_URL}/supervisors/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.message || 'Failed to delete supervisor');
+  }
+}
+

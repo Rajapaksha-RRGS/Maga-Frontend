@@ -7,10 +7,13 @@
  */
 import { useState, useEffect, type FormEvent } from 'react';
 import type { Employee, EmployeeFormData } from '../services/employeeService';
+import type { BusinessPartner } from '../../business-partners/services/businessPartnerService';
+import * as businessPartnerService from '../../business-partners/services/businessPartnerService';
 
 interface EmployeeFormProps {
   /** If provided, form is in edit mode for this employee */
   employee?: Employee | null;
+  businessPartners?: BusinessPartner[];
   onSave: (data: EmployeeFormData) => Promise<void>;
   onDeactivate?: (id: string) => Promise<void>;
   onCancel: () => void;
@@ -21,6 +24,7 @@ const INPUT_CLASS =
 
 export default function EmployeeForm({
   employee,
+  businessPartners,
   onSave,
   onDeactivate,
   onCancel,
@@ -28,20 +32,55 @@ export default function EmployeeForm({
   const [employeeCode, setEmployeeCode] = useState('');
   const [callingName, setCallingName] = useState('');
   const [fullName, setFullName] = useState('');
-  const [businessPartner, setBusinessPartner] = useState('');
+  const [businessPartnerId, setBusinessPartnerId] = useState('');
   const [tradeGroup, setTradeGroup] = useState('');
   const [nicNo, setNicNo] = useState('');
   const [dailyRate, setDailyRate] = useState('1400');
   const [epfNo, setEpfNo] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  // Populate for edit
+  const [partners, setPartners] = useState<BusinessPartner[]>(businessPartners || []);
+  const [loadingPartners, setLoadingPartners] = useState(!businessPartners || businessPartners.length === 0);
+
+  // Fetch partners if not supplied via props
+  useEffect(() => {
+    if (businessPartners && businessPartners.length > 0) {
+      setPartners(businessPartners);
+      setLoadingPartners(false);
+      return;
+    }
+    let isMounted = true;
+    setLoadingPartners(true);
+    businessPartnerService.getAll()
+      .then((res) => {
+        if (isMounted) setPartners(res);
+      })
+      .catch((err) => {
+        console.error('Failed to load business partners:', err);
+      })
+      .finally(() => {
+        if (isMounted) setLoadingPartners(false);
+      });
+    return () => { isMounted = false; };
+  }, [businessPartners]);
+
+  // Populate for edit / reset for add
   useEffect(() => {
     if (employee) {
       setEmployeeCode(employee.employeeCode || employee.id);
       setCallingName(employee.callingName || '');
       setFullName(employee.fullName || '');
-      setBusinessPartner(employee.businessPartner || 'Maga');
+
+      // Resolve businessPartnerId if already present, or match by name
+      if (employee.businessPartnerId) {
+        setBusinessPartnerId(employee.businessPartnerId);
+      } else {
+        const matched = partners.find(
+          (p) => p.name.toLowerCase() === employee.businessPartner.toLowerCase() || p.id === employee.businessPartner
+        );
+        setBusinessPartnerId(matched ? matched.id : '');
+      }
+
       setTradeGroup(employee.tradeGroup || '');
       setNicNo(employee.nicNo || '');
       setDailyRate(employee.dailyRate != null ? String(employee.dailyRate) : '1400');
@@ -50,24 +89,28 @@ export default function EmployeeForm({
       setEmployeeCode('');
       setCallingName('');
       setFullName('');
-      setBusinessPartner('Maga');
+      // If partners available and none selected yet, default to first or empty
+      setBusinessPartnerId('');
       setTradeGroup('');
       setNicNo('');
       setDailyRate('1400');
       setEpfNo('');
     }
-  }, [employee]);
+  }, [employee, partners]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!tradeGroup.trim()) return;
+    if (!tradeGroup.trim() || !businessPartnerId) return;
+    const selectedPartner = partners.find((p) => p.id === businessPartnerId);
+
     setIsSaving(true);
     try {
       await onSave({
         employeeCode: employeeCode.trim() || undefined,
         callingName: callingName.trim() || employeeCode.trim() || 'Worker',
         fullName: fullName.trim() || callingName.trim() || employeeCode.trim() || 'Worker',
-        businessPartner: businessPartner.trim() || 'Maga',
+        businessPartnerId: businessPartnerId,
+        businessPartner: selectedPartner?.name || '',
         tradeGroup: tradeGroup.trim(),
         nicNo: nicNo.trim(),
         dailyRate: parseFloat(dailyRate) || 1400,
@@ -80,6 +123,45 @@ export default function EmployeeForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {/* Business Partner selection */}
+      <div className="flex flex-col gap-1">
+        <label htmlFor="emp-bp" className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+          Business partner *
+        </label>
+        {partners.length === 0 && !loadingPartners ? (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex flex-col gap-2">
+            <p className="font-semibold">
+              No registered business partners found!
+            </p>
+            <p className="text-amber-700">
+              An employee must belong to a registered business partner. Please register a business partner before adding employees.
+            </p>
+            <a
+              href="/admin/business-partners"
+              className="inline-flex items-center justify-center font-medium bg-amber-600 hover:bg-amber-700 text-white rounded px-3 py-1.5 transition-colors self-start"
+            >
+              Register Business Partner
+            </a>
+          </div>
+        ) : (
+          <select
+            id="emp-bp"
+            value={businessPartnerId}
+            onChange={(e) => setBusinessPartnerId(e.target.value)}
+            className={INPUT_CLASS}
+            required
+            disabled={loadingPartners}
+          >
+            <option value="">{loadingPartners ? 'Loading business partners…' : 'Select a business partner *'}</option>
+            {partners.map((bp) => (
+              <option key={bp.id} value={bp.id}>
+                {bp.name} ({bp.code})
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
       {/* Trade Group */}
       <div className="flex flex-col gap-1">
         <label htmlFor="emp-tg" className="text-xs font-medium text-slate-500 uppercase tracking-wide">
@@ -124,22 +206,6 @@ export default function EmployeeForm({
           onChange={(e) => setDailyRate(e.target.value)}
           className={INPUT_CLASS}
           placeholder="1400.00"
-          required
-        />
-      </div>
-
-      {/* Business Partner */}
-      <div className="flex flex-col gap-1">
-        <label htmlFor="emp-bp" className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-          Business partner *
-        </label>
-        <input
-          id="emp-bp"
-          type="text"
-          value={businessPartner}
-          onChange={(e) => setBusinessPartner(e.target.value)}
-          className={INPUT_CLASS}
-          placeholder="e.g. Maga"
           required
         />
       </div>
@@ -208,7 +274,7 @@ export default function EmployeeForm({
       <div className="flex flex-col gap-2 pt-2">
         <button
           type="submit"
-          disabled={isSaving || !tradeGroup.trim()}
+          disabled={isSaving || !tradeGroup.trim() || !businessPartnerId || partners.length === 0}
           className="w-full bg-blue-700 text-white font-medium rounded-lg min-h-[52px] px-4 transition-colors active:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
         >
           {isSaving ? 'Saving…' : employee ? 'Save changes' : 'Add employee'}

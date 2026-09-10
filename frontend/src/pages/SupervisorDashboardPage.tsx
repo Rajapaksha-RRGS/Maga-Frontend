@@ -94,12 +94,12 @@ export function SupervisorDashboardPage({
           <button
             type="button"
             onClick={onStartCheckin}
+            disabled={employees.length === 0}
             className={[
-              'w-full flex items-center justify-between px-4 py-4 rounded-lg',
-              'bg-blue-700 text-white font-medium',
-              'min-h-[56px] active:bg-blue-800',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2',
-              'transition-colors',
+              'w-full flex items-center justify-between px-4 py-4 rounded-lg font-medium min-h-[56px] transition-colors',
+              employees.length === 0
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-blue-700 text-white active:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2',
             ].join(' ')}
             aria-label="Start today's check-in flow"
           >
@@ -114,9 +114,13 @@ export function SupervisorDashboardPage({
             </h2>
 
             {employees.length === 0 ? (
-              <p className="text-sm text-slate-400 py-6 text-center">
-                No workers assigned for today.
-              </p>
+              <div className="text-center py-10 px-4 bg-white rounded-lg border border-dashed border-slate-300">
+                <Users className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                <p className="text-sm font-medium text-slate-700">No workers assigned for today</p>
+                <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+                  Site administration has not assigned any workers to your gang for today. Once assigned by Admin, they will appear here.
+                </p>
+              </div>
             ) : (
               <ul className="space-y-2">
                 {employees.map((emp) => (

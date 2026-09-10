@@ -48,11 +48,16 @@ export function useSupervisors() {
     await load();
   };
 
+  const deleteSupervisor = async (id: string) => {
+    await svc.deleteSupervisor(id);
+    await load();
+  };
+
   const clearTempPassword = () => setTempPasswordResult(null);
 
   return {
     supervisors, filtered, employees, isLoading, search, setSearch,
     tempPasswordResult, clearTempPassword,
-    add, resetPassword, deactivateSupervisor, refresh: load,
+    add, resetPassword, deactivateSupervisor, deleteSupervisor, refresh: load,
   };
 }

@@ -13,4 +13,6 @@ router.put('/:id/reset-password', supervisorController_1.resetSupervisorPassword
 router.put('/:id/updateStatus', supervisorController_1.updateSupervisorStatus);
 router.patch('/:id/status', supervisorController_1.updateSupervisorStatus);
 router.put('/:id/status', supervisorController_1.updateSupervisorStatus);
+// Delete supervisor
+router.delete('/:id', supervisorController_1.deleteSupervisor);
 exports.default = router;

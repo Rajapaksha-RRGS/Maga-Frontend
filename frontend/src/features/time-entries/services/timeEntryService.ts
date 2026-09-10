@@ -58,13 +58,6 @@ const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
 
 // ─── Mock fallback data ────────────────────────────────────────────────────────
 
-const MOCK_EMPLOYEES: AssignedEmployee[] = [
-  { id: 'HK030', callingName: 'Kamal',   fullName: 'Kamal Perera',   tradeGroup: 'Mason',     businessPartner: 'Aruna Builders (Pvt) Ltd' },
-  { id: 'HK031', callingName: 'Nimal',   fullName: 'Nimal Silva',     tradeGroup: 'Carpenter', businessPartner: 'Aruna Builders (Pvt) Ltd' },
-  { id: 'HI101', callingName: 'Sunil',   fullName: 'Sunil Shantha',   tradeGroup: 'Bar Bender', businessPartner: 'Maga Engineering' },
-  { id: 'HI102', callingName: 'Chaminda', fullName: 'Chaminda Bandara', tradeGroup: 'Helper',   businessPartner: 'Laksiri Construction' },
-];
-
 const MOCK_ACTIVITY_CODES: ActivityCode[] = [
   { id: 'ac-01', code: '00-00-11-11-M', description: 'Direct Labour Masonry Works' },
   { id: 'ac-02', code: '01-10-10-00', description: 'Earth Work Excavation & Trenching' },
@@ -86,14 +79,14 @@ export async function getAssignedEmployees(
     const res = await fetch(`${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`);
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         return data;
       }
     }
   } catch (err) {
-    console.warn('Backend unavailable, using fallback assigned employees:', err);
+    console.error('Error fetching assigned employees from backend:', err);
   }
-  return [...MOCK_EMPLOYEES];
+  return [];
 }
 
 /**

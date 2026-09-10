@@ -16,7 +16,7 @@ export default function SupervisorsPage() {
   const {
     filtered, employees, isLoading, search, setSearch,
     tempPasswordResult, clearTempPassword,
-    add, resetPassword, deactivateSupervisor,
+    add, resetPassword, deactivateSupervisor, deleteSupervisor,
   } = useSupervisors();
   const [panelOpen, setPanelOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -80,8 +80,20 @@ export default function SupervisorsPage() {
       {!isLoading && filtered.length === 0 && <EmptyState message="No supervisors found." />}
       {!isLoading && filtered.length > 0 && (
         <>
-          <SupervisorTable data={filtered} onRowClick={() => {}} onResetPassword={resetPassword} onDeactivate={deactivateSupervisor} />
-          <SupervisorCardList data={filtered} onCardClick={() => {}} onResetPassword={resetPassword} onDeactivate={deactivateSupervisor} />
+          <SupervisorTable
+            data={filtered}
+            onRowClick={() => {}}
+            onResetPassword={resetPassword}
+            onDeactivate={deactivateSupervisor}
+            onDelete={deleteSupervisor}
+          />
+          <SupervisorCardList
+            data={filtered}
+            onCardClick={() => {}}
+            onResetPassword={resetPassword}
+            onDeactivate={deactivateSupervisor}
+            onDelete={deleteSupervisor}
+          />
           <p className="text-xs text-slate-400 mt-3">{filtered.length} supervisor{filtered.length !== 1 ? 's' : ''}</p>
         </>
       )}

@@ -104,6 +104,48 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
 
     const tenantId = req.body.tenantId || (await getDefaultTenantId());
 
+    // Prerequisite: At least one business partner must be registered
+    const bpCount = await prisma.businessPartner.count({ where: { tenantId } });
+    if (bpCount === 0) {
+      res.status(400).json({
+        error: 'No registered business partners found. Please register a business partner before adding employees.',
+      });
+      return;
+    }
+
+    let resolvedBpId = businessPartnerId;
+    if (!resolvedBpId && req.body.businessPartner) {
+      const bpNameOrCode = String(req.body.businessPartner).trim();
+      if (bpNameOrCode) {
+        const partner = await prisma.businessPartner.findFirst({
+          where: {
+            tenantId,
+            OR: [
+              { id: bpNameOrCode },
+              { name: { equals: bpNameOrCode, mode: 'insensitive' } },
+              { code: { equals: bpNameOrCode, mode: 'insensitive' } },
+            ],
+          },
+        });
+        if (partner) {
+          resolvedBpId = partner.id;
+        }
+      }
+    }
+
+    if (!resolvedBpId) {
+      res.status(400).json({ error: 'Please select a registered business partner for this employee.' });
+      return;
+    }
+
+    const partnerExists = await prisma.businessPartner.findFirst({
+      where: { id: resolvedBpId, tenantId },
+    });
+    if (!partnerExists) {
+      res.status(400).json({ error: 'Selected business partner does not exist in this tenant.' });
+      return;
+    }
+
     const newEmployee = await prisma.employee.create({
       data: {
         tenantId,
@@ -115,7 +157,7 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
         dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
         epfNo: epfNo || '',
         status: status || 'active',
-        businessPartnerId: businessPartnerId || undefined,
+        businessPartnerId: resolvedBpId || undefined,
       },
       include: {
         businessPartner: true,
@@ -141,6 +183,39 @@ export const updateEmployee = async (req: Request, res: Response): Promise<void>
 
     if (updateData.dailyRate !== undefined) {
       updateData.dailyRate = parseFloat(updateData.dailyRate);
+    }
+
+    if (updateData.businessPartner !== undefined) {
+      if (!updateData.businessPartnerId && updateData.businessPartner) {
+        const bpNameOrCode = String(updateData.businessPartner).trim();
+        if (bpNameOrCode) {
+          const emp = await prisma.employee.findUnique({ where: { id }, select: { tenantId: true } });
+          const tenantId = emp?.tenantId || (await getDefaultTenantId());
+          let partner = await prisma.businessPartner.findFirst({
+            where: {
+              tenantId,
+              OR: [
+                { id: bpNameOrCode },
+                { name: { equals: bpNameOrCode, mode: 'insensitive' } },
+                { code: { equals: bpNameOrCode, mode: 'insensitive' } },
+              ],
+            },
+          });
+          if (!partner) {
+            const count = await prisma.businessPartner.count({ where: { tenantId } });
+            const code = `BP1${String(count + 1).padStart(6, '0')}`;
+            partner = await prisma.businessPartner.create({
+              data: {
+                tenantId,
+                name: bpNameOrCode,
+                code,
+              },
+            });
+          }
+          updateData.businessPartnerId = partner.id;
+        }
+      }
+      delete updateData.businessPartner;
     }
 
     const updatedEmployee = await prisma.employee.update({

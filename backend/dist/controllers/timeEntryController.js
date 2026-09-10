@@ -102,62 +102,60 @@ async function getDayTypeRulesAndId(tenantId, date) {
         dayTypeName: 'Normal Day',
     };
 }
+// Helper: parse date to UTC midnight for date column (matches assignmentController)
+function parseDate(dateStr) {
+    if (!dateStr) {
+        const now = new Date();
+        return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    }
+    const clean = dateStr.split('T')[0];
+    const [year, month, day] = clean.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day));
+}
 // 1. Get assigned employees for supervisor & date
 const getAssignedEmployees = async (req, res) => {
     try {
         const supervisorId = req.query.supervisorId;
         const dateStr = req.query.date;
         const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const parsedDate = dateStr ? new Date(dateStr) : new Date();
-        // Check DailyAssignment table
-        let assignedRecords = [];
-        if (supervisorId) {
-            assignedRecords = await prisma_1.default.dailyAssignment.findMany({
-                where: {
-                    tenantId,
-                    supervisorId,
-                    date: parsedDate,
-                },
-                include: {
-                    employee: {
-                        include: { businessPartner: true },
-                    },
-                },
-            });
-        }
-        // If assignments exist, return those
-        if (assignedRecords.length > 0) {
-            const result = assignedRecords.map((rec) => ({
-                id: rec.employee.id,
-                employeeCode: rec.employee.employeeCode,
-                callingName: rec.employee.callingName,
-                fullName: rec.employee.fullName || rec.employee.callingName,
-                tradeGroup: rec.employee.tradeGroup || 'General labour',
-                businessPartner: rec.employee.businessPartner?.name || 'Direct',
-            }));
-            res.json(result);
+        const targetDate = parseDate(dateStr);
+        // If supervisorId is not provided, return empty array immediately
+        if (!supervisorId) {
+            res.json([]);
             return;
         }
-        // Fallback: If no daily assignments configured for today yet, return active employees
-        const allEmployees = await prisma_1.default.employee.findMany({
+        // Check DailyAssignment table strictly for this supervisor and date
+        const assignedRecords = await prisma_1.default.dailyAssignment.findMany({
             where: {
                 tenantId,
-                status: 'active',
+                supervisorId,
+                date: targetDate,
+                employee: {
+                    status: 'active',
+                },
             },
             include: {
-                businessPartner: true,
+                employee: {
+                    include: { businessPartner: true },
+                },
             },
-            orderBy: { employeeCode: 'asc' },
+            orderBy: {
+                employee: {
+                    employeeCode: 'asc',
+                },
+            },
         });
-        const formatted = allEmployees.map((emp) => ({
-            id: emp.id,
-            employeeCode: emp.employeeCode,
-            callingName: emp.callingName,
-            fullName: emp.fullName || emp.callingName,
-            tradeGroup: emp.tradeGroup || 'General labour',
-            businessPartner: emp.businessPartner?.name || 'Direct',
+        // Return ONLY employees assigned to this supervisor for this date.
+        // If none assigned, return empty array [].
+        const result = assignedRecords.map((rec) => ({
+            id: rec.employee.id,
+            employeeCode: rec.employee.employeeCode,
+            callingName: rec.employee.callingName,
+            fullName: rec.employee.fullName || rec.employee.callingName,
+            tradeGroup: rec.employee.tradeGroup || 'General labour',
+            businessPartner: rec.employee.businessPartner?.name || 'Direct',
         }));
-        res.json(formatted);
+        res.json(result);
     }
     catch (error) {
         console.error('Error fetching assigned employees:', error);
@@ -174,7 +172,7 @@ const checkInEmployee = async (req, res) => {
             return;
         }
         const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const entryDate = date ? new Date(date) : new Date();
+        const entryDate = parseDate(date);
         // Check if a time entry already exists for this employee and date
         const existing = await prisma_1.default.timeEntry.findFirst({
             where: {
@@ -217,7 +215,7 @@ const assignActivityBulk = async (req, res) => {
             return;
         }
         const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const targetDate = date ? new Date(date) : new Date();
+        const targetDate = parseDate(date);
         const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
         // Resolve supervisor ID
         let finalSupervisorId = supervisorId;
@@ -320,7 +318,7 @@ const upsertTimeEntry = async (req, res) => {
     try {
         const { employeeId, supervisorId, date, activityId, equipmentId, hours, inTime, outTime, remarks, } = req.body;
         const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const targetDate = date ? new Date(date) : new Date();
+        const targetDate = parseDate(date);
         const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
         const numHours = hours !== undefined ? parseFloat(hours) : 0;
         let overtimeHours = 0;
@@ -385,7 +383,7 @@ const getTimeEntries = async (req, res) => {
         const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const where = { tenantId };
         if (date && typeof date === 'string') {
-            where.date = new Date(date);
+            where.date = parseDate(date);
         }
         if (supervisorId && typeof supervisorId === 'string') {
             where.supervisorId = supervisorId;
@@ -424,7 +422,7 @@ const submitDay = async (req, res) => {
     try {
         const { supervisorId, date } = req.body;
         const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const targetDate = date ? new Date(date) : new Date();
+        const targetDate = parseDate(date);
         const whereClause = {
             tenantId,
             date: targetDate,

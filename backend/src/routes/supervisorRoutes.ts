@@ -4,6 +4,7 @@ import {
   createSupervisor,
   resetSupervisorPassword,
   updateSupervisorStatus,
+  deleteSupervisor,
 } from "../controllers/supervisorController";
 
 const router: Router = Router();
@@ -20,5 +21,8 @@ router.put('/:id/reset-password', resetSupervisorPassword);
 router.put('/:id/updateStatus', updateSupervisorStatus);
 router.patch('/:id/status', updateSupervisorStatus);
 router.put('/:id/status', updateSupervisorStatus);
+
+// Delete supervisor
+router.delete('/:id', deleteSupervisor);
 
 export default router;

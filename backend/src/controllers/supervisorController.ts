@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import bcrypt from "bcrypt";
 import prisma from "../config/prisma";
 import { getDefaultTenantId } from "./employeeController";
 
@@ -81,6 +82,7 @@ export const createSupervisor = async (req: Request, res: Response): Promise<voi
 
     const tenantId = req.body.tenantId || (await getDefaultTenantId());
     const tempPassword = generateTempPassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
     const resolvedEmployeeId = linkedEmployeeId || employeeId || null;
 
     const newSupervisor = await prisma.user.create({
@@ -89,7 +91,7 @@ export const createSupervisor = async (req: Request, res: Response): Promise<voi
         fullName: fullName.trim(),
         username: username.trim().toLowerCase(),
         role: "supervisor",
-        passwordHash: tempPassword,
+        passwordHash: hashedPassword,
         employeeId: resolvedEmployeeId,
         status: "active",
         mustChangePassword: true,
@@ -133,11 +135,12 @@ export const resetSupervisorPassword = async (req: Request, res: Response): Prom
   try {
     const id = (req.params.id as string) || '';
     const tempPassword = generateTempPassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     const update = await prisma.user.update({
       where: { id },
       data: {
-        passwordHash: tempPassword,
+        passwordHash: hashedPassword,
         mustChangePassword: true,
       },
     });
@@ -177,3 +180,36 @@ export const updateSupervisorStatus = async (req: Request, res: Response): Promi
     res.status(500).json({ message: "Error updating supervisor status" });
   }
 };
+
+export const deleteSupervisor = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = (req.params.id as string) || '';
+
+    const supervisor = await prisma.user.findUnique({
+      where: { id },
+    });
+
+    if (!supervisor) {
+      res.status(404).json({ message: "Supervisor not found" });
+      return;
+    }
+
+    // Clean up any assigned tasks or time entries if linked
+    await prisma.dailyAssignment.deleteMany({ where: { supervisorId: id } });
+    await prisma.timeEntry.deleteMany({ where: { supervisorId: id } });
+
+    await prisma.user.delete({
+      where: { id },
+    });
+
+    res.json({ message: "Supervisor deleted successfully" });
+  } catch (error: any) {
+    console.error("Error deleting supervisor:", error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ message: "Supervisor not found" });
+      return;
+    }
+    res.status(500).json({ message: "Failed to delete supervisor" });
+  }
+};
+
