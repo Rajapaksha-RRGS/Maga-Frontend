@@ -41,11 +41,11 @@ export function useEmployees(): UseEmployeesReturn {
   const [tradeGroupFilter, setTradeGroupFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await employeeService.getAll();
+      const data = await employeeService.getAll(undefined, forceRefresh);
       setEmployees(data);
     } catch (err: any) {
       console.error('Failed to load employees from backend:', err);
@@ -138,7 +138,7 @@ export function useEmployees(): UseEmployeesReturn {
     updateEmployee,
     deactivateEmployee,
     deleteEmployee,
-    refresh: load,
+    refresh: () => load(true),
   };
 }
 

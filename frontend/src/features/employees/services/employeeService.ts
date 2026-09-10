@@ -45,6 +45,7 @@ export interface EmployeeFormData {
 }
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 
 
 function mapEmployee(raw: any): Employee {
@@ -75,36 +76,49 @@ export interface EmployeeQueryFilters {
   businessPartner?: string;
 }
 
-/** Fetch all employees from backend with optional filters */
-export async function getAll(filters?: EmployeeQueryFilters): Promise<Employee[]> {
-  const params = new URLSearchParams();
-  if (filters?.status) params.append('status', filters.status);
-  if (filters?.tradeGroup) params.append('tradeGroup', filters.tradeGroup);
-  if (filters?.businessPartner) params.append('businessPartner', filters.businessPartner);
+/** Fetch all employees from backend with optional filters (Cached for session) */
+export async function getAll(filters?: EmployeeQueryFilters, forceRefresh: boolean = false): Promise<Employee[]> {
+  const cacheKey = `employees:list:${JSON.stringify(filters || {})}`;
 
-  const query = params.toString() ? `?${params.toString()}` : '';
-  const res = await fetch(`${API_URL}/employees${query}`);
-  if (!res.ok) {
-    const errData = await res.json().catch(() => null);
-    throw new Error(errData?.error || `Failed to fetch employees (${res.status})`);
-  }
-  const data = await res.json();
-  if (Array.isArray(data)) {
-    return data.map(mapEmployee);
-  }
-  return [];
+  return cacheManager.fetchWithCache(
+    cacheKey,
+    async () => {
+      const params = new URLSearchParams();
+      if (filters?.status) params.append('status', filters.status);
+      if (filters?.tradeGroup) params.append('tradeGroup', filters.tradeGroup);
+      if (filters?.businessPartner) params.append('businessPartner', filters.businessPartner);
+
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await fetch(`${API_URL}/employees${query}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.error || `Failed to fetch employees (${res.status})`);
+      }
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data.map(mapEmployee);
+      }
+      return [];
+    },
+    null,
+    forceRefresh
+  );
 }
 
-/** Fetch a single employee by ID from backend */
+/** Fetch a single employee by ID from backend (Cached) */
 export async function getById(id: string): Promise<Employee | undefined> {
-  const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}`);
-  if (res.status === 404) return undefined;
-  if (!res.ok) {
-    const errData = await res.json().catch(() => null);
-    throw new Error(errData?.error || `Failed to fetch employee (${res.status})`);
-  }
-  const data = await res.json();
-  return mapEmployee(data);
+  const cacheKey = `employees:id:${id}`;
+
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}`);
+    if (res.status === 404) return undefined;
+    if (!res.ok) {
+      const errData = await res.json().catch(() => null);
+      throw new Error(errData?.error || `Failed to fetch employee (${res.status})`);
+    }
+    const data = await res.json();
+    return mapEmployee(data);
+  });
 }
 
 /** Create employee on backend */
@@ -119,6 +133,8 @@ export async function create(data: EmployeeFormData): Promise<Employee> {
     throw new Error(errData?.error || 'Failed to create employee');
   }
   const newEmployee = await response.json();
+  cacheManager.invalidate('employees');
+  cacheManager.invalidate('reports');
   return mapEmployee(newEmployee);
 }
 
@@ -134,6 +150,8 @@ export async function update(id: string, data: Partial<EmployeeFormData>): Promi
     throw new Error(errData?.error || 'Failed to update employee');
   }
   const updated = await res.json();
+  cacheManager.invalidate('employees');
+  cacheManager.invalidate('reports');
   return mapEmployee(updated);
 }
 
@@ -149,6 +167,8 @@ export async function deactivate(id: string): Promise<Employee> {
     throw new Error(errData?.error || 'Failed to deactivate employee');
   }
   const updated = await res.json();
+  cacheManager.invalidate('employees');
+  cacheManager.invalidate('reports');
   return mapEmployee(updated);
 }
 
@@ -161,6 +181,8 @@ export async function deleteEmployee(id: string): Promise<void> {
     const errData = await res.json().catch(() => null);
     throw new Error(errData?.error || 'Failed to delete employee');
   }
+  cacheManager.invalidate('employees');
+  cacheManager.invalidate('reports');
 }
 
 /** Unique business partners derived dynamically from employee data */

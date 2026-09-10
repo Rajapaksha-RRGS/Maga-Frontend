@@ -55,6 +55,7 @@ export interface SubmitDayPayload {
 }
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 
 // ─── Mock fallback data ────────────────────────────────────────────────────────
 
@@ -218,11 +219,13 @@ export async function checkOutEmployee(
       body: JSON.stringify({ employeeId, supervisorId, date, outTime }),
     });
     if (res.ok) {
+      cacheManager.invalidate('reports');
       return await res.json();
     }
   } catch (err) {
     console.warn('Failed to record check-out on backend:', err);
   }
+  cacheManager.invalidate('reports');
   return { employeeId, outTime };
 }
 
@@ -239,11 +242,13 @@ export async function assignActivityBulk(
       body: JSON.stringify(payload),
     });
     if (res.ok) {
+      cacheManager.invalidate('reports');
       return await res.json();
     }
   } catch (err) {
     console.warn('Failed to assign activity bulk on backend:', err);
   }
+  cacheManager.invalidate('reports');
   return { success: true };
 }
 
@@ -260,11 +265,13 @@ export async function saveTimeEntry(
       body: JSON.stringify(payload),
     });
     if (res.ok) {
+      cacheManager.invalidate('reports');
       return await res.json();
     }
   } catch (err) {
     console.warn('Failed to save time entry on backend:', err);
   }
+  cacheManager.invalidate('reports');
   return { success: true };
 }
 
@@ -281,10 +288,12 @@ export async function submitDay(
       body: JSON.stringify(payload),
     });
     if (res.ok) {
+      cacheManager.invalidate('reports');
       return await res.json();
     }
   } catch (err) {
     console.warn('Failed to submit day on backend:', err);
   }
+  cacheManager.invalidate('reports');
   return { success: true };
 }

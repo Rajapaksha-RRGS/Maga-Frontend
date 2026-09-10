@@ -20,6 +20,7 @@ export interface ActivityCode {
 export type ActivityCodeFormData = Omit<ActivityCode, 'id'>;
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 24;
 
@@ -50,23 +51,25 @@ const CODES: ActivityCode[] = [
 ];
 
 export async function getAll(): Promise<ActivityCode[]> {
-  try {
-    const res = await fetch(`${API_URL}/activity-codes`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length >= 0) {
-        return data.map((item: any) => ({
-          id: item.id,
-          code: item.code,
-          description: item.description || item.code,
-        }));
+  return cacheManager.fetchWithCache('activity-codes:list', async () => {
+    try {
+      const res = await fetch(`${API_URL}/activity-codes`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length >= 0) {
+          return data.map((item: any) => ({
+            id: item.id,
+            code: item.code,
+            description: item.description || item.code,
+          }));
+        }
       }
+    } catch (err) {
+      console.warn('Backend unavailable, using fallback activity codes:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using fallback activity codes:', err);
-  }
-  await delay(300);
-  return [...CODES];
+    await delay(300);
+    return [...CODES];
+  });
 }
 
 /** Check if a code string is already in use (client-side uniqueness check for offline mode) */
@@ -85,6 +88,8 @@ export async function create(data: ActivityCodeFormData): Promise<ActivityCode> 
     });
     if (res.ok) {
       const item = await res.json();
+      cacheManager.invalidate('activity-codes');
+      cacheManager.invalidate('reports');
       return { id: item.id, code: item.code, description: item.description || item.code };
     }
     const errData = await res.json().catch(() => null);
@@ -102,6 +107,8 @@ export async function create(data: ActivityCodeFormData): Promise<ActivityCode> 
     ...data,
   };
   CODES.push(item);
+  cacheManager.invalidate('activity-codes');
+  cacheManager.invalidate('reports');
   return item;
 }
 
@@ -114,6 +121,8 @@ export async function update(id: string, data: Partial<ActivityCodeFormData>): P
     });
     if (res.ok) {
       const item = await res.json();
+      cacheManager.invalidate('activity-codes');
+      cacheManager.invalidate('reports');
       return { id: item.id, code: item.code, description: item.description || item.code };
     }
     const errData = await res.json().catch(() => null);
@@ -129,6 +138,8 @@ export async function update(id: string, data: Partial<ActivityCodeFormData>): P
     throw new Error(`Activity code "${data.code}" already exists.`);
   }
   CODES[idx] = { ...CODES[idx], ...data };
+  cacheManager.invalidate('activity-codes');
+  cacheManager.invalidate('reports');
   return CODES[idx];
 }
 
@@ -137,7 +148,11 @@ export async function remove(id: string): Promise<void> {
     const res = await fetch(`${API_URL}/activity-codes/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
-    if (res.ok) return;
+    if (res.ok) {
+      cacheManager.invalidate('activity-codes');
+      cacheManager.invalidate('reports');
+      return;
+    }
     const errData = await res.json().catch(() => null);
     throw new Error(errData?.error || 'Failed to delete activity code');
   } catch (err) {
@@ -148,4 +163,6 @@ export async function remove(id: string): Promise<void> {
   const idx = CODES.findIndex((c) => c.id === id);
   if (idx === -1) throw new Error('Activity code not found');
   CODES.splice(idx, 1);
+  cacheManager.invalidate('activity-codes');
+  cacheManager.invalidate('reports');
 }

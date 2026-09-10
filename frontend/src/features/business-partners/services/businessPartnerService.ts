@@ -39,6 +39,7 @@ export interface BusinessPartnerFormData {
 }
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Backend response mapper
@@ -87,29 +88,33 @@ export async function getNextPartnerCode(): Promise<string> {
 }
 
 export async function getAll(): Promise<BusinessPartner[]> {
-  try {
-    const res = await fetch(`${API_URL}/business-partners`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) return data.map(mapPartner);
+  return cacheManager.fetchWithCache('business-partners:list', async () => {
+    try {
+      const res = await fetch(`${API_URL}/business-partners`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) return data.map(mapPartner);
+      }
+    } catch (err) {
+      console.warn('Backend unavailable, using fallback business partners:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using fallback business partners:', err);
-  }
-  await delay(200);
-  return [...BUSINESS_PARTNERS];
+    await delay(200);
+    return [...BUSINESS_PARTNERS];
+  });
 }
 
 export async function getById(id: string): Promise<BusinessPartner | undefined> {
-  try {
-    const res = await fetch(`${API_URL}/business-partners/${encodeURIComponent(id)}`);
-    if (res.ok) return mapPartner(await res.json());
-    if (res.status === 404) return undefined;
-  } catch (err) {
-    console.warn('Backend unavailable, using fallback getById:', err);
-  }
-  await delay(150);
-  return BUSINESS_PARTNERS.find((bp) => bp.id === id);
+  return cacheManager.fetchWithCache(`business-partners:id:${id}`, async () => {
+    try {
+      const res = await fetch(`${API_URL}/business-partners/${encodeURIComponent(id)}`);
+      if (res.ok) return mapPartner(await res.json());
+      if (res.status === 404) return undefined;
+    } catch (err) {
+      console.warn('Backend unavailable, using fallback getById:', err);
+    }
+    await delay(150);
+    return BUSINESS_PARTNERS.find((bp) => bp.id === id);
+  });
 }
 
 export async function create(data: BusinessPartnerFormData): Promise<BusinessPartner> {
@@ -119,7 +124,11 @@ export async function create(data: BusinessPartnerFormData): Promise<BusinessPar
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    if (res.ok) return mapPartner(await res.json());
+    if (res.ok) {
+      cacheManager.invalidate('business-partners');
+      cacheManager.invalidate('reports');
+      return mapPartner(await res.json());
+    }
     const errData = await res.json().catch(() => null);
     throw new Error(errData?.error || 'Failed to create business partner');
   } catch (err) {
@@ -139,6 +148,8 @@ export async function create(data: BusinessPartnerFormData): Promise<BusinessPar
     createdAt: new Date().toISOString().slice(0, 10),
   };
   BUSINESS_PARTNERS.unshift(newPartner);
+  cacheManager.invalidate('business-partners');
+  cacheManager.invalidate('reports');
   return newPartner;
 }
 
@@ -149,7 +160,11 @@ export async function update(id: string, data: Partial<BusinessPartnerFormData>)
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    if (res.ok) return mapPartner(await res.json());
+    if (res.ok) {
+      cacheManager.invalidate('business-partners');
+      cacheManager.invalidate('reports');
+      return mapPartner(await res.json());
+    }
     const errData = await res.json().catch(() => null);
     throw new Error(errData?.error || 'Failed to update business partner');
   } catch (err) {
@@ -165,6 +180,8 @@ export async function update(id: string, data: Partial<BusinessPartnerFormData>)
     code: data.code ? data.code.trim().toUpperCase() : existing.code,
     name: data.name ? data.name.trim() : existing.name,
   };
+  cacheManager.invalidate('business-partners');
+  cacheManager.invalidate('reports');
   return BUSINESS_PARTNERS[idx];
 }
 
@@ -173,7 +190,11 @@ export async function remove(id: string): Promise<void> {
     const res = await fetch(`${API_URL}/business-partners/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
-    if (res.ok) return;
+    if (res.ok) {
+      cacheManager.invalidate('business-partners');
+      cacheManager.invalidate('reports');
+      return;
+    }
     const errData = await res.json().catch(() => null);
     throw new Error(errData?.error || 'Failed to delete business partner');
   } catch (err) {
@@ -183,6 +204,8 @@ export async function remove(id: string): Promise<void> {
   await delay(200);
   const idx = BUSINESS_PARTNERS.findIndex((bp) => bp.id === id);
   if (idx !== -1) BUSINESS_PARTNERS.splice(idx, 1);
+  cacheManager.invalidate('business-partners');
+  cacheManager.invalidate('reports');
 }
 
 export async function toggleStatus(id: string): Promise<BusinessPartner> {
@@ -195,7 +218,11 @@ export async function toggleStatus(id: string): Promise<BusinessPartner> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
     });
-    if (res.ok) return mapPartner(await res.json());
+    if (res.ok) {
+      cacheManager.invalidate('business-partners');
+      cacheManager.invalidate('reports');
+      return mapPartner(await res.json());
+    }
   } catch (err) {
     console.warn('Backend unavailable, toggling status locally:', err);
   }
@@ -203,5 +230,7 @@ export async function toggleStatus(id: string): Promise<BusinessPartner> {
   const partner = BUSINESS_PARTNERS.find((bp) => bp.id === id);
   if (!partner) throw new Error('Business Partner not found');
   partner.status = newStatus;
+  cacheManager.invalidate('business-partners');
+  cacheManager.invalidate('reports');
   return partner;
 }

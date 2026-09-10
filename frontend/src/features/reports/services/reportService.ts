@@ -13,6 +13,7 @@
 
 import { getDayTypeRule } from '../../../utils/overtimeCalculator';
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 function buildParams(f: ReportFilters): string {
   const p = new URLSearchParams();
   if (f.dateFrom) p.set('dateFrom', f.dateFrom);
@@ -241,15 +242,19 @@ function getDateRange(from?: string, to?: string): string[] {
 // ── Filter Options ───────────────────────────────────────────────────────────
 
 export async function getBusinessPartnerOptions(): Promise<string[]> {
-  const o = await loadFOpts();
-  if (o?.businessPartners?.length) return o.businessPartners;
-  return ['Mäga Engineering', 'Alpha Constructions', 'Beta Projects'];
+  return cacheManager.fetchWithCache('reports:filter-opts:bp', async () => {
+    const o = await loadFOpts();
+    if (o?.businessPartners?.length) return o.businessPartners;
+    return ['Mäga Engineering', 'Alpha Constructions', 'Beta Projects'];
+  });
 }
 
 export async function getActivityCodeOptions(): Promise<{ code: string; description: string }[]> {
-  const o = await loadFOpts();
-  if (o?.activityCodes?.length) return o.activityCodes;
-  return [...SEED_ACTIVITIES];
+  return cacheManager.fetchWithCache('reports:filter-opts:act', async () => {
+    const o = await loadFOpts();
+    if (o?.activityCodes?.length) return o.activityCodes;
+    return [...SEED_ACTIVITIES];
+  });
 }
 
 // ── 1. GET Summary Report ────────────────────────────────────────────────────
@@ -261,57 +266,60 @@ export async function getActivityCodeOptions(): Promise<{ code: string; descript
  *   return data;
  */
 export async function getSummaryReport(filters: ReportFilters): Promise<SummaryReportResponse> {
-  try {
-    const _r = await fetch(API_URL + '/reports/summary?' + buildParams(filters));
-    if (_r.ok) { const _d = await _r.json(); if (_d?.items) return _d as SummaryReportResponse; }
-  } catch (_e) { console.warn('Backend unavailable, using mock summary report:', _e); }
-  await delay(350);
+  const cacheKey = `reports:summary:${JSON.stringify(filters)}`;
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    try {
+      const _r = await fetch(API_URL + '/reports/summary?' + buildParams(filters));
+      if (_r.ok) { const _d = await _r.json(); if (_d?.items) return _d as SummaryReportResponse; }
+    } catch (_e) { console.warn('Backend unavailable, using mock summary report:', _e); }
+    await delay(350);
 
-  const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
-    if (filters.employeeQuery && !emp.name.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
-      return false;
-    }
-    if (filters.businessPartner && emp.partner !== filters.businessPartner) {
-      return false;
-    }
-    return true;
+    const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
+      if (filters.employeeQuery && !emp.name.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
+        return false;
+      }
+      if (filters.businessPartner && emp.partner !== filters.businessPartner) {
+        return false;
+      }
+      return true;
+    });
+
+    const dates = getDateRange(filters.dateFrom, filters.dateTo);
+    const daysCount = dates.length;
+
+    const items: SummaryReportItem[] = filteredEmps.map((emp, idx) => {
+      // Generate deterministic values based on employee index and date count
+      const workedDays = Math.max(1, Math.min(daysCount, Math.round(daysCount * (0.8 + (idx % 3) * 0.08))));
+      const normalHours = workedDays * 8;
+      const otHours = idx % 2 === 0 ? Math.round(workedDays * 1.5 * 10) / 10 : 0;
+      const totalHours = normalHours + otHours;
+
+      return {
+        id: `sum-${emp.id}`,
+        employeeId: emp.id,
+        employeeName: emp.name,
+        tradeGroup: emp.trade,
+        businessPartner: emp.partner,
+        totalDays: workedDays,
+        totalNormalHours: normalHours,
+        totalOtHours: otHours,
+        totalHours,
+      };
+    });
+
+    const totals = items.reduce(
+      (acc, curr) => ({
+        employeeCount: acc.employeeCount + 1,
+        totalDays: acc.totalDays + curr.totalDays,
+        totalNormalHours: acc.totalNormalHours + curr.totalNormalHours,
+        totalOtHours: acc.totalOtHours + curr.totalOtHours,
+        totalHours: acc.totalHours + curr.totalHours,
+      }),
+      { employeeCount: 0, totalDays: 0, totalNormalHours: 0, totalOtHours: 0, totalHours: 0 }
+    );
+
+    return { items, totals };
   });
-
-  const dates = getDateRange(filters.dateFrom, filters.dateTo);
-  const daysCount = dates.length;
-
-  const items: SummaryReportItem[] = filteredEmps.map((emp, idx) => {
-    // Generate deterministic values based on employee index and date count
-    const workedDays = Math.max(1, Math.min(daysCount, Math.round(daysCount * (0.8 + (idx % 3) * 0.08))));
-    const normalHours = workedDays * 8;
-    const otHours = idx % 2 === 0 ? Math.round(workedDays * 1.5 * 10) / 10 : 0;
-    const totalHours = normalHours + otHours;
-
-    return {
-      id: `sum-${emp.id}`,
-      employeeId: emp.id,
-      employeeName: emp.name,
-      tradeGroup: emp.trade,
-      businessPartner: emp.partner,
-      totalDays: workedDays,
-      totalNormalHours: normalHours,
-      totalOtHours: otHours,
-      totalHours,
-    };
-  });
-
-  const totals = items.reduce(
-    (acc, curr) => ({
-      employeeCount: acc.employeeCount + 1,
-      totalDays: acc.totalDays + curr.totalDays,
-      totalNormalHours: acc.totalNormalHours + curr.totalNormalHours,
-      totalOtHours: acc.totalOtHours + curr.totalOtHours,
-      totalHours: acc.totalHours + curr.totalHours,
-    }),
-    { employeeCount: 0, totalDays: 0, totalNormalHours: 0, totalOtHours: 0, totalHours: 0 }
-  );
-
-  return { items, totals };
 }
 
 // ── 2. GET Day & OT Summary Report ───────────────────────────────────────────
@@ -323,79 +331,82 @@ export async function getSummaryReport(filters: ReportFilters): Promise<SummaryR
  *   return data;
  */
 export async function getDayOtSummaryReport(filters: ReportFilters): Promise<DayOtSummaryResponse> {
-  try {
-    const _r = await fetch(API_URL + '/reports/day-ot-summary?' + buildParams(filters));
-    if (_r.ok) { const _d = await _r.json(); if (_d?.items) return _d as DayOtSummaryResponse; }
-  } catch (_e) { console.warn('Backend unavailable, using mock day-ot-summary report:', _e); }
-  await delay(400);
+  const cacheKey = `reports:day-ot:${JSON.stringify(filters)}`;
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    try {
+      const _r = await fetch(API_URL + '/reports/day-ot-summary?' + buildParams(filters));
+      if (_r.ok) { const _d = await _r.json(); if (_d?.items) return _d as DayOtSummaryResponse; }
+    } catch (_e) { console.warn('Backend unavailable, using mock day-ot-summary report:', _e); }
+    await delay(400);
 
-  const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
-    if (filters.employeeQuery && !emp.name.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
-      return false;
-    }
-    if (filters.businessPartner && emp.partner !== filters.businessPartner) {
-      return false;
-    }
-    return true;
-  });
-
-  const dates = getDateRange(filters.dateFrom, filters.dateTo);
-
-  const dateTotals: Record<string, { days: number; otHours: number }> = {};
-  dates.forEach((d) => {
-    dateTotals[d] = { days: 0, otHours: 0 };
-  });
-
-  let grandTotalDays = 0;
-  let grandTotalOt = 0;
-
-  const items: DayOtSummaryItem[] = filteredEmps.map((emp, empIdx) => {
-    const dailyEntries: Record<string, DayOtDailyEntry> = {};
-    let empDays = 0;
-    let empOt = 0;
-
-    dates.forEach((date, dateIdx) => {
-      // Deterministic work pattern
-      const dayNum = parseInt(date.slice(-2), 10) || dateIdx + 1;
-      const isAbsent = (empIdx + dayNum) % 7 === 0; // occasional rest day
-      const hasOt = (empIdx + dayNum) % 3 === 0 && !isAbsent;
-
-      const days = isAbsent ? 0 : 1;
-      const otHours = hasOt ? ((empIdx % 2 === 0 ? 2 : 1.5)) : 0;
-
-      dailyEntries[date] = { days, otHours };
-
-      empDays += days;
-      empOt += otHours;
-
-      dateTotals[date].days += days;
-      dateTotals[date].otHours += otHours;
+    const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
+      if (filters.employeeQuery && !emp.name.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
+        return false;
+      }
+      if (filters.businessPartner && emp.partner !== filters.businessPartner) {
+        return false;
+      }
+      return true;
     });
 
-    grandTotalDays += empDays;
-    grandTotalOt += empOt;
+    const dates = getDateRange(filters.dateFrom, filters.dateTo);
+
+    const dateTotals: Record<string, { days: number; otHours: number }> = {};
+    dates.forEach((d) => {
+      dateTotals[d] = { days: 0, otHours: 0 };
+    });
+
+    let grandTotalDays = 0;
+    let grandTotalOt = 0;
+
+    const items: DayOtSummaryItem[] = filteredEmps.map((emp, empIdx) => {
+      const dailyEntries: Record<string, DayOtDailyEntry> = {};
+      let empDays = 0;
+      let empOt = 0;
+
+      dates.forEach((date, dateIdx) => {
+        // Deterministic work pattern
+        const dayNum = parseInt(date.slice(-2), 10) || dateIdx + 1;
+        const isAbsent = (empIdx + dayNum) % 7 === 0; // occasional rest day
+        const hasOt = (empIdx + dayNum) % 3 === 0 && !isAbsent;
+
+        const days = isAbsent ? 0 : 1;
+        const otHours = hasOt ? ((empIdx % 2 === 0 ? 2 : 1.5)) : 0;
+
+        dailyEntries[date] = { days, otHours };
+
+        empDays += days;
+        empOt += otHours;
+
+        dateTotals[date].days += days;
+        dateTotals[date].otHours += otHours;
+      });
+
+      grandTotalDays += empDays;
+      grandTotalOt += empOt;
+
+      return {
+        id: `dayot-${emp.id}`,
+        employeeId: emp.id,
+        employeeName: emp.name,
+        tradeGroup: emp.trade,
+        businessPartner: emp.partner,
+        dailyEntries,
+        totalDays: empDays,
+        totalOtHours: empOt,
+      };
+    });
 
     return {
-      id: `dayot-${emp.id}`,
-      employeeId: emp.id,
-      employeeName: emp.name,
-      tradeGroup: emp.trade,
-      businessPartner: emp.partner,
-      dailyEntries,
-      totalDays: empDays,
-      totalOtHours: empOt,
+      dates,
+      items,
+      totals: {
+        totalDays: grandTotalDays,
+        totalOtHours: grandTotalOt,
+        dateTotals,
+      },
     };
   });
-
-  return {
-    dates,
-    items,
-    totals: {
-      totalDays: grandTotalDays,
-      totalOtHours: grandTotalOt,
-      dateTotals,
-    },
-  };
 }
 
 // ── 3. GET BP Bill Report ────────────────────────────────────────────────────
@@ -407,106 +418,109 @@ export async function getDayOtSummaryReport(filters: ReportFilters): Promise<Day
  *   return data;
  */
 export async function getBpBillReport(filters: ReportFilters): Promise<BpBillResponse> {
-  try {
-    const _r = await fetch(API_URL + '/reports/bp-bill?' + buildParams(filters));
-    if (_r.ok) { const _d = await _r.json(); if (_d?.groups) return _d as BpBillResponse; }
-  } catch (_e) { console.warn('Backend unavailable, using mock bp-bill report:', _e); }
-  await delay(400);
+  const cacheKey = `reports:bp-bill:${JSON.stringify(filters)}`;
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    try {
+      const _r = await fetch(API_URL + '/reports/bp-bill?' + buildParams(filters));
+      if (_r.ok) { const _d = await _r.json(); if (_d?.groups) return _d as BpBillResponse; }
+    } catch (_e) { console.warn('Backend unavailable, using mock bp-bill report:', _e); }
+    await delay(400);
 
-  const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
-    if (filters.employeeQuery && !emp.name.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
-      return false;
-    }
-    if (filters.businessPartner && emp.partner !== filters.businessPartner) {
-      return false;
-    }
-    return true;
-  });
+    const filteredEmps = SEED_EMPLOYEES.filter((emp) => {
+      if (filters.employeeQuery && !emp.name.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
+        return false;
+      }
+      if (filters.businessPartner && emp.partner !== filters.businessPartner) {
+        return false;
+      }
+      return true;
+    });
 
-  const dates = getDateRange(filters.dateFrom, filters.dateTo);
+    const dates = getDateRange(filters.dateFrom, filters.dateTo);
 
-  // Group by partner
-  const partnerMap = new Map<string, typeof SEED_EMPLOYEES>();
-  filteredEmps.forEach((emp) => {
-    const list = partnerMap.get(emp.partner) || [];
-    list.push(emp);
-    partnerMap.set(emp.partner, list);
-  });
+    // Group by partner
+    const partnerMap = new Map<string, typeof SEED_EMPLOYEES>();
+    filteredEmps.forEach((emp) => {
+      const list = partnerMap.get(emp.partner) || [];
+      list.push(emp);
+      partnerMap.set(emp.partner, list);
+    });
 
-  let grandTotalHours = 0;
-  let grandTotalPayment = 0;
-  let grandTotalOverhead = 0;
-  let grandTotalCost = 0;
+    let grandTotalHours = 0;
+    let grandTotalPayment = 0;
+    let grandTotalOverhead = 0;
+    let grandTotalCost = 0;
 
-  const groups: BpBillGroup[] = [];
+    const groups: BpBillGroup[] = [];
 
-  partnerMap.forEach((emps, partner) => {
-    let subtotalHours = 0;
-    let subtotalPayment = 0;
-    let subtotalOverhead = 0;
-    let subtotalCost = 0;
+    partnerMap.forEach((emps, partner) => {
+      let subtotalHours = 0;
+      let subtotalPayment = 0;
+      let subtotalOverhead = 0;
+      let subtotalCost = 0;
 
-    const items: BpBillEmployeeItem[] = emps.map((emp, empIdx) => {
-      const dailyHours: Record<string, number> = {};
-      let totalEmpHours = 0;
+      const items: BpBillEmployeeItem[] = emps.map((emp, empIdx) => {
+        const dailyHours: Record<string, number> = {};
+        let totalEmpHours = 0;
 
-      dates.forEach((date, dateIdx) => {
-        const dayNum = parseInt(date.slice(-2), 10) || dateIdx + 1;
-        const isAbsent = (empIdx + dayNum) % 7 === 0;
-        const ot = (empIdx + dayNum) % 3 === 0 ? 2 : 0;
-        const hrs = isAbsent ? 0 : 8 + ot;
+        dates.forEach((date, dateIdx) => {
+          const dayNum = parseInt(date.slice(-2), 10) || dateIdx + 1;
+          const isAbsent = (empIdx + dayNum) % 7 === 0;
+          const ot = (empIdx + dayNum) % 3 === 0 ? 2 : 0;
+          const hrs = isAbsent ? 0 : 8 + ot;
 
-        dailyHours[date] = hrs;
-        totalEmpHours += hrs;
+          dailyHours[date] = hrs;
+          totalEmpHours += hrs;
+        });
+
+        const hourlyRate = emp.rate;
+        const totalHourlyPayment = totalEmpHours * hourlyRate;
+        const overhead = totalHourlyPayment * 0.10; // 10% Overhead
+        const totalCost = totalHourlyPayment + overhead;
+
+        subtotalHours += totalEmpHours;
+        subtotalPayment += totalHourlyPayment;
+        subtotalOverhead += overhead;
+        subtotalCost += totalCost;
+
+        return {
+          id: `bp-${emp.id}`,
+          employeeId: emp.id,
+          employeeName: emp.name,
+          tradeGroup: emp.trade,
+          dailyHours,
+          totalHours: totalEmpHours,
+          hourlyRate,
+          totalHourlyPayment,
+          overhead,
+          totalCost,
+        };
       });
 
-      const hourlyRate = emp.rate;
-      const totalHourlyPayment = totalEmpHours * hourlyRate;
-      const overhead = totalHourlyPayment * 0.10; // 10% Overhead
-      const totalCost = totalHourlyPayment + overhead;
+      grandTotalHours += subtotalHours;
+      grandTotalPayment += subtotalPayment;
+      grandTotalOverhead += subtotalOverhead;
+      grandTotalCost += subtotalCost;
 
-      subtotalHours += totalEmpHours;
-      subtotalPayment += totalHourlyPayment;
-      subtotalOverhead += overhead;
-      subtotalCost += totalCost;
-
-      return {
-        id: `bp-${emp.id}`,
-        employeeId: emp.id,
-        employeeName: emp.name,
-        tradeGroup: emp.trade,
-        dailyHours,
-        totalHours: totalEmpHours,
-        hourlyRate,
-        totalHourlyPayment,
-        overhead,
-        totalCost,
-      };
+      groups.push({
+        businessPartner: partner,
+        items,
+        subtotalHours,
+        subtotalPayment,
+        subtotalOverhead,
+        subtotalCost,
+      });
     });
 
-    grandTotalHours += subtotalHours;
-    grandTotalPayment += subtotalPayment;
-    grandTotalOverhead += subtotalOverhead;
-    grandTotalCost += subtotalCost;
-
-    groups.push({
-      businessPartner: partner,
-      items,
-      subtotalHours,
-      subtotalPayment,
-      subtotalOverhead,
-      subtotalCost,
-    });
+    return {
+      dates,
+      groups,
+      grandTotalHours,
+      grandTotalPayment,
+      grandTotalOverhead,
+      grandTotalCost,
+    };
   });
-
-  return {
-    dates,
-    groups,
-    grandTotalHours,
-    grandTotalPayment,
-    grandTotalOverhead,
-    grandTotalCost,
-  };
 }
 
 // ── 4. GET ERP Upload Export Preview ─────────────────────────────────────────
@@ -548,168 +562,174 @@ const MOCK_ERP_ROWS: ErpUploadRow[] = [
  *   return data;
  */
 export async function getErpUploadReport(filters: ReportFilters): Promise<ErpUploadResponse> {
-  try {
-    const _r = await fetch(API_URL + '/reports/erp-upload?' + buildParams(filters));
-    if (_r.ok) { const _d = await _r.json(); if (_d?.rows) return _d as ErpUploadResponse; }
-  } catch (_e) { console.warn('Backend unavailable, using mock ERP upload report:', _e); }
-  await delay(350);
+  const cacheKey = `reports:erp-upload:${JSON.stringify(filters)}`;
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    try {
+      const _r = await fetch(API_URL + '/reports/erp-upload?' + buildParams(filters));
+      if (_r.ok) { const _d = await _r.json(); if (_d?.rows) return _d as ErpUploadResponse; }
+    } catch (_e) { console.warn('Backend unavailable, using mock ERP upload report:', _e); }
+    await delay(350);
 
-  // Filter raw activity rows by filters
-  const filtered = MOCK_ERP_ROWS.filter((r) => {
-    if (filters.dateFrom && r.date < filters.dateFrom) return false;
-    if (filters.dateTo && r.date > filters.dateTo) return false;
-    if (filters.employeeQuery && !r.employeeName.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
-      return false;
-    }
-    if (filters.activityCode && r.activityCode !== filters.activityCode) {
-      return false;
-    }
-    return true;
-  });
+    // Filter raw activity rows by filters
+    const filtered = MOCK_ERP_ROWS.filter((r) => {
+      if (filters.dateFrom && r.date < filters.dateFrom) return false;
+      if (filters.dateTo && r.date > filters.dateTo) return false;
+      if (filters.employeeQuery && !r.employeeName.toLowerCase().includes(filters.employeeQuery.toLowerCase())) {
+        return false;
+      }
+      if (filters.activityCode && r.activityCode !== filters.activityCode) {
+        return false;
+      }
+      return true;
+    });
 
-  // Group by Employee + Date
-  const groups: { [key: string]: ErpUploadRow[] } = {};
-  filtered.forEach((r) => {
-    const key = `${r.employeeId}___${r.date}`;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(r);
-  });
+    // Group by Employee + Date
+    const groups: { [key: string]: ErpUploadRow[] } = {};
+    filtered.forEach((r) => {
+      const key = `${r.employeeId}___${r.date}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(r);
+    });
 
-  const finalRows: ErpUploadRow[] = [];
-  let totalHours = 0;
-  let totalOtHours = 0;
+    const finalRows: ErpUploadRow[] = [];
+    let totalHours = 0;
+    let totalOtHours = 0;
 
-  Object.values(groups).forEach((groupRows) => {
-    const first = groupRows[0];
-    const totalDayHours = groupRows
-      .filter((r) => r.activityCode.toUpperCase() !== 'OT')
-      .reduce((s, r) => s + (r.hours || 0), 0);
+    Object.values(groups).forEach((groupRows) => {
+      const first = groupRows[0];
+      const totalDayHours = groupRows
+        .filter((r) => r.activityCode.toUpperCase() !== 'OT')
+        .reduce((s, r) => s + (r.hours || 0), 0);
 
-    // 1. Regular Activity lines (with full activity hours)
-    groupRows
-      .filter((r) => r.activityCode.toUpperCase() !== 'OT')
-      .forEach((r) => {
-        finalRows.push({
-          ...r,
-          overtimeHours: 0, // Activity line holds standard hours
+      // 1. Regular Activity lines (with full activity hours)
+      groupRows
+        .filter((r) => r.activityCode.toUpperCase() !== 'OT')
+        .forEach((r) => {
+          finalRows.push({
+            ...r,
+            overtimeHours: 0, // Activity line holds standard hours
+          });
+          totalHours += r.hours || 0;
         });
-        totalHours += r.hours || 0;
-      });
 
-    // 2. OT Line underneath based on Calendar Site Overtime rules:
-    // - Sunday / Poya / Holiday: 100% of all hours are Overtime (standardCap = 0)
-    // - Saturday: Half-day up to 13:00 (standardCap = 6.0), hours > 6.0 are Overtime
-    // - Normal Day: Standard 8.0 hrs, hours > 8.0 are Overtime
-    const { standardCap, isAllOvertime, dayTypeLabel } = getDayTypeRule(first.date);
-    let otHours = 0;
-    const explicitOt = groupRows.find((r) => r.activityCode.toUpperCase() === 'OT');
-    if (explicitOt) {
-      otHours = explicitOt.overtimeHours || explicitOt.hours || 0;
-    } else if (isAllOvertime) {
-      otHours = totalDayHours;
-    } else if (totalDayHours > standardCap) {
-      otHours = parseFloat((totalDayHours - standardCap).toFixed(2));
-    } else {
-      const explicitSum = groupRows.reduce((s, r) => s + (r.overtimeHours || 0), 0);
-      if (explicitSum > 0) otHours = explicitSum;
-    }
+      // 2. OT Line underneath based on Calendar Site Overtime rules:
+      // - Sunday / Poya / Holiday: 100% of all hours are Overtime (standardCap = 0)
+      // - Saturday: Half-day up to 13:00 (standardCap = 6.0), hours > 6.0 are Overtime
+      // - Normal Day: Standard 8.0 hrs, hours > 8.0 are Overtime
+      const { standardCap, isAllOvertime, dayTypeLabel } = getDayTypeRule(first.date);
+      let otHours = 0;
+      const explicitOt = groupRows.find((r) => r.activityCode.toUpperCase() === 'OT');
+      if (explicitOt) {
+        otHours = explicitOt.overtimeHours || explicitOt.hours || 0;
+      } else if (isAllOvertime) {
+        otHours = totalDayHours;
+      } else if (totalDayHours > standardCap) {
+        otHours = parseFloat((totalDayHours - standardCap).toFixed(2));
+      } else {
+        const explicitSum = groupRows.reduce((s, r) => s + (r.overtimeHours || 0), 0);
+        if (explicitSum > 0) otHours = explicitSum;
+      }
 
-    if (otHours > 0) {
-      finalRows.push({
-        id: `erp-ot-${first.employeeId}-${first.date}`,
-        employeeId: first.employeeId,
-        employeeName: first.employeeName,
-        date: first.date,
-        activityCode: 'OT',
-        activityDescription: isAllOvertime ? `${dayTypeLabel} Overtime` : `Overtime (> ${standardCap}.0 Hours)`,
-        hours: 0,
-        overtimeHours: otHours,
-        remarks: '',
-      });
-      totalOtHours += otHours;
-    }
+      if (otHours > 0) {
+        finalRows.push({
+          id: `erp-ot-${first.employeeId}-${first.date}`,
+          employeeId: first.employeeId,
+          employeeName: first.employeeName,
+          date: first.date,
+          activityCode: 'OT',
+          activityDescription: isAllOvertime ? `${dayTypeLabel} Overtime` : `Overtime (> ${standardCap}.0 Hours)`,
+          hours: 0,
+          overtimeHours: otHours,
+          remarks: '',
+        });
+        totalOtHours += otHours;
+      }
+    });
+
+    return {
+      rows: finalRows,
+      totalHours,
+      totalOtHours,
+      rowCount: finalRows.length,
+    };
   });
-
-  return {
-    rows: finalRows,
-    totalHours,
-    totalOtHours,
-    rowCount: finalRows.length,
-  };
 }
 
 // ── 5. GET Running Chart Report ──────────────────────────────────────────────
 
 export async function getRunningChartReport(filters: ReportFilters): Promise<RunningChartResponse> {
-  try {
-    const _r = await fetch(API_URL + '/reports/running-chart?' + buildParams(filters));
-    if (_r.ok) {
-      const _d = await _r.json();
-      if (_d?.items) return _d as RunningChartResponse;
+  const cacheKey = `reports:running-chart:${JSON.stringify(filters)}`;
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    try {
+      const _r = await fetch(API_URL + '/reports/running-chart?' + buildParams(filters));
+      if (_r.ok) {
+        const _d = await _r.json();
+        if (_d?.items) return _d as RunningChartResponse;
+      }
+    } catch (_e) {
+      console.warn('Backend unavailable, using mock running chart report:', _e);
     }
-  } catch (_e) {
-    console.warn('Backend unavailable, using mock running chart report:', _e);
-  }
-  await delay(350);
+    await delay(350);
 
-  // Fallback mock using seed employees & activities
-  const dates = getDateRange(filters.dateFrom, filters.dateTo);
-  const items: RunningChartItem[] = [];
-  let grandWorkHours = 0;
-  let grandOtHours = 0;
-  let grandTotalHours = 0;
+    // Fallback mock using seed employees & activities
+    const dates = getDateRange(filters.dateFrom, filters.dateTo);
+    const items: RunningChartItem[] = [];
+    let grandWorkHours = 0;
+    let grandOtHours = 0;
+    let grandTotalHours = 0;
 
-  SEED_EMPLOYEES.slice(0, 10).forEach((emp, empIdx) => {
-    dates.slice(0, 5).forEach((date, dateIdx) => {
-      const dayRule = getDayTypeRule(date);
-      const isAbsent = (empIdx + dateIdx) % 7 === 0;
-      if (isAbsent) return;
+    SEED_EMPLOYEES.slice(0, 10).forEach((emp, empIdx) => {
+      dates.slice(0, 5).forEach((date, dateIdx) => {
+        const dayRule = getDayTypeRule(date);
+        const isAbsent = (empIdx + dateIdx) % 7 === 0;
+        if (isAbsent) return;
 
-      const act1 = SEED_ACTIVITIES[empIdx % SEED_ACTIVITIES.length];
-      const act2 = SEED_ACTIVITIES[(empIdx + 1) % SEED_ACTIVITIES.length];
+        const act1 = SEED_ACTIVITIES[empIdx % SEED_ACTIVITIES.length];
+        const act2 = SEED_ACTIVITIES[(empIdx + 1) % SEED_ACTIVITIES.length];
 
-      const act1Hours = 4.0;
-      const act2Hours = (empIdx % 2 === 0) ? 4.5 : 4.0;
-      const totalDayHours = act1Hours + act2Hours;
+        const act1Hours = 4.0;
+        const act2Hours = (empIdx % 2 === 0) ? 4.5 : 4.0;
+        const totalDayHours = act1Hours + act2Hours;
 
-      const workHours = dayRule.isAllOvertime ? 0 : Math.min(totalDayHours, dayRule.standardCap);
-      const otHours = dayRule.isAllOvertime ? totalDayHours : (totalDayHours > dayRule.standardCap ? totalDayHours - dayRule.standardCap : 0);
-      const totalHours = workHours + otHours;
+        const workHours = dayRule.isAllOvertime ? 0 : Math.min(totalDayHours, dayRule.standardCap);
+        const otHours = dayRule.isAllOvertime ? totalDayHours : (totalDayHours > dayRule.standardCap ? totalDayHours - dayRule.standardCap : 0);
+        const totalHours = workHours + otHours;
 
-      grandWorkHours += workHours;
-      grandOtHours += otHours;
-      grandTotalHours += totalHours;
+        grandWorkHours += workHours;
+        grandOtHours += otHours;
+        grandTotalHours += totalHours;
 
-      items.push({
-        id: `mock-rc-${emp.id}-${date}`,
-        date,
-        supervisorName: empIdx % 2 === 0 ? 'Gayan Kumara' : 'Sunil Perera',
-        employeeCode: emp.id.toUpperCase(),
-        callingName: emp.name,
-        businessPartner: emp.partner,
-        inTime: '07:00',
-        outTime: otHours > 0 ? '17:30' : '17:00',
-        workHours,
-        otHours,
-        totalHours,
-        activities: [
-          { code: act1.code, description: act1.description, hours: act1Hours },
-          { code: act2.code, description: act2.description, hours: act2Hours },
-        ],
-        activitiesDisplay: `${act1.code} (${act1Hours.toFixed(1)}h), ${act2.code} (${act2Hours.toFixed(1)}h)`,
+        items.push({
+          id: `mock-rc-${emp.id}-${date}`,
+          date,
+          supervisorName: empIdx % 2 === 0 ? 'Gayan Kumara' : 'Sunil Perera',
+          employeeCode: emp.id.toUpperCase(),
+          callingName: emp.name,
+          businessPartner: emp.partner,
+          inTime: '07:00',
+          outTime: otHours > 0 ? '17:30' : '17:00',
+          workHours,
+          otHours,
+          totalHours,
+          activities: [
+            { code: act1.code, description: act1.description, hours: act1Hours },
+            { code: act2.code, description: act2.description, hours: act2Hours },
+          ],
+          activitiesDisplay: `${act1.code} (${act1Hours.toFixed(1)}h), ${act2.code} (${act2Hours.toFixed(1)}h)`,
+        });
       });
     });
-  });
 
-  return {
-    items,
-    totals: {
-      totalRecords: items.length,
-      totalWorkHours: Math.round(grandWorkHours * 100) / 100,
-      totalOtHours: Math.round(grandOtHours * 100) / 100,
-      totalHours: Math.round(grandTotalHours * 100) / 100,
-    },
-  };
+    return {
+      items,
+      totals: {
+        totalRecords: items.length,
+        totalWorkHours: Math.round(grandWorkHours * 100) / 100,
+        totalOtHours: Math.round(grandOtHours * 100) / 100,
+        totalHours: Math.round(grandTotalHours * 100) / 100,
+      },
+    };
+  });
 }
 
 // ── 6. Excel Export Service ──────────────────────────────────────────────────

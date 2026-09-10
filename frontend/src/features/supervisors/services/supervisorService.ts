@@ -30,6 +30,7 @@ export interface SupervisorCreateData {
 }
 
 import { API_URL } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextId = 4;
 
@@ -47,26 +48,28 @@ function generateTempPassword(): string {
 }
 
 export async function getAll(): Promise<Supervisor[]> {
-  try {
-    const res = await fetch(`${API_URL}/supervisors`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data.map((s: any) => ({
-          id: s.id,
-          fullName: s.fullName,
-          username: s.username,
-          status: s.status || 'active',
-          linkedEmployeeId: s.linkedEmployeeId || s.employeeId || null,
-          linkedEmployeeName: s.linkedEmployeeName || null,
-        }));
+  return cacheManager.fetchWithCache('supervisors:list', async () => {
+    try {
+      const res = await fetch(`${API_URL}/supervisors`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data.map((s: any) => ({
+            id: s.id,
+            fullName: s.fullName,
+            username: s.username,
+            status: s.status || 'active',
+            linkedEmployeeId: s.linkedEmployeeId || s.employeeId || null,
+            linkedEmployeeName: s.linkedEmployeeName || null,
+          }));
+        }
       }
+    } catch (err) {
+      console.warn('Backend unavailable, using fallback supervisors:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, using fallback supervisors:', err);
-  }
-  await delay(300);
-  return [...SUPERVISORS];
+    await delay(300);
+    return [...SUPERVISORS];
+  });
 }
 
 /** Returns the supervisor and the generated temporary password (shown once). */
@@ -79,6 +82,7 @@ export async function create(data: SupervisorCreateData): Promise<{ supervisor: 
     });
     if (res.ok) {
       const result = await res.json();
+      cacheManager.invalidate('supervisors');
       return {
         supervisor: {
           id: result.supervisor.id,
@@ -111,6 +115,7 @@ export async function create(data: SupervisorCreateData): Promise<{ supervisor: 
     linkedEmployeeName: linkedName,
   };
   SUPERVISORS.push(sup);
+  cacheManager.invalidate('supervisors');
   return { supervisor: sup, tempPassword };
 }
 
@@ -142,6 +147,7 @@ export async function deactivate(id: string): Promise<Supervisor> {
     });
     if (res.ok) {
       const updated = await res.json();
+      cacheManager.invalidate('supervisors');
       return {
         id: updated.id,
         fullName: updated.fullName,
@@ -156,6 +162,7 @@ export async function deactivate(id: string): Promise<Supervisor> {
   }
 
   await delay(300);
+  cacheManager.invalidate('supervisors');
   const idx = SUPERVISORS.findIndex((s) => s.id === id);
   if (idx !== -1) {
     SUPERVISORS[idx].status = 'inactive';
@@ -186,5 +193,6 @@ export async function deleteSupervisor(id: string): Promise<void> {
     const errData = await res.json().catch(() => null);
     throw new Error(errData?.message || 'Failed to delete supervisor');
   }
+  cacheManager.invalidate('supervisors');
 }
 
