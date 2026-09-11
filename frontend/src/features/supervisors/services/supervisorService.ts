@@ -32,7 +32,7 @@ export interface SupervisorCreateData {
 import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
-export async function getAll(): Promise<Supervisor[]> {
+export async function getAll(forceRefresh: boolean = false): Promise<Supervisor[]> {
   return cacheManager.fetchWithCache('supervisors:list', async () => {
     const res = await apiFetch(`${API_URL}/supervisors`);
     if (!res.ok) {
@@ -51,7 +51,7 @@ export async function getAll(): Promise<Supervisor[]> {
       }));
     }
     return [];
-  });
+  }, null, forceRefresh);
 }
 
 /** Returns the supervisor and the generated temporary password (shown once). */
@@ -67,6 +67,8 @@ export async function create(data: SupervisorCreateData): Promise<{ supervisor: 
   }
   const result = await res.json();
   cacheManager.invalidate('supervisors');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
   return {
     supervisor: {
       id: result.supervisor.id,
@@ -106,6 +108,8 @@ export async function deactivate(id: string): Promise<Supervisor> {
   }
   const updated = await res.json();
   cacheManager.invalidate('supervisors');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
   return {
     id: updated.id,
     fullName: updated.fullName,
@@ -132,5 +136,7 @@ export async function deleteSupervisor(id: string): Promise<void> {
     throw new Error(errData?.message || 'Failed to delete supervisor');
   }
   cacheManager.invalidate('supervisors');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
 }
 

@@ -41,6 +41,7 @@ export default function EmployeeForm({
   const [nicNo, setNicNo] = useState('');
   const [dailyRate, setDailyRate] = useState('1400');
   const [epfNo, setEpfNo] = useState('');
+  const [status, setStatus] = useState<'active' | 'inactive'>('active');
   const [isSaving, setIsSaving] = useState(false);
   const [isStatusChanging, setIsStatusChanging] = useState(false);
 
@@ -75,6 +76,7 @@ export default function EmployeeForm({
       setEmployeeCode(employee.employeeCode || employee.id);
       setCallingName(employee.callingName || '');
       setFullName(employee.fullName || '');
+      setStatus(employee.status || 'active');
 
       // Resolve businessPartnerId if already present, or match by name
       if (employee.businessPartnerId) {
@@ -94,6 +96,7 @@ export default function EmployeeForm({
       setEmployeeCode('');
       setCallingName('');
       setFullName('');
+      setStatus('active');
       // If partners available and none selected yet, default to first or empty
       setBusinessPartnerId('');
       setTradeGroup('');
@@ -120,7 +123,7 @@ export default function EmployeeForm({
         nicNo: nicNo.trim(),
         dailyRate: parseFloat(dailyRate) || 1400,
         epfNo: epfNo.trim() || undefined,
-        status: employee ? employee.status : 'active',
+        status: status,
       });
     } finally {
       setIsSaving(false);
@@ -129,16 +132,22 @@ export default function EmployeeForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      {/* Current Status banner if in edit mode */}
+      {/* Current Status banner with toggle if in edit mode */}
       {employee && (
         <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50/80">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-slate-600">Current Status:</span>
-            <StatusBadge status={employee.status} />
+            <span className="text-xs font-medium text-slate-600">Employee Status:</span>
+            <StatusBadge status={status} />
           </div>
-          <span className="text-xs text-slate-500">
-            {employee.status === 'active' ? 'Active' : 'Inactive'}
-          </span>
+          <select
+            id="emp-status-select"
+            value={status}
+            onChange={(e) => setStatus(e.target.value as 'active' | 'inactive')}
+            className="text-xs font-medium bg-white border border-slate-300 rounded px-2.5 py-1 text-slate-700 focus:ring-1 focus:ring-blue-600 focus:outline-none"
+          >
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
         </div>
       )}
 

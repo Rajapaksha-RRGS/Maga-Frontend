@@ -49,9 +49,9 @@ export function useDashboardStats(): DashboardStats {
     try {
       const today = formatDate(new Date());
       const [employees, supervisors, assignments] = await Promise.all([
-        empSvc.getAll(),
-        supSvc.getAll(),
-        asgnSvc.getForDate(today),
+        empSvc.getAll(undefined, forceRefresh),
+        supSvc.getAll(forceRefresh),
+        asgnSvc.getForDate(today, forceRefresh),
       ]);
 
       const activeEmps = employees.filter((e) => e.status === 'active');

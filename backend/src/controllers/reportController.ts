@@ -214,18 +214,19 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
       employeeName: string;
       tradeGroup: string;
       businessPartner: string;
-      dailyEntries: Record<string, { days: number; otHours: number }>;
+      dailyEntries: Record<string, { days: number; otHours: number; workHours: number }>;
     };
 
     const empMap = new Map<string, EmpEntry>();
-    const dateTotals: Record<string, { days: number; otHours: number }> = {};
+    const dateTotals: Record<string, { days: number; otHours: number; workHours: number }> = {};
 
     for (const entry of entries) {
       const dateKey = entry.date.toISOString().split('T')[0];
       const otH = Number(entry.overtimeHours);
+      const wH = Number(entry.hours);
       const empId = entry.employeeId;
 
-      if (!dateTotals[dateKey]) dateTotals[dateKey] = { days: 0, otHours: 0 };
+      if (!dateTotals[dateKey]) dateTotals[dateKey] = { days: 0, otHours: 0, workHours: 0 };
 
       if (!empMap.has(empId)) {
         empMap.set(empId, {
@@ -239,21 +240,26 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
 
       const emp = empMap.get(empId)!;
       if (!emp.dailyEntries[dateKey]) {
-        emp.dailyEntries[dateKey] = { days: 1, otHours: 0 };
+        emp.dailyEntries[dateKey] = { days: 1, otHours: 0, workHours: 0 };
         dateTotals[dateKey].days += 1;
       }
       emp.dailyEntries[dateKey].otHours += otH;
+      emp.dailyEntries[dateKey].workHours += wH;
       dateTotals[dateKey].otHours += otH;
+      dateTotals[dateKey].workHours += wH;
     }
 
     let grandTotalDays = 0;
     let grandTotalOt = 0;
+    let grandTotalWork = 0;
 
     const items = Array.from(empMap.values()).map((e, idx) => {
       const totalDays = Object.values(e.dailyEntries).filter((de) => de.days > 0).length;
       const totalOt = Object.values(e.dailyEntries).reduce((s, de) => s + de.otHours, 0);
+      const totalWork = Object.values(e.dailyEntries).reduce((s, de) => s + de.workHours, 0);
       grandTotalDays += totalDays;
       grandTotalOt += totalOt;
+      grandTotalWork += totalWork;
       return {
         id: `dayot-${idx}`,
         employeeId: e.employeeId,
@@ -263,6 +269,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
         dailyEntries: e.dailyEntries,
         totalDays,
         totalOtHours: Math.round(totalOt * 100) / 100,
+        totalWorkHours: Math.round(totalWork * 100) / 100,
       };
     });
 
@@ -272,6 +279,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
       totals: {
         totalDays: grandTotalDays,
         totalOtHours: Math.round(grandTotalOt * 100) / 100,
+        totalWorkHours: Math.round(grandTotalWork * 100) / 100,
         dateTotals,
       },
     });
@@ -420,6 +428,27 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
   }
 };
 
+// Helper: parse string times like "07:00", "19:30", or decimal "7.00", "19.50" into decimal hours
+function parseTimeToHours(t: string | null | undefined): number | null {
+  if (!t || typeof t !== 'string') return null;
+  const trimmed = t.trim();
+  if (!trimmed || trimmed === '—' || trimmed === '--:--') return null;
+
+  if (trimmed.includes(':')) {
+    const [h, m] = trimmed.split(':').map(Number);
+    if (!isNaN(h) && !isNaN(m)) {
+      return Math.round((h + m / 60) * 100) / 100;
+    }
+  }
+
+  const num = parseFloat(trimmed);
+  if (!isNaN(num)) {
+    return Math.round(num * 100) / 100;
+  }
+
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. ERP UPLOAD EXPORT
 // GET /api/reports/erp-upload?dateFrom=&dateTo=&employeeQuery=&activityCode=
@@ -488,18 +517,16 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
       const outTime = groupEntries.find((e) => e.outTime)?.outTime;
       let shiftEffectiveHours = 0;
 
-      if (inTime && outTime) {
-        const [inH, inM] = inTime.split(':').map(Number);
-        const [outH, outM] = outTime.split(':').map(Number);
-        const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
-        if (diffMins > 0) {
-          const grossH = diffMins / 60;
-          let breakH = Number(groupEntries.find((e) => e.breakHours !== null)?.breakHours) || 0;
-          if (breakH === 0 && grossH >= 5.0) {
-            breakH = 1.0;
-          }
-          shiftEffectiveHours = Math.max(0, Math.round((grossH - breakH) * 100) / 100);
+      const inH = parseTimeToHours(inTime);
+      const outH = parseTimeToHours(outTime);
+
+      if (inH !== null && outH !== null && outH > inH) {
+        const grossH = outH - inH;
+        let breakH = Number(groupEntries.find((e) => e.breakHours !== null)?.breakHours) || 0;
+        if (breakH === 0 && grossH >= 5.0) {
+          breakH = 1.0;
         }
+        shiftEffectiveHours = Math.max(0, Math.round((grossH - breakH) * 100) / 100);
       }
 
       let totalDayHours = 0;
@@ -536,7 +563,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
           activityDescription: 'Idle / Balancing Hours',
           hours: -excessHours,
           overtimeHours: 0,
-          remarks: 'Balancing adjustment (exceeds effective shift)',
+          remarks: '',
         });
         totalHours -= excessHours;
       }
@@ -550,9 +577,11 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
         otHours = parseFloat((effectiveForOt - standardCap).toFixed(2));
       }
 
-      // Also check explicit overtimeHours stored in entries
-      const explicitOt = groupEntries.reduce((s, e) => s + Number(e.overtimeHours), 0);
-      if (explicitOt > otHours) otHours = explicitOt;
+      // If no shift bounds were recorded, fallback to explicit overtime stored in entries
+      if (shiftEffectiveHours === 0) {
+        const explicitOt = groupEntries.reduce((s, e) => s + Number(e.overtimeHours), 0);
+        if (explicitOt > otHours) otHours = explicitOt;
+      }
 
       if (otHours > 0) {
         finalRows.push({

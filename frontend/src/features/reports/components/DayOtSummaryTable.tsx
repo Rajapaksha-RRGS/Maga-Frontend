@@ -90,20 +90,20 @@ export default function DayOtSummaryTable({ data }: Props) {
                 </th>
               </tr>
 
-              {/* Sub-Header Row: Days & O.T. */}
+              {/* Sub-Header Row: Hrs & O.T. */}
               <tr className="bg-slate-50/90 border-b border-slate-200 text-[10px] font-medium text-slate-500 uppercase tracking-wider">
                 {dates.map((date) => (
                   <Fragment key={`${date}-sub`}>
-                    <th className="px-2 py-1.5 text-center min-w-[44px] text-slate-600 bg-slate-50">
-                      Days
+                    <th className="px-2 py-1.5 text-center min-w-[48px] text-slate-600 bg-slate-50">
+                      Hrs
                     </th>
-                    <th className="px-2 py-1.5 text-center min-w-[44px] text-amber-700 bg-amber-50/30 border-r border-slate-200">
+                    <th className="px-2 py-1.5 text-center min-w-[48px] text-amber-700 bg-amber-50/30 border-r border-slate-200">
                       O.T.
                     </th>
                   </Fragment>
                 ))}
                 <th className="px-3 py-1.5 text-right min-w-[60px] text-slate-800 bg-blue-50/40">
-                  Days
+                  Hrs
                 </th>
                 <th className="px-3 py-1.5 text-right min-w-[60px] text-amber-800 bg-blue-50/40 font-semibold">
                   O.T.
@@ -131,13 +131,17 @@ export default function DayOtSummaryTable({ data }: Props) {
                     {row.businessPartner}
                   </td>
 
-                  {/* Date Entries */}
+                  {/* Date Entries — show effective work hours instead of day count */}
                   {dates.map((date) => {
-                    const entry = row.dailyEntries[date] || { days: 0, otHours: 0 };
+                    const entry = row.dailyEntries[date] || { days: 0, otHours: 0, workHours: 0 };
                     return (
                       <Fragment key={`${row.id}-${date}`}>
                         <td className="px-2 py-2 text-center tabular-nums text-slate-700 font-mono">
-                          {entry.days > 0 ? entry.days : <span className="text-slate-300">—</span>}
+                          {entry.workHours > 0 ? (
+                            entry.workHours.toFixed(1)
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
                         </td>
                         <td className="px-2 py-2 text-center tabular-nums font-mono border-r border-slate-100">
                           {entry.otHours > 0 ? (
@@ -154,7 +158,7 @@ export default function DayOtSummaryTable({ data }: Props) {
 
                   {/* Row Totals */}
                   <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900 bg-slate-50/40">
-                    {row.totalDays}
+                    {row.totalWorkHours != null ? row.totalWorkHours.toFixed(1) : row.totalDays}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-amber-700 bg-amber-50/20">
                     {row.totalOtHours > 0 ? row.totalOtHours.toFixed(1) : '0.0'}
@@ -174,11 +178,11 @@ export default function DayOtSummaryTable({ data }: Props) {
                 </td>
 
                 {dates.map((date) => {
-                  const dTot = totals.dateTotals[date] || { days: 0, otHours: 0 };
+                  const dTot = totals.dateTotals[date] || { days: 0, otHours: 0, workHours: 0 };
                   return (
                     <Fragment key={`tot-${date}`}>
                       <td className="px-2 py-2.5 text-center tabular-nums font-semibold text-slate-900 font-mono">
-                        {dTot.days}
+                        {dTot.workHours > 0 ? dTot.workHours.toFixed(1) : '—'}
                       </td>
                       <td className="px-2 py-2.5 text-center tabular-nums font-semibold text-amber-700 font-mono border-r border-slate-200">
                         {dTot.otHours > 0 ? dTot.otHours.toFixed(1) : '0'}
@@ -188,7 +192,7 @@ export default function DayOtSummaryTable({ data }: Props) {
                 })}
 
                 <td className="px-3 py-3 text-right tabular-nums font-semibold text-slate-900 text-sm bg-blue-100/50">
-                  {totals.totalDays}
+                  {totals.totalWorkHours != null ? totals.totalWorkHours.toFixed(1) : totals.totalDays}
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums font-semibold text-amber-800 text-sm bg-amber-100/50">
                   {totals.totalOtHours.toFixed(1)}

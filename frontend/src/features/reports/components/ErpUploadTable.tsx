@@ -98,7 +98,7 @@ export default function ErpUploadTable({ data }: Props) {
                           OT
                         </span>
                       ) : isZidleRow ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-100 border border-rose-300 font-bold text-rose-800">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-red-100 border border-red-300 font-bold text-red-800">
                           ZIDLE
                         </span>
                       ) : (
@@ -108,12 +108,12 @@ export default function ErpUploadTable({ data }: Props) {
                       )}
                     </td>
                     <td className={`px-4 py-3 text-right tabular-nums font-medium ${
-                      isZidleRow ? 'text-rose-700 font-bold' : 'text-slate-800'
+                      isZidleRow ? 'text-red-700 font-bold' : 'text-slate-800'
                     }`}>
                       {isOtRow ? (
                         <span className="text-slate-300">—</span>
                       ) : isZidleRow ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-100/90 border border-rose-300 text-rose-700 font-mono text-xs font-bold">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded bg-red-600 text-white font-mono text-xs font-bold shadow-xs">
                           {row.hours < 0 ? `(${Math.abs(row.hours).toFixed(2)})` : `(${row.hours.toFixed(2)})`}
                         </span>
                       ) : (
@@ -122,8 +122,8 @@ export default function ErpUploadTable({ data }: Props) {
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {isOtRow && row.overtimeHours > 0 ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold">
-                          +{row.overtimeHours.toFixed(2)}
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-purple-100 text-purple-900 border border-purple-300 font-bold font-mono">
+                          {row.overtimeHours.toFixed(1)}
                         </span>
                       ) : (
                         <span className="text-slate-300">—</span>

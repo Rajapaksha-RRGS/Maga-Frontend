@@ -504,7 +504,7 @@ export function ActivityDistributionPage({
 
                     {/* Summary Footer: Allocated vs Overtime breakdown */}
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-slate-500">Allocated:</span>
                         <span
                           className={[
@@ -516,6 +516,16 @@ export function ActivityDistributionPage({
                         >
                           {formatDecimalHours(allocatedHours)}
                         </span>
+
+                        {/* ZIDLE Balancing notification when activities exceed effective shift */}
+                        {shiftHours > 0 && allocatedHours > shiftHours && (
+                          <span
+                            className="font-semibold px-2 py-0.5 rounded text-[11px] bg-red-50 text-red-700 border border-red-200"
+                            title="Excess allocated activity hours will be offset as ZIDLE in ERP Upload"
+                          >
+                            ZIDLE: -{(allocatedHours - shiftHours).toFixed(2)}h
+                          </span>
+                        )}
                       </div>
 
                       {/* Auto OT Badge */}

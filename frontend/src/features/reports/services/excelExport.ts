@@ -354,7 +354,7 @@ export async function exportDayOtSummaryToExcel(
 
     // Row 10 Subheaders
     const daysSub = ws.getCell(10, startCol);
-    daysSub.value = 'Days';
+    daysSub.value = 'Hrs';
     daysSub.alignment = { horizontal: 'center', vertical: 'middle' };
 
     const otSub = ws.getCell(10, endCol);
@@ -371,7 +371,7 @@ export async function exportDayOtSummaryToExcel(
   totTop.alignment = { horizontal: 'center', vertical: 'middle' };
 
   const totDaysSub = ws.getCell(10, colIdx);
-  totDaysSub.value = 'Days';
+  totDaysSub.value = 'Hrs';
   totDaysSub.alignment = { horizontal: 'center', vertical: 'middle' };
 
   const totOtSub = ws.getCell(10, colIdx + 1);
@@ -419,11 +419,11 @@ export async function exportDayOtSummaryToExcel(
     ];
 
     dates.forEach((d) => {
-      const entry = item.dailyEntries[d] || { days: 0, otHours: 0 };
-      rowValues.push(entry.days, entry.otHours);
+      const entry = item.dailyEntries[d] || { days: 0, otHours: 0, workHours: 0 };
+      rowValues.push(entry.workHours, entry.otHours);
     });
 
-    rowValues.push(item.totalDays, item.totalOtHours);
+    rowValues.push(item.totalWorkHours ?? item.totalDays, item.totalOtHours);
 
     const row = ws.getRow(currentRow);
     row.values = rowValues;
@@ -435,13 +435,13 @@ export async function exportDayOtSummaryToExcel(
     let c = 4;
     dates.forEach(() => {
       row.getCell(c).alignment = { horizontal: 'center', vertical: 'middle' };
-      row.getCell(c).numFmt = '0';
+      row.getCell(c).numFmt = '0.00'; // effective hours — decimal
       row.getCell(c + 1).alignment = { horizontal: 'right', vertical: 'middle' };
       row.getCell(c + 1).numFmt = '0.00';
       c += 2;
     });
     row.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
-    row.getCell(c).numFmt = '0';
+    row.getCell(c).numFmt = '0.00'; // total work hours
     row.getCell(c + 1).alignment = { horizontal: 'right', vertical: 'middle' };
     row.getCell(c + 1).numFmt = '0.00';
 
@@ -461,10 +461,10 @@ export async function exportDayOtSummaryToExcel(
     '',
   ];
   dates.forEach((d) => {
-    const dt = data.totals.dateTotals[d] || { days: 0, otHours: 0 };
-    totalValues.push(dt.days, dt.otHours);
+    const dt = data.totals.dateTotals[d] || { days: 0, otHours: 0, workHours: 0 };
+    totalValues.push(dt.workHours, dt.otHours);
   });
-  totalValues.push(data.totals.totalDays, data.totals.totalOtHours);
+  totalValues.push(data.totals.totalWorkHours ?? data.totals.totalDays, data.totals.totalOtHours);
   totalRow.values = totalValues;
   totalRow.height = 22;
 
@@ -477,7 +477,7 @@ export async function exportDayOtSummaryToExcel(
     };
     cell.border = THIN_BORDER;
     if (idx >= 4) {
-      cell.numFmt = idx % 2 === 0 ? '0' : '0.00';
+      cell.numFmt = '0.00'; // both Hrs and OT columns now use decimal format
     }
   });
 
@@ -733,14 +733,14 @@ export async function exportErpUploadToExcel(
   headerRow.height = 24;
 
   headerRow.eachCell((cell) => {
-    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF1E293B' } };
+    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF6B21A8' } };
     cell.fill = {
       type: 'pattern',
       pattern: 'solid',
-      fgColor: { argb: 'FFF1F5F9' },
+      fgColor: { argb: 'FFF5F3FF' }, // Soft lavender
     };
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
-    cell.border = THIN_BORDER;
+    cell.border = DOTTED_BORDER;
   });
 
   // Freeze panes below Row 4
@@ -813,7 +813,7 @@ export async function exportErpUploadToExcel(
     row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
     row.getCell(3).alignment = { horizontal: 'left', vertical: 'middle' };
     row.getCell(4).alignment = { horizontal: 'right', vertical: 'middle' };
-    if (rowItem.hours !== null) row.getCell(4).numFmt = '0.00;[Red](0.00)';
+    if (rowItem.hours !== null) row.getCell(4).numFmt = '0.00;(0.00)';
     row.getCell(5).alignment = { horizontal: 'right', vertical: 'middle' };
     if (rowItem.overtimeHours !== null) row.getCell(5).numFmt = '0.00';
     row.getCell(6).alignment = { horizontal: 'left', vertical: 'middle' };
@@ -821,24 +821,24 @@ export async function exportErpUploadToExcel(
     row.eachCell({ includeEmpty: true }, (cell) => {
       cell.font = {
         name: 'Calibri',
-        size: 9.5,
+        size: 10,
         bold: isOt || isZidle,
-        color: { argb: isOt ? 'FF9A3412' : isZidle ? 'FF4338CA' : 'FF0F172A' },
+        color: { argb: 'FF6B21A8' }, // Purple text matching user reference photo
       };
       cell.border = DOTTED_BORDER;
     });
 
-    // Special styling for ZIDLE hours cell: Red background with white text matching photo
+    // Special styling for ZIDLE hours cell: Solid red background with white bold text matching photo
     if (isZidle) {
       const zidleHoursCell = row.getCell(4);
       zidleHoursCell.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: 'FFDC2626' }, // Red background
+        fgColor: { argb: 'FFFF0000' }, // Pure Red background
       };
       zidleHoursCell.font = {
         name: 'Calibri',
-        size: 9.5,
+        size: 10,
         bold: true,
         color: { argb: 'FFFFFFFF' }, // White bold text
       };

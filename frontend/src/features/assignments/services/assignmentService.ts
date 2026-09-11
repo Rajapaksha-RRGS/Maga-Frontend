@@ -37,7 +37,7 @@ export interface RecentGangSummary {
 import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
-export async function getForDate(date: string): Promise<Assignment[]> {
+export async function getForDate(date: string, forceRefresh: boolean = false): Promise<Assignment[]> {
   return cacheManager.fetchWithCache(`assignments:date:${date}`, async () => {
     const res = await apiFetch(`${API_URL}/assignments?date=${encodeURIComponent(date)}`);
     if (!res.ok) {
@@ -54,7 +54,7 @@ export async function getForDate(date: string): Promise<Assignment[]> {
       }));
     }
     return [];
-  });
+  }, null, forceRefresh);
 }
 
 export async function assign(date: string, supervisorId: string, employeeIds: string[]): Promise<Assignment[]> {
@@ -141,15 +141,15 @@ export async function bulkAssign(
 }
 
 /** Helper: get all employees and supervisors for the assignment UI */
-export async function getAssignmentContext(): Promise<{
+export async function getAssignmentContext(forceRefresh: boolean = false): Promise<{
   employees: Employee[];
   supervisors: Supervisor[];
 }> {
   return cacheManager.fetchWithCache('assignments:context', async () => {
-    const [employees, supervisors] = await Promise.all([empSvc.getAll(), supSvc.getAll()]);
+    const [employees, supervisors] = await Promise.all([empSvc.getAll(undefined, forceRefresh), supSvc.getAll(forceRefresh)]);
     return {
       employees: employees.filter((e) => e.status === 'active'),
       supervisors: supervisors.filter((s) => s.status === 'active'),
     };
-  });
+  }, null, forceRefresh);
 }

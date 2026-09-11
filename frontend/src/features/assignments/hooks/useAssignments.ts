@@ -44,8 +44,8 @@ export function useAssignments() {
     }
     try {
       const [asgn, ctx] = await Promise.all([
-        svc.getForDate(selectedDate),
-        svc.getAssignmentContext(),
+        svc.getForDate(selectedDate, forceRefresh),
+        svc.getAssignmentContext(forceRefresh),
       ]);
       setAssignments(asgn);
       setEmployees(ctx.employees);

@@ -73,6 +73,7 @@ export interface SummaryReportResponse {
 export interface DayOtDailyEntry {
   days: number;
   otHours: number;
+  workHours: number; // actual effective hours worked that day
 }
 
 export interface DayOtSummaryItem {
@@ -84,6 +85,7 @@ export interface DayOtSummaryItem {
   dailyEntries: Record<string, DayOtDailyEntry>; // keyed by date 'YYYY-MM-DD'
   totalDays: number;
   totalOtHours: number;
+  totalWorkHours: number; // total effective hours worked across all days
 }
 
 export interface DayOtSummaryResponse {
@@ -92,7 +94,8 @@ export interface DayOtSummaryResponse {
   totals: {
     totalDays: number;
     totalOtHours: number;
-    dateTotals: Record<string, { days: number; otHours: number }>;
+    totalWorkHours: number;
+    dateTotals: Record<string, { days: number; otHours: number; workHours: number }>;
   };
 }
 

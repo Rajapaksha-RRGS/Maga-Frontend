@@ -136,6 +136,8 @@ export async function create(data: EmployeeFormData): Promise<Employee> {
   const newEmployee = await response.json();
   cacheManager.invalidate('employees');
   cacheManager.invalidate('reports');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
   return mapEmployee(newEmployee);
 }
 
@@ -153,6 +155,8 @@ export async function update(id: string, data: Partial<EmployeeFormData>): Promi
   const updated = await res.json();
   cacheManager.invalidate('employees');
   cacheManager.invalidate('reports');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
   return mapEmployee(updated);
 }
 
@@ -170,6 +174,8 @@ export async function updateStatus(id: string, status: 'active' | 'inactive'): P
   const updated = await res.json();
   cacheManager.invalidate('employees');
   cacheManager.invalidate('reports');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
   return mapEmployee(updated);
 }
 
@@ -194,6 +200,8 @@ export async function deleteEmployee(id: string): Promise<void> {
   }
   cacheManager.invalidate('employees');
   cacheManager.invalidate('reports');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
 }
 
 /** Unique business partners derived dynamically from employee data */

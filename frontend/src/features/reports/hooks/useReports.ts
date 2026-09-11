@@ -40,34 +40,17 @@ export function useReports() {
     () => cacheManager.get<ReportFilters>('reports:active-filters') || INITIAL_FILTERS
   );
 
-  // Separate result states per tab (persisted in cacheManager)
-  const [summaryData, setSummaryData] = useState<SummaryReportResponse | null>(
-    () => cacheManager.get<SummaryReportResponse>('reports:last-summary') || null
-  );
-  const [dayOtData, setDayOtData] = useState<DayOtSummaryResponse | null>(
-    () => cacheManager.get<DayOtSummaryResponse>('reports:last-day-ot') || null
-  );
-  const [bpBillData, setBpBillData] = useState<BpBillResponse | null>(
-    () => cacheManager.get<BpBillResponse>('reports:last-bp-bill') || null
-  );
-  const [erpData, setErpData] = useState<ErpUploadResponse | null>(
-    () => cacheManager.get<ErpUploadResponse>('reports:last-erp') || null
-  );
-  const [runningChartData, setRunningChartData] = useState<RunningChartResponse | null>(
-    () => cacheManager.get<RunningChartResponse>('reports:last-running-chart') || null
-  );
+  // Result states — always start empty on page mount (force fresh fetch on every visit)
+  const [summaryData, setSummaryData] = useState<SummaryReportResponse | null>(null);
+  const [dayOtData, setDayOtData] = useState<DayOtSummaryResponse | null>(null);
+  const [bpBillData, setBpBillData] = useState<BpBillResponse | null>(null);
+  const [erpData, setErpData] = useState<ErpUploadResponse | null>(null);
+  const [runningChartData, setRunningChartData] = useState<RunningChartResponse | null>(null);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
-  const [hasQueried, setHasQueried] = useState<boolean>(() => {
-    const tab = cacheManager.get<ReportType>('reports:active-tab') || 'summary';
-    if (tab === 'summary') return !!cacheManager.get('reports:last-summary');
-    if (tab === 'day-ot-summary') return !!cacheManager.get('reports:last-day-ot');
-    if (tab === 'bp-bill') return !!cacheManager.get('reports:last-bp-bill');
-    if (tab === 'erp-upload') return !!cacheManager.get('reports:last-erp');
-    if (tab === 'running-chart') return !!cacheManager.get('reports:last-running-chart');
-    return false;
-  });
+  // Always false on mount — user must click "Run Report" each time they visit the page
+  const [hasQueried, setHasQueried] = useState<boolean>(false);
 
   // Options for dropdown filters
   const [businessPartners, setBusinessPartners] = useState<string[]>(
@@ -78,6 +61,13 @@ export function useReports() {
   );
 
   useEffect(() => {
+    // Clear stale result caches on every page mount — ensures fresh data on next query
+    cacheManager.invalidate('reports:last-summary');
+    cacheManager.invalidate('reports:last-day-ot');
+    cacheManager.invalidate('reports:last-bp-bill');
+    cacheManager.invalidate('reports:last-erp');
+    cacheManager.invalidate('reports:last-running-chart');
+    // Load filter dropdown options (these are stable reference data — OK to cache)
     svc.getBusinessPartnerOptions().then(setBusinessPartners);
     svc.getActivityCodeOptions().then(setActivityCodes);
   }, []);
@@ -101,19 +91,20 @@ export function useReports() {
     setHasQueried(false);
   }, []);
 
-  // Switch tab — keep hasQueried if target tab has data
+  // Switch tab — keep hasQueried based on whether current tab has data in state
   const handleTabChange = useCallback((tab: ReportType) => {
     setActiveTab(tab);
     cacheManager.set('reports:active-tab', tab);
-    const hasCachedResult = (
-      (tab === 'summary' && !!cacheManager.get('reports:last-summary')) ||
-      (tab === 'day-ot-summary' && !!cacheManager.get('reports:last-day-ot')) ||
-      (tab === 'bp-bill' && !!cacheManager.get('reports:last-bp-bill')) ||
-      (tab === 'erp-upload' && !!cacheManager.get('reports:last-erp')) ||
-      (tab === 'running-chart' && !!cacheManager.get('reports:last-running-chart'))
+    // hasQueried reflects whether the newly selected tab has results in current session
+    const hasResult = (
+      (tab === 'summary' && !!summaryData && summaryData.items.length > 0) ||
+      (tab === 'day-ot-summary' && !!dayOtData && dayOtData.items.length > 0) ||
+      (tab === 'bp-bill' && !!bpBillData && bpBillData.groups.length > 0) ||
+      (tab === 'erp-upload' && !!erpData && erpData.rows.length > 0) ||
+      (tab === 'running-chart' && !!runningChartData && runningChartData.items.length > 0)
     );
-    setHasQueried(hasCachedResult);
-  }, []);
+    setHasQueried(hasResult);
+  }, [summaryData, dayOtData, bpBillData, erpData, runningChartData]);
 
   // Execute report query for the active tab
   const runQuery = useCallback(async () => {
