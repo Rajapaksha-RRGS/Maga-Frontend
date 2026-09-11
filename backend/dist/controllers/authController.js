@@ -19,17 +19,23 @@ const login = async (req, res) => {
         }
         const cleanTenant = String(tenantId).trim();
         const cleanUsername = String(username).trim().toLowerCase();
-        const tenant = await prisma_1.default.tenant.findUnique({
-            where: { subdomain: cleanTenant }
+        const tenant = await prisma_1.default.tenant.findFirst({
+            where: {
+                OR: [
+                    { id: cleanTenant },
+                    { subdomain: { equals: cleanTenant, mode: 'insensitive' } }
+                ]
+            }
         });
         if (!tenant || tenant.status !== 'active') {
             res.status(400).json({ error: "Invalid Tenant or Inactive Tenant" });
             return;
         }
         // check for user
-        const user = await prisma_1.default.user.findUnique({
+        const user = await prisma_1.default.user.findFirst({
             where: {
-                tenantId_username: { tenantId: tenant.id, username: cleanUsername }
+                tenantId: tenant.id,
+                username: { equals: cleanUsername, mode: 'insensitive' }
             }
         });
         // if no user

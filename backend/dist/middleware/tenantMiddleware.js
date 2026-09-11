@@ -34,6 +34,10 @@ exports.getDefaultTenantId = getDefaultTenantId;
  * 4. Fallback to default 'maga' tenant
  */
 const resolveTenantMiddleware = async (req, res, next) => {
+    // Never intercept auth endpoints so login credentials are not mutated
+    if (req.path.includes('/auth/')) {
+        return next();
+    }
     try {
         const rawTenantId = req.headers['x-tenant-id'] ||
             req.query.tenantId ||
@@ -55,8 +59,8 @@ const resolveTenantMiddleware = async (req, res, next) => {
                 return next();
             }
             // Check if it's a subdomain (e.g. '521M', '531M', 'maga')
-            const tenantBySubdomain = await prisma_1.default.tenant.findUnique({
-                where: { subdomain: clean },
+            const tenantBySubdomain = await prisma_1.default.tenant.findFirst({
+                where: { subdomain: { equals: clean, mode: 'insensitive' } },
                 select: { id: true },
             });
             if (tenantBySubdomain) {

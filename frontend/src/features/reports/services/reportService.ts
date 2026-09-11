@@ -285,6 +285,7 @@ export async function getDayOtSummaryReport(filters: ReportFilters): Promise<Day
       totals: {
         totalDays: 0,
         totalOtHours: 0,
+        totalWorkHours: 0,
         dateTotals: {},
       },
     };
