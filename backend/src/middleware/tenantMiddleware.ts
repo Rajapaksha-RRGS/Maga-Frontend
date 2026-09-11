@@ -39,6 +39,11 @@ export const getDefaultTenantId = async (): Promise<string> => {
  * 4. Fallback to default 'maga' tenant
  */
 export const resolveTenantMiddleware = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  // Never intercept auth endpoints so login credentials are not mutated
+  if (req.path.includes('/auth/')) {
+    return next();
+  }
+
   try {
     const rawTenantId =
       (req.headers['x-tenant-id'] as string) ||
@@ -63,8 +68,8 @@ export const resolveTenantMiddleware = async (req: Request, res: Response, next:
       }
 
       // Check if it's a subdomain (e.g. '521M', '531M', 'maga')
-      const tenantBySubdomain = await prisma.tenant.findUnique({
-        where: { subdomain: clean },
+      const tenantBySubdomain = await prisma.tenant.findFirst({
+        where: { subdomain: { equals: clean, mode: 'insensitive' } },
         select: { id: true },
       });
 
