@@ -59,8 +59,11 @@ export function useDashboardStats(): DashboardStats {
       const assignedEmpIds = new Set(assignments.map((a) => a.employeeId));
       const unassignedEmps = activeEmps.filter((e) => !assignedEmpIds.has(e.id));
 
-      // Mock: some supervisors have "pending" submissions
-      const pendingSubmissions = Math.max(0, activeSups.length - 1); // mock: 1 has submitted
+      // Active supervisors who have assignments today
+      const supsWithAssignments = activeSups.filter((sup) =>
+        assignments.some((a) => a.supervisorId === sup.id)
+      );
+      const pendingSubmissions = supsWithAssignments.length;
 
       const attentionItems: AttentionItem[] = [];
 
@@ -84,13 +87,13 @@ export function useDashboardStats(): DashboardStats {
         });
       }
 
-      // Mock: supervisors with unsubmitted entries
-      for (const sup of activeSups.slice(0, pendingSubmissions)) {
+      // Supervisors with work assigned today
+      for (const sup of supsWithAssignments.slice(0, 5)) {
         attentionItems.push({
           id: `us-${sup.id}`,
           type: 'unsubmitted',
           label: sup.fullName,
-          detail: 'Has unsubmitted time entries',
+          detail: 'Has assignments for today',
           link: '/admin/reports',
         });
       }

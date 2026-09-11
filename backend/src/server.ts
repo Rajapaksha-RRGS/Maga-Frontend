@@ -23,7 +23,7 @@ app.use(cors({
   origin: true, // Automatically reflects request origin (Vercel, localhost, etc.)
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Tenant-Id', 'x-tenant-id'],
 }));
 
 // 2. Preflight (OPTIONS) requests handler (Express 5 safe - avoids app.options('*') crash)
@@ -31,7 +31,7 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') {
     res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, X-Tenant-Id, x-tenant-id');
     res.header('Access-Control-Allow-Credentials', 'true');
     return res.status(200).end();
   }
@@ -39,6 +39,9 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+import { resolveTenantMiddleware } from './middleware/tenantMiddleware';
+app.use(resolveTenantMiddleware);
 
 // API Routes
 app.use('/api/auth', authRoutes);

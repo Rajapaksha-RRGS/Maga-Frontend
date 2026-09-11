@@ -39,7 +39,9 @@ export default function EmployeesPage() {
     tradeGroups,
     addEmployee,
     updateEmployee,
+    activateEmployee,
     deactivateEmployee,
+    toggleStatus,
     refresh,
   } = useEmployees();
 
@@ -90,6 +92,11 @@ export default function EmployeesPage() {
 
   const handleDeactivate = async (id: string) => {
     await deactivateEmployee(id);
+    closePanel();
+  };
+
+  const handleActivate = async (id: string) => {
+    await activateEmployee(id);
     closePanel();
   };
 
@@ -189,8 +196,16 @@ export default function EmployeesPage() {
 
       {!isLoading && filteredEmployees.length > 0 && (
         <>
-          <EmployeeTable data={filteredEmployees} onRowClick={openEdit} />
-          <EmployeeCardList data={filteredEmployees} onCardClick={openEdit} />
+          <EmployeeTable
+            data={filteredEmployees}
+            onRowClick={openEdit}
+            onToggleStatus={toggleStatus}
+          />
+          <EmployeeCardList
+            data={filteredEmployees}
+            onCardClick={openEdit}
+            onToggleStatus={toggleStatus}
+          />
         </>
       )}
 
@@ -212,6 +227,7 @@ export default function EmployeesPage() {
           businessPartners={registeredPartners}
           onSave={handleSave}
           onDeactivate={handleDeactivate}
+          onActivate={handleActivate}
           onCancel={closePanel}
         />
       </SlidePanel>

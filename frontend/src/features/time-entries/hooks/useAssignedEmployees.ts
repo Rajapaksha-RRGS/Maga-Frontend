@@ -34,7 +34,7 @@ export function useAssignedEmployees(
     setError(null);
 
     getAssignedEmployees(supervisorId, date)
-      .then((data) => {
+      .then((data: AssignedEmployee[]) => {
         if (!cancelled) {
           setEmployees(data);
           setLoading(false);

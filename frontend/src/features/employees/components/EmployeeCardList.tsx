@@ -6,9 +6,10 @@ import type { Employee } from '../services/employeeService';
 interface EmployeeCardListProps {
   data: Employee[];
   onCardClick: (emp: Employee) => void;
+  onToggleStatus?: (id: string, currentStatus: 'active' | 'inactive') => void;
 }
 
-export default function EmployeeCardList({ data, onCardClick }: EmployeeCardListProps) {
+export default function EmployeeCardList({ data, onCardClick, onToggleStatus }: EmployeeCardListProps) {
   return (
     <CardList
       data={data}
@@ -40,7 +41,25 @@ export default function EmployeeCardList({ data, onCardClick }: EmployeeCardList
             </p>
           </div>
 
-          <StatusBadge status={emp.status} />
+          <div
+            className="flex flex-col items-end gap-1 flex-shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <StatusBadge status={emp.status} />
+            {onToggleStatus && (
+              <button
+                type="button"
+                onClick={() => onToggleStatus(emp.id, emp.status)}
+                className={`text-[11px] px-2 py-0.5 rounded font-medium transition-colors ${
+                  emp.status === 'active'
+                    ? 'text-slate-500 hover:text-amber-700 hover:bg-amber-50 border border-slate-200'
+                    : 'text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+                }`}
+              >
+                {emp.status === 'active' ? 'Deactivate' : 'Activate'}
+              </button>
+            )}
+          </div>
         </button>
       )}
     />

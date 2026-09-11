@@ -9,6 +9,8 @@ import { useState, useEffect, type FormEvent } from 'react';
 import type { Employee, EmployeeFormData } from '../services/employeeService';
 import type { BusinessPartner } from '../../business-partners/services/businessPartnerService';
 import * as businessPartnerService from '../../business-partners/services/businessPartnerService';
+import StatusBadge from '../../../components/StatusBadge';
+import { UserCheck, UserX } from 'lucide-react';
 
 interface EmployeeFormProps {
   /** If provided, form is in edit mode for this employee */
@@ -16,6 +18,7 @@ interface EmployeeFormProps {
   businessPartners?: BusinessPartner[];
   onSave: (data: EmployeeFormData) => Promise<void>;
   onDeactivate?: (id: string) => Promise<void>;
+  onActivate?: (id: string) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -27,6 +30,7 @@ export default function EmployeeForm({
   businessPartners,
   onSave,
   onDeactivate,
+  onActivate,
   onCancel,
 }: EmployeeFormProps) {
   const [employeeCode, setEmployeeCode] = useState('');
@@ -38,6 +42,7 @@ export default function EmployeeForm({
   const [dailyRate, setDailyRate] = useState('1400');
   const [epfNo, setEpfNo] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isStatusChanging, setIsStatusChanging] = useState(false);
 
   const [partners, setPartners] = useState<BusinessPartner[]>(businessPartners || []);
   const [loadingPartners, setLoadingPartners] = useState(!businessPartners || businessPartners.length === 0);
@@ -115,6 +120,7 @@ export default function EmployeeForm({
         nicNo: nicNo.trim(),
         dailyRate: parseFloat(dailyRate) || 1400,
         epfNo: epfNo.trim() || undefined,
+        status: employee ? employee.status : 'active',
       });
     } finally {
       setIsSaving(false);
@@ -123,6 +129,19 @@ export default function EmployeeForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {/* Current Status banner if in edit mode */}
+      {employee && (
+        <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50/80">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-600">Current Status:</span>
+            <StatusBadge status={employee.status} />
+          </div>
+          <span className="text-xs text-slate-500">
+            {employee.status === 'active' ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+      )}
+
       {/* Business Partner selection */}
       <div className="flex flex-col gap-1">
         <label htmlFor="emp-bp" className="text-xs font-medium text-slate-500 uppercase tracking-wide">
@@ -274,8 +293,8 @@ export default function EmployeeForm({
       <div className="flex flex-col gap-2 pt-2">
         <button
           type="submit"
-          disabled={isSaving || !tradeGroup.trim() || !businessPartnerId || partners.length === 0}
-          className="w-full bg-blue-700 text-white font-medium rounded-lg min-h-[52px] px-4 transition-colors active:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+          disabled={isSaving || isStatusChanging || !tradeGroup.trim() || !businessPartnerId || partners.length === 0}
+          className="w-full bg-blue-700 text-white font-medium rounded-lg min-h-[52px] px-4 transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed shadow-2xs"
         >
           {isSaving ? 'Saving…' : employee ? 'Save changes' : 'Add employee'}
         </button>
@@ -283,17 +302,46 @@ export default function EmployeeForm({
         {employee && employee.status === 'active' && onDeactivate && (
           <button
             type="button"
-            onClick={() => onDeactivate(employee.id)}
-            className="w-full border border-slate-200 text-slate-700 font-medium rounded-lg min-h-[48px] px-4 transition-colors hover:bg-slate-50 active:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600"
+            disabled={isSaving || isStatusChanging}
+            onClick={async () => {
+              setIsStatusChanging(true);
+              try {
+                await onDeactivate(employee.id);
+              } finally {
+                setIsStatusChanging(false);
+              }
+            }}
+            className="w-full flex items-center justify-center gap-2 border border-slate-200 text-slate-700 hover:bg-slate-50 active:bg-slate-100 font-medium rounded-lg min-h-[48px] px-4 transition-colors focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-50"
           >
-            Deactivate employee
+            <UserX size={16} className="text-slate-500" />
+            <span>{isStatusChanging ? 'Deactivating…' : 'Deactivate employee'}</span>
+          </button>
+        )}
+
+        {employee && employee.status === 'inactive' && onActivate && (
+          <button
+            type="button"
+            disabled={isSaving || isStatusChanging}
+            onClick={async () => {
+              setIsStatusChanging(true);
+              try {
+                await onActivate(employee.id);
+              } finally {
+                setIsStatusChanging(false);
+              }
+            }}
+            className="w-full flex items-center justify-center gap-2 border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 font-medium rounded-lg min-h-[48px] px-4 transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 disabled:opacity-50"
+          >
+            <UserCheck size={16} className="text-emerald-600" />
+            <span>{isStatusChanging ? 'Activating…' : 'Activate employee'}</span>
           </button>
         )}
 
         <button
           type="button"
           onClick={onCancel}
-          className="w-full text-sm text-slate-500 py-2 transition-colors hover:text-slate-700"
+          disabled={isSaving || isStatusChanging}
+          className="w-full text-sm text-slate-500 py-2 transition-colors hover:text-slate-700 disabled:opacity-50"
         >
           Cancel
         </button>

@@ -29,151 +29,89 @@ export interface SupervisorCreateData {
   linkedEmployeeId: string | null;
 }
 
-import { API_URL } from '../../../config/api';
+import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-let nextId = 4;
-
-const SUPERVISORS: Supervisor[] = [
-  { id: 'sup-001', fullName: 'Ruwan Jayasinghe (Site Supervisor)', username: 'supervisor1', status: 'active', linkedEmployeeId: null, linkedEmployeeName: null },
-  { id: 'sup-002', fullName: 'Chaminda Wijesekara (Site Supervisor)', username: 'supervisor2', status: 'active', linkedEmployeeId: null, linkedEmployeeName: null },
-  { id: 'sup-003', fullName: 'Nimal Bandara (Site Supervisor)', username: 'supervisor3', status: 'active', linkedEmployeeId: null, linkedEmployeeName: null },
-];
-
-function generateTempPassword(): string {
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  let pw = '';
-  for (let i = 0; i < 8; i++) pw += chars[Math.floor(Math.random() * chars.length)];
-  return pw;
-}
 
 export async function getAll(): Promise<Supervisor[]> {
   return cacheManager.fetchWithCache('supervisors:list', async () => {
-    try {
-      const res = await fetch(`${API_URL}/supervisors`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          return data.map((s: any) => ({
-            id: s.id,
-            fullName: s.fullName,
-            username: s.username,
-            status: s.status || 'active',
-            linkedEmployeeId: s.linkedEmployeeId || s.employeeId || null,
-            linkedEmployeeName: s.linkedEmployeeName || null,
-          }));
-        }
-      }
-    } catch (err) {
-      console.warn('Backend unavailable, using fallback supervisors:', err);
+    const res = await apiFetch(`${API_URL}/supervisors`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.message || `Failed to fetch supervisors (${res.status})`);
     }
-    await delay(300);
-    return [...SUPERVISORS];
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      return data.map((s: any) => ({
+        id: s.id,
+        fullName: s.fullName,
+        username: s.username,
+        status: s.status || 'active',
+        linkedEmployeeId: s.linkedEmployeeId || s.employeeId || null,
+        linkedEmployeeName: s.linkedEmployeeName || null,
+      }));
+    }
+    return [];
   });
 }
 
 /** Returns the supervisor and the generated temporary password (shown once). */
 export async function create(data: SupervisorCreateData): Promise<{ supervisor: Supervisor; tempPassword: string }> {
-  try {
-    const res = await fetch(`${API_URL}/supervisors`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (res.ok) {
-      const result = await res.json();
-      cacheManager.invalidate('supervisors');
-      return {
-        supervisor: {
-          id: result.supervisor.id,
-          fullName: result.supervisor.fullName,
-          username: result.supervisor.username,
-          status: result.supervisor.status || 'active',
-          linkedEmployeeId: data.linkedEmployeeId,
-          linkedEmployeeName: result.linkedEmployeeName || null,
-        },
-        tempPassword: result.tempPassword,
-      };
-    }
-  } catch (err) {
-    console.warn('Backend unavailable, using local supervisor creation:', err);
+  const res = await apiFetch(`${API_URL}/supervisors`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.message || 'Failed to create supervisor');
   }
-
-  await delay(400);
-  const tempPassword = generateTempPassword();
-  let linkedName: string | null = null;
-  if (data.linkedEmployeeId) {
-    const emp = await empSvc.getById(data.linkedEmployeeId);
-    linkedName = emp?.callingName ?? null;
-  }
-  const sup: Supervisor = {
-    id: `sup-${String(nextId++).padStart(3, '0')}`,
-    fullName: data.fullName,
-    username: data.username,
-    status: 'active',
-    linkedEmployeeId: data.linkedEmployeeId,
-    linkedEmployeeName: linkedName,
-  };
-  SUPERVISORS.push(sup);
+  const result = await res.json();
   cacheManager.invalidate('supervisors');
-  return { supervisor: sup, tempPassword };
+  return {
+    supervisor: {
+      id: result.supervisor.id,
+      fullName: result.supervisor.fullName,
+      username: result.supervisor.username,
+      status: result.supervisor.status || 'active',
+      linkedEmployeeId: data.linkedEmployeeId,
+      linkedEmployeeName: result.linkedEmployeeName || null,
+    },
+    tempPassword: result.tempPassword,
+  };
 }
 
 /** Returns the new temporary password (shown once). */
 export async function resetPassword(id: string): Promise<string> {
-  try {
-    const res = await fetch(`${API_URL}/supervisors/${encodeURIComponent(id)}/reset-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return data.tempPassword;
-    }
-  } catch (err) {
-    console.warn('Backend unavailable, resetting password locally:', err);
+  const res = await apiFetch(`${API_URL}/supervisors/${encodeURIComponent(id)}/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.message || 'Failed to reset password');
   }
-
-  await delay(400);
-  return generateTempPassword();
+  const data = await res.json();
+  return data.tempPassword;
 }
 
 export async function deactivate(id: string): Promise<Supervisor> {
-  try {
-    const res = await fetch(`${API_URL}/supervisors/${encodeURIComponent(id)}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'inactive' }),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      cacheManager.invalidate('supervisors');
-      return {
-        id: updated.id,
-        fullName: updated.fullName,
-        username: updated.username,
-        status: 'inactive',
-        linkedEmployeeId: updated.employeeId || null,
-        linkedEmployeeName: null,
-      };
-    }
-  } catch (err) {
-    console.warn('Backend unavailable, deactivating supervisor locally:', err);
+  const res = await apiFetch(`${API_URL}/supervisors/${encodeURIComponent(id)}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'inactive' }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.message || 'Failed to deactivate supervisor');
   }
-
-  await delay(300);
+  const updated = await res.json();
   cacheManager.invalidate('supervisors');
-  const idx = SUPERVISORS.findIndex((s) => s.id === id);
-  if (idx !== -1) {
-    SUPERVISORS[idx].status = 'inactive';
-    return SUPERVISORS[idx];
-  }
   return {
-    id,
-    fullName: 'Supervisor',
-    username: 'supervisor',
+    id: updated.id,
+    fullName: updated.fullName,
+    username: updated.username,
     status: 'inactive',
-    linkedEmployeeId: null,
+    linkedEmployeeId: updated.employeeId || null,
     linkedEmployeeName: null,
   };
 }

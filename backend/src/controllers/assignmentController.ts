@@ -66,10 +66,15 @@ export const getRecentGangSummaries = async (req: Request, res: Response): Promi
   try {
     const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
     const limitDays = parseInt(req.query.days as string, 10) || 5;
+    const beforeDateStr = (req.query.before as string) || (req.query.targetDate as string);
+    const beforeDate = beforeDateStr ? parseDate(beforeDateStr) : undefined;
 
-    // Fetch distinct assignment dates
+    // Fetch distinct assignment dates (strictly before beforeDate if provided)
     const distinctDates = await prisma.dailyAssignment.findMany({
-      where: { tenantId },
+      where: {
+        tenantId,
+        ...(beforeDate ? { date: { lt: beforeDate } } : {}),
+      },
       select: { date: true },
       distinct: ['date'],
       orderBy: { date: 'desc' },
@@ -183,7 +188,7 @@ export const unassignEmployee = async (req: Request, res: Response): Promise<voi
 // 5. Copy gang from any selected past date to target date
 export const copyGangsFromDate = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { sourceDate, targetDate, supervisorIds } = req.body;
+    const { sourceDate, targetDate, supervisorIds, overwrite = true } = req.body;
     if (!sourceDate || !targetDate) {
       res.status(400).json({ error: 'sourceDate and targetDate are required' });
       return;
@@ -215,34 +220,35 @@ export const copyGangsFromDate = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    // Upsert each source assignment into the target date
-    const copied = [];
-    for (const src of sourceAssignments) {
-      const result = await prisma.dailyAssignment.upsert({
-        where: {
-          tenantId_date_employeeId: {
-            tenantId,
-            date: tgtDateParsed,
-            employeeId: src.employeeId,
-          },
-        },
-        update: {
-          supervisorId: src.supervisorId,
-        },
-        create: {
-          tenantId,
-          date: tgtDateParsed,
-          supervisorId: src.supervisorId,
-          employeeId: src.employeeId,
-        },
+    // Overwrite existing assignments on target date so stale old assignments don't stay attached to other supervisors
+    if (overwrite !== false) {
+      const deleteWhere: Record<string, any> = {
+        tenantId,
+        date: tgtDateParsed,
+      };
+      if (Array.isArray(supervisorIds) && supervisorIds.length > 0) {
+        deleteWhere.supervisorId = { in: supervisorIds };
+      }
+      await prisma.dailyAssignment.deleteMany({
+        where: deleteWhere,
       });
-      copied.push(result);
     }
+
+    // Insert copied assignments into target date
+    await prisma.dailyAssignment.createMany({
+      data: sourceAssignments.map((src) => ({
+        tenantId,
+        date: tgtDateParsed,
+        supervisorId: src.supervisorId,
+        employeeId: src.employeeId,
+      })),
+      skipDuplicates: true,
+    });
 
     res.json({
       success: true,
-      copiedCount: copied.length,
-      message: `Successfully copied ${copied.length} gang assignment(s) from ${sourceDate} to ${targetDate}.`,
+      copiedCount: sourceAssignments.length,
+      message: `Successfully copied ${sourceAssignments.length} gang assignment(s) from ${sourceDate} to ${targetDate}.`,
     });
   } catch (error) {
     console.error('Error copying gangs from date:', error);

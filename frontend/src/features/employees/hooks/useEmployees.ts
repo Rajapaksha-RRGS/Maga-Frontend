@@ -28,7 +28,9 @@ interface UseEmployeesReturn {
   tradeGroups: string[];
   addEmployee: (data: EmployeeFormData) => Promise<void>;
   updateEmployee: (id: string, data: Partial<EmployeeFormData>) => Promise<void>;
+  activateEmployee: (id: string) => Promise<void>;
   deactivateEmployee: (id: string) => Promise<void>;
+  toggleStatus: (id: string, currentStatus: 'active' | 'inactive') => Promise<void>;
   deleteEmployee: (id: string) => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -112,8 +114,19 @@ export function useEmployees(): UseEmployeesReturn {
     await load();
   };
 
+  const activateEmployee = async (id: string) => {
+    await employeeService.activate(id);
+    await load();
+  };
+
   const deactivateEmployee = async (id: string) => {
     await employeeService.deactivate(id);
+    await load();
+  };
+
+  const toggleStatus = async (id: string, currentStatus: 'active' | 'inactive') => {
+    const nextStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    await employeeService.updateStatus(id, nextStatus);
     await load();
   };
 
@@ -140,7 +153,9 @@ export function useEmployees(): UseEmployeesReturn {
     tradeGroups,
     addEmployee,
     updateEmployee,
+    activateEmployee,
     deactivateEmployee,
+    toggleStatus,
     deleteEmployee,
     refresh: () => load(true),
   };

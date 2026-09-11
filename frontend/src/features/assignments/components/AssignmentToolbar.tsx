@@ -15,7 +15,7 @@ interface Props {
   tradeGroups: string[];
   businessPartners: string[];
   onBulkAssign: (supervisorId: string, filter: { tradeGroup?: string; businessPartner?: string }) => Promise<void>;
-  getRecentGangSummaries?: (days?: number) => Promise<RecentGangSummary[]>;
+  getRecentGangSummaries?: (days?: number, beforeDate?: string) => Promise<RecentGangSummary[]>;
 }
 
 const SELECT_CLASS =
@@ -36,6 +36,7 @@ export default function AssignmentToolbar({
   const [showPastGangsModal, setShowPastGangsModal] = useState(false);
   const [recentGangs, setRecentGangs] = useState<RecentGangSummary[]>([]);
   const [loadingPastGangs, setLoadingPastGangs] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
   const [customPastDate, setCustomPastDate] = useState('');
   const [copySuccessMsg, setCopySuccessMsg] = useState<string | null>(null);
 
@@ -43,14 +44,14 @@ export default function AssignmentToolbar({
   const [bulkTG, setBulkTG] = useState('');
   const [bulkBP, setBulkBP] = useState('');
 
-  // Fetch recent 5 days gang records when modal opens
+  // Fetch recent 5 days gang records strictly before selectedDate
   const openPastGangsModal = async () => {
     setShowPastGangsModal(true);
     setLoadingPastGangs(true);
     try {
       if (getRecentGangSummaries) {
-        const data = await getRecentGangSummaries(5);
-        setRecentGangs(data);
+        const data = await getRecentGangSummaries(5, selectedDate);
+        setRecentGangs(data.filter((g) => g.date < selectedDate));
       }
     } catch (err) {
       console.error('Failed to load recent gangs:', err);
@@ -60,16 +61,23 @@ export default function AssignmentToolbar({
   };
 
   const handleApplyPastGang = async (sourceDate: string) => {
-    if (!onCopyFromDate) {
-      await onCopyPreviousDay();
-      return;
+    setIsApplying(true);
+    try {
+      if (!onCopyFromDate) {
+        await onCopyPreviousDay();
+      } else {
+        await onCopyFromDate(sourceDate);
+      }
+      setCopySuccessMsg(`Gangs from ${sourceDate} copied successfully to ${selectedDate}!`);
+      setTimeout(() => {
+        setCopySuccessMsg(null);
+        setShowPastGangsModal(false);
+      }, 1200);
+    } catch (err) {
+      console.error('Failed to apply past gang:', err);
+    } finally {
+      setIsApplying(false);
     }
-    await onCopyFromDate(sourceDate);
-    setCopySuccessMsg(`Gangs from ${sourceDate} copied successfully to ${selectedDate}!`);
-    setTimeout(() => {
-      setCopySuccessMsg(null);
-      setShowPastGangsModal(false);
-    }, 1500);
   };
 
   const handleBulkAssign = async () => {
@@ -84,11 +92,12 @@ export default function AssignmentToolbar({
     setBulkBP('');
   };
 
-  // Helper to format date with day name
+  // Helper to format date with day name safely in UTC
   const formatFriendlyDate = (dateStr: string) => {
-    const d = new Date(dateStr);
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dateObj = new Date(Date.UTC(y, m - 1, d));
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    return `${dateStr} (${dayNames[d.getUTCDay()]})`;
+    return `${dateStr} (${dayNames[dateObj.getUTCDay()]})`;
   };
 
   return (
@@ -231,18 +240,27 @@ export default function AssignmentToolbar({
                           </span>
                         </div>
                         {item.gangs && item.gangs.length > 0 && (
-                          <p className="text-xs text-slate-500 mt-1 truncate">
-                            {item.gangs.map((g) => `${g.supervisorName}: ${g.workerCount}`).join(' • ')}
-                          </p>
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {item.gangs.map((g) => (
+                              <span
+                                key={g.supervisorId}
+                                className="inline-flex items-center gap-1 text-xs bg-slate-100 border border-slate-200 text-slate-700 font-medium px-2 py-0.5 rounded"
+                              >
+                                <span className="font-semibold text-slate-900">{g.supervisorName}:</span>
+                                <span className="text-blue-700 font-bold tabular-nums">{g.workerCount}</span>
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </div>
 
                       <button
                         type="button"
+                        disabled={isApplying}
                         onClick={() => handleApplyPastGang(item.date)}
-                        className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors flex-shrink-0"
+                        className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:bg-slate-300 text-white text-xs font-medium px-3.5 py-2 rounded-lg transition-colors flex-shrink-0 shadow-2xs"
                       >
-                        <span>Apply Gang</span>
+                        <span>{isApplying ? 'Applying…' : 'Apply Gang'}</span>
                         <ChevronRight size={14} />
                       </button>
                     </div>
@@ -265,11 +283,11 @@ export default function AssignmentToolbar({
                   />
                   <button
                     type="button"
-                    disabled={!customPastDate}
+                    disabled={!customPastDate || isApplying}
                     onClick={() => handleApplyPastGang(customPastDate)}
                     className="bg-slate-800 hover:bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-medium px-4 min-h-[44px] rounded-lg transition-colors"
                   >
-                    Copy That Date
+                    {isApplying ? 'Copying…' : 'Copy That Date'}
                   </button>
                 </div>
               </div>

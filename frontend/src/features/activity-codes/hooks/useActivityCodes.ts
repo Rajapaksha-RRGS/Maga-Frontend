@@ -43,7 +43,8 @@ export function useActivityCodes() {
     await svc.remove(id); await load();
   };
 
-  const checkUnique = (code: string, excludeId?: string) => svc.isCodeUnique(code, excludeId);
+  const checkUnique = (code: string, excludeId?: string): boolean =>
+    !items.some((c) => c.code.toLowerCase() === code.toLowerCase() && c.id !== excludeId);
 
   return { items, filtered, isLoading, search, setSearch, error, setError, add, edit, del, checkUnique, refresh: load };
 }

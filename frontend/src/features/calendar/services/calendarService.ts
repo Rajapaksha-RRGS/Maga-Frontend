@@ -23,9 +23,8 @@ export interface CalendarEntry {
   dayTypeId: string;
 }
 
-import { API_URL } from '../../../config/api';
+import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const FIXED_DAY_TYPES: DayType[] = [
   { id: 'dt-normal',   name: 'Normal day',     code: 'normal',   rateMultiplier: 1.0 },
@@ -69,7 +68,7 @@ initCalendarForMonth(now.getFullYear(), now.getMonth());
 export async function getDayTypes(): Promise<DayType[]> {
   return cacheManager.fetchWithCache('calendar:day-types', async () => {
     try {
-      const res = await fetch(`${API_URL}/calendar/day-types`);
+      const res = await apiFetch(`${API_URL}/calendar/day-types`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
@@ -77,10 +76,9 @@ export async function getDayTypes(): Promise<DayType[]> {
         }
       }
     } catch (err) {
-      console.warn('Backend unavailable, using mock day types:', err);
+      console.warn('Backend unavailable, using default day types:', err);
     }
 
-    await delay(100);
     return [...FIXED_DAY_TYPES];
   });
 }
@@ -90,7 +88,7 @@ export async function getDayTypes(): Promise<DayType[]> {
 export async function getCalendarMonth(year: number, month: number): Promise<CalendarEntry[]> {
   return cacheManager.fetchWithCache(`calendar:month:${year}:${month}`, async () => {
     try {
-      const res = await fetch(`${API_URL}/calendar?year=${year}&month=${month}`);
+      const res = await apiFetch(`${API_URL}/calendar?year=${year}&month=${month}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
@@ -98,10 +96,9 @@ export async function getCalendarMonth(year: number, month: number): Promise<Cal
         }
       }
     } catch (err) {
-      console.warn('Backend unavailable, using mock calendar month:', err);
+      console.warn('Backend unavailable, using default calendar month:', err);
     }
 
-    await delay(150);
     initCalendarForMonth(year, month);
     const entries: CalendarEntry[] = [];
     const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -123,13 +120,12 @@ export async function setCalendarDayType(date: string, dayTypeId: string): Promi
   cacheManager.invalidate('calendar');
 
   try {
-    await fetch(`${API_URL}/calendar/set-day`, {
+    await apiFetch(`${API_URL}/calendar/set-day`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ date, dayTypeId }),
     });
   } catch (err) {
-    console.warn('Backend unavailable, saved calendar day locally:', err);
+    console.warn('Failed to set calendar day on backend:', err);
   }
 }
 
@@ -154,13 +150,12 @@ export async function bulkMarkSundays(year: number, month: number): Promise<numb
   }
 
   try {
-    await fetch(`${API_URL}/calendar/batch-set`, {
+    await apiFetch(`${API_URL}/calendar/batch-set`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entries }),
     });
   } catch (err) {
-    console.warn('Backend unavailable, marked sundays locally:', err);
+    console.warn('Failed to batch mark sundays on backend:', err);
   }
 
   return count;
@@ -186,13 +181,12 @@ export async function bulkMarkSaturdays(year: number, month: number): Promise<nu
   }
 
   try {
-    await fetch(`${API_URL}/calendar/batch-set`, {
+    await apiFetch(`${API_URL}/calendar/batch-set`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entries }),
     });
   } catch (err) {
-    console.warn('Backend unavailable, marked saturdays locally:', err);
+    console.warn('Failed to batch mark saturdays on backend:', err);
   }
 
   return count;

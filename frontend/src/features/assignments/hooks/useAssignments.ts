@@ -15,9 +15,10 @@ function formatDate(d: Date): string {
 }
 
 function prevDateStr(dateStr: string): string {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() - 1);
-  return formatDate(d);
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
 }
 
 export function useAssignments() {
@@ -109,12 +110,12 @@ export function useAssignments() {
   const copyPreviousDay = async () => {
     const prev = prevDateStr(selectedDate);
     await svc.copyFromDate(prev, selectedDate);
-    await load();
+    await load(true);
   };
 
   const copyFromSpecificDate = async (sourceDate: string, supervisorIds?: string[]) => {
     await svc.copyFromDate(sourceDate, selectedDate, supervisorIds);
-    await load();
+    await load(true);
   };
 
   const bulkAssignByGroup = async (

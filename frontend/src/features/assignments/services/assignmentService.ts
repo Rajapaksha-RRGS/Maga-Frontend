@@ -34,206 +34,87 @@ export interface RecentGangSummary {
   }[];
 }
 
-import { API_URL } from '../../../config/api';
+import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-let nextId = 10;
-
-// In-memory fallback
-const ASSIGNMENTS: Map<string, Assignment[]> = new Map();
-
-function formatDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// Pre-populate some assignments for today and past days for demo/offline resilience
-function initMockData() {
-  const today = formatDate(new Date());
-  ASSIGNMENTS.set(today, [
-    { id: 'asgn-001', date: today, supervisorId: 'sup-001', employeeId: 'HK030' },
-    { id: 'asgn-002', date: today, supervisorId: 'sup-001', employeeId: 'HK031' },
-    { id: 'asgn-003', date: today, supervisorId: 'sup-002', employeeId: 'HI101' },
-  ]);
-
-  // Yesterday
-  const yest = new Date();
-  yest.setDate(yest.getDate() - 1);
-  const yestStr = formatDate(yest);
-  ASSIGNMENTS.set(yestStr, [
-    { id: 'asgn-y1', date: yestStr, supervisorId: 'sup-001', employeeId: 'HK030' },
-    { id: 'asgn-y2', date: yestStr, supervisorId: 'sup-001', employeeId: 'HK031' },
-    { id: 'asgn-y3', date: yestStr, supervisorId: 'sup-002', employeeId: 'HI101' },
-    { id: 'asgn-y4', date: yestStr, supervisorId: 'sup-002', employeeId: 'HI102' },
-  ]);
-
-  // 2 days ago
-  const d2 = new Date();
-  d2.setDate(d2.getDate() - 2);
-  const d2Str = formatDate(d2);
-  ASSIGNMENTS.set(d2Str, [
-    { id: 'asgn-d2-1', date: d2Str, supervisorId: 'sup-001', employeeId: 'HK030' },
-    { id: 'asgn-d2-2', date: d2Str, supervisorId: 'sup-002', employeeId: 'HI101' },
-  ]);
-}
-
-initMockData();
 
 export async function getForDate(date: string): Promise<Assignment[]> {
   return cacheManager.fetchWithCache(`assignments:date:${date}`, async () => {
-    try {
-      const res = await fetch(`${API_URL}/assignments?date=${encodeURIComponent(date)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          return data.map((a: any) => ({
-            id: a.id,
-            date: a.date || date,
-            supervisorId: a.supervisorId,
-            employeeId: a.employeeId,
-          }));
-        }
-      }
-    } catch (err) {
-      console.warn('Backend unavailable, using fallback assignments:', err);
+    const res = await apiFetch(`${API_URL}/assignments?date=${encodeURIComponent(date)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error || `Failed to fetch assignments (${res.status})`);
     }
-    await delay(200);
-    return [...(ASSIGNMENTS.get(date) ?? [])];
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      return data.map((a: any) => ({
+        id: a.id,
+        date: a.date || date,
+        supervisorId: a.supervisorId,
+        employeeId: a.employeeId,
+      }));
+    }
+    return [];
   });
 }
 
 export async function assign(date: string, supervisorId: string, employeeIds: string[]): Promise<Assignment[]> {
-  try {
-    const res = await fetch(`${API_URL}/assignments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, supervisorId, employeeIds }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      cacheManager.invalidate('assignments');
-      cacheManager.invalidate('dashboard');
-      return data.assignments || [];
-    }
-  } catch (err) {
-    console.warn('Backend unavailable, assigning locally:', err);
+  const res = await apiFetch(`${API_URL}/assignments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, supervisorId, employeeIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to assign employees');
   }
-
-  await delay(300);
-  const existing = ASSIGNMENTS.get(date) ?? [];
-  const created: Assignment[] = [];
-  for (const empId of employeeIds) {
-    if (existing.some((a) => a.employeeId === empId)) continue;
-    const a: Assignment = {
-      id: `asgn-${String(nextId++).padStart(3, '0')}`,
-      date,
-      supervisorId,
-      employeeId: empId,
-    };
-    existing.push(a);
-    created.push(a);
-  }
-  ASSIGNMENTS.set(date, existing);
+  const data = await res.json();
   cacheManager.invalidate('assignments');
   cacheManager.invalidate('dashboard');
-  return created;
+  return data.assignments || [];
 }
 
-export async function unassign(date: string, assignmentId: string): Promise<void> {
-  try {
-    const res = await fetch(`${API_URL}/assignments/${encodeURIComponent(assignmentId)}`, {
-      method: 'DELETE',
-    });
-    if (res.ok) {
-      cacheManager.invalidate('assignments');
-      cacheManager.invalidate('dashboard');
-      return;
-    }
-  } catch (err) {
-    console.warn('Backend unavailable, unassigning locally:', err);
+export async function unassign(_date: string, assignmentId: string): Promise<void> {
+  const res = await apiFetch(`${API_URL}/assignments/${encodeURIComponent(assignmentId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to remove assignment');
   }
-
-  await delay(200);
-  const existing = ASSIGNMENTS.get(date) ?? [];
-  ASSIGNMENTS.set(date, existing.filter((a) => a.id !== assignmentId));
   cacheManager.invalidate('assignments');
   cacheManager.invalidate('dashboard');
 }
 
-export async function copyFromDate(sourceDate: string, destDate: string, supervisorIds?: string[]): Promise<number> {
-  try {
-    const res = await fetch(`${API_URL}/assignments/copy`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sourceDate, targetDate: destDate, supervisorIds }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      cacheManager.invalidate('assignments');
-      cacheManager.invalidate('dashboard');
-      return data.copiedCount ?? 0;
-    }
-  } catch (err) {
-    console.warn('Backend unavailable, copying locally:', err);
+export async function copyFromDate(sourceDate: string, destDate: string, supervisorIds?: string[], overwrite: boolean = true): Promise<number> {
+  const res = await apiFetch(`${API_URL}/assignments/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceDate, targetDate: destDate, supervisorIds, overwrite }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to copy gang assignments');
   }
-
-  await delay(400);
-  const source = ASSIGNMENTS.get(sourceDate) ?? [];
-  const destExisting = ASSIGNMENTS.get(destDate) ?? [];
-  let count = 0;
-  for (const a of source) {
-    if (supervisorIds && supervisorIds.length > 0 && !supervisorIds.includes(a.supervisorId)) {
-      continue;
-    }
-    if (!destExisting.some((d) => d.employeeId === a.employeeId)) {
-      destExisting.push({
-        id: `asgn-${String(nextId++).padStart(3, '0')}`,
-        date: destDate,
-        supervisorId: a.supervisorId,
-        employeeId: a.employeeId,
-      });
-      count++;
-    }
-  }
-  ASSIGNMENTS.set(destDate, destExisting);
+  const data = await res.json();
   cacheManager.invalidate('assignments');
   cacheManager.invalidate('dashboard');
-  return count;
+  return data.copiedCount ?? 0;
 }
 
-export async function getRecentGangSummaries(days: number = 5): Promise<RecentGangSummary[]> {
-  try {
-    const res = await fetch(`${API_URL}/assignments/recent-gangs?days=${days}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        return data;
-      }
-    }
-  } catch (err) {
-    console.warn('Backend unavailable, generating local recent gang summaries:', err);
-  }
+export async function getRecentGangSummaries(days: number = 5, beforeDate?: string): Promise<RecentGangSummary[]> {
+  const params = new URLSearchParams();
+  params.append('days', String(days));
+  if (beforeDate) params.append('before', beforeDate);
 
-  await delay(200);
-  // Fallback generation from local dates
-  const result: RecentGangSummary[] = [];
-  const today = new Date();
-  for (let i = 1; i <= days; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const dateStr = formatDate(d);
-    const list = ASSIGNMENTS.get(dateStr) ?? [];
-    if (list.length > 0) {
-      result.push({
-        date: dateStr,
-        totalWorkers: list.length,
-        supervisorsCount: new Set(list.map((a) => a.supervisorId)).size,
-        gangs: [
-          { supervisorId: 'sup-001', supervisorName: 'Site Supervisor', workerCount: list.length },
-        ],
-      });
-    }
+  const res = await apiFetch(`${API_URL}/assignments/recent-gangs?${params.toString()}`);
+  if (!res.ok) {
+    return [];
   }
-  return result;
+  const data = await res.json();
+  if (Array.isArray(data)) {
+    return beforeDate ? data.filter((d: RecentGangSummary) => d.date < beforeDate) : data;
+  }
+  return [];
 }
 
 export async function bulkAssign(

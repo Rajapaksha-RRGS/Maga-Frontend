@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { login as authLogin } from '../features/auth/services/authService';
+import { cacheManager } from '../utils/cacheManager';
 
 export type Role = 'admin' | 'supervisor';
 
@@ -62,11 +63,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   ): Promise<void> => {
     const loggedInUser = await authLogin(tenant, username, password);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedInUser));
+    cacheManager.clear();
     setUser(loggedInUser);
   };
 
   const logout = (): void => {
     localStorage.removeItem(STORAGE_KEY);
+    cacheManager.clear();
     setUser(null);
   };
 

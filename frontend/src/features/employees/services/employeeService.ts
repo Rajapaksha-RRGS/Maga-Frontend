@@ -42,9 +42,10 @@ export interface EmployeeFormData {
   nicNo: string;
   dailyRate: number;
   epfNo?: string;
+  status?: 'active' | 'inactive';
 }
 
-import { API_URL } from '../../../config/api';
+import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
 
@@ -89,7 +90,7 @@ export async function getAll(filters?: EmployeeQueryFilters, forceRefresh: boole
       if (filters?.businessPartner) params.append('businessPartner', filters.businessPartner);
 
       const query = params.toString() ? `?${params.toString()}` : '';
-      const res = await fetch(`${API_URL}/employees${query}`);
+      const res = await apiFetch(`${API_URL}/employees${query}`);
       if (!res.ok) {
         const errData = await res.json().catch(() => null);
         throw new Error(errData?.error || `Failed to fetch employees (${res.status})`);
@@ -110,7 +111,7 @@ export async function getById(id: string): Promise<Employee | undefined> {
   const cacheKey = `employees:id:${id}`;
 
   return cacheManager.fetchWithCache(cacheKey, async () => {
-    const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}`);
+    const res = await apiFetch(`${API_URL}/employees/${encodeURIComponent(id)}`);
     if (res.status === 404) return undefined;
     if (!res.ok) {
       const errData = await res.json().catch(() => null);
@@ -123,7 +124,7 @@ export async function getById(id: string): Promise<Employee | undefined> {
 
 /** Create employee on backend */
 export async function create(data: EmployeeFormData): Promise<Employee> {
-  const response = await fetch(`${API_URL}/employees`, {
+  const response = await apiFetch(`${API_URL}/employees`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -140,7 +141,7 @@ export async function create(data: EmployeeFormData): Promise<Employee> {
 
 /** Update employee on backend */
 export async function update(id: string, data: Partial<EmployeeFormData>): Promise<Employee> {
-  const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`${API_URL}/employees/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -155,16 +156,16 @@ export async function update(id: string, data: Partial<EmployeeFormData>): Promi
   return mapEmployee(updated);
 }
 
-/** Deactivate employee on backend */
-export async function deactivate(id: string): Promise<Employee> {
-  const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}/status`, {
+/** Update employee status on backend ('active' | 'inactive') */
+export async function updateStatus(id: string, status: 'active' | 'inactive'): Promise<Employee> {
+  const res = await apiFetch(`${API_URL}/employees/${encodeURIComponent(id)}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'inactive' }),
+    body: JSON.stringify({ status }),
   });
   if (!res.ok) {
     const errData = await res.json().catch(() => null);
-    throw new Error(errData?.error || 'Failed to deactivate employee');
+    throw new Error(errData?.error || `Failed to ${status === 'active' ? 'activate' : 'deactivate'} employee`);
   }
   const updated = await res.json();
   cacheManager.invalidate('employees');
@@ -172,9 +173,19 @@ export async function deactivate(id: string): Promise<Employee> {
   return mapEmployee(updated);
 }
 
+/** Activate employee on backend */
+export async function activate(id: string): Promise<Employee> {
+  return updateStatus(id, 'active');
+}
+
+/** Deactivate employee on backend */
+export async function deactivate(id: string): Promise<Employee> {
+  return updateStatus(id, 'inactive');
+}
+
 /** Delete an employee by ID on backend */
 export async function deleteEmployee(id: string): Promise<void> {
-  const res = await fetch(`${API_URL}/employees/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`${API_URL}/employees/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
   if (!res.ok) {

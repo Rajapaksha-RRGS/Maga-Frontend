@@ -54,41 +54,8 @@ export interface SubmitDayPayload {
   date: string;
 }
 
-import { API_URL } from '../../../config/api';
+import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
-
-// ─── Mock fallback data ────────────────────────────────────────────────────────
-
-const MOCK_ACTIVITY_CODES: ActivityCode[] = [
-  { id: 'ac-01', code: '00-00-11-11-M', description: 'Direct Labour Masonry Works' },
-  { id: 'ac-02', code: '01-10-10-00', description: 'Earth Work Excavation & Trenching' },
-  { id: 'ac-03', code: '02-20-10-00', description: 'Concrete Pouring & Compaction' },
-  { id: 'ac-04', code: '03-30-10-00', description: 'Formwork & Shuttering Installation' },
-  { id: 'ac-05', code: '04-40-10-00', description: 'Reinforcement Steel Bar Bending & Fixing' },
-];
-
-// ─── Service functions ────────────────────────────────────────────────────────
-
-/**
- * Fetch employees assigned to a supervisor for a given date.
- */
-export async function getAssignedEmployees(
-  supervisorId: string,
-  date: string
-): Promise<AssignedEmployee[]> {
-  try {
-    const res = await fetch(`${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        return data;
-      }
-    }
-  } catch (err) {
-    console.error('Error fetching assigned employees from backend:', err);
-  }
-  return [];
-}
 
 /**
  * Fetch all activity codes for the tenant.
@@ -98,10 +65,10 @@ export async function getActivityCodes(
 ): Promise<ActivityCode[]> {
   try {
     const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
-    const res = await fetch(`${API_URL}/activity-codes${query}`);
+    const res = await apiFetch(`${API_URL}/activity-codes${query}`);
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         return data.map((item: any) => ({
           id: item.id,
           code: item.code,
@@ -110,9 +77,32 @@ export async function getActivityCodes(
       }
     }
   } catch (err) {
-    console.warn('Backend unavailable, using fallback activity codes:', err);
+    console.error('Error fetching activity codes from backend:', err);
   }
-  return [...MOCK_ACTIVITY_CODES];
+  return [];
+}
+
+/**
+ * Fetch employees assigned to a supervisor on a date.
+ */
+export async function getAssignedEmployees(
+  supervisorId: string,
+  date: string
+): Promise<AssignedEmployee[]> {
+  try {
+    const res = await apiFetch(
+      `${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to fetch assigned employees:', err);
+  }
+  return [];
 }
 
 /**
@@ -125,7 +115,7 @@ export async function checkInEmployee(
   inTime: string
 ): Promise<{ employeeId: string; inTime: string }> {
   try {
-    const res = await fetch(`${API_URL}/time-entries/check-in`, {
+    const res = await apiFetch(`${API_URL}/time-entries/check-in`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ employeeId, supervisorId, date, inTime }),
@@ -190,7 +180,7 @@ export async function getTimeEntries(
     if (date) params.append('date', date);
 
     const query = params.toString() ? `?${params.toString()}` : '';
-    const res = await fetch(`${API_URL}/time-entries${query}`);
+    const res = await apiFetch(`${API_URL}/time-entries${query}`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -213,7 +203,7 @@ export async function checkOutEmployee(
   outTime: string
 ): Promise<{ employeeId: string; outTime: string }> {
   try {
-    const res = await fetch(`${API_URL}/time-entries/check-out`, {
+    const res = await apiFetch(`${API_URL}/time-entries/check-out`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ employeeId, supervisorId, date, outTime }),
@@ -236,7 +226,7 @@ export async function assignActivityBulk(
   payload: BulkAssignPayload
 ): Promise<{ success: boolean; count?: number }> {
   try {
-    const res = await fetch(`${API_URL}/time-entries/assign-activity`, {
+    const res = await apiFetch(`${API_URL}/time-entries/assign-activity`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -259,7 +249,7 @@ export async function saveTimeEntry(
   payload: TimeEntryPayload
 ): Promise<{ success: boolean }> {
   try {
-    const res = await fetch(`${API_URL}/time-entries/upsert`, {
+    const res = await apiFetch(`${API_URL}/time-entries/upsert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -282,7 +272,7 @@ export async function submitDay(
   payload: SubmitDayPayload
 ): Promise<SubmitDayResponse> {
   try {
-    const res = await fetch(`${API_URL}/time-entries/submit`, {
+    const res = await apiFetch(`${API_URL}/time-entries/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
