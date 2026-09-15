@@ -770,6 +770,46 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Auto-populate default shift hours for any entries that have inTime & outTime but hours === 0
+    const zeroHourDrafts = await prisma.timeEntry.findMany({
+      where: {
+        ...whereClause,
+        inTime: { not: null },
+        outTime: { not: null },
+        hours: 0,
+      },
+    });
+
+    if (zeroHourDrafts.length > 0) {
+      const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
+
+      for (const entry of zeroHourDrafts) {
+        if (!entry.inTime || !entry.outTime) continue;
+        const [inH, inM] = entry.inTime.split(':').map(Number);
+        const [outH, outM] = entry.outTime.split(':').map(Number);
+        const diff = (outH * 60 + outM) - (inH * 60 + inM);
+        if (diff > 0) {
+          const gross = Math.round((diff / 60) * 100) / 100;
+          const breakHours = computeBreakHours(entry.inTime, entry.outTime);
+          const netHours = Math.max(0, Math.round((gross - breakHours) * 100) / 100);
+          let otHours = 0;
+          if (isAllOvertime) {
+            otHours = netHours;
+          } else if (netHours > standardHoursCap) {
+            otHours = Math.round((netHours - standardHoursCap) * 100) / 100;
+          }
+          await prisma.timeEntry.update({
+            where: { id: entry.id },
+            data: {
+              hours: netHours,
+              overtimeHours: otHours,
+              breakHours,
+            },
+          });
+        }
+      }
+    }
+
     const submittedAt = new Date();
 
     const updated = await prisma.timeEntry.updateMany({

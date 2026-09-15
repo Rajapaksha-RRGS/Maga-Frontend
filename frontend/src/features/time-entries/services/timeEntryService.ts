@@ -285,11 +285,13 @@ export async function submitDay(
     });
     if (res.ok) {
       cacheManager.invalidate('reports');
+      cacheManager.invalidate('dashboard');
       return await res.json();
     }
   } catch (err) {
     console.warn('Failed to submit day on backend:', err);
   }
   cacheManager.invalidate('reports');
+  cacheManager.invalidate('dashboard');
   return { success: true };
 }

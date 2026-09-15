@@ -23,22 +23,32 @@ import { cacheManager } from '../../../utils/cacheManager';
 import { useAuth } from '../../../context/AuthContext';
 import { getTenantById } from '../../auth/services/authService';
 
-const INITIAL_FILTERS: ReportFilters = {
-  dateFrom: '2026-08-01',
-  dateTo: '2026-08-15',
-  employeeQuery: '',
-  businessPartner: '',
-  activityCode: '',
-};
+function getDefaultFilters(): ReportFilters {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return {
+    dateFrom: `${year}-${month}-01`,
+    dateTo: `${year}-${month}-${day}`,
+    employeeQuery: '',
+    businessPartner: '',
+    activityCode: '',
+  };
+}
 
 export function useReports() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<ReportType>(
     () => cacheManager.get<ReportType>('reports:active-tab') || 'summary'
   );
-  const [filters, setFilters] = useState<ReportFilters>(
-    () => cacheManager.get<ReportFilters>('reports:active-filters') || INITIAL_FILTERS
-  );
+  const [filters, setFilters] = useState<ReportFilters>(() => {
+    const cached = cacheManager.get<ReportFilters>('reports:active-filters');
+    if (cached && (cached.dateFrom?.startsWith('2026-08') || !cached.dateFrom)) {
+      return getDefaultFilters();
+    }
+    return cached || getDefaultFilters();
+  });
 
   // Result states — always start empty on page mount (force fresh fetch on every visit)
   const [summaryData, setSummaryData] = useState<SummaryReportResponse | null>(null);
@@ -86,8 +96,9 @@ export function useReports() {
 
   // Reset all filters to default
   const resetFilters = useCallback(() => {
-    setFilters(INITIAL_FILTERS);
-    cacheManager.set('reports:active-filters', INITIAL_FILTERS);
+    const defaults = getDefaultFilters();
+    setFilters(defaults);
+    cacheManager.set('reports:active-filters', defaults);
     setHasQueried(false);
   }, []);
 

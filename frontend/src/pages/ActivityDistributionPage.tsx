@@ -105,6 +105,31 @@ export function ActivityDistributionPage({
     });
   }, [entries, employees]);
 
+  // Auto-sync default activity and shift hours for any checked-in worker who does not have activities saved yet
+  useEffect(() => {
+    if (isSubmitted) return;
+    checkedInWorkers.forEach((worker) => {
+      const entry = entries[worker.id];
+      const acts = localActivities[worker.id];
+      if ((!entry?.activities || entry.activities.length === 0 || !entry.hours) && acts && acts.length > 0) {
+        if (acts.some((a) => a.hours > 0)) {
+          onUpdateActivities(worker.id, acts);
+        }
+      }
+    });
+  }, [checkedInWorkers.length, isSubmitted]);
+
+  const handleFinalSubmit = () => {
+    // Ensure all checked-in workers have their current localActivities synced before submitting
+    checkedInWorkers.forEach((worker) => {
+      const acts = localActivities[worker.id];
+      if (acts && acts.length > 0) {
+        onUpdateActivities(worker.id, acts);
+      }
+    });
+    onSubmit();
+  };
+
   const handleHourChange = (empId: string, index: number, hours: number) => {
     const current = localActivities[empId] ? [...localActivities[empId]] : [{ activityId: activityCodes[0]?.id || '', hours: 0 }];
     current[index] = { ...current[index], hours: isNaN(hours) ? 0 : hours };
@@ -564,7 +589,7 @@ export function ActivityDistributionPage({
 
             <button
               type="button"
-              onClick={onSubmit}
+              onClick={handleFinalSubmit}
               disabled={isSubmitting || isSubmitted || checkedInWorkers.length === 0 || missingCheckoutWorkers.length > 0}
               className={[
                 'font-medium text-sm rounded-lg px-4 min-h-[52px] transition-colors flex-[2] text-white',

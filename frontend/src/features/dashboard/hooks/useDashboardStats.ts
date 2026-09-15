@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback } from 'react';
 import * as empSvc from '../../employees/services/employeeService';
 import * as supSvc from '../../supervisors/services/supervisorService';
 import * as asgnSvc from '../../assignments/services/assignmentService';
+import * as timeEntrySvc from '../../time-entries/services/timeEntryService';
 import { cacheManager } from '../../../utils/cacheManager';
 
 interface AttentionItem {
@@ -48,10 +49,11 @@ export function useDashboardStats(): DashboardStats {
     }
     try {
       const today = formatDate(new Date());
-      const [employees, supervisors, assignments] = await Promise.all([
+      const [employees, supervisors, assignments, todayEntries] = await Promise.all([
         empSvc.getAll(undefined, forceRefresh),
         supSvc.getAll(forceRefresh),
         asgnSvc.getForDate(today, forceRefresh),
+        timeEntrySvc.getTimeEntries(undefined, today),
       ]);
 
       const activeEmps = employees.filter((e) => e.status === 'active');
@@ -63,7 +65,17 @@ export function useDashboardStats(): DashboardStats {
       const supsWithAssignments = activeSups.filter((sup) =>
         assignments.some((a) => a.supervisorId === sup.id)
       );
-      const pendingSubmissions = supsWithAssignments.length;
+
+      // A supervisor is pending if they have work assigned today, but either:
+      // 1. No time entries exist for them yet today, OR
+      // 2. Any of their time entries is still in 'draft' status
+      const unsubmittedSupervisors = supsWithAssignments.filter((sup) => {
+        const supEntries = todayEntries.filter((t) => t.supervisorId === sup.id);
+        if (supEntries.length === 0) return true;
+        return supEntries.some((t) => t.status === 'draft');
+      });
+
+      const pendingSubmissions = unsubmittedSupervisors.length;
 
       const attentionItems: AttentionItem[] = [];
 
@@ -87,13 +99,13 @@ export function useDashboardStats(): DashboardStats {
         });
       }
 
-      // Supervisors with work assigned today
-      for (const sup of supsWithAssignments.slice(0, 5)) {
+      // Supervisors with genuinely unsubmitted daily attendance
+      for (const sup of unsubmittedSupervisors.slice(0, 5)) {
         attentionItems.push({
           id: `us-${sup.id}`,
           type: 'unsubmitted',
           label: sup.fullName,
-          detail: 'Has assignments for today',
+          detail: 'Daily attendance has not been submitted yet',
           link: '/admin/reports',
         });
       }
@@ -106,7 +118,7 @@ export function useDashboardStats(): DashboardStats {
         attentionItems,
         isLoading: false,
       };
-      cacheManager.set('dashboard:stats', newStats);
+      cacheManager.set('dashboard:stats', newStats, 15_000); // 15s TTL so fresh submissions show quickly
       setStats(newStats);
     } catch {
       setStats((prev) => ({ ...prev, isLoading: false }));
