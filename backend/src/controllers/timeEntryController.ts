@@ -137,7 +137,7 @@ export const getAssignedEmployees = async (req: Request, res: Response): Promise
   try {
     const supervisorId = req.query.supervisorId as string;
     const dateStr = req.query.date as string;
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
     const targetDate = parseDate(dateStr);
 
@@ -196,7 +196,7 @@ export const checkInEmployee = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const entryDate = parseDate(date);
 
     // Strict lock: Check if records for this employee or supervisor are already submitted
@@ -301,7 +301,7 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const entryDate = parseDate(date);
 
     // Strict lock: Check if records for this employee or supervisor are already submitted
@@ -426,7 +426,7 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const targetDate = parseDate(date);
 
     // Strict lock: Check if records for this supervisor or date are already submitted
@@ -614,7 +614,7 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
       remarks,
     } = req.body;
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const targetDate = parseDate(date);
     const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
 
@@ -686,7 +686,7 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
 export const getTimeEntries = async (req: Request, res: Response): Promise<void> => {
   try {
     const { date, supervisorId, employeeId, status } = req.query;
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
     const where: Record<string, any> = { tenantId };
     if (date && typeof date === 'string') {
@@ -729,7 +729,7 @@ export const getTimeEntries = async (req: Request, res: Response): Promise<void>
 export const submitDay = async (req: Request, res: Response): Promise<void> => {
   try {
     const { supervisorId, date } = req.body;
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const targetDate = parseDate(date);
 
     const whereClause: Record<string, any> = {

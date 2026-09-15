@@ -66,6 +66,15 @@ interface SidebarProps {
 }
 
 function SidebarContent({ tenantName, onNavClick, onLogout }: SidebarProps) {
+  const { user } = useAuth();
+
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (item.to === '/admin/tenants') {
+      return user?.role === 'super_admin';
+    }
+    return true;
+  });
+
   return (
     <div className="flex flex-col h-full">
       {/* Product / tenant name header */}
@@ -83,14 +92,14 @@ function SidebarContent({ tenantName, onNavClick, onLogout }: SidebarProps) {
           </p>
           <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-500/30 px-1.5 py-0.5 rounded-full mt-0.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Admin
+            {user?.role === 'super_admin' ? 'Super Admin' : 'Admin'}
           </span>
         </div>
       </div>
 
       {/* Nav items */}
       <nav className="flex-1 px-2.5 py-3.5 flex flex-col gap-1 overflow-y-auto" aria-label="Admin navigation">
-        {NAV_ITEMS.map((item) => (
+        {visibleNavItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

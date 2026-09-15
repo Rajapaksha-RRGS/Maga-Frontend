@@ -11,10 +11,12 @@
  * All functions fall back to mock data when backend is unavailable.
  */
 
-import { API_URL, apiFetch } from '../../../config/api';
+import { API_URL, apiFetch, getCurrentTenantId } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 function buildParams(f: ReportFilters): string {
   const p = new URLSearchParams();
+  const currentTenant = getCurrentTenantId();
+  if (currentTenant) p.set('tenantId', currentTenant);
   if (f.dateFrom) p.set('dateFrom', f.dateFrom);
   if (f.dateTo) p.set('dateTo', f.dateTo);
   if (f.employeeQuery) p.set('employeeQuery', f.employeeQuery);
@@ -216,7 +218,8 @@ export async function getActivityCodeOptions(): Promise<{ code: string; descript
  *   return data;
  */
 export async function getSummaryReport(filters: ReportFilters): Promise<SummaryReportResponse> {
-  const cacheKey = `reports:summary:${JSON.stringify(filters)}`;
+  const tId = getCurrentTenantId() || 'default';
+  const cacheKey = `reports:${tId}:summary:${JSON.stringify(filters)}`;
   return cacheManager.fetchWithCache(cacheKey, async () => {
     try {
       const _r = await apiFetch(API_URL + '/reports/summary?' + buildParams(filters));
@@ -268,7 +271,8 @@ export async function getSummaryReport(filters: ReportFilters): Promise<SummaryR
 // ── 2. GET Day & OT Summary Report ───────────────────────────────────────────
 
 export async function getDayOtSummaryReport(filters: ReportFilters): Promise<DayOtSummaryResponse> {
-  const cacheKey = `reports:day-ot:${JSON.stringify(filters)}`;
+  const tId = getCurrentTenantId() || 'default';
+  const cacheKey = `reports:${tId}:day-ot:${JSON.stringify(filters)}`;
   return cacheManager.fetchWithCache(cacheKey, async () => {
     try {
       const _r = await apiFetch(API_URL + '/reports/day-ot-summary?' + buildParams(filters));
@@ -295,7 +299,8 @@ export async function getDayOtSummaryReport(filters: ReportFilters): Promise<Day
 // ── 3. GET BP Bill Report ────────────────────────────────────────────────────
 
 export async function getBpBillReport(filters: ReportFilters): Promise<BpBillResponse> {
-  const cacheKey = `reports:bp-bill:${JSON.stringify(filters)}`;
+  const tId = getCurrentTenantId() || 'default';
+  const cacheKey = `reports:${tId}:bp-bill:${JSON.stringify(filters)}`;
   return cacheManager.fetchWithCache(cacheKey, async () => {
     try {
       const _r = await apiFetch(API_URL + '/reports/bp-bill?' + buildParams(filters));
@@ -320,7 +325,8 @@ export async function getBpBillReport(filters: ReportFilters): Promise<BpBillRes
 // ── 4. GET ERP Upload Export Preview ─────────────────────────────────────────
 
 export async function getErpUploadReport(filters: ReportFilters): Promise<ErpUploadResponse> {
-  const cacheKey = `reports:erp-upload:${JSON.stringify(filters)}`;
+  const tId = getCurrentTenantId() || 'default';
+  const cacheKey = `reports:${tId}:erp-upload:${JSON.stringify(filters)}`;
   return cacheManager.fetchWithCache(cacheKey, async () => {
     try {
       const _r = await apiFetch(API_URL + '/reports/erp-upload?' + buildParams(filters));
@@ -343,7 +349,8 @@ export async function getErpUploadReport(filters: ReportFilters): Promise<ErpUpl
 // ── 5. GET Running Chart Report ──────────────────────────────────────────────
 
 export async function getRunningChartReport(filters: ReportFilters): Promise<RunningChartResponse> {
-  const cacheKey = `reports:running-chart:${JSON.stringify(filters)}`;
+  const tId = getCurrentTenantId() || 'default';
+  const cacheKey = `reports:${tId}:running-chart:${JSON.stringify(filters)}`;
   return cacheManager.fetchWithCache(cacheKey, async () => {
     try {
       const _r = await apiFetch(API_URL + '/reports/running-chart?' + buildParams(filters));

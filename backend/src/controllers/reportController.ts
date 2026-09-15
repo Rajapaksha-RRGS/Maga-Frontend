@@ -50,7 +50,7 @@ function getDayTypeRule(dateStr: string): { standardCap: number; isAllOvertime: 
 // ─────────────────────────────────────────────────────────────────────────────
 export const getSummaryReport = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
     const dateFrom = qStr(req.query.dateFrom);
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
@@ -170,7 +170,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
 // ─────────────────────────────────────────────────────────────────────────────
 export const getDayOtSummaryReport = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
     const dateFrom = qStr(req.query.dateFrom);
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
@@ -295,7 +295,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
 // ─────────────────────────────────────────────────────────────────────────────
 export const getBpBillReport = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
     const dateFrom = qStr(req.query.dateFrom);
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
@@ -455,7 +455,7 @@ function parseTimeToHours(t: string | null | undefined): number | null {
 // ─────────────────────────────────────────────────────────────────────────────
 export const getErpUploadReport = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
     const dateFrom = qStr(req.query.dateFrom);
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
@@ -619,7 +619,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
 // ─────────────────────────────────────────────────────────────────────────────
 export const getReportFilterOptions = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
 
     const [partners, activityCodes] = await Promise.all([
       prisma.businessPartner.findMany({
@@ -650,7 +650,7 @@ export const getReportFilterOptions = async (req: Request, res: Response): Promi
 // ─────────────────────────────────────────────────────────────────────────────
 export const getRunningChartReport = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
     const dateFrom = qStr(req.query.dateFrom);
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);

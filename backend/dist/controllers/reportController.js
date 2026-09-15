@@ -52,7 +52,7 @@ function getDayTypeRule(dateStr) {
 // ─────────────────────────────────────────────────────────────────────────────
 const getSummaryReport = async (req, res) => {
     try {
-        const tenantId = qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
         const dateFrom = qStr(req.query.dateFrom);
         const dateTo = qStr(req.query.dateTo);
         const employeeQuery = qStr(req.query.employeeQuery);
@@ -152,7 +152,7 @@ exports.getSummaryReport = getSummaryReport;
 // ─────────────────────────────────────────────────────────────────────────────
 const getDayOtSummaryReport = async (req, res) => {
     try {
-        const tenantId = qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
         const dateFrom = qStr(req.query.dateFrom);
         const dateTo = qStr(req.query.dateTo);
         const employeeQuery = qStr(req.query.employeeQuery);
@@ -259,7 +259,7 @@ exports.getDayOtSummaryReport = getDayOtSummaryReport;
 // ─────────────────────────────────────────────────────────────────────────────
 const getBpBillReport = async (req, res) => {
     try {
-        const tenantId = qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
         const dateFrom = qStr(req.query.dateFrom);
         const dateTo = qStr(req.query.dateTo);
         const employeeQuery = qStr(req.query.employeeQuery);
@@ -396,7 +396,7 @@ function parseTimeToHours(t) {
 // ─────────────────────────────────────────────────────────────────────────────
 const getErpUploadReport = async (req, res) => {
     try {
-        const tenantId = qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
         const dateFrom = qStr(req.query.dateFrom);
         const dateTo = qStr(req.query.dateTo);
         const employeeQuery = qStr(req.query.employeeQuery);
@@ -546,7 +546,7 @@ exports.getErpUploadReport = getErpUploadReport;
 // ─────────────────────────────────────────────────────────────────────────────
 const getReportFilterOptions = async (req, res) => {
     try {
-        const tenantId = qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
         const [partners, activityCodes] = await Promise.all([
             prisma_1.default.businessPartner.findMany({
                 where: { tenantId, status: 'active' },
@@ -576,7 +576,7 @@ exports.getReportFilterOptions = getReportFilterOptions;
 // ─────────────────────────────────────────────────────────────────────────────
 const getRunningChartReport = async (req, res) => {
     try {
-        const tenantId = qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await (0, employeeController_1.getDefaultTenantId)());
         const dateFrom = qStr(req.query.dateFrom);
         const dateTo = qStr(req.query.dateTo);
         const employeeQuery = qStr(req.query.employeeQuery);

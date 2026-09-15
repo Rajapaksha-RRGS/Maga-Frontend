@@ -85,11 +85,16 @@ export default function App() {
         <Route path="/splash" element={<SplashShowcasePage />} />
         <Route path="/users" element={<UseTable />} />
 
-        {/* ── Admin (protected, role=admin) ───────────────────────────────── */}
-        <Route element={<ProtectedRoute requiredRole="admin" />}>
+        {/* ── Admin (protected, role=admin or super_admin) ───────────────── */}
+        <Route element={<ProtectedRoute allowedRoles={['admin', 'super_admin']} />}>
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminDashboardPage />} />
-            <Route path="tenants"           element={<TenantsPage />} />
+
+            {/* Only super_admin can access the Tenants / Projects & Admins page */}
+            <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
+              <Route path="tenants" element={<TenantsPage />} />
+            </Route>
+
             <Route path="employees"         element={<EmployeesPage />} />
             <Route path="business-partners" element={<BusinessPartnersPage />} />
             <Route path="equipment"         element={<EquipmentPage />} />

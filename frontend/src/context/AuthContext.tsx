@@ -8,7 +8,8 @@ import {
 import { login as authLogin } from '../features/auth/services/authService';
 import { cacheManager } from '../utils/cacheManager';
 
-export type Role = 'admin' | 'supervisor';
+export type Role = 'super_admin' | 'admin' | 'supervisor';
+
 
 export interface AuthUser {
   id: string;

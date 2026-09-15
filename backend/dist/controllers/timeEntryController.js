@@ -128,7 +128,7 @@ const getAssignedEmployees = async (req, res) => {
     try {
         const supervisorId = req.query.supervisorId;
         const dateStr = req.query.date;
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(dateStr);
         // If supervisorId is not provided, return empty array immediately
         if (!supervisorId) {
@@ -182,7 +182,7 @@ const checkInEmployee = async (req, res) => {
             res.status(400).json({ error: 'employeeId and inTime are required' });
             return;
         }
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const entryDate = parseDate(date);
         // Strict lock: Check if records for this employee or supervisor are already submitted
         const submittedCheck = await prisma_1.default.timeEntry.findFirst({
@@ -278,7 +278,7 @@ const checkOutEmployee = async (req, res) => {
             res.status(400).json({ error: 'employeeId and outTime are required' });
             return;
         }
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const entryDate = parseDate(date);
         // Strict lock: Check if records for this employee or supervisor are already submitted
         const submittedCheck = await prisma_1.default.timeEntry.findFirst({
@@ -384,7 +384,7 @@ const assignActivityBulk = async (req, res) => {
             res.status(400).json({ error: 'Valid positive hours number is required' });
             return;
         }
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
         // Strict lock: Check if records for this supervisor or date are already submitted
         const submittedCheck = await prisma_1.default.timeEntry.findFirst({
@@ -551,7 +551,7 @@ exports.assignActivityBulk = assignActivityBulk;
 const upsertTimeEntry = async (req, res) => {
     try {
         const { employeeId, supervisorId, date, activityId, equipmentId, hours, inTime, outTime, remarks, } = req.body;
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
         const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
         const numHours = hours !== undefined ? parseFloat(hours) : 0;
@@ -619,7 +619,7 @@ exports.upsertTimeEntry = upsertTimeEntry;
 const getTimeEntries = async (req, res) => {
     try {
         const { date, supervisorId, employeeId, status } = req.query;
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const where = { tenantId };
         if (date && typeof date === 'string') {
             where.date = parseDate(date);
@@ -660,7 +660,7 @@ exports.getTimeEntries = getTimeEntries;
 const submitDay = async (req, res) => {
     try {
         const { supervisorId, date } = req.body;
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
         const whereClause = {
             tenantId,

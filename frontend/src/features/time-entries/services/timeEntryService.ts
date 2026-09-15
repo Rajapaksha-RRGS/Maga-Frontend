@@ -54,7 +54,7 @@ export interface SubmitDayPayload {
   date: string;
 }
 
-import { API_URL, apiFetch } from '../../../config/api';
+import { API_URL, apiFetch, getCurrentTenantId } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
 /**
@@ -64,7 +64,8 @@ export async function getActivityCodes(
   tenantId?: string
 ): Promise<ActivityCode[]> {
   try {
-    const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+    const activeTenantId = tenantId || getCurrentTenantId();
+    const query = activeTenantId ? `?tenantId=${encodeURIComponent(activeTenantId)}` : '';
     const res = await apiFetch(`${API_URL}/activity-codes${query}`);
     if (res.ok) {
       const data = await res.json();
@@ -90,9 +91,14 @@ export async function getAssignedEmployees(
   date: string
 ): Promise<AssignedEmployee[]> {
   try {
-    const res = await apiFetch(
-      `${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`
-    );
+    const tenantId = getCurrentTenantId();
+    const query = new URLSearchParams({
+      supervisorId,
+      date,
+      ...(tenantId ? { tenantId } : {}),
+    }).toString();
+
+    const res = await apiFetch(`${API_URL}/time-entries/assigned?${query}`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
