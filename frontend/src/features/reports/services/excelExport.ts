@@ -168,6 +168,28 @@ function applyFooter(ws: ExcelJS.Worksheet, lastDataRowIndex: number, totalColCo
   cell.alignment = { horizontal: 'left', vertical: 'middle' };
 }
 
+/**
+ * Convert an ArrayBuffer, Uint8Array, or ExcelJS buffer to a Base64 string.
+ * Safe for Browser and Capacitor mobile environments.
+ * Uses 32KB chunking to prevent "Maximum call stack size exceeded" errors on large Excel files.
+ */
+export function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
+  // Check if Node Buffer is available in environment
+  const maybeBuffer = (globalThis as unknown as { Buffer?: { from: (b: unknown) => { toString: (enc: string) => string } } }).Buffer;
+  if (maybeBuffer && typeof maybeBuffer.from === 'function') {
+    return maybeBuffer.from(buffer).toString('base64');
+  }
+
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000; // 32KB chunks
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, Array.from(chunk));
+  }
+  return btoa(binary);
+}
+
 /** Trigger browser file download from workbook buffer */
 async function downloadWorkbook(workbook: ExcelJS.Workbook, filename: string): Promise<void> {
   const buffer = await workbook.xlsx.writeBuffer();

@@ -48,7 +48,7 @@ function formatDate(d: Date): string {
 // 1. GET /api/calendar/day-types
 export const getDayTypes = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
     await ensureSeedDayTypes(tenantId);
 
     const types = await prisma.dayType.findMany({
@@ -73,7 +73,7 @@ export const getDayTypes = async (req: Request, res: Response): Promise<void> =>
 // 2. GET /api/calendar?year=&month=&tenantId=
 export const getCalendarMonth = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
     await ensureSeedDayTypes(tenantId);
 
     const year = parseInt(req.query.year as string, 10) || new Date().getFullYear();
@@ -134,7 +134,7 @@ export const getCalendarMonth = async (req: Request, res: Response): Promise<voi
 // 3. POST /api/calendar/set-day
 export const setCalendarDay = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const { date: dateStr, dayTypeId } = req.body;
 
     if (!dateStr || !dayTypeId) {
@@ -174,7 +174,7 @@ export const setCalendarDay = async (req: Request, res: Response): Promise<void>
 // 4. POST /api/calendar/batch-set
 export const batchSetCalendarDays = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const { entries } = req.body; // Array of { date: string, dayTypeId: string }
 
     if (!Array.isArray(entries) || entries.length === 0) {
