@@ -24,7 +24,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       where: {
         OR: [
           { id: cleanTenant },
-          { subdomain: { equals: cleanTenant, mode: 'insensitive' } }
+          { subdomain: { equals: cleanTenant, mode: 'insensitive' } },
+          { subdomain: { equals: `${cleanTenant}M`, mode: 'insensitive' } },
+          { subdomain: { equals: cleanTenant.replace(/M$/i, ''), mode: 'insensitive' } },
         ]
       }
     });

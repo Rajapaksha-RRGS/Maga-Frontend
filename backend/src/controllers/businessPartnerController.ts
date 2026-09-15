@@ -12,7 +12,7 @@ const getParam = (param: string | string[] | undefined): string => {
 export const getAllBusinessPartners = async (req: Request, res: Response): Promise<void> => {
   try {
     const { status, search } = req.query;
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
     const where: Record<string, any> = { tenantId };
     if (status && typeof status === 'string' && status !== 'all') {
@@ -75,7 +75,7 @@ export const getBusinessPartnerById = async (req: Request, res: Response): Promi
 // Get next available BP code (BP1xxxxxx)
 export const getNextBusinessPartnerCode = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
     const latest = await prisma.businessPartner.findFirst({
       where: {
@@ -123,7 +123,7 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
 
     const partner = await prisma.businessPartner.create({
       data: {

@@ -11,7 +11,7 @@ const getParam = (param: string | string[] | undefined): string => {
 export const getAllActivityCodes = async (req: Request, res: Response): Promise<void> => {
   try {
     const { search } = req.query;
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
     const where: Record<string, any> = { tenantId };
     if (search && typeof search === 'string') {
@@ -62,7 +62,7 @@ export const createActivityCode = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
 
     const newCode = await prisma.activityCode.create({
       data: {

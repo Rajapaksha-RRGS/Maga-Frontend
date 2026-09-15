@@ -29,7 +29,7 @@ export const getDefaultTenantId = async (): Promise<string> => {
 export const getAllEmployees = async (req: Request, res: Response): Promise<void> => {
   try {
     const { status, tradeGroup, businessPartner } = req.query;
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
     const where: Record<string, any> = { tenantId };
     if (status && typeof status === 'string') {
@@ -47,9 +47,17 @@ export const getAllEmployees = async (req: Request, res: Response): Promise<void
     const employees = await prisma.employee.findMany({
       where,
       include: {
-        businessPartner: true,
+        businessPartner: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: {
+        employeeCode: 'asc',
+      },
     });
 
     res.json(employees);
@@ -66,7 +74,13 @@ export const getEmployeeById = async (req: Request, res: Response): Promise<void
     const employee = await prisma.employee.findUnique({
       where: { id },
       include: {
-        businessPartner: true,
+        businessPartner: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
       },
     });
 
@@ -102,7 +116,7 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
 
     // Prerequisite: At least one business partner must be registered
     const bpCount = await prisma.businessPartner.count({ where: { tenantId } });

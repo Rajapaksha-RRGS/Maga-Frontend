@@ -14,7 +14,7 @@ function generateTempPassword(): string {
 
 export const getAllSupervisors = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
     if (!tenantId) {
       res.status(401).json({ message: "Unauthorized: No tenantId found" });
@@ -80,7 +80,7 @@ export const createSupervisor = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const tempPassword = generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     const resolvedEmployeeId = linkedEmployeeId || employeeId || null;

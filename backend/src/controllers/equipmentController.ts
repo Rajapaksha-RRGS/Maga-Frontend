@@ -45,7 +45,7 @@ async function ensureSeedEquipment(tenantId: string) {
 // 1. GET /api/equipment
 export const getAllEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
     await ensureSeedEquipment(tenantId);
 
     const { status, type, query } = req.query;
@@ -72,16 +72,16 @@ export const getAllEquipment = async (req: Request, res: Response): Promise<void
     res.json(equipment);
   } catch (error) {
     console.error('Error fetching equipment:', error);
-    res.status(500).json({ error: 'Failed to fetch equipment records' });
+    res.status(500).json({ error: 'Failed to fetch equipment list' });
   }
 };
 
 // 2. GET /api/equipment/:id
 export const getEquipmentById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const id = getParam(req.params.id);
+    const { id } = req.params;
     const item = await prisma.equipment.findUnique({
-      where: { id },
+      where: { id: id as string },
     });
 
     if (!item) {
@@ -99,7 +99,7 @@ export const getEquipmentById = async (req: Request, res: Response): Promise<voi
 // 3. POST /api/equipment
 export const createEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const { code, name, type } = req.body;
 
     if (!name || !name.trim()) {

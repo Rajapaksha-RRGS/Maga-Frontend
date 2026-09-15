@@ -17,7 +17,7 @@ export const getAssignmentsForDate = async (req: Request, res: Response): Promis
       return;
     }
 
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
     const targetDate = parseDate(dateStr);
 
     const assignments = await prisma.dailyAssignment.findMany({
@@ -64,7 +64,7 @@ export const getAssignmentsForDate = async (req: Request, res: Response): Promis
 // 2. Get past days gang summary (Past 5-7 days of recorded gangs)
 export const getRecentGangSummaries = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = (req.query.tenantId as string) || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
     const limitDays = parseInt(req.query.days as string, 10) || 5;
     const beforeDateStr = (req.query.before as string) || (req.query.targetDate as string);
     const beforeDate = beforeDateStr ? parseDate(beforeDateStr) : undefined;
@@ -129,7 +129,7 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const targetDate = parseDate(date);
 
     const createdAssignments = [];
@@ -194,7 +194,7 @@ export const copyGangsFromDate = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const tenantId = req.body.tenantId || (await getDefaultTenantId());
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const srcDateParsed = parseDate(sourceDate);
     const tgtDateParsed = parseDate(targetDate);
 
