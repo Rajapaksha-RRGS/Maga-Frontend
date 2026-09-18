@@ -48,8 +48,13 @@ import CalendarPage from './pages/CalendarPage';
 import AssignmentsPage from './pages/AssignmentsPage';
 import ReportsPage from './pages/ReportsPage';
 
+
+// Theme
+import { ThemeProvider } from './context/ThemeContext';
+
 // Supervisor flow
 import SupervisorFlowPage from './SupervisorFlowPage';
+import SupervisorMobileApp from './features/supervisor/SupervisorMobileApp';
 
 // Splash Screen & Showcase
 import SplashScreen from './components/SplashScreen';
@@ -77,13 +82,19 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
-      <Analytics />
-      <Routes>
-        {/* ── Public ─────────────────────────────────────────────────────── */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/splash" element={<SplashShowcasePage />} />
-        <Route path="/users" element={<UseTable />} />
+    <ThemeProvider>
+      <BrowserRouter>
+        <Analytics />
+        <Routes>
+          {/* ── Public ─────────────────────────────────────────────────────── */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/splash" element={<SplashShowcasePage />} />
+          <Route path="/users" element={<UseTable />} />
+          {/* ── Public direct supervisor mobile preview ─────────────────────── */}
+          <Route path="/labour" element={<SupervisorMobileApp />} />
+          <Route path="/supervisor-preview" element={<SupervisorMobileApp />} />
+        
+
 
         {/* ── Admin (protected, role=admin or super_admin) ───────────────── */}
         <Route element={<ProtectedRoute allowedRoles={['admin', 'super_admin']} />}>
@@ -112,10 +123,13 @@ export default function App() {
             <Route index element={<SupervisorFlowPage />} />
           </Route>
         </Route>
+        
+
 
         {/* ── Fallback: everything else → /login ─────────────────────────── */}
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
+  </ThemeProvider>
   );
 }
