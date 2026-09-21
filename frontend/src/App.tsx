@@ -97,14 +97,14 @@ export default function App() {
 
 
         {/* ── Admin (protected, role=admin or super_admin) ───────────────── */}
-        <Route element={<ProtectedRoute allowedRoles={['admin', 'super_admin']} />}>
+        
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminDashboardPage />} />
 
             {/* Only super_admin can access the Tenants / Projects & Admins page */}
-            <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
+            
               <Route path="tenants" element={<TenantsPage />} />
-            </Route>
+            
 
             <Route path="employees"         element={<EmployeesPage />} />
             <Route path="business-partners" element={<BusinessPartnersPage />} />
@@ -115,7 +115,7 @@ export default function App() {
             <Route path="assignments"   element={<AssignmentsPage />} />
             <Route path="reports"       element={<ReportsPage />} />
           </Route>
-        </Route>
+        
 
         {/* ── Supervisor (protected, role=supervisor) ─────────────────────── */}
        
