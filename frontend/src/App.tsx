@@ -26,7 +26,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Analytics } from "@vercel/analytics/react";
 
 // Auth
-import ProtectedRoute from './features/auth/components/ProtectedRoute';
+
 import LoginPage from './features/auth/pages/LoginPage';
 
 // Layouts
