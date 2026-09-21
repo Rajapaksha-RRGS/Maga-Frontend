@@ -33,6 +33,18 @@
   /* slate-200 */
 }
 
+html.dark {
+  --color-accent: #3b82f6;
+  --color-accent-light: #1e293b;
+  --color-success: #22c55e;
+  --color-success-light: #064e3b;
+  --color-warning: #f59e0b;
+  --color-warning-light: #451a03;
+  --color-neutral: #f1f5f9;
+  --color-surface: #0f172a;
+  --color-border: #334155;
+}
+
 *,
 *::before,
 *::after {
