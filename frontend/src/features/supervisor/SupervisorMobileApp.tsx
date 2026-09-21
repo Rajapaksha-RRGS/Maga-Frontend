@@ -129,8 +129,6 @@ export default function SupervisorMobileApp() {
       <SupervisorDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        currentSite={currentSite}
-        onSelectSite={handleSelectSite}
         pendingSyncCount={pendingSyncCount}
         onSync={handleSync}
         isSyncing={isSyncing}

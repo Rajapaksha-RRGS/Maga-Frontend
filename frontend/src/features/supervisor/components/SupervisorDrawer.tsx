@@ -1,6 +1,5 @@
 import { 
-  X, 
-  Building2, 
+  X,
   RotateCw, 
   Sun, 
   Moon, 
@@ -10,13 +9,11 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../../../context/ThemeContext';
 import { useAuth } from '../../../context/AuthContext';
-import { MASTER_SITES, type SiteProject } from '../services/supervisorStorageService';
+
 
 interface SupervisorDrawerProps {
   open: boolean;
   onClose: () => void;
-  currentSite: SiteProject;
-  onSelectSite: (site: SiteProject) => void;
   pendingSyncCount: number;
   onSync: () => Promise<void>;
   isSyncing: boolean;
@@ -25,8 +22,6 @@ interface SupervisorDrawerProps {
 export function SupervisorDrawer({
   open,
   onClose,
-  currentSite,
-  onSelectSite,
   pendingSyncCount,
   onSync,
   isSyncing,
