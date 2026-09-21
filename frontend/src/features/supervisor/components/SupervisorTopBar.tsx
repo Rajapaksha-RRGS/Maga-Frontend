@@ -40,7 +40,7 @@ export function SupervisorTopBar({
 
   return (
     <header className="sticky top-0 z-40 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 transition-colors shadow-xs">
-      <div className="max-w-md mx-auto px-3.5 py-2.5 flex items-center justify-between gap-2">
+      <div className="  px-3.5 py-2.5 flex items-center justify-between gap-2">
         {/* Left: Mäga Brand Logo & Assigned Site */}
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="w-8 h-8 rounded-xl bg-white dark:bg-slate-800 p-0.5 flex items-center justify-center flex-shrink-0 shadow-xs border border-slate-200 dark:border-slate-700">

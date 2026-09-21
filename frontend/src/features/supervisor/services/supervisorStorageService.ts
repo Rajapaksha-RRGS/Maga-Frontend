@@ -51,19 +51,31 @@ export interface OperatorEntry {
   otHours: number;
   assignedEquipmentId: string; // ID of the mapped equipment
   status: 'draft' | 'pending' | 'done';
-  safetyCheckPassed: boolean;
   notes?: string;
   lastSavedAt?: string;
 }
+
+export type EquipmentRatingUnit = 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2';
 
 export interface EquipmentLogEntry {
   id: string;
   code: string;
   name: string;
   type: string;
+  
+  // Rating Units (from Master Data)
+  availableUnits?: EquipmentRatingUnit[];
+  activeUnit?: EquipmentRatingUnit;
+  
+  // Values per unit
   startMeter: number;
   endMeter: number;
-  netHours: number;
+  netHours: number; // for 'mth'
+  daysValue?: number; // for 'Days' (1, 0.5, 1.5, etc.)
+  hoursValue?: number; // for 'Hrs'
+  extraHoursValue?: number; // for 'EX.hrs'
+  areaValue?: number; // for 'm2'
+  
   workingHours: number;
   idleHours: number;
   breakdownHours: number;
@@ -247,7 +259,6 @@ const INITIAL_OPERATORS: OperatorEntry[] = [
     otHours: 1.5,
     assignedEquipmentId: 'EQ-01',
     status: 'done',
-    safetyCheckPassed: true,
     notes: 'Hydraulic pre-inspection passed. Ready for deep trenching.',
     lastSavedAt: '07:15 AM',
   },
@@ -263,7 +274,6 @@ const INITIAL_OPERATORS: OperatorEntry[] = [
     otHours: 0.5,
     assignedEquipmentId: 'EQ-02',
     status: 'done',
-    safetyCheckPassed: true,
     notes: 'Anemometer wind check clear under 30 knots.',
     lastSavedAt: '07:45 AM',
   },
@@ -279,7 +289,6 @@ const INITIAL_OPERATORS: OperatorEntry[] = [
     otHours: 0,
     assignedEquipmentId: 'EQ-03',
     status: 'draft',
-    safetyCheckPassed: true,
     notes: 'Subgrade rolling at Access Ramp sector.',
     lastSavedAt: '08:10 AM',
   },
@@ -295,7 +304,6 @@ const INITIAL_OPERATORS: OperatorEntry[] = [
     otHours: 0,
     assignedEquipmentId: '', // intentionally unmapped to demonstrate validation!
     status: 'pending',
-    safetyCheckPassed: false,
   },
 ];
 
@@ -305,9 +313,14 @@ const INITIAL_EQUIPMENT: EquipmentLogEntry[] = [
     code: 'EX-04',
     name: 'CAT 320D Excavator',
     type: 'Heavy Earthmover',
+    availableUnits: ['mth', 'Hrs', 'EX.hrs', 'Days'],
+    activeUnit: 'mth',
     startMeter: 4820.5,
     endMeter: 4828.5,
     netHours: 8.0,
+    daysValue: 1.0,
+    hoursValue: 8.0,
+    extraHoursValue: 1.5,
     workingHours: 7.0,
     idleHours: 1.0,
     breakdownHours: 0,
@@ -323,9 +336,14 @@ const INITIAL_EQUIPMENT: EquipmentLogEntry[] = [
     code: 'TC-01',
     name: 'Zoomlion 50T Tower Crane',
     type: 'Lifting & Hoisting',
+    availableUnits: ['Days', 'Hrs', 'EX.hrs'],
+    activeUnit: 'Days',
     startMeter: 1240.0,
     endMeter: 1247.5,
     netHours: 7.5,
+    daysValue: 1.0,
+    hoursValue: 7.5,
+    extraHoursValue: 0.5,
     workingHours: 6.5,
     idleHours: 1.0,
     breakdownHours: 0,
@@ -341,9 +359,14 @@ const INITIAL_EQUIPMENT: EquipmentLogEntry[] = [
     code: 'RL-02',
     name: 'Dynapac CA2500D Vibratory Roller',
     type: 'Compaction Equipment',
+    availableUnits: ['mth', 'm2', 'Hrs', 'Days'],
+    activeUnit: 'mth',
     startMeter: 3105.0,
     endMeter: 3111.0,
     netHours: 6.0,
+    daysValue: 1.0,
+    hoursValue: 6.0,
+    areaValue: 480,
     workingHours: 5.0,
     idleHours: 1.0,
     breakdownHours: 0,
@@ -359,9 +382,14 @@ const INITIAL_EQUIPMENT: EquipmentLogEntry[] = [
     code: 'CP-01',
     name: 'Schwing Stetter Concrete Pump',
     type: 'Concrete Machinery',
+    availableUnits: ['Days', 'm2', 'Hrs'],
+    activeUnit: 'Days',
     startMeter: 2150.0,
     endMeter: 2150.0,
     netHours: 0,
+    daysValue: 0,
+    hoursValue: 0,
+    areaValue: 0,
     workingHours: 0,
     idleHours: 0,
     breakdownHours: 0,
@@ -370,6 +398,29 @@ const INITIAL_EQUIPMENT: EquipmentLogEntry[] = [
     activityCode: 'ACT-101',
     status: 'pending',
     remarks: 'Scheduled for afternoon slab concrete pour at 14:00.',
+  },
+  {
+    id: 'EQ-05',
+    code: 'TP-02',
+    name: 'Isuzu Giga 10-Wheeler Tipper',
+    type: 'Material Haulage Truck',
+    availableUnits: ['Days', 'Hrs', 'EX.hrs', 'm2'],
+    activeUnit: 'Days',
+    startMeter: 54100.0,
+    endMeter: 54220.0,
+    netHours: 8.0,
+    daysValue: 1.0,
+    hoursValue: 8.0,
+    extraHoursValue: 2.0,
+    workingHours: 8.0,
+    idleHours: 0,
+    breakdownHours: 0,
+    fuelIssuedLiters: 85,
+    operatorId: 'OP-204',
+    activityCode: 'ACT-108',
+    status: 'done',
+    remarks: 'Aggregate transport from batching plant to sector 3.',
+    lastSavedAt: '10:30 AM',
   },
 ];
 
@@ -463,7 +514,24 @@ export const supervisorStorage = {
     const key = `${STORAGE_PREFIX}equipment_${date}`;
     try {
       const saved = localStorage.getItem(key);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((eq: any, index: number) => {
+            const seed = INITIAL_EQUIPMENT.find((s) => s.id === eq.id) || INITIAL_EQUIPMENT[index % INITIAL_EQUIPMENT.length];
+            return {
+              ...seed,
+              ...eq,
+              availableUnits: eq.availableUnits || seed?.availableUnits || ['mth', 'Days', 'Hrs'],
+              activeUnit: eq.activeUnit || seed?.activeUnit || 'mth',
+              daysValue: eq.daysValue ?? seed?.daysValue ?? (eq.netHours > 0 ? 1 : 0),
+              hoursValue: eq.hoursValue ?? seed?.hoursValue ?? eq.netHours,
+              extraHoursValue: eq.extraHoursValue ?? seed?.extraHoursValue ?? 0,
+              areaValue: eq.areaValue ?? seed?.areaValue ?? 0,
+            };
+          });
+        }
+      }
     } catch {
       // ignore
     }

@@ -93,7 +93,7 @@ export function SupervisorDrawer({
             </div>
           </div>
 
-          {/* Current Project / Site Switcher */}
+          {/* Current Project / Site Switcher
           <div>
             <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-2">
               Assigned Project Site
@@ -124,7 +124,7 @@ export function SupervisorDrawer({
                 );
               })}
             </div>
-          </div>
+          </div> */}
 
           {/* Offline Sync & Storage Tools */}
           <div>

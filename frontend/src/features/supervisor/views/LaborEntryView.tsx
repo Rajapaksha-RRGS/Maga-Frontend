@@ -203,7 +203,7 @@ export function LaborEntryView({
     setBatchActivities((prev) => prev.filter((a) => a.id !== id));
   };
 
-  const totalBatchActivityHours = batchActivities.reduce((acc, a) => acc + (Number(a.hours) || 0), 0);
+
 
   // ── APPLY BATCH OUT TIME & ACTIVITIES ──
   const handleApplyBatchOut = () => {
@@ -400,20 +400,18 @@ export function LaborEntryView({
       </div>
 
       {/* ── 4. Trade Group & Status Filter Chips (Under Search Bar) ────────────── */}
-      <div className="py-3 px-3.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3.5">
+       <div className="py-2 px-2.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3.5">
         {/* Trade Groups Chips */}
         <div>
-          <div className="flex items-center justify-between mb-2 px-0.5">
+          <div className="flex items-center justify-between mb-1 px-0.5">
             <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
               <Filter size={12} className="text-blue-600 dark:text-blue-400" />
               Filter by Trade:
             </span>
-            <span className="text-[11px] text-slate-400 font-medium">
-              {selectedTrade === 'all' ? 'Showing All' : selectedTrade}
-            </span>
+
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto pb-1.5 no-scrollbar text-xs">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs"> 
             <button
               type="button"
               onClick={() => setSelectedTrade('all')}
@@ -447,8 +445,7 @@ export function LaborEntryView({
           </div>
         </div>
 
-        {/* Divider with extra breathing space */}
-        <div className="border-t border-slate-100 dark:border-slate-800" />
+
 
         {/* Status Filter Chips: Completed vs Pending */}
         <div>
@@ -576,9 +573,9 @@ export function LaborEntryView({
                 <h3 className="text-xs font-bold text-blue-950 dark:text-blue-200">
                   Evening Out-Time & Activity Allocation
                 </h3>
-                <p className="text-[11px] text-blue-700 dark:text-blue-400">
+                {/* <p className="text-[11px] text-blue-700 dark:text-blue-400">
                   Record departure time & split hours across Master Activity codes
-                </p>
+                </p> */}
               </div>
             </div>
 
@@ -599,14 +596,14 @@ export function LaborEntryView({
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1">
                 <Briefcase size={12} className="text-blue-600" />
-                Activity Codes Split (Total: {totalBatchActivityHours.toFixed(1)}h)
+                Activity Codes Split 
               </span>
               <button
                 type="button"
                 onClick={handleAddBatchActivityRow}
                 className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold flex items-center gap-0.5"
               >
-                <Plus size={13} /> Add Activity Split
+                <Plus size={13} /> Add Activity
               </button>
             </div>
 
@@ -619,7 +616,7 @@ export function LaborEntryView({
                 >
                   {MASTER_ACTIVITIES.map((act) => (
                     <option key={act.code} value={act.code}>
-                      {act.code} — {act.name}
+                      {act.code} 
                     </option>
                   ))}
                 </select>
@@ -693,7 +690,7 @@ export function LaborEntryView({
         ) : (
           filteredLaborers.map((worker) => {
             const isSelected = selectedWorkerIds.includes(worker.id);
-            const isExpanded = expandedId === worker.id;
+            const isExpanded = tabMode === 'out' && expandedId === worker.id;
             const activitySum = worker.activities.reduce((acc, a) => acc + (Number(a.hours) || 0), 0);
             const hasDiscrepancy = worker.shiftHours > 0 && Math.abs(activitySum - worker.shiftHours) >= 0.1;
             const isIndividualSaved = individualSaveId === worker.id;
@@ -729,9 +726,9 @@ export function LaborEntryView({
                     onClick={() => setExpandedId(isExpanded ? null : worker.id)}
                     className="flex-1 min-w-0 flex items-center gap-2.5 cursor-pointer"
                   >
-                    <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-bold flex items-center justify-center text-[10px] tracking-tight flex-shrink-0 border border-blue-200 dark:border-blue-800 font-mono">
+                    {/* <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-bold flex items-center justify-center text-[10px] tracking-tight flex-shrink-0 border border-blue-200 dark:border-blue-800 font-mono">
                       {worker.employeeCode || worker.callingName.charAt(0)}
-                    </div>
+                    </div> */}
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -784,9 +781,12 @@ export function LaborEntryView({
                       )}
                     </div>
 
-                    <div className="text-slate-400 pl-1">
-                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </div>
+                    {/* Chevron Icon */}
+                      {tabMode === 'out' && (
+                      <div className="text-slate-400 pl-1">
+                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -814,7 +814,7 @@ export function LaborEntryView({
                 {isExpanded && (
                   <div className="px-3.5 pb-4 pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3 bg-slate-50/50 dark:bg-slate-900/40">
                     {/* Worker Identity Details */}
-                    <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    {/* <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                       <div>
                         <span className="text-[10px] uppercase font-bold text-blue-700 dark:text-blue-400 block tracking-wider">
                           Full Name
@@ -831,7 +831,7 @@ export function LaborEntryView({
                           {worker.nic} · {worker.tradeGroup}
                         </span>
                       </div>
-                    </div>
+                    </div> */}
 
                     {/* Individual In / Out Time Pickers */}
                     <div className="grid grid-cols-2 gap-2.5">
@@ -864,14 +864,14 @@ export function LaborEntryView({
                       <div className="flex items-center justify-between mb-1.5">
                         <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
                           <Briefcase size={12} className="text-blue-600" />
-                          Master Activity Code Splits
+                          Activity Code
                         </label>
                         <button
                           type="button"
                           onClick={() => handleAddIndividualActivitySplit(worker.id)}
                           className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5"
                         >
-                          <Plus size={13} /> Add Task Split
+                          <Plus size={13} /> Add Task
                         </button>
                       </div>
 
@@ -888,7 +888,7 @@ export function LaborEntryView({
                             >
                               {MASTER_ACTIVITIES.map((item) => (
                                 <option key={item.code} value={item.code}>
-                                  {item.code} — {item.name}
+                                  {item.code}
                                 </option>
                               ))}
                             </select>

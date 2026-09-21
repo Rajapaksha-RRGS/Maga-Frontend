@@ -118,11 +118,11 @@ export default function App() {
         </Route>
 
         {/* ── Supervisor (protected, role=supervisor) ─────────────────────── */}
-        <Route element={<ProtectedRoute requiredRole="supervisor" />}>
+       
           <Route path="/supervisor" element={<SupervisorLayout />}>
             <Route index element={<SupervisorFlowPage />} />
           </Route>
-        </Route>
+       
         
 
 

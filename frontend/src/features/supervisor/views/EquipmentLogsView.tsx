@@ -2,27 +2,66 @@ import { useState, useMemo } from 'react';
 import { 
   Tractor, 
   Gauge, 
-  Fuel, 
   AlertTriangle, 
   Save, 
   Check, 
   ChevronDown, 
   ChevronUp, 
   HardHat, 
-  PauseCircle, 
-  PlayCircle,
   Search,
-  X
+  X,
+  Calendar,
+  Clock,
+  Zap,
+  Maximize2,
+  Sliders
 } from 'lucide-react';
 import type { 
   EquipmentLogEntry, 
-  OperatorEntry 
+  OperatorEntry,
+  EquipmentRatingUnit 
 } from '../services/supervisorStorageService';
 
 interface EquipmentLogsViewProps {
   equipment: EquipmentLogEntry[];
   operators: OperatorEntry[];
   onSaveEquipment: (updated: EquipmentLogEntry[]) => void;
+}
+
+const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon: string }> = {
+  'Days': { label: 'Days', sub: 'Day / Shift Rate', icon: '📅' },
+  'Hrs': { label: 'Hrs', sub: 'Operating Hours', icon: '⏱️' },
+  'EX.hrs': { label: 'EX.hrs', sub: 'Extra / OT Hours', icon: '⚡' },
+  'mth': { label: 'mth', sub: 'Meter Hours (SMH)', icon: '⚙️' },
+  'm2': { label: 'm²', sub: 'Work Area (Square Meters)', icon: '📐' },
+};
+
+function getEquipmentActiveValue(eq: EquipmentLogEntry): { value: number; label: string; display: string } {
+  const unit: EquipmentRatingUnit = eq.activeUnit || 'mth';
+  switch (unit) {
+    case 'Days': {
+      const v = eq.daysValue ?? (eq.netHours > 0 ? 1 : 0);
+      return { value: v, label: 'Days', display: `${v} Day${v === 1 ? '' : 's'}` };
+    }
+    case 'Hrs': {
+      const v = eq.hoursValue ?? eq.netHours;
+      return { value: v, label: 'Hrs', display: `${v.toFixed(1)} Hrs` };
+    }
+    case 'EX.hrs': {
+      const v = eq.extraHoursValue ?? 0;
+      return { value: v, label: 'EX.hrs', display: `${v.toFixed(1)} EX.hrs` };
+    }
+    case 'mth': {
+      const v = eq.netHours;
+      return { value: v, label: 'mth', display: `${v.toFixed(1)} mth` };
+    }
+    case 'm2': {
+      const v = eq.areaValue ?? 0;
+      return { value: v, label: 'm²', display: `${v} m²` };
+    }
+    default:
+      return { value: eq.netHours, label: 'mth', display: `${eq.netHours} mth` };
+  }
 }
 
 export function EquipmentLogsView({
@@ -32,11 +71,11 @@ export function EquipmentLogsView({
 }: EquipmentLogsViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
-  const [expandedId, setExpandedId] = useState<string | null>(() => equipment[0]?.id || null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [saveSuccessId, setSaveSuccessId] = useState<string | null>(null);
 
-  // Counts
-  const doneCount = equipment.filter((e) => e.netHours > 0).length;
+  // Counts based on active unit value
+  const doneCount = equipment.filter((e) => getEquipmentActiveValue(e).value > 0).length;
   const pendingCount = equipment.length - doneCount;
 
   // Filtered machinery
@@ -50,8 +89,9 @@ export function EquipmentLogsView({
         eq.type.toLowerCase().includes(q);
       
       if (!matchesSearch) return false;
-      if (statusFilter === 'pending') return eq.netHours === 0;
-      if (statusFilter === 'done') return eq.netHours > 0;
+      const isDone = getEquipmentActiveValue(eq).value > 0;
+      if (statusFilter === 'pending') return !isDone;
+      if (statusFilter === 'done') return isDone;
       return true;
     });
   }, [equipment, searchQuery, statusFilter]);
@@ -60,13 +100,81 @@ export function EquipmentLogsView({
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
-  // Update meter readings & recalculate net hours
+  // ── Unit Switching Handler ──
+  const handleUnitChange = (id: string, newUnit: EquipmentRatingUnit) => {
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+      let daysVal = eq.daysValue;
+      if (newUnit === 'Days' && (daysVal === undefined || daysVal === 0)) {
+        daysVal = 1; // 1-click default for 1 Day
+      }
+      return {
+        ...eq,
+        activeUnit: newUnit,
+        daysValue: daysVal,
+        status: 'draft' as const,
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
+  // ── Days Rate Handler ──
+  const handleDaysChange = (id: string, days: number) => {
+    const safeDays = Math.max(0, days);
+    const updated = equipment.map((eq) => 
+      eq.id === id ? { 
+        ...eq, 
+        daysValue: safeDays, 
+        status: (safeDays > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
+      } : eq
+    );
+    onSaveEquipment(updated);
+  };
+
+  // ── Operating Hours (Hrs) Handler ──
+  const handleHoursChange = (id: string, hours: number) => {
+    const safeHours = Math.max(0, hours);
+    const updated = equipment.map((eq) => 
+      eq.id === id ? { 
+        ...eq, 
+        hoursValue: safeHours, 
+        status: (safeHours > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
+      } : eq
+    );
+    onSaveEquipment(updated);
+  };
+
+  // ── Extra Hours (EX.hrs) Handler ──
+  const handleExtraHoursChange = (id: string, exHours: number) => {
+    const safeEx = Math.max(0, exHours);
+    const updated = equipment.map((eq) => 
+      eq.id === id ? { 
+        ...eq, 
+        extraHoursValue: safeEx, 
+        status: (safeEx > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
+      } : eq
+    );
+    onSaveEquipment(updated);
+  };
+
+  // ── Square Meters (m2) Handler ──
+  const handleAreaChange = (id: string, area: number) => {
+    const safeArea = Math.max(0, area);
+    const updated = equipment.map((eq) => 
+      eq.id === id ? { 
+        ...eq, 
+        areaValue: safeArea, 
+        status: (safeArea > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
+      } : eq
+    );
+    onSaveEquipment(updated);
+  };
+
+  // ── Meter Readings (mth) Handler ──
   const handleMeterChange = (id: string, start: number, end: number) => {
     const net = end >= start ? parseFloat((end - start).toFixed(1)) : 0;
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
-
-      // If working hours was previously equal to old net or 0, default working hours to net
       const working = eq.workingHours === eq.netHours || eq.workingHours === 0 ? net : eq.workingHours;
       const idle = Math.max(0, parseFloat((net - working).toFixed(1)));
 
@@ -83,32 +191,12 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
-  const handleHoursBreakdown = (id: string, field: 'workingHours' | 'idleHours' | 'breakdownHours' | 'fuelIssuedLiters', value: number) => {
-    const updated = equipment.map((eq) => 
-      eq.id === id ? { ...eq, [field]: value, status: 'draft' as const } : eq
-    );
-    onSaveEquipment(updated);
-  };
-
-  const handleOperatorChange = (equipmentId: string, operatorId: string) => {
-    const updated = equipment.map((eq) => 
-      eq.id === equipmentId ? { ...eq, operatorId, status: 'draft' as const } : eq
-    );
-    onSaveEquipment(updated);
-  };
-
-  const handleRemarksChange = (id: string, remarks: string) => {
-    const updated = equipment.map((eq) => 
-      eq.id === id ? { ...eq, remarks } : eq
-    );
-    onSaveEquipment(updated);
-  };
-
   const handleSaveDraft = (id: string) => {
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
-      const isComplete = eq.netHours > 0 && eq.operatorId;
+      const activeInfo = getEquipmentActiveValue(eq);
+      const isComplete = activeInfo.value > 0;
       return {
         ...eq,
         status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
@@ -122,9 +210,6 @@ export function EquipmentLogsView({
 
   return (
     <div className="space-y-3 pb-24 animate-in fade-in duration-150">
-      {/* ── Top Header Notice ────────────────────────────────────────────────── */}
-      
-
       {/* ── Search Bar ──────────────────────────────────────────────────────── */}
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -139,7 +224,7 @@ export function EquipmentLogsView({
           <button
             type="button"
             onClick={() => setSearchQuery('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
           >
             <X size={14} />
           </button>
@@ -148,7 +233,7 @@ export function EquipmentLogsView({
 
       {/* ── Status Filter Chips ─────────────────────────────────────────────── */}
       <div className="p-2 bg-white dark:bg-slate-850 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none text-xs"> 
           <button
             type="button"
             onClick={() => setStatusFilter('all')}
@@ -204,7 +289,9 @@ export function EquipmentLogsView({
           filteredEquipment.map((eq) => {
             const isExpanded = expandedId === eq.id;
             const mappedOp = operators.find((o) => o.id === eq.operatorId);
-            const isMeterInvalid = eq.endMeter < eq.startMeter;
+            const activeVal = getEquipmentActiveValue(eq);
+            const activeUnit: EquipmentRatingUnit = eq.activeUnit || 'mth';
+            const isMeterInvalid = activeUnit === 'mth' && eq.endMeter < eq.startMeter;
             const isSavedJustNow = saveSuccessId === eq.id;
 
             return (
@@ -236,9 +323,7 @@ export function EquipmentLogsView({
                           {eq.code}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        {eq.type}
-                      </p>
+                      
 
                       {/* Operator Link Badge */}
                       <div className="mt-1 flex items-center gap-1.5 flex-wrap">
@@ -251,24 +336,19 @@ export function EquipmentLogsView({
                             No Operator Linked
                           </span>
                         )}
-                        {eq.fuelIssuedLiters > 0 && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200">
-                            <Fuel size={10} /> {eq.fuelIssuedLiters}L
-                          </span>
-                        )}
                       </div>
                     </div>
                   </div>
 
-                  {/* Right: Net Running Hours Pill */}
+                  {/* Right: Active Rating Unit Result Pill */}
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {eq.netHours > 0 ? (
+                    {activeVal.value > 0 ? (
                       <div className="text-right">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
-                          {eq.netHours} hrs
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 font-mono">
+                          {activeVal.display}
                         </span>
-                        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
-                          {eq.startMeter} → {eq.endMeter}
+                        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 font-medium">
+                          {activeUnit === 'mth' ? `${eq.startMeter} → ${eq.endMeter}` : `Unit: ${activeUnit}`}
                         </p>
                       </div>
                     ) : (
@@ -283,152 +363,314 @@ export function EquipmentLogsView({
                   </div>
                 </button>
 
-                {/* Expanded Meter Reading Inputs & Utilization */}
+                {/* ── Expanded Content: Dynamic Rating Unit Selection & Inputs ── */}
                 {isExpanded && (
-                  <div className="px-3.5 pb-4 pt-1 border-t border-slate-100 dark:border-slate-800 space-y-3.5 animate-in slide-in-from-top-1 duration-150">
-                    {/* Meter Readings Row */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
-                          <Gauge size={13} className="text-emerald-600" />
-                          Engine Meter Readings (Hours)
-                        </label>
-                        {eq.lastSavedAt && (
-                          <span className="text-[10px] text-slate-400">Saved: {eq.lastSavedAt}</span>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div>
-                          <label className="text-xs text-slate-500 dark:text-slate-400 block mb-1">
-                            Start / Initial Meter
-                          </label>
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={eq.startMeter}
-                            onChange={(e) => handleMeterChange(eq.id, parseFloat(e.target.value) || 0, eq.endMeter)}
-                            className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-xs text-slate-500 dark:text-slate-400 block mb-1">
-                            End / Final Meter
-                          </label>
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={eq.endMeter}
-                            onChange={(e) => handleMeterChange(eq.id, eq.startMeter, parseFloat(e.target.value) || 0)}
-                            className={[
-                              'w-full px-3 py-2 text-xs font-bold rounded-xl border focus:ring-2 focus:ring-emerald-500 transition-colors',
-                              isMeterInvalid
-                                ? 'border-red-500 bg-red-50 dark:bg-red-950/40 text-red-900'
-                                : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100'
-                            ].join(' ')}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Net Hours Calculation Display */}
-                      <div className="mt-2 flex items-center justify-between p-2 rounded-xl bg-slate-100 dark:bg-slate-800/80 text-xs">
-                        <span className="text-slate-600 dark:text-slate-300">
-                          Net Operating Utilization:
+                  <div className="px-3.5 pb-4 pt-1 border-t border-slate-100 dark:border-slate-800 space-y-3 animate-in slide-in-from-top-1 duration-150">
+                    
+                    {/* ── 1. Horizontal Rating Unit Selector ── */}
+                    <div className="bg-slate-100/90 dark:bg-slate-900/70 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-1.5">
+                      <div className="flex items-center justify-between px-0.5">
+                        <span className="text-[10px] uppercase font-bold text-slate-600 dark:text-slate-400 tracking-wider flex items-center gap-1">
+                          <Sliders size={12} className="text-emerald-600 dark:text-emerald-400" />
+                          Rating Unit
                         </span>
-                        {isMeterInvalid ? (
-                          <span className="text-red-600 dark:text-red-400 font-bold flex items-center gap-1">
-                            <AlertTriangle size={13} /> Final meter cannot be less than initial!
-                          </span>
-                        ) : (
-                          <span className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
-                            {eq.netHours.toFixed(1)} Hours
-                          </span>
-                        )}
+                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                          Active: {activeUnit}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
+                        {(eq.availableUnits || ['mth', 'Days', 'Hrs']).map((unit) => {
+                          const isSelected = activeUnit === unit;
+                          return (
+                            <button
+                              key={unit}
+                              type="button"
+                              onClick={() => handleUnitChange(eq.id, unit)}
+                              className={[
+                                'py-1.5 px-3 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 flex-shrink-0 shadow-2xs',
+                                isSelected
+                                  ? 'bg-emerald-600 text-white shadow-xs scale-[1.02] ring-2 ring-emerald-500/20'
+                                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700'
+                              ].join(' ')}
+                            >
+                              <span>{UNIT_META[unit]?.icon || '⚙️'}</span>
+                              <span>{unit}</span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
-                    {/* Operational Hour Breakdown & Fuel */}
-                    <div>
-                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider block mb-1.5">
-                        Hour Breakdown & Fuel Consumption
-                      </label>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-1">
-                            <PlayCircle size={11} className="text-emerald-600" /> Working (h)
+                    {/* ── 2. Dynamic Input Section Based on Active Unit ── */}
+                    
+                    {/* CASE A: DAYS (Day rate: 1-click select for 1 Day, 0.5 Day, etc.) */}
+                    {activeUnit === 'Days' && (
+                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <Calendar size={13} className="text-emerald-600" />
+                            Daily Rate Log
                           </label>
-                          <input
-                            type="number"
-                            step="0.5"
-                            value={eq.workingHours}
-                            onChange={(e) => handleHoursBreakdown(eq.id, 'workingHours', parseFloat(e.target.value) || 0)}
-                            className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-center"
-                          />
+                          <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                            {eq.daysValue ?? 1} Day{(eq.daysValue ?? 1) === 1 ? '' : 's'}
+                          </span>
                         </div>
 
+                        {/* 1-Click Quick Select: "day ekak nm eka click ekaki 1 day" */}
                         <div>
-                          <label className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-1">
-                            <PauseCircle size={11} className="text-amber-500" /> Idle / Standby
-                          </label>
-                          <input
-                            type="number"
-                            step="0.5"
-                            value={eq.idleHours}
-                            onChange={(e) => handleHoursBreakdown(eq.id, 'idleHours', parseFloat(e.target.value) || 0)}
-                            className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-center"
-                          />
+                          <span className="text-[10px] text-slate-400 block mb-1">1-Click Quick Select:</span>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {[1, 0.5, 1.5, 2].map((d) => (
+                              <button
+                                key={d}
+                                type="button"
+                                onClick={() => handleDaysChange(eq.id, d)}
+                                className={[
+                                  'py-2 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
+                                  (eq.daysValue ?? 1) === d
+                                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs ring-1 ring-emerald-500/20'
+                                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
+                                ].join(' ')}
+                              >
+                                {d === 1 ? '1 Day' : d === 0.5 ? '½ Day' : `${d} Days`}
+                              </button>
+                            ))}
+                          </div>
                         </div>
 
-                        <div>
-                          <label className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-1">
-                            <Fuel size={11} className="text-blue-600" /> Fuel Issued (L)
-                          </label>
-                          <input
-                            type="number"
-                            step="5"
-                            value={eq.fuelIssuedLiters}
-                            onChange={(e) => handleHoursBreakdown(eq.id, 'fuelIssuedLiters', parseFloat(e.target.value) || 0)}
-                            className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-center"
-                          />
+                        {/* Custom Day Input */}
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                            Or enter custom days:
+                          </span>
+                          <div className="w-24">
+                            <input
+                              type="number"
+                              step="0.25"
+                              min="0"
+                              value={eq.daysValue ?? 1}
+                              onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
+                              className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
 
-                    {/* Linked Operator Selector */}
-                    <div>
-                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider block mb-1">
-                        Operating Driver / Heavy Operator
-                      </label>
-                      <select
-                        value={eq.operatorId || ''}
-                        onChange={(e) => handleOperatorChange(eq.id, e.target.value)}
-                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="">-- No Operator Linked --</option>
-                        {operators.map((op) => (
-                          <option key={op.id} value={op.id}>
-                            {op.employeeNumber ? `${op.employeeNumber} — ` : ''}{op.callingName} ({op.designation})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {/* CASE B: MTH (Service Meter Hours: Start Meter -> End Meter) */}
+                    {activeUnit === 'mth' && (
+                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <Gauge size={13} className="text-emerald-600" />
+                            Service Meter Hours (mth)
+                          </label>
+                          {eq.lastSavedAt && (
+                            <span className="text-[10px] text-slate-400">Saved: {eq.lastSavedAt}</span>
+                          )}
+                        </div>
 
-                    {/* Operational Remarks */}
-                    <div>
-                      <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
-                        Work Location & Maintenance Remarks
-                      </label>
-                      <input
-                        type="text"
-                        value={eq.remarks || ''}
-                        onChange={(e) => handleRemarksChange(eq.id, e.target.value)}
-                        placeholder="e.g., Foundation pile excavation, hydraulic hose replaced…"
-                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
+                              Start / Initial Meter
+                            </label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={eq.startMeter}
+                              onChange={(e) => handleMeterChange(eq.id, parseFloat(e.target.value) || 0, eq.endMeter)}
+                              className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
 
-                    {/* Save Draft Action */}
+                          <div>
+                            <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
+                              End / Final Meter
+                            </label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={eq.endMeter}
+                              onChange={(e) => handleMeterChange(eq.id, eq.startMeter, parseFloat(e.target.value) || 0)}
+                              className={[
+                                'w-full px-3 py-2 text-xs font-bold rounded-xl border focus:ring-2 focus:ring-emerald-500 transition-colors',
+                                isMeterInvalid
+                                  ? 'border-red-500 bg-red-50 dark:bg-red-950/40 text-red-900'
+                                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100'
+                              ].join(' ')}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 text-xs">
+                          <span className="text-slate-600 dark:text-slate-400">Net Utilization:</span>
+                          {isMeterInvalid ? (
+                            <span className="text-red-600 dark:text-red-400 font-bold flex items-center gap-1 text-[11px]">
+                              <AlertTriangle size={12} /> Final meter cannot be less than initial!
+                            </span>
+                          ) : (
+                            <span className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
+                              {eq.netHours.toFixed(1)} mth
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CASE C: HRS (Direct Operating Hours) */}
+                    {activeUnit === 'Hrs' && (
+                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <Clock size={13} className="text-blue-600" />
+                            Operating Hours (Hrs)
+                          </label>
+                          <span className="text-xs font-bold text-blue-700 dark:text-blue-400">
+                            {(eq.hoursValue ?? 8).toFixed(1)} Hrs
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">Quick Select:</span>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {[4, 8, 9, 10].map((h) => (
+                              <button
+                                key={h}
+                                type="button"
+                                onClick={() => handleHoursChange(eq.id, h)}
+                                className={[
+                                  'py-2 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
+                                  (eq.hoursValue ?? 8) === h
+                                    ? 'bg-blue-600 border-blue-600 text-white shadow-xs ring-1 ring-blue-500/20'
+                                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
+                                ].join(' ')}
+                              >
+                                {h}.0h
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                            Exact Operating Hours:
+                          </span>
+                          <div className="w-24">
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              value={eq.hoursValue ?? 8}
+                              onChange={(e) => handleHoursChange(eq.id, parseFloat(e.target.value) || 0)}
+                              className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CASE D: EX.HRS (Extra / Overtime Hours) */}
+                    {activeUnit === 'EX.hrs' && (
+                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <Zap size={13} className="text-amber-500" />
+                            Extra / Overtime Hours (EX.hrs)
+                          </label>
+                          <span className="text-xs font-bold text-amber-700 dark:text-amber-400">
+                            {(eq.extraHoursValue ?? 0).toFixed(1)} EX.hrs
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">Quick Select:</span>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {[1, 1.5, 2, 3].map((ex) => (
+                              <button
+                                key={ex}
+                                type="button"
+                                onClick={() => handleExtraHoursChange(eq.id, ex)}
+                                className={[
+                                  'py-2 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
+                                  (eq.extraHoursValue ?? 0) === ex
+                                    ? 'bg-amber-600 border-amber-600 text-white shadow-xs ring-1 ring-amber-500/20'
+                                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
+                                ].join(' ')}
+                              >
+                                +{ex}h
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                            Custom Extra Hours:
+                          </span>
+                          <div className="w-24">
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              value={eq.extraHoursValue ?? 0}
+                              onChange={(e) => handleExtraHoursChange(eq.id, parseFloat(e.target.value) || 0)}
+                              className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-amber-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CASE E: M2 (Square Meters / Area Output) */}
+                    {activeUnit === 'm2' && (
+                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <Maximize2 size={13} className="text-purple-600" />
+                            Work Area Output (m²)
+                          </label>
+                          <span className="text-xs font-bold text-purple-700 dark:text-purple-400">
+                            {eq.areaValue ?? 0} m²
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">Quick Add:</span>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {[50, 100, 250, 500].map((area) => (
+                              <button
+                                key={area}
+                                type="button"
+                                onClick={() => handleAreaChange(eq.id, (eq.areaValue ?? 0) + area)}
+                                className="py-2 rounded-lg text-xs font-bold transition-all border bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-100 active:scale-95"
+                              >
+                                +{area} m²
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                            Total Area (m²):
+                          </span>
+                          <div className="w-28">
+                            <input
+                              type="number"
+                              step="10"
+                              min="0"
+                              value={eq.areaValue ?? 0}
+                              onChange={(e) => handleAreaChange(eq.id, parseFloat(e.target.value) || 0)}
+                              className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-purple-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── 3. Save Draft Action ── */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
                       <button
                         type="button"
@@ -443,12 +685,12 @@ export function EquipmentLogsView({
                         {isSavedJustNow ? (
                           <>
                             <Check size={16} />
-                            <span>Equipment Meter Log Saved!</span>
+                            <span>Equipment Log Saved!</span>
                           </>
                         ) : (
                           <>
                             <Save size={15} />
-                            <span>Save Equipment Draft Entry</span>
+                            <span>Save Equipment Entry</span>
                           </>
                         )}
                       </button>

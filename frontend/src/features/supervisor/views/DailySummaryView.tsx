@@ -3,7 +3,6 @@ import {
   ClipboardCheck, 
   Users, 
   HardHat, 
-  Tractor, 
   Lock, 
   Unlock, 
   CheckCircle2, 
@@ -56,10 +55,6 @@ export function DailySummaryView({
   const completedOperators = operators.filter((o) => o.inTime && o.assignedEquipmentId).length;
   const unmappedOperators = operators.filter((o) => !o.assignedEquipmentId).length;
 
-  const totalEquipment = equipment.length;
-  const totalMachineHours = equipment.reduce((acc, e) => acc + (e.netHours || 0), 0);
-  const totalFuelLiters = equipment.reduce((acc, e) => acc + (e.fuelIssuedLiters || 0), 0);
-
   // Activity breakdown aggregation
   const activityHoursMap: Record<string, number> = {};
   laborers.forEach((l) => {
@@ -72,8 +67,7 @@ export function DailySummaryView({
 
   const hasPendingItems = 
     completedLaborers < totalLaborers || 
-    unmappedOperators > 0 || 
-    equipment.some((e) => e.netHours === 0);
+    unmappedOperators > 0;
 
   const handleConfirmSubmit = () => {
     onLockDay();
@@ -275,46 +269,10 @@ export function DailySummaryView({
           </div>
         </div>
 
-        {/* Stream 3: Equipment Utilization & Fuel */}
-        <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shadow-2xs">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center">
-                <Tractor size={15} />
-              </div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                3. Equipment Meters & Fuel ({equipment.filter((e) => e.netHours > 0).length}/{totalEquipment})
-              </h4>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigateTab('equipment')}
-              className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline font-semibold"
-            >
-              Edit
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-750 border border-slate-100 dark:border-slate-700">
-              <p className="text-slate-400 text-[10px]">Net Operating Hours</p>
-              <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5">
-                {totalMachineHours.toFixed(1)} hrs
-              </p>
-            </div>
-            <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-750 border border-slate-100 dark:border-slate-700">
-              <p className="text-slate-400 text-[10px]">Total Fuel Issued</p>
-              <p className="text-sm font-bold text-blue-600 dark:text-blue-400 tabular-nums mt-0.5">
-                {totalFuelLiters} Liters
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Stream 4: Master Activity Breakdown */}
+        {/* Stream 3: Master Activity Breakdown */}
         <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shadow-2xs">
           <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100 mb-2">
-            4. Activity Hours Allocation
+            3. Activity Hours Allocation
           </h4>
           <div className="space-y-1.5">
             {Object.entries(activityHoursMap).map(([code, hrs]) => (
@@ -371,9 +329,6 @@ export function DailySummaryView({
               </p>
               <p className="text-slate-600 dark:text-slate-300">
                 • <strong>{completedOperators}</strong> Equipment Operators verified
-              </p>
-              <p className="text-slate-600 dark:text-slate-300">
-                • <strong>{totalMachineHours}h</strong> Total machine meter utilization
               </p>
             </div>
 

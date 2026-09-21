@@ -2,7 +2,6 @@ import { useState, useMemo } from 'react';
 import { 
   HardHat, 
   Tractor, 
-  ShieldCheck, 
   AlertTriangle, 
   Save, 
   Check, 
@@ -113,7 +112,7 @@ export function OperatorEntryView({
       }
 
       // Status filter
-      const isComplete = o.inTime && o.outTime && o.assignedEquipmentId && o.safetyCheckPassed;
+      const isComplete = o.inTime && o.outTime && o.assignedEquipmentId;
       if (effectiveStatus === 'pending') {
         return !isComplete;
       }
@@ -198,7 +197,6 @@ export function OperatorEntryView({
         shiftHours: shift,
         otHours: ot,
         assignedEquipmentId: o.assignedEquipmentId,
-        safetyCheckPassed: o.safetyCheckPassed ?? true,
         status: o.assignedEquipmentId ? ('done' as const) : ('draft' as const),
         lastSavedAt: `Out: ${batchOutTime}`,
       };
@@ -239,18 +237,11 @@ export function OperatorEntryView({
     onSaveOperators(updated);
   };
 
-  const handleIndividualSafetyToggle = (id: string) => {
-    const updated = operators.map((o) => 
-      o.id === id ? { ...o, safetyCheckPassed: !o.safetyCheckPassed } : o
-    );
-    onSaveOperators(updated);
-  };
-
   const handleIndividualSave = (id: string) => {
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const updated = operators.map((o) => {
       if (o.id !== id) return o;
-      const isComplete = o.inTime && o.outTime && o.assignedEquipmentId && o.safetyCheckPassed;
+      const isComplete = o.inTime && o.outTime && o.assignedEquipmentId;
       return {
         ...o,
         status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
@@ -282,7 +273,10 @@ export function OperatorEntryView({
       <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-200/70 dark:bg-slate-900/90 rounded-2xl border border-slate-300/80 dark:border-slate-800 shadow-inner">
         <button
           type="button"
-          onClick={() => setTabMode('in')}
+          onClick={() => {
+            setTabMode('in');
+            setExpandedId(null);
+          }}
           className={[
             'py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all',
             tabMode === 'in'
@@ -343,19 +337,16 @@ export function OperatorEntryView({
       </div>
 
       {/* ── 3. Role & Status Filter Chips ─────────────────────────────────────── */}
-      <div className="py-3 px-3.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3.5">
+      <div className="py-2 px-2.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3.5">
         <div>
-          <div className="flex items-center justify-between mb-2 px-0.5">
+          <div className="flex items-center justify-between mb-1 px-0.5">
             <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
               <Filter size={12} className="text-blue-600 dark:text-blue-400" />
               Filter by Role:
             </span>
-            <span className="text-[11px] text-slate-400 font-medium">
-              {selectedRole === 'all' ? 'All Roles' : selectedRole}
-            </span>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto pb-1.5 no-scrollbar text-xs">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs">
             <button
               type="button"
               onClick={() => setSelectedRole('all')}
@@ -388,9 +379,6 @@ export function OperatorEntryView({
             })}
           </div>
         </div>
-
-        {/* Divider */}
-        <div className="border-t border-slate-100 dark:border-slate-800" />
 
         {/* Status Chips */}
         <div>
@@ -567,7 +555,7 @@ export function OperatorEntryView({
         ) : (
           filteredOperators.map((operator) => {
             const isSelected = selectedOperatorIds.includes(operator.id);
-            const isExpanded = expandedId === operator.id;
+            const isExpanded = tabMode === 'out' && expandedId === operator.id;
             const mappedEquip = equipment.find((e) => e.id === operator.assignedEquipmentId);
             const conflict = getMappedConflict(operator.assignedEquipmentId, operator.id);
             const isSavedJustNow = individualSaveId === operator.id;
@@ -601,9 +589,9 @@ export function OperatorEntryView({
                     onClick={() => setExpandedId(isExpanded ? null : operator.id)}
                     className="flex-1 min-w-0 flex items-center gap-2.5 cursor-pointer"
                   >
-                    <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 font-bold flex items-center justify-center text-[10px] tracking-tight flex-shrink-0 border border-amber-300 dark:border-amber-800 font-mono">
+                    {/* <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 font-bold flex items-center justify-center text-[10px] tracking-tight flex-shrink-0 border border-amber-300 dark:border-amber-800 font-mono">
                       {operator.employeeNumber}
-                    </div>
+                    </div> */}
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -648,9 +636,12 @@ export function OperatorEntryView({
                       )}
                     </div>
 
-                    <div className="text-slate-400 pl-1">
-                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </div>
+                    {/* Chevron Icon */}
+                    {tabMode === 'out' && (
+                      <div className="text-slate-400 pl-1">
+                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -672,19 +663,13 @@ export function OperatorEntryView({
                         <AlertTriangle size={11} /> Also mapped: {conflict.employeeNumber}
                       </span>
                     )}
-
-                    {operator.safetyCheckPassed && (
-                      <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 ml-auto">
-                        <ShieldCheck size={12} /> Safety OK
-                      </span>
-                    )}
                   </div>
                 )}
 
                 {/* ── Expanded Content: Single Operator Edit ── */}
                 {isExpanded && (
                   <div className="px-3.5 pb-4 pt-2 border-t border-slate-100 dark:border-slate-700/80 space-y-3 bg-slate-50/50 dark:bg-slate-900/40">
-                    <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    {/* <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                       <div>
                         <span className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400 block tracking-wider">
                           Full Name
@@ -701,7 +686,7 @@ export function OperatorEntryView({
                           {operator.licenseNo}
                         </span>
                       </div>
-                    </div>
+                    </div> */}
 
                     {/* In / Out Pickers */}
                     <div className="grid grid-cols-2 gap-2.5">
@@ -743,24 +728,13 @@ export function OperatorEntryView({
                         <option value="">-- No Equipment Assigned --</option>
                         {equipment.map((eq) => (
                           <option key={eq.id} value={eq.id}>
-                            {eq.code} — {eq.name} ({eq.type || 'Equipment'})
+                            {eq.code}
                           </option>
                         ))}
                       </select>
                     </div>
 
-                    {/* Safety Inspection Checkbox */}
-                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={operator.safetyCheckPassed}
-                        onChange={() => handleIndividualSafetyToggle(operator.id)}
-                        className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                      />
-                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1">
-                        <ShieldCheck size={14} className="text-emerald-600" /> Pre-Shift Safety Inspection Completed
-                      </span>
-                    </label>
+                   
 
                     {/* Individual Save Button */}
                     <button
