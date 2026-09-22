@@ -29,8 +29,9 @@ export default function LoginPage() {
       
       const stored = localStorage.getItem('les_auth_user');
       if (stored) {
-        const u = JSON.parse(stored) as { role: 'admin' | 'supervisor' };
-        navigate(u.role === 'admin' ? '/admin' : '/supervisor', { replace: true });
+        const u = JSON.parse(stored) as { role?: string };
+        const isAdmin = u.role === 'admin' || u.role === 'super_admin';
+        navigate(isAdmin ? '/admin' : '/supervisor', { replace: true });
       }
     } catch (err: unknown) {
       const message =
