@@ -67,7 +67,6 @@ export function OperatorEntryView({
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Save feedback state
-  const [saveToast, setSaveToast] = useState(false);
   const [individualSaveId, setIndividualSaveId] = useState<string | null>(null);
 
   // ── IN MODE BATCH STATE ──
@@ -177,7 +176,6 @@ export function OperatorEntryView({
     });
 
     onSaveOperators(updated);
-    showSaveNotification();
   };
 
   // ── APPLY BATCH OUT TIME & EQUIPMENT (No activity codes) ──
@@ -203,7 +201,6 @@ export function OperatorEntryView({
     });
 
     onSaveOperators(updated);
-    showSaveNotification();
   };
 
   // ── INDIVIDUAL UPDATES ──
@@ -253,22 +250,12 @@ export function OperatorEntryView({
     setTimeout(() => setIndividualSaveId(null), 2000);
   };
 
-  const handleSaveAll = () => {
-    onSaveOperators([...operators]);
-    showSaveNotification();
-  };
-
-  const showSaveNotification = () => {
-    setSaveToast(true);
-    setTimeout(() => setSaveToast(false), 2500);
-  };
-
   const isAllFilteredSelected = 
     filteredOperators.length > 0 && 
     filteredOperators.every((o) => selectedOperatorIds.includes(o.id));
 
   return (
-    <div className="space-y-3 pb-28 animate-in fade-in duration-150">
+    <div className="space-y-3 pb-16 animate-in fade-in duration-150">
       {/* ── 1. IN / OUT Dual Tabs (Compact, Matches Labor View) ─────────────────── */}
       <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-200/70 dark:bg-slate-900/90 rounded-2xl border border-slate-300/80 dark:border-slate-800 shadow-inner">
         <button
@@ -765,43 +752,6 @@ export function OperatorEntryView({
             );
           })
         )}
-      </div>
-
-      {/* ── 6. Sticky Bottom Save Bar ─────────────────────────────────────────── */}
-      <div className="fixed bottom-16 left-0 right-0 z-30 px-3.5 py-2.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-lg">
-        <div className="max-w-md mx-auto flex items-center justify-between gap-3">
-          <div className="text-xs">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-              Operator Shift Status
-            </span>
-            <span className="font-bold text-slate-800 dark:text-slate-200">
-              {completedCount} of {operators.length} Ready
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleSaveAll}
-            className={[
-              'flex items-center gap-2 py-2.5 px-5 rounded-xl font-bold text-xs shadow-md transition-all active:scale-[0.98]',
-              saveToast
-                ? 'bg-emerald-600 text-white'
-                : 'bg-blue-700 hover:bg-blue-800 text-white'
-            ].join(' ')}
-          >
-            {saveToast ? (
-              <>
-                <Check size={16} />
-                <span>Saved to Draft & Offline Cache!</span>
-              </>
-            ) : (
-              <>
-                <Save size={16} />
-                <span>Save All Changes</span>
-              </>
-            )}
-          </button>
-        </div>
       </div>
     </div>
   );

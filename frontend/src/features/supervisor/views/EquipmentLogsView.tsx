@@ -11,11 +11,14 @@ import {
   Search,
   X,
   Calendar,
+  Tag,  
   Clock,
   Zap,
   Maximize2,
-  Sliders
+  Sliders, 
+  
 } from 'lucide-react';
+import { MASTER_ACTIVITIES } from '../services/supervisorStorageService';
 import type { 
   EquipmentLogEntry, 
   OperatorEntry,
@@ -207,6 +210,12 @@ export function EquipmentLogsView({
     setSaveSuccessId(id);
     setTimeout(() => setSaveSuccessId(null), 2000);
   };
+
+  const handleActivityCodeChange= (id:string , code:string)=>{
+    const update = equipment.map((eq)=>eq.id === id ? {...eq,activityCode:code,status:'draft' as const}:eq
+  )
+  onSaveEquipment(update);
+  }
 
   return (
     <div className="space-y-3 pb-24 animate-in fade-in duration-150">
@@ -669,6 +678,22 @@ export function EquipmentLogsView({
                         </div>
                       </div>
                     )}
+                    {/* i need to add acitivity code for equpment */}
+                    <div className='  md-1.5 p-3 my-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 shadow-2xs'>
+                       
+                       <div className='flex items-center justify-between mb-2'>
+                        <label htmlFor="activityCode" className="text-[10px]  font-medium text-slate-500 uppercase tracking-wide">
+                        <Tag className="text-green-600" size={12} />Activity Code</label>
+                        {eq.activityCode && (<span className="text-xs font-bold text-slate-800 dark:text-slate-100">{eq.activityCode}</span>)}
+                       </div>
+                        
+                      <select name="activityCode" id="activityCode" value={eq.activityCode} onChange={(e)=>handleActivityCodeChange(eq.id , e.target.value)} className='w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 '>
+                        {MASTER_ACTIVITIES.map((act)=>{
+                          return<option key={act.code} value={act.code}>{act.code}</option>
+                        })}
+                      </select>
+                    </div>
+
 
                     {/* ── 3. Save Draft Action ── */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800">

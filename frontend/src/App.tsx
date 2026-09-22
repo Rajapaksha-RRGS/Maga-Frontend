@@ -52,8 +52,7 @@ import ReportsPage from './pages/ReportsPage';
 // Theme
 import { ThemeProvider } from './context/ThemeContext';
 
-// Supervisor flow
-import SupervisorFlowPage from './SupervisorFlowPage';
+// Supervisor mobile app
 import SupervisorMobileApp from './features/supervisor/SupervisorMobileApp';
 
 // Splash Screen & Showcase
@@ -120,7 +119,7 @@ export default function App() {
         {/* ── Supervisor (protected, role=supervisor) ─────────────────────── */}
        
           <Route path="/supervisor" element={<SupervisorLayout />}>
-            <Route index element={<SupervisorFlowPage />} />
+            <Route index element={<SupervisorMobileApp />} />
           </Route>
        
         
