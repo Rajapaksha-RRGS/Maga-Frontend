@@ -6,8 +6,8 @@
  *
  * Responsive: DataTable on md+, CardList below md.
  */
-import { useState, useEffect } from 'react';
-import { Plus } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Database } from 'lucide-react';
 import { useEmployees } from '../features/employees/hooks/useEmployees';
 import EmployeeTable from '../features/employees/components/EmployeeTable';
 import EmployeeCardList from '../features/employees/components/EmployeeCardList';
@@ -16,6 +16,9 @@ import EmployeeFilters from '../features/employees/components/EmployeeFilters';
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
+import MasterImportModal from '../features/master-import/components/MasterImportModal';
+import { CORPORATE_EMPLOYEES_CATALOG } from '../features/master-import/services/corporateMasterService';
+import type { CorporateEmployee } from '../features/master-import/services/corporateMasterService';
 import type { Employee } from '../features/employees/services/employeeService';
 import type { BusinessPartner } from '../features/business-partners/services/businessPartnerService';
 import * as businessPartnerService from '../features/business-partners/services/businessPartnerService';
@@ -49,6 +52,73 @@ export default function EmployeesPage() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [registeredPartners, setRegisteredPartners] = useState<BusinessPartner[]>([]);
   const [loadingPartners, setLoadingPartners] = useState(true);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
+  const existingCodes = useMemo(() => {
+    return new Set(employees.map((e) => (e.employeeCode || e.id).toUpperCase()));
+  }, [employees]);
+
+  const handleBatchImport = async (items: CorporateEmployee[]) => {
+    let defaultPartnerId = registeredPartners[0]?.id;
+    if (!defaultPartnerId) {
+      const p = await businessPartnerService.create({
+        code: 'BP-MAGA',
+        name: 'Mäga Engineering (Direct)',
+      });
+      defaultPartnerId = p.id;
+      await fetchPartners();
+    }
+
+    for (const item of items) {
+      const matchedPartner = registeredPartners.find(
+        (p) => p.name.toLowerCase() === item.businessPartner.toLowerCase()
+      );
+      const partnerIdToUse = matchedPartner ? matchedPartner.id : defaultPartnerId;
+
+      await addEmployee({
+        employeeCode: item.employeeCode,
+        callingName: item.callingName,
+        fullName: item.fullName,
+        businessPartnerId: partnerIdToUse,
+        tradeGroup: item.tradeGroup,
+        nicNo: item.nicNo,
+        dailyRate: item.dailyRate,
+        epfNo: item.epfNo,
+      });
+    }
+  };
+
+  const employeeColumns = [
+    {
+      key: 'nic',
+      header: 'NIC & EPF',
+      render: (item: CorporateEmployee) => (
+        <div>
+          <span className="font-mono text-xs text-slate-700">{item.nicNo}</span>
+          <span className="block text-[11px] text-slate-400 font-mono">{item.epfNo}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'partner',
+      header: 'Business Partner & Rate',
+      render: (item: CorporateEmployee) => (
+        <div>
+          <span className="font-medium text-slate-800 text-xs">{item.businessPartner}</span>
+          <span className="block text-[11px] text-emerald-600 font-semibold">LKR {item.dailyRate}/day</span>
+        </div>
+      ),
+    },
+    {
+      key: 'skill',
+      header: 'Skill Level',
+      render: (item: CorporateEmployee) => (
+        <span className="font-medium text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">
+          {item.skillLevel}
+        </span>
+      ),
+    },
+  ];
 
   const fetchPartners = async () => {
     setLoadingPartners(true);
@@ -118,14 +188,25 @@ export default function EmployeesPage() {
             </p>
           )}
         </div>
-        <button
-          id="emp-add-btn"
-          onClick={openAdd}
-          className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors active:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
-        >
-          <Plus size={16} />
-          <span>Add employee</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            id="emp-import-btn"
+            onClick={() => setImportModalOpen(true)}
+            className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 cursor-pointer shadow-xs"
+          >
+            <Database size={16} />
+            <span>Add from ERP Master</span>
+          </button>
+          <button
+            id="emp-add-btn"
+            onClick={openAdd}
+            className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 font-medium text-sm rounded-lg px-3 min-h-[44px] transition-colors hover:bg-slate-50 active:bg-slate-100 cursor-pointer"
+            title="Create ad-hoc employee record manually"
+          >
+            <Plus size={16} />
+            <span className="hidden sm:inline">Manual entry</span>
+          </button>
+        </div>
       </div>
 
       {/* Prerequisite banner: If no business partners exist */}
@@ -215,6 +296,24 @@ export default function EmployeesPage() {
           {filteredEmployees.length} employee{filteredEmployees.length !== 1 ? 's' : ''}
         </p>
       )}
+
+      {/* Corporate ERP Master Import Modal */}
+      <MasterImportModal<CorporateEmployee>
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Corporate ERP Master Register — Employees"
+        subtitle="Search verified skilled tradesmen & labour from central company pool and allocate to this project."
+        entityName="Employee"
+        catalog={CORPORATE_EMPLOYEES_CATALOG}
+        existingCodes={existingCodes}
+        getItemCode={(item) => item.employeeCode}
+        getItemName={(item) => `${item.callingName} (${item.fullName})`}
+        getItemCategory={(item) => item.tradeGroup}
+        getItemSourceProject={(item) => item.sourceProject}
+        columns={employeeColumns}
+        onImport={handleBatchImport}
+        onOpenManualAdd={openAdd}
+      />
 
       {/* Slide panel */}
       <SlidePanel

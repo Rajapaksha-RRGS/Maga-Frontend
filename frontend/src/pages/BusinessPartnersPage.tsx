@@ -3,8 +3,8 @@
  *
  * Follows design-system.json & dev-system-spec patterns.
  */
-import { useState } from 'react';
-import { Plus, Building2, CheckCircle2, XCircle } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Plus, Building2, CheckCircle2, XCircle, Database } from 'lucide-react';
 import { useBusinessPartners } from '../features/business-partners/hooks/useBusinessPartners';
 import BusinessPartnerTable from '../features/business-partners/components/BusinessPartnerTable';
 import BusinessPartnerCardList from '../features/business-partners/components/BusinessPartnerCardList';
@@ -12,6 +12,9 @@ import BusinessPartnerForm from '../features/business-partners/components/Busine
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
+import MasterImportModal from '../features/master-import/components/MasterImportModal';
+import { CORPORATE_PARTNERS_CATALOG } from '../features/master-import/services/corporateMasterService';
+import type { CorporateBusinessPartner } from '../features/master-import/services/corporateMasterService';
 import type {
   BusinessPartner,
   BusinessPartnerFormData,
@@ -35,6 +38,46 @@ export default function BusinessPartnersPage() {
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingPartner, setEditingPartner] = useState<BusinessPartner | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
+  const existingCodes = useMemo(() => {
+    return new Set(partners.map((p) => p.code.toUpperCase()));
+  }, [partners]);
+
+  const handleBatchImport = async (items: CorporateBusinessPartner[]) => {
+    for (const item of items) {
+      await addPartner({
+        code: item.code,
+        name: item.name,
+        contactPerson: item.contactPerson,
+        phone: item.phone,
+        email: item.email,
+        address: item.address,
+      });
+    }
+  };
+
+  const partnerColumns = [
+    {
+      key: 'contact',
+      header: 'Contact Person & Phone',
+      render: (item: CorporateBusinessPartner) => (
+        <div>
+          <span className="font-medium text-slate-800">{item.contactPerson}</span>
+          <span className="block text-[11px] text-slate-400 font-mono">{item.phone}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'rating',
+      header: 'Grade / Rating',
+      render: (item: CorporateBusinessPartner) => (
+        <span className="font-medium text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+          {item.rating}
+        </span>
+      ),
+    },
+  ];
 
   const openAdd = () => {
     setEditingPartner(null);
@@ -82,14 +125,25 @@ export default function BusinessPartnersPage() {
           </p>
         </div>
 
-        <button
-          id="bp-add-btn"
-          onClick={openAdd}
-          className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 shadow-2xs"
-        >
-          <Plus size={16} />
-          <span>Add partner</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            id="bp-import-btn"
+            onClick={() => setImportModalOpen(true)}
+            className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 cursor-pointer shadow-xs"
+          >
+            <Database size={16} />
+            <span>Add from ERP Master</span>
+          </button>
+          <button
+            id="bp-add-btn"
+            onClick={openAdd}
+            className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 font-medium text-sm rounded-lg px-3 min-h-[44px] transition-colors hover:bg-slate-50 active:bg-slate-100 cursor-pointer"
+            title="Create ad-hoc partner record manually"
+          >
+            <Plus size={16} />
+            <span className="hidden sm:inline">Manual entry</span>
+          </button>
+        </div>
       </div>
 
       {/* Metric Cards */}
@@ -179,6 +233,24 @@ export default function BusinessPartnersPage() {
           </p>
         </>
       )}
+
+      {/* Corporate ERP Master Import Modal */}
+      <MasterImportModal<CorporateBusinessPartner>
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Corporate ERP Master Directory — Business Partners"
+        subtitle="Search verified subcontractors, suppliers and partners from central company registry and link to this project."
+        entityName="Business Partner"
+        catalog={CORPORATE_PARTNERS_CATALOG}
+        existingCodes={existingCodes}
+        getItemCode={(item) => item.code}
+        getItemName={(item) => item.name}
+        getItemCategory={(item) => item.type}
+        getItemSourceProject={(item) => item.sourceProject}
+        columns={partnerColumns}
+        onImport={handleBatchImport}
+        onOpenManualAdd={openAdd}
+      />
 
       {/* SlidePanel for Add / Edit */}
       <SlidePanel

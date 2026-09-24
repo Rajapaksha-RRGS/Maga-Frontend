@@ -91,14 +91,22 @@ label {
   outline-offset: 2px;
 }
 
-/* ── Scrollbar hide utility (used on horizontal chip row) ────────────────── */
-.scrollbar-none::-webkit-scrollbar {
-  display: none;
+/* ── Scrollbar hide utility & global sleek scrollbars ─────────────────────── */
+.scrollbar-none::-webkit-scrollbar,
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
-.scrollbar-none {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+.scrollbar-none,
+html,
+body,
+* {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
 }
 
 /* ── Typography scale — two weights only ─────────────────────────────────── */

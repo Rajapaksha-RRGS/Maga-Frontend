@@ -45,8 +45,9 @@ export default function SupervisorMobileApp() {
   const [equipment, setEquipment] = useState<EquipmentLogEntry[]>([]);
   const [isDayLocked, setIsDayLocked] = useState(false);
 
-  // Load data whenever selectedDate changes
+  // Load data whenever selectedDate changes (Offline-First: cached first, then fresh backend)
   useEffect(() => {
+    // 1. Instant render from local cache
     const loadedLaborers = supervisorStorage.getLaborers(selectedDate);
     const loadedOperators = supervisorStorage.getOperators(selectedDate);
     const loadedEquipment = supervisorStorage.getEquipment(selectedDate);
@@ -57,7 +58,31 @@ export default function SupervisorMobileApp() {
     setEquipment(loadedEquipment);
     setIsDayLocked(locked);
     setPendingSyncCount(supervisorStorage.getPendingSyncCount());
-  }, [selectedDate]);
+
+    // 2. Fetch fresh real data from backend (Admin assigned workers & entries)
+    if (user?.id) {
+      supervisorStorage.getAssignedEmployees(user.id, selectedDate)
+        .then((freshLaborers) => {
+          setLaborers(freshLaborers);
+          setIsDayLocked(supervisorStorage.isDayLocked(selectedDate));
+        })
+        .catch((err) => console.warn('Could not fetch assigned laborers:', err));
+
+      supervisorStorage.fetchOperators(user.id, selectedDate)
+        .then((freshOperators) => {
+          setOperators(freshOperators);
+        })
+        .catch(() => {});
+
+      supervisorStorage.fetchEquipment()
+        .then((freshEquipment) => {
+          if (freshEquipment.length > 0) {
+            setEquipment(freshEquipment);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [selectedDate, user?.id]);
 
   // Site change
   const handleSelectSite = (site: SiteProject) => {
@@ -65,14 +90,18 @@ export default function SupervisorMobileApp() {
     supervisorStorage.setActiveSite(site);
   };
 
-  // Sync trigger
+  // Sync trigger to backend
   const handleSync = async () => {
+    if (!user?.id) return;
     setIsSyncing(true);
-    // Simulate real network request to backend
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    supervisorStorage.resetPendingSync();
-    setPendingSyncCount(0);
-    setIsSyncing(false);
+    try {
+      await supervisorStorage.syncToBackend(user.id, selectedDate);
+      setPendingSyncCount(0);
+    } catch (err: any) {
+      console.error('Sync failed:', err);
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   // Data update handlers
@@ -94,10 +123,15 @@ export default function SupervisorMobileApp() {
     setPendingSyncCount(supervisorStorage.getPendingSyncCount());
   };
 
-  const handleLockDay = () => {
-    supervisorStorage.lockDay(selectedDate);
-    setIsDayLocked(true);
-    setPendingSyncCount(supervisorStorage.getPendingSyncCount());
+  const handleLockDay = async () => {
+    if (!user?.id) return;
+    try {
+      await supervisorStorage.submitDayToBackend(user.id, selectedDate);
+      setIsDayLocked(true);
+      setPendingSyncCount(0);
+    } catch (err: any) {
+      alert(err.message || 'Failed to submit and lock day on backend');
+    }
   };
 
   const handleUnlockDay = () => {

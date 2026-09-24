@@ -38,10 +38,7 @@ export function useAssignments() {
   const [employeeTGFilter, setEmployeeTGFilter] = useState('');
 
   const load = useCallback(async (forceRefresh = false) => {
-    const hasCachedData = cacheManager.get(`assignments:date:${selectedDate}`) && cacheManager.get('assignments:context');
-    if (forceRefresh || !hasCachedData) {
-      setIsLoading(true);
-    }
+    setIsLoading(true);
     try {
       const [asgn, ctx] = await Promise.all([
         svc.getForDate(selectedDate, forceRefresh),
