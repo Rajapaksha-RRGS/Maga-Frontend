@@ -45,13 +45,17 @@ async function ensureSeedDayTypes(tenantId) {
         }
     }
 }
-function formatDate(d) {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function parseCalendarDate(dateStr) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+}
+function formatUtcDate(d) {
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 // 1. GET /api/calendar/day-types
 const getDayTypes = async (req, res) => {
     try {
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         await ensureSeedDayTypes(tenantId);
         const types = await prisma_1.default.dayType.findMany({
             where: { tenantId },
@@ -74,13 +78,13 @@ exports.getDayTypes = getDayTypes;
 // 2. GET /api/calendar?year=&month=&tenantId=
 const getCalendarMonth = async (req, res) => {
     try {
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         await ensureSeedDayTypes(tenantId);
         const year = parseInt(req.query.year, 10) || new Date().getFullYear();
         // month is 0-indexed (0..11) from frontend
         const month = parseInt(req.query.month, 10) ?? new Date().getMonth();
-        const startDate = new Date(Date.UTC(year, month, 1));
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0));
+        const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
         const endDate = new Date(Date.UTC(year, month, daysInMonth, 23, 59, 59));
         // Get all day types for default mapping
         const allTypes = await prisma_1.default.dayType.findMany({ where: { tenantId } });
@@ -100,14 +104,14 @@ const getCalendarMonth = async (req, res) => {
         });
         const savedMap = new Map();
         savedDays.forEach((sd) => {
-            savedMap.set(formatDate(new Date(sd.date)), sd.dayTypeId);
+            savedMap.set(formatUtcDate(new Date(sd.date)), sd.dayTypeId);
         });
         // Build complete month array
         const entries = [];
         for (let d = 1; d <= daysInMonth; d++) {
-            const date = new Date(year, month, d);
-            const key = formatDate(date);
-            const dow = date.getDay(); // 0 = Sun, 6 = Sat
+            const date = new Date(Date.UTC(year, month, d));
+            const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const dow = date.getUTCDay(); // 0 = Sun, 6 = Sat
             let dayTypeId = savedMap.get(key);
             if (!dayTypeId) {
                 if (dow === 0 && sunType)
@@ -130,13 +134,13 @@ exports.getCalendarMonth = getCalendarMonth;
 // 3. POST /api/calendar/set-day
 const setCalendarDay = async (req, res) => {
     try {
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const { date: dateStr, dayTypeId } = req.body;
         if (!dateStr || !dayTypeId) {
             res.status(400).json({ error: 'date and dayTypeId are required' });
             return;
         }
-        const date = new Date(dateStr);
+        const date = parseCalendarDate(dateStr);
         const entry = await prisma_1.default.calendarDay.upsert({
             where: {
                 tenantId_date: {
@@ -154,7 +158,7 @@ const setCalendarDay = async (req, res) => {
             },
         });
         res.json({
-            date: formatDate(new Date(entry.date)),
+            date: formatUtcDate(new Date(entry.date)),
             dayTypeId: entry.dayTypeId,
         });
     }
@@ -167,28 +171,31 @@ exports.setCalendarDay = setCalendarDay;
 // 4. POST /api/calendar/batch-set
 const batchSetCalendarDays = async (req, res) => {
     try {
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const { entries } = req.body; // Array of { date: string, dayTypeId: string }
         if (!Array.isArray(entries) || entries.length === 0) {
             res.status(400).json({ error: 'entries array is required' });
             return;
         }
-        const results = await prisma_1.default.$transaction(entries.map((item) => prisma_1.default.calendarDay.upsert({
-            where: {
-                tenantId_date: {
-                    tenantId,
-                    date: new Date(item.date),
+        const results = await prisma_1.default.$transaction(entries.map((item) => {
+            const date = parseCalendarDate(item.date);
+            return prisma_1.default.calendarDay.upsert({
+                where: {
+                    tenantId_date: {
+                        tenantId,
+                        date,
+                    },
                 },
-            },
-            update: {
-                dayTypeId: item.dayTypeId,
-            },
-            create: {
-                tenantId,
-                date: new Date(item.date),
-                dayTypeId: item.dayTypeId,
-            },
-        })));
+                update: {
+                    dayTypeId: item.dayTypeId,
+                },
+                create: {
+                    tenantId,
+                    date,
+                    dayTypeId: item.dayTypeId,
+                },
+            });
+        }));
         res.json({ updatedCount: results.length });
     }
     catch (error) {

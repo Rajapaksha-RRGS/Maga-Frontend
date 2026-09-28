@@ -74,13 +74,11 @@ export default function SupervisorMobileApp() {
         })
         .catch(() => {});
 
-      supervisorStorage.fetchEquipment()
+      supervisorStorage.fetchEquipment(user.id, selectedDate)
         .then((freshEquipment) => {
-          if (freshEquipment.length > 0) {
-            setEquipment(freshEquipment);
-          }
+          setEquipment(freshEquipment);
         })
-        .catch(() => {});
+        .catch((err) => console.warn('Could not fetch assigned equipment:', err));
     }
   }, [selectedDate, user?.id]);
 
@@ -173,7 +171,7 @@ export default function SupervisorMobileApp() {
         selectedDate={selectedDate}
         onDateChange={setSelectedDate}
         rightAction={
-          activeTab === 'labor' ? (
+          activeTab === 'labor' && !isDayLocked ? (
             <button
               type="button"
               onClick={() => setQuickAssignOpen(true)}
@@ -209,6 +207,7 @@ export default function SupervisorMobileApp() {
           <LaborEntryView
             laborers={laborers}
             onSaveLaborers={handleSaveLaborers}
+            isDayLocked={isDayLocked}
           />
         )}
 

@@ -29,6 +29,8 @@ export interface Employee {
   nicNo: string;
   dailyRate?: number;
   epfNo?: string;
+  isOperator?: boolean;
+  licenseNo?: string;
   status: 'active' | 'inactive';
 }
 
@@ -42,6 +44,8 @@ export interface EmployeeFormData {
   nicNo: string;
   dailyRate: number;
   epfNo?: string;
+  isOperator?: boolean;
+  licenseNo?: string;
   status?: 'active' | 'inactive';
 }
 
@@ -65,6 +69,8 @@ function mapEmployee(raw: any): Employee {
     nicNo: raw.nicNo || raw.nic_no || '',
     dailyRate: raw.dailyRate !== undefined ? Number(raw.dailyRate) : 1400,
     epfNo: raw.epfNo || raw.epf_no || '',
+    isOperator: Boolean(raw.isOperator ?? raw.is_operator ?? (raw.tradeGroup?.toLowerCase() === 'operator')),
+    licenseNo: raw.licenseNo || raw.license_no || undefined,
     status: raw.status === 'inactive' ? 'inactive' : 'active',
   };
 }
@@ -214,5 +220,64 @@ export function getBusinessPartners(employees?: Employee[]): string[] {
 export function getTradeGroups(employees?: Employee[]): string[] {
   if (!employees || employees.length === 0) return [];
   return [...new Set(employees.map((e) => e.tradeGroup).filter((tg): tg is string => Boolean(tg?.trim())))].sort();
+}
+
+export interface CrossTenantStatus {
+  status: 'in_current_site' | 'in_other_site' | 'available';
+  currentSiteName?: string;
+  currentSiteCode?: string;
+  currentTenantId?: string;
+  employeeId?: string;
+}
+
+export interface EmployeeTransferParams {
+  employeeCode?: string;
+  callingName: string;
+  fullName?: string;
+  nicNo: string;
+  businessPartnerName?: string;
+  tradeGroup?: string;
+  dailyRate?: number;
+  epfNo?: string;
+  previousTenantId?: string;
+}
+
+/** Check cross-tenant status across entire database for a batch of employees */
+export async function getCrossTenantEmployeeStatus(
+  items: Array<{ code: string; nicNo?: string }>
+): Promise<Record<string, CrossTenantStatus>> {
+  try {
+    const res = await apiFetch(`${API_URL}/employees/cross-tenant-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    });
+    if (!res.ok) {
+      return {};
+    }
+    return await res.json();
+  } catch (error) {
+    console.error('Error fetching cross-tenant status:', error);
+    return {};
+  }
+}
+
+/** Transfer an employee from another site/tenant to the current active site */
+export async function transferEmployee(params: EmployeeTransferParams): Promise<Employee> {
+  const res = await apiFetch(`${API_URL}/employees/transfer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.error || 'Failed to transfer employee');
+  }
+  const data = await res.json();
+  cacheManager.invalidate('employees');
+  cacheManager.invalidate('reports');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
+  return mapEmployee(data.employee);
 }
 

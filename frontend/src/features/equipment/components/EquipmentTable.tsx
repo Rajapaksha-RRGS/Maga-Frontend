@@ -8,9 +8,19 @@ import type { Equipment } from '../services/equipmentService';
 interface Props { data: Equipment[]; onRowClick: (e: Equipment) => void; }
 
 const columns: Column<Equipment>[] = [
-  { header: 'Code', accessor: 'code', render: (e) => <span className="font-mono text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{e.code}</span> },
-  { header: 'Name', accessor: 'name', render: (e) => <span className="font-medium text-slate-800">{e.name}</span> },
-  { header: 'Type', accessor: 'type' },
+  { header: 'Equipment', accessor: 'code', render: (e) => <span className="font-mono text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{e.code}</span> },
+  { header: 'Description', accessor: 'name', render: (e) => <span className="font-medium text-slate-800">{e.name}</span> },
+  {
+    header: 'Cost Rate',
+    accessor: 'costRate',
+    render: (e) => (
+      <span className="font-mono text-xs text-slate-700">
+        {e.costRate !== undefined && e.costRate !== null && Number(e.costRate) > 0
+          ? `LKR ${Number(e.costRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : '—'}
+      </span>
+    ),
+  },
   { header: 'Status', accessor: 'status', render: (e) => <StatusBadge status={e.status} /> },
 ];
 

@@ -22,6 +22,9 @@ import {
   ExternalLink,
   Trash2,
   ShieldCheck,
+  Sun,
+  Sunset,
+  Moon,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications, type NotificationItem } from '../context/NotificationContext';
@@ -62,6 +65,14 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
     };
   }, []);
 
+  function getGreeting(): { text: string; Icon: typeof Sun } {
+    const h = new Date().getHours();
+    if (h < 12) return { text: 'Good morning', Icon: Sun };
+    if (h < 17) return { text: 'Good afternoon', Icon: Sun };
+    if (h < 20) return { text: 'Good evening', Icon: Sunset };
+    return { text: 'Good night', Icon: Moon };
+  }
+
   // Determine current active section title from route
   const getPageTitle = () => {
     const path = location.pathname;
@@ -77,7 +88,7 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
     if (path.includes('/admin/supervisors')) return 'Supervisors';
     if (path.includes('/admin/calendar')) return 'Working Calendar';
     if (path.includes('/admin/tenants')) return 'Project Tenants';
-    return 'Admin Portal';
+    return null;
   };
 
   const todayFormatted = new Intl.DateTimeFormat('en-GB', {
@@ -123,6 +134,10 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
       ? 'Supervisor'
       : 'Project Admin';
 
+  const pageTitle = getPageTitle();
+  const displayName = user?.fullName?.split(' ')[0] ?? user?.username ?? 'Admin';
+  const { text: greetingText, Icon: GreetingIcon } = getGreeting();
+
   return (
     <header className="h-[52px] bg-white border-b border-slate-200 px-4 md:px-6 flex items-center justify-between z-20 flex-shrink-0 select-none">
 
@@ -138,9 +153,16 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
         </button>
 
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-semibold text-slate-800 tracking-tight whitespace-nowrap">
-            {getPageTitle()}
-          </span>
+          {pageTitle ? (
+            <span className="text-xs font-semibold text-slate-800 tracking-tight whitespace-nowrap">
+              {pageTitle}
+            </span>
+          ) : (
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 tracking-tight whitespace-nowrap">
+              <GreetingIcon size={15} className="text-emerald-500 flex-shrink-0" />
+              <span>{greetingText}, {displayName}!</span>
+            </div>
+          )}
 
           <span className="hidden sm:inline-block text-slate-300">•</span>
 

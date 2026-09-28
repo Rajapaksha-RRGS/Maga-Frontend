@@ -296,3 +296,211 @@ export const deleteEmployee = async (req: Request, res: Response): Promise<void>
     res.status(500).json({ error: 'Failed to delete employee' });
   }
 };
+
+// Query cross-tenant employee status
+export const getCrossTenantEmployeeStatus = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const currentTenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+    const { items } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      res.json({});
+      return;
+    }
+
+    const nics = items.map((i: any) => i.nicNo).filter(Boolean) as string[];
+    const codes = items.map((i: any) => i.code).filter(Boolean) as string[];
+
+    const existingEmployees = await prisma.employee.findMany({
+      where: {
+        OR: [
+          nics.length > 0 ? { nicNo: { in: nics } } : undefined,
+          codes.length > 0 ? { employeeCode: { in: codes } } : undefined,
+        ].filter(Boolean) as any,
+      },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            companyName: true,
+            subdomain: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    const resultMap: Record<
+      string,
+      {
+        status: 'in_current_site' | 'in_other_site' | 'available';
+        currentSiteName?: string;
+        currentSiteCode?: string;
+        currentTenantId?: string;
+        employeeId?: string;
+      }
+    > = {};
+
+    for (const item of items) {
+      const matches = existingEmployees.filter(
+        (emp) =>
+          (item.nicNo && emp.nicNo === item.nicNo) ||
+          (item.code && emp.employeeCode === item.code)
+      );
+
+      const inCurrent = matches.find((m) => m.tenantId === currentTenantId && m.status === 'active');
+      const inOther = matches.find((m) => m.tenantId !== currentTenantId && m.status === 'active');
+
+      if (inCurrent) {
+        resultMap[item.code] = {
+          status: 'in_current_site',
+          currentSiteName: inCurrent.tenant?.companyName,
+          currentSiteCode: inCurrent.tenant?.subdomain,
+          currentTenantId: inCurrent.tenantId,
+          employeeId: inCurrent.id,
+        };
+      } else if (inOther) {
+        resultMap[item.code] = {
+          status: 'in_other_site',
+          currentSiteName: inOther.tenant?.companyName || `Site ${inOther.tenant?.subdomain}`,
+          currentSiteCode: inOther.tenant?.subdomain,
+          currentTenantId: inOther.tenantId,
+          employeeId: inOther.id,
+        };
+      } else {
+        resultMap[item.code] = { status: 'available' };
+      }
+    }
+
+    res.json(resultMap);
+  } catch (error) {
+    console.error('Error checking cross-tenant employee status:', error);
+    res.status(500).json({ error: 'Failed to check cross-tenant employee status' });
+  }
+};
+
+// Transfer an employee from another tenant/site to current tenant
+export const transferEmployee = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const targetTenantId = req.resolvedTenantId || req.body.targetTenantId || (await getDefaultTenantId());
+    const {
+      employeeCode,
+      callingName,
+      fullName,
+      nicNo,
+      businessPartnerName,
+      tradeGroup,
+      dailyRate,
+      epfNo,
+    } = req.body;
+
+    if (!callingName || !nicNo) {
+      res.status(400).json({ error: 'Calling name and NIC number are required' });
+      return;
+    }
+
+    // 1. Deactivate this worker in any previous tenant (where active)
+    await prisma.employee.updateMany({
+      where: {
+        OR: [
+          { nicNo },
+          employeeCode ? { employeeCode } : undefined,
+        ].filter(Boolean) as any,
+        status: 'active',
+        tenantId: { not: targetTenantId },
+      },
+      data: {
+        status: 'inactive',
+      },
+    });
+
+    // 2. Ensure BusinessPartner exists in target tenant
+    let targetBpId: string | undefined;
+    const partnerSearchName = businessPartnerName || 'Mäga Engineering (Direct)';
+    let partner = await prisma.businessPartner.findFirst({
+      where: {
+        tenantId: targetTenantId,
+        OR: [
+          { name: { equals: partnerSearchName, mode: 'insensitive' } },
+          { code: { equals: partnerSearchName, mode: 'insensitive' } },
+        ],
+      },
+    });
+
+    if (!partner) {
+      const count = await prisma.businessPartner.count({ where: { tenantId: targetTenantId } });
+      const bpCode = `BP1${String(count + 1).padStart(6, '0')}`;
+      partner = await prisma.businessPartner.create({
+        data: {
+          tenantId: targetTenantId,
+          name: partnerSearchName,
+          code: bpCode,
+          type: partnerSearchName.toLowerCase().includes('maga') ? 'internal' : 'subcontractor',
+        },
+      });
+    }
+    targetBpId = partner.id;
+
+    // 3. Upsert into target tenant
+    const codeToUse = employeeCode || `EMP${Date.now().toString().slice(-4)}`;
+    const existingInTarget = await prisma.employee.findFirst({
+      where: {
+        tenantId: targetTenantId,
+        OR: [
+          { employeeCode: codeToUse },
+          { nicNo },
+        ],
+      },
+    });
+
+    let targetEmployee;
+    if (existingInTarget) {
+      targetEmployee = await prisma.employee.update({
+        where: { id: existingInTarget.id },
+        data: {
+          callingName,
+          fullName: fullName || callingName,
+          tradeGroup: tradeGroup || 'General labour',
+          dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
+          epfNo: epfNo || '',
+          status: 'active',
+          businessPartnerId: targetBpId,
+        },
+        include: {
+          businessPartner: true,
+          tenant: { select: { id: true, companyName: true, subdomain: true } },
+        },
+      });
+    } else {
+      targetEmployee = await prisma.employee.create({
+        data: {
+          tenantId: targetTenantId,
+          employeeCode: codeToUse,
+          callingName,
+          fullName: fullName || callingName,
+          tradeGroup: tradeGroup || 'General labour',
+          nicNo,
+          dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
+          epfNo: epfNo || '',
+          status: 'active',
+          businessPartnerId: targetBpId,
+        },
+        include: {
+          businessPartner: true,
+          tenant: { select: { id: true, companyName: true, subdomain: true } },
+        },
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Employee ${callingName} successfully transferred to current site`,
+      employee: targetEmployee,
+    });
+  } catch (error: any) {
+    console.error('Error transferring employee:', error);
+    res.status(500).json({ error: 'Failed to transfer employee to current site' });
+  }
+};

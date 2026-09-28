@@ -2,7 +2,7 @@
  * ActivityCodesPage.tsx — Admin activity code CRUD page.
  */
 import { useState, useMemo } from 'react';
-import { Plus, Database } from 'lucide-react';
+import { Database } from 'lucide-react';
 import { useActivityCodes } from '../features/activity-codes/hooks/useActivityCodes';
 import ActivityCodeTable from '../features/activity-codes/components/ActivityCodeTable';
 import ActivityCodeCardList from '../features/activity-codes/components/ActivityCodeCardList';
@@ -11,6 +11,7 @@ import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
 import MasterImportModal from '../features/master-import/components/MasterImportModal';
+import Breadcrumb from '../components/Breadcrumb';
 import { CORPORATE_ACTIVITY_CATALOG } from '../features/master-import/services/corporateMasterService';
 import type { CorporateActivityCode } from '../features/master-import/services/corporateMasterService';
 import type { ActivityCode } from '../features/activity-codes/services/activityCodeService';
@@ -21,7 +22,6 @@ export default function ActivityCodesPage() {
   const [editing, setEditing] = useState<ActivityCode | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
 
-  const openAdd = () => { setEditing(null); setPanelOpen(true); };
   const openEdit = (c: ActivityCode) => { setEditing(c); setPanelOpen(true); };
   const close = () => { setPanelOpen(false); setEditing(null); };
 
@@ -46,11 +46,29 @@ export default function ActivityCodesPage() {
 
   const activityColumns = [
     {
+      key: 'searchKey',
+      header: 'Search Key',
+      render: (item: CorporateActivityCode) => (
+        <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+          {item.searchKey || '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'activityType',
+      header: 'Activity Type',
+      render: (item: CorporateActivityCode) => (
+        <span className="text-xs font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">
+          {item.activityType || 'Work Package'}
+        </span>
+      ),
+    },
+    {
       key: 'unit',
-      header: 'Unit of Measure',
+      header: 'Unit / Time',
       render: (item: CorporateActivityCode) => (
         <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-          {item.unit}
+          {item.unit || '—'} {item.timeUnit ? `(${item.timeUnit})` : ''}
         </span>
       ),
     },
@@ -61,9 +79,7 @@ export default function ActivityCodesPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
         <div>
           <h1 className="text-base font-semibold text-slate-800">Activity Codes Master</h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Standard construction activities, BOQ items and tasks for labour tracking
-          </p>
+          <Breadcrumb items={[{ label: 'Master Data' }, { label: 'Activity Codes' }]} className="mt-1" />
         </div>
 
         <div className="flex items-center gap-2">
@@ -74,15 +90,6 @@ export default function ActivityCodesPage() {
           >
             <Database size={16} />
             <span>Add from ERP Master</span>
-          </button>
-          <button
-            id="ac-add-btn"
-            onClick={openAdd}
-            className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 font-medium text-sm rounded-lg px-3 min-h-[44px] transition-colors hover:bg-slate-50 active:bg-slate-100 cursor-pointer"
-            title="Create ad-hoc activity code manually"
-          >
-            <Plus size={16} />
-            <span className="hidden sm:inline">Manual entry</span>
           </button>
         </div>
       </div>
@@ -112,11 +119,10 @@ export default function ActivityCodesPage() {
         existingCodes={existingCodes}
         getItemCode={(item) => item.code}
         getItemName={(item) => item.description}
-        getItemCategory={(item) => item.tradeGroup}
-        getItemSourceProject={(item) => item.sourceProject}
+        getItemCategory={(item) => item.activityType || item.tradeGroup || 'Work Package'}
+        getItemSourceProject={(item) => item.currentWorkingProject || item.sourceProject || 'Maga - CWS'}
         columns={activityColumns}
         onImport={handleBatchImport}
-        onOpenManualAdd={openAdd}
       />
 
       {/* Manual Slide Panel Form */}

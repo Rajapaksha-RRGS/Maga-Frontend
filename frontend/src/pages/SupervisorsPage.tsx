@@ -11,6 +11,7 @@ import SupervisorForm from '../features/supervisors/components/SupervisorForm';
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
+import Breadcrumb from '../components/Breadcrumb';
 
 export default function SupervisorsPage() {
   const {
@@ -40,7 +41,10 @@ export default function SupervisorsPage() {
   return (
     <div className="px-4 md:px-6 py-5">
       <div className="flex items-center justify-between mb-5">
-        <h1 className="text-base font-medium text-slate-800">Supervisors</h1>
+        <div>
+          <h1 className="text-base font-medium text-slate-800">Supervisors</h1>
+          <Breadcrumb items={[{ label: 'Supervisors' }]} className="mt-1" />
+        </div>
         <button id="sup-add-btn" onClick={openAdd} className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors active:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">
           <Plus size={16} /><span>Add supervisor</span>
         </button>

@@ -47,7 +47,7 @@ async function ensureSeedEquipment(tenantId) {
 // 1. GET /api/equipment
 const getAllEquipment = async (req, res) => {
     try {
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         await ensureSeedEquipment(tenantId);
         const { status, type, query } = req.query;
         const where = { tenantId };
@@ -71,16 +71,16 @@ const getAllEquipment = async (req, res) => {
     }
     catch (error) {
         console.error('Error fetching equipment:', error);
-        res.status(500).json({ error: 'Failed to fetch equipment records' });
+        res.status(500).json({ error: 'Failed to fetch equipment list' });
     }
 };
 exports.getAllEquipment = getAllEquipment;
 // 2. GET /api/equipment/:id
 const getEquipmentById = async (req, res) => {
     try {
-        const id = getParam(req.params.id);
+        const { id } = req.params;
         const item = await prisma_1.default.equipment.findUnique({
-            where: { id },
+            where: { id: id },
         });
         if (!item) {
             res.status(404).json({ error: 'Equipment not found' });
@@ -97,7 +97,7 @@ exports.getEquipmentById = getEquipmentById;
 // 3. POST /api/equipment
 const createEquipment = async (req, res) => {
     try {
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const { code, name, type } = req.body;
         if (!name || !name.trim()) {
             res.status(400).json({ error: 'Equipment name is required' });

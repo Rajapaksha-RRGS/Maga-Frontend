@@ -19,7 +19,7 @@ const getAssignmentsForDate = async (req, res) => {
             res.status(400).json({ error: 'Date query parameter (YYYY-MM-DD) is required' });
             return;
         }
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(dateStr);
         const assignments = await prisma_1.default.dailyAssignment.findMany({
             where: {
@@ -64,7 +64,7 @@ exports.getAssignmentsForDate = getAssignmentsForDate;
 // 2. Get past days gang summary (Past 5-7 days of recorded gangs)
 const getRecentGangSummaries = async (req, res) => {
     try {
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const limitDays = parseInt(req.query.days, 10) || 5;
         const beforeDateStr = req.query.before || req.query.targetDate;
         const beforeDate = beforeDateStr ? parseDate(beforeDateStr) : undefined;
@@ -121,7 +121,7 @@ const assignEmployees = async (req, res) => {
             res.status(400).json({ error: 'date, supervisorId, and non-empty employeeIds array are required' });
             return;
         }
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
         const createdAssignments = [];
         for (const empId of employeeIds) {
@@ -184,7 +184,7 @@ const copyGangsFromDate = async (req, res) => {
             res.status(400).json({ error: 'sourceDate and targetDate are required' });
             return;
         }
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const srcDateParsed = parseDate(sourceDate);
         const tgtDateParsed = parseDate(targetDate);
         // Fetch assignments from source date

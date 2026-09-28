@@ -19,6 +19,7 @@ import { ApprovalDayBanner } from '../features/approvals/components/ApprovalDayB
 import { ApprovalStatsBar } from '../features/approvals/components/ApprovalStatsBar';
 import { SupervisorApprovalCard } from '../features/approvals/components/SupervisorApprovalCard';
 import { NotSubmittedCard } from '../features/approvals/components/NotSubmittedCard';
+import Breadcrumb from '../components/Breadcrumb';
 
 export default function ApprovalsPage() {
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -143,9 +144,7 @@ export default function ApprovalsPage() {
               Admin Portal
             </span>
           </div>
-          <p className="text-sm text-slate-500 mt-1">
-            Review, verify, and approve daily labour attendance submitted by site supervisors.
-          </p>
+          <Breadcrumb items={[{ label: 'Daily Approvals' }]} className="mt-1" />
         </div>
 
         {/* Date Selector Controls */}
@@ -272,8 +271,10 @@ export default function ApprovalsPage() {
                   <SupervisorApprovalCard
                     key={group.supervisorId}
                     group={group}
+                    selectedDate={selectedDate}
                     onApprove={handleApproveSupervisor}
                     onReject={handleRejectSupervisor}
+                    onRefresh={() => loadData(selectedDate)}
                     isProcessing={processingId === group.supervisorId}
                   />
                 ))
@@ -324,8 +325,10 @@ export default function ApprovalsPage() {
                   <SupervisorApprovalCard
                     key={group.supervisorId}
                     group={group}
+                    selectedDate={selectedDate}
                     onApprove={handleApproveSupervisor}
                     onReject={handleRejectSupervisor}
+                    onRefresh={() => loadData(selectedDate)}
                     isProcessing={processingId === group.supervisorId}
                   />
                 ))

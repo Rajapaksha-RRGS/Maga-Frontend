@@ -16,7 +16,7 @@ const getParam = (param) => {
 const getAllBusinessPartners = async (req, res) => {
     try {
         const { status, search } = req.query;
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const where = { tenantId };
         if (status && typeof status === 'string' && status !== 'all') {
             where.status = status;
@@ -75,7 +75,7 @@ exports.getBusinessPartnerById = getBusinessPartnerById;
 // Get next available BP code (BP1xxxxxx)
 const getNextBusinessPartnerCode = async (req, res) => {
     try {
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const latest = await prisma_1.default.businessPartner.findFirst({
             where: {
                 tenantId,
@@ -117,7 +117,7 @@ const createBusinessPartner = async (req, res) => {
             });
             return;
         }
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const partner = await prisma_1.default.businessPartner.create({
             data: {
                 tenantId,

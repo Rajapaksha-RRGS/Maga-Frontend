@@ -27,7 +27,13 @@ export function useEquipment() {
 
   const filtered = items.filter((e) => {
     const q = search.toLowerCase();
-    return !q || (e.code && e.code.toLowerCase().includes(q)) || e.name.toLowerCase().includes(q) || e.type.toLowerCase().includes(q);
+    return (
+      !q ||
+      (e.code && e.code.toLowerCase().includes(q)) ||
+      (e.name && e.name.toLowerCase().includes(q)) ||
+      (e.type && e.type.toLowerCase().includes(q)) ||
+      (e.costRate !== undefined && String(e.costRate).toLowerCase().includes(q))
+    );
   });
 
   const add = async (data: EquipmentFormData) => { await svc.create(data); await load(); };

@@ -2,16 +2,18 @@
  * useDashboardStats.ts
  *
  * Aggregates data from employee, supervisor, assignment, and time-entry
- * services into dashboard stat counts and "needs attention" items.
+ * services into dashboard stat counts, "needs attention" items, and
+ * supervisor submission status for the activity panel and feed.
  */
 import { useState, useEffect, useCallback } from 'react';
 import * as empSvc from '../../employees/services/employeeService';
 import * as supSvc from '../../supervisors/services/supervisorService';
 import * as asgnSvc from '../../assignments/services/assignmentService';
 import * as timeEntrySvc from '../../time-entries/services/timeEntryService';
+import type { BackendTimeEntry } from '../../time-entries/services/timeEntryService';
 import { cacheManager } from '../../../utils/cacheManager';
 
-interface AttentionItem {
+export interface AttentionItem {
   id: string;
   type: 'unassigned' | 'unsubmitted';
   label: string;
@@ -19,12 +21,22 @@ interface AttentionItem {
   link: string;
 }
 
-interface DashboardStats {
+export interface SupervisorStatus {
+  id: string;
+  name: string;
+  status: 'submitted' | 'in-progress' | 'not-started';
+}
+
+export interface DashboardStats {
   totalEmployees: number;
   activeSupervisors: number;
   unassignedToday: number;
   pendingSubmissions: number;
+  submittedSupervisors: number;
+  inProgressSupervisors: number;
+  supervisorStatuses: SupervisorStatus[];
   attentionItems: AttentionItem[];
+  todayEntries: BackendTimeEntry[];
   isLoading: boolean;
 }
 
@@ -32,16 +44,22 @@ function formatDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+const INITIAL: DashboardStats = {
+  totalEmployees: 0,
+  activeSupervisors: 0,
+  unassignedToday: 0,
+  pendingSubmissions: 0,
+  submittedSupervisors: 0,
+  inProgressSupervisors: 0,
+  supervisorStatuses: [],
+  attentionItems: [],
+  todayEntries: [],
+  isLoading: true,
+};
+
 export function useDashboardStats(): DashboardStats {
   const cached = cacheManager.get<DashboardStats>('dashboard:stats');
-  const [stats, setStats] = useState<DashboardStats>(() => cached ?? {
-    totalEmployees: 0,
-    activeSupervisors: 0,
-    unassignedToday: 0,
-    pendingSubmissions: 0,
-    attentionItems: [],
-    isLoading: true,
-  });
+  const [stats, setStats] = useState<DashboardStats>(() => cached ?? INITIAL);
 
   const load = useCallback(async (forceRefresh = false) => {
     if (forceRefresh || !cacheManager.get('dashboard:stats')) {
@@ -66,47 +84,58 @@ export function useDashboardStats(): DashboardStats {
         assignments.some((a) => a.supervisorId === sup.id)
       );
 
-      // A supervisor is pending if they have work assigned today, but either:
-      // 1. No time entries exist for them yet today, OR
-      // 2. Any of their time entries is still in 'draft' status
-      const unsubmittedSupervisors = supsWithAssignments.filter((sup) => {
+      // Build per-supervisor status
+      const supervisorStatuses: SupervisorStatus[] = [];
+      let submittedSupervisors = 0;
+      let inProgressSupervisors = 0;
+
+      for (const sup of supsWithAssignments) {
         const supEntries = todayEntries.filter((t) => t.supervisorId === sup.id);
-        if (supEntries.length === 0) return true;
-        return supEntries.some((t) => t.status === 'draft');
-      });
+        let status: SupervisorStatus['status'];
+        if (supEntries.length === 0) {
+          status = 'not-started';
+        } else if (supEntries.every((t) => t.status === 'submitted')) {
+          status = 'submitted';
+          submittedSupervisors++;
+        } else {
+          status = 'in-progress';
+          inProgressSupervisors++;
+        }
+        supervisorStatuses.push({ id: sup.id, name: sup.fullName, status });
+      }
 
-      const pendingSubmissions = unsubmittedSupervisors.length;
+      const pendingSubmissions = supsWithAssignments.length - submittedSupervisors;
 
+      // Build attention items
       const attentionItems: AttentionItem[] = [];
 
-      // Unassigned employees
       for (const emp of unassignedEmps.slice(0, 5)) {
         attentionItems.push({
           id: `ua-${emp.id}`,
           type: 'unassigned',
           label: emp.callingName,
           detail: `${emp.tradeGroup} — not assigned today`,
-          link: '/admin/assignments',
+          link: '/admin/assignments/labour',
         });
       }
       if (unassignedEmps.length > 5) {
         attentionItems.push({
           id: 'ua-more',
           type: 'unassigned',
-          label: `+${unassignedEmps.length - 5} more`,
-          detail: 'Unassigned employees',
-          link: '/admin/assignments',
+          label: `+${unassignedEmps.length - 5} more unassigned`,
+          detail: 'employees not assigned today',
+          link: '/admin/assignments/labour',
         });
       }
 
-      // Supervisors with genuinely unsubmitted daily attendance
-      for (const sup of unsubmittedSupervisors.slice(0, 5)) {
+      const unsubmittedSups = supervisorStatuses.filter((s) => s.status !== 'submitted');
+      for (const sup of unsubmittedSups.slice(0, 3)) {
         attentionItems.push({
           id: `us-${sup.id}`,
           type: 'unsubmitted',
-          label: sup.fullName,
-          detail: 'Daily attendance has not been submitted yet',
-          link: '/admin/reports',
+          label: sup.name,
+          detail: sup.status === 'in-progress' ? 'Sheet is in draft — not submitted yet' : 'No entries recorded today',
+          link: '/admin/approvals',
         });
       }
 
@@ -115,10 +144,15 @@ export function useDashboardStats(): DashboardStats {
         activeSupervisors: activeSups.length,
         unassignedToday: unassignedEmps.length,
         pendingSubmissions,
+        submittedSupervisors,
+        inProgressSupervisors,
+        supervisorStatuses,
         attentionItems,
+        todayEntries,
         isLoading: false,
       };
-      cacheManager.set('dashboard:stats', newStats, 15_000); // 15s TTL so fresh submissions show quickly
+
+      cacheManager.set('dashboard:stats', newStats, 15_000); // 15s TTL
       setStats(newStats);
     } catch {
       setStats((prev) => ({ ...prev, isLoading: false }));

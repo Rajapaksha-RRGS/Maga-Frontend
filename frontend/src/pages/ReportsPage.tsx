@@ -19,6 +19,7 @@ import BpBillTable from '../features/reports/components/BpBillTable';
 import ErpUploadTable from '../features/reports/components/ErpUploadTable';
 import RunningChartTable from '../features/reports/components/RunningChartTable';
 import EmptyState from '../components/EmptyState';
+import Breadcrumb from '../components/Breadcrumb';
 
 export default function ReportsPage() {
   const {
@@ -52,9 +53,7 @@ export default function ReportsPage() {
             <FileSpreadsheet size={20} className="text-blue-700" />
             Reports & Payroll Export
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Generate consolidated attendance summaries, daily OT grids, business partner billing sheets, and ERP export files.
-          </p>
+          <Breadcrumb items={[{ label: 'Reports & Payroll' }]} className="mt-1" />
         </div>
 
         {/* Top-Right "Export to Excel" Button */}

@@ -16,8 +16,8 @@ import {
   Square, 
   LogIn, 
   LogOut, 
-  Clock, 
-  Filter
+  Clock,
+  Lock
 } from 'lucide-react';
 import { 
   MASTER_ACTIVITIES, 
@@ -30,6 +30,7 @@ interface LaborEntryViewProps {
   onSaveLaborers: (updated: LaborerEntry[]) => void;
   searchQuery?: string;
   statusFilter?: 'all' | 'pending' | 'done';
+  isDayLocked?: boolean;
 }
 
 interface BatchActivityItem {
@@ -55,18 +56,35 @@ function computeHours(inTime: string, outTime: string): { shift: number; ot: num
   return { shift: shiftHours, ot: otHours };
 }
 
+// Helper to get effective shift hours for a worker in current context
+function getWorkerEffectiveShift(worker: LaborerEntry, referenceOutTime: string): { shift: number; ot: number; hasIn: boolean } {
+  if (!worker.inTime) return { shift: 0, ot: 0, hasIn: false };
+  const outTime = worker.outTime || referenceOutTime;
+  const { shift, ot } = computeHours(worker.inTime, outTime);
+  return { shift, ot, hasIn: true };
+}
+
 export function LaborEntryView({
   laborers,
   onSaveLaborers,
   searchQuery: externalSearchQuery = '',
   statusFilter: externalStatusFilter = 'all',
+  isDayLocked = false,
 }: LaborEntryViewProps) {
   // Mode: In Time or Out Time (matching hand-drawn sketch)
   const [tabMode, setTabMode] = useState<'in' | 'out'>('in');
 
-  // Internal search and filters (search bar & trade filter directly under search)
+  // Internal search and filters
   const [localSearch, setLocalSearch] = useState('');
-  const [selectedTrade, setSelectedTrade] = useState<string>('all');
+  // Shift Hours Filter state (replaces trade filter)
+  const [selectedShiftFilter, setSelectedShiftFilter] = useState<string>('all');
+  const [targetShiftHours, setTargetShiftHours] = useState<number>(8.0);
+  const [showShiftMismatchModal, setShowShiftMismatchModal] = useState<boolean>(false);
+  const [mismatchData, setMismatchData] = useState<{
+    groups: Record<string, LaborerEntry[]>;
+    targetSum: number;
+  } | null>(null);
+
   const [localStatusFilter, setLocalStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
 
   // Selection state for batch actions
@@ -84,17 +102,27 @@ export function LaborEntryView({
   // ── OUT MODE BATCH STATE ──
   const [batchOutTime, setBatchOutTime] = useState('17:00');
   const [batchActivities, setBatchActivities] = useState<BatchActivityItem[]>([
-    { id: 'batch-act-1', activityCode: MASTER_ACTIVITIES[0].code, hours: 8.5 }
+    { id: 'batch-act-1', activityCode: MASTER_ACTIVITIES[0].code, hours: 8.0 }
   ]);
 
-  // Derived unique trades for trade group filter
-  const uniqueTrades = useMemo(() => {
-    const trades = new Set<string>();
+  // Derived unique shift hours for Shift Hours filter chips
+  const shiftGroupStats = useMemo(() => {
+    const counts: Record<string, number> = {};
     laborers.forEach((l) => {
-      if (l.tradeGroup) trades.add(l.tradeGroup);
+      const info = getWorkerEffectiveShift(l, batchOutTime);
+      const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
+      counts[key] = (counts[key] || 0) + 1;
     });
-    return Array.from(trades);
-  }, [laborers]);
+
+    // Sort: highest hours first, pending_in at the end
+    const keys = Object.keys(counts).sort((a, b) => {
+      if (a === 'pending_in') return 1;
+      if (b === 'pending_in') return -1;
+      return parseFloat(b) - parseFloat(a);
+    });
+
+    return { counts, keys };
+  }, [laborers, batchOutTime]);
 
   // Combined search query (external + local)
   const effectiveSearch = localSearch || externalSearchQuery;
@@ -114,9 +142,13 @@ export function LaborEntryView({
 
       if (!matchesSearch) return false;
 
-      // Trade Group filter
-      if (selectedTrade !== 'all' && l.tradeGroup !== selectedTrade) {
-        return false;
+      // Shift Hours filter (replaces trade filter)
+      if (selectedShiftFilter !== 'all') {
+        const info = getWorkerEffectiveShift(l, batchOutTime);
+        const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
+        if (key !== selectedShiftFilter) {
+          return false;
+        }
       }
 
       // Status filter
@@ -129,7 +161,7 @@ export function LaborEntryView({
 
       return true;
     });
-  }, [laborers, effectiveSearch, selectedTrade, effectiveStatus]);
+  }, [laborers, effectiveSearch, selectedShiftFilter, batchOutTime, effectiveStatus]);
 
   // Stats
   const inMarkedCount = laborers.filter((l) => !!l.inTime).length;
@@ -137,15 +169,27 @@ export function LaborEntryView({
   const completedCount = laborers.filter((l) => l.inTime && l.outTime && l.activities.length > 0).length;
   const pendingCount = laborers.length - completedCount;
 
+  // Only the selected worker IDs that are currently visible/filtered
+  const selectedFilteredWorkerIds = useMemo(() => {
+    return filteredLaborers.filter((l) => selectedWorkerIds.includes(l.id)).map((l) => l.id);
+  }, [filteredLaborers, selectedWorkerIds]);
+
+  const selectedFilteredCount = selectedFilteredWorkerIds.length;
+
   // Selection handlers
   const handleToggleSelectAll = () => {
     const currentFilteredIds = filteredLaborers.map((l) => l.id);
+    if (currentFilteredIds.length === 0) return;
+
     const allSelected = currentFilteredIds.every((id) => selectedWorkerIds.includes(id));
 
     if (allSelected) {
+      // Deselect all currently filtered workers
       setSelectedWorkerIds((prev) => prev.filter((id) => !currentFilteredIds.includes(id)));
     } else {
-      setSelectedWorkerIds((prev) => Array.from(new Set([...prev, ...currentFilteredIds])));
+      // Select ONLY the currently visible filtered workers!
+      // This strictly isolates the selection to the active filtered chip/view.
+      setSelectedWorkerIds(currentFilteredIds);
     }
   };
 
@@ -158,10 +202,11 @@ export function LaborEntryView({
 
   // ── APPLY BATCH IN TIME ──
   const handleApplyBatchIn = () => {
-    if (selectedWorkerIds.length === 0) return;
+    const targetIds = selectedFilteredWorkerIds;
+    if (targetIds.length === 0) return;
 
     const updated = laborers.map((l) => {
-      if (!selectedWorkerIds.includes(l.id)) return l;
+      if (!targetIds.includes(l.id)) return l;
       const inTime = batchInTime;
       const outTime = l.outTime;
       const { shift, ot } = computeHours(inTime, outTime);
@@ -180,12 +225,91 @@ export function LaborEntryView({
     onSaveLaborers(updated);
   };
 
-  // ── BATCH ACTIVITY ROW HANDLERS ──
+  // ── SHIFT FILTER SELECTOR (DYNAMIC TARGET HOURS & AUTO-SELECT COHORT) ──
+  const handleSelectShiftFilter = (shiftKey: string) => {
+    setSelectedShiftFilter(shiftKey);
+
+    if (shiftKey === 'all') {
+      // Clear selection so supervisor can choose cleanly in All view
+      setSelectedWorkerIds([]);
+    } else {
+      // Auto-select all workers belonging to this specific shift cohort!
+      const matchingCohortIds = laborers.filter((l) => {
+        const info = getWorkerEffectiveShift(l, batchOutTime);
+        const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
+        return key === shiftKey;
+      }).map((l) => l.id);
+
+      setSelectedWorkerIds(matchingCohortIds);
+    }
+
+    if (shiftKey !== 'all' && shiftKey !== 'pending_in') {
+      const hours = parseFloat(shiftKey.replace('h', ''));
+      if (!isNaN(hours) && hours > 0) {
+        setTargetShiftHours(hours);
+        // Automatically adjust batch activities to match target
+        setBatchActivities((prev) => {
+          if (prev.length <= 1) {
+            return [{
+              id: 'batch-act-1',
+              activityCode: prev[0]?.activityCode || MASTER_ACTIVITIES[0].code,
+              hours,
+            }];
+          } else {
+            // Multiple activities: scale proportionally
+            const sum = prev.reduce((acc, a) => acc + (a.hours || 0), 0);
+            if (sum > 0) {
+              let allocated = 0;
+              return prev.map((a, idx) => {
+                if (idx === prev.length - 1) {
+                  return { ...a, hours: parseFloat(Math.max(0.5, hours - allocated).toFixed(1)) };
+                }
+                const share = parseFloat(((a.hours / sum) * hours).toFixed(1));
+                allocated += share;
+                return { ...a, hours: share };
+              });
+            }
+            return prev;
+          }
+        });
+      }
+    }
+  };
+
+  // ── BATCH ACTIVITY ROW HANDLERS (SMART AUTO-BALANCING) ──
   const handleAddBatchActivityRow = () => {
+    const currentSum = batchActivities.reduce((acc, a) => acc + (a.hours || 0), 0);
+
+    // Case 1: Only 1 activity exists and its hours equal targetShiftHours (unmodified)
+    // -> Split evenly! (e.g. 8.0h -> 4.0h & 4.0h, or 6.0h -> 3.0h & 3.0h)
+    if (batchActivities.length === 1 && Math.abs(batchActivities[0].hours - targetShiftHours) < 0.1) {
+      const half = parseFloat((targetShiftHours / 2).toFixed(1));
+      const secondHalf = parseFloat((targetShiftHours - half).toFixed(1));
+
+      const updatedFirst = { ...batchActivities[0], hours: half };
+      const newRow: BatchActivityItem = {
+        id: `batch-act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+        activityCode: MASTER_ACTIVITIES[1 % MASTER_ACTIVITIES.length].code,
+        hours: secondHalf,
+      };
+      setBatchActivities([updatedFirst, newRow]);
+      return;
+    }
+
+    // Case 2: Top activity or existing activities were edited and sum < targetShiftHours
+    // -> Auto-fill the remaining hours! (e.g. 8.0 - 5.0 = 3.0h)
+    let fillHours = 4.0;
+    if (currentSum < targetShiftHours) {
+      fillHours = parseFloat((targetShiftHours - currentSum).toFixed(1));
+    } else {
+      fillHours = 1.0;
+    }
+
+    const nextActivity = MASTER_ACTIVITIES[batchActivities.length % MASTER_ACTIVITIES.length].code;
     const newRow: BatchActivityItem = {
       id: `batch-act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      activityCode: MASTER_ACTIVITIES[batchActivities.length % MASTER_ACTIVITIES.length].code,
-      hours: 4.0,
+      activityCode: nextActivity,
+      hours: Math.max(0.5, fillHours),
     };
     setBatchActivities((prev) => [...prev, newRow]);
   };
@@ -201,14 +325,37 @@ export function LaborEntryView({
     setBatchActivities((prev) => prev.filter((a) => a.id !== id));
   };
 
-
-
-  // ── APPLY BATCH OUT TIME & ACTIVITIES ──
+  // ── APPLY BATCH OUT TIME & ACTIVITIES (WITH MISMATCH VALIDATION) ──
   const handleApplyBatchOut = () => {
-    if (selectedWorkerIds.length === 0) return;
+    const targetIds = selectedFilteredWorkerIds;
+    if (targetIds.length === 0) return;
+
+    const selectedWorkers = laborers.filter((l) => targetIds.includes(l.id));
+
+    // Group selected workers by effective shift hours
+    const selectedShiftGroups: Record<string, LaborerEntry[]> = {};
+    selectedWorkers.forEach((w) => {
+      const info = getWorkerEffectiveShift(w, batchOutTime);
+      const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
+      if (!selectedShiftGroups[key]) selectedShiftGroups[key] = [];
+      selectedShiftGroups[key].push(w);
+    });
+
+    const distinctShiftKeys = Object.keys(selectedShiftGroups);
+
+    // If supervisor selected workers with DIFFERENT shift hours -> Show Error Modal!
+    if (distinctShiftKeys.length > 1) {
+      const currentBatchSum = batchActivities.reduce((acc, a) => acc + (a.hours || 0), 0);
+      setMismatchData({
+        groups: selectedShiftGroups,
+        targetSum: currentBatchSum,
+      });
+      setShowShiftMismatchModal(true);
+      return;
+    }
 
     const updated = laborers.map((l) => {
-      if (!selectedWorkerIds.includes(l.id)) return l;
+      if (!targetIds.includes(l.id)) return l;
       const inTime = l.inTime || '07:00'; // Fallback if In wasn't marked
       const outTime = batchOutTime;
       const { shift, ot } = computeHours(inTime, outTime);
@@ -322,6 +469,28 @@ export function LaborEntryView({
 
   return (
     <div className="space-y-3 pb-16 animate-in fade-in duration-150">
+      {/* ── Day Locked Alert Banner (Read-Only) ── */}
+      {isDayLocked && (
+        <div className="bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-2xl p-3.5 shadow-xs flex items-center gap-3 animate-in fade-in">
+          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
+            <Lock size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <h4 className="text-xs font-bold text-emerald-950 dark:text-emerald-200">
+                Shift Roster Locked & Submitted
+              </h4>
+              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200 font-mono">
+                Read-Only
+              </span>
+            </div>
+            <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5 leading-snug">
+              Submitted for Admin Approval. Record modifications are locked unless returned by Admin.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── IN / OUT Dual Tabs (Matches Hand-Drawn Sketch) ───────────────────── */}
       <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-200/70 dark:bg-slate-900/90 rounded-2xl border border-slate-300/80 dark:border-slate-800 shadow-inner">
         <button
@@ -386,53 +555,55 @@ export function LaborEntryView({
         )}
       </div>
 
-      {/* ── 4. Trade Group & Status Filter Chips (Under Search Bar) ────────────── */}
+      {/* ── 4. Shift Hours & Status Filter Chips (Under Search Bar) ────────────── */}
        <div className="py-2 px-2.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3.5">
-        {/* Trade Groups Chips */}
+        {/* Shift Hours Chips */}
         <div>
           <div className="flex items-center justify-between mb-1 px-0.5">
             <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-              <Filter size={12} className="text-blue-600 dark:text-blue-400" />
-              Filter by Trade:
+              <Clock size={12} className="text-blue-600 dark:text-blue-400" />
+              Filter by Shift Hours:
             </span>
-
+            <span className="text-[10px] text-slate-500 font-medium">
+              Target: <strong className="text-blue-700 dark:text-blue-400 font-mono">{targetShiftHours.toFixed(1)}h</strong>
+            </span>
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs"> 
             <button
               type="button"
-              onClick={() => setSelectedTrade('all')}
+              onClick={() => handleSelectShiftFilter('all')}
               className={[
-                'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0',
-                selectedTrade === 'all'
+                'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
+                selectedShiftFilter === 'all'
                   ? 'bg-blue-600 text-white shadow-xs'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
               ].join(' ')}
             >
-              All Trades ({laborers.length})
+              All Shifts ({laborers.length})
             </button>
-            {uniqueTrades.map((trade) => {
-              const count = laborers.filter((l) => l.tradeGroup === trade).length;
+            {shiftGroupStats.keys.map((key) => {
+              const count = shiftGroupStats.counts[key];
+              const isSelected = selectedShiftFilter === key;
+              const label = key === 'pending_in' ? 'Pending In' : `${key} Shift`;
               return (
                 <button
-                  key={trade}
+                  key={key}
                   type="button"
-                  onClick={() => setSelectedTrade(trade)}
+                  onClick={() => handleSelectShiftFilter(key)}
                   className={[
-                    'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0',
-                    selectedTrade === trade
+                    'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 font-mono cursor-pointer',
+                    isSelected
                       ? 'bg-blue-600 text-white shadow-xs'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
                   ].join(' ')}
                 >
-                  {trade} ({count})
+                  {label} ({count})
                 </button>
               );
             })}
           </div>
         </div>
-
-
 
         {/* Status Filter Chips: Completed vs Pending */}
         <div>
@@ -444,7 +615,7 @@ export function LaborEntryView({
               type="button"
               onClick={() => setLocalStatusFilter('all')}
               className={[
-                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border',
+                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border cursor-pointer',
                 localStatusFilter === 'all'
                   ? 'bg-slate-900 dark:bg-slate-100 border-slate-900 dark:border-slate-100 text-white dark:text-slate-900 shadow-2xs font-bold'
                   : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-750'
@@ -460,7 +631,7 @@ export function LaborEntryView({
               type="button"
               onClick={() => setLocalStatusFilter('done')}
               className={[
-                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border',
+                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border cursor-pointer',
                 localStatusFilter === 'done'
                   ? 'bg-emerald-600 border-emerald-600 text-white shadow-2xs font-bold'
                   : 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/50'
@@ -477,7 +648,7 @@ export function LaborEntryView({
               type="button"
               onClick={() => setLocalStatusFilter('pending')}
               className={[
-                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border',
+                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border cursor-pointer',
                 localStatusFilter === 'pending'
                   ? 'bg-amber-600 border-amber-600 text-white shadow-2xs font-bold'
                   : 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/50'
@@ -506,7 +677,6 @@ export function LaborEntryView({
                 <h3 className="text-xs font-bold text-emerald-950 dark:text-emerald-200">
                   Morning In-Time 
                 </h3>
-                
               </div>
             </div>
 
@@ -527,7 +697,7 @@ export function LaborEntryView({
             <button
               type="button"
               onClick={handleToggleSelectAll}
-              className="flex items-center gap-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300 hover:underline"
+              className="flex items-center gap-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300 hover:underline cursor-pointer"
             >
               {isAllFilteredSelected ? (
                 <CheckSquare size={16} className="text-emerald-600" />
@@ -540,11 +710,11 @@ export function LaborEntryView({
             <button
               type="button"
               onClick={handleApplyBatchIn}
-              disabled={selectedWorkerIds.length === 0}
-              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98]"
+              disabled={isDayLocked || selectedFilteredCount === 0}
+              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
             >
               <Check size={14} />
-              <span>Apply In-Time to {selectedWorkerIds.length} Workers</span>
+              <span>Apply In-Time to {selectedFilteredCount} Workers</span>
             </button>
           </div>
         </div>
@@ -560,9 +730,6 @@ export function LaborEntryView({
                 <h3 className="text-xs font-bold text-blue-950 dark:text-blue-200">
                   Evening Out-Time & Activity Allocation
                 </h3>
-                {/* <p className="text-[11px] text-blue-700 dark:text-blue-400">
-                  Record departure time & split hours across Master Activity codes
-                </p> */}
               </div>
             </div>
 
@@ -584,11 +751,14 @@ export function LaborEntryView({
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1">
                 <Briefcase size={12} className="text-blue-600" />
                 Activity Codes Split 
+                <span className="text-[10px] text-slate-500 font-normal ml-1">
+                  (Target: <strong className="text-blue-700 dark:text-blue-300 font-mono">{targetShiftHours.toFixed(1)}h</strong>)
+                </span>
               </span>
               <button
                 type="button"
                 onClick={handleAddBatchActivityRow}
-                className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold flex items-center gap-0.5"
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
               >
                 <Plus size={13} /> Add Activity
               </button>
@@ -625,13 +795,37 @@ export function LaborEntryView({
                   <button
                     type="button"
                     onClick={() => handleRemoveBatchActivityRow(row.id)}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
                   >
                     <Trash2 size={14} />
                   </button>
                 )}
               </div>
             ))}
+
+            {/* Live Hours Balance Indicator */}
+            {(() => {
+              const currentSum = batchActivities.reduce((a, b) => a + (Number(b.hours) || 0), 0);
+              const diff = parseFloat((currentSum - targetShiftHours).toFixed(1));
+              const isBalanced = Math.abs(diff) < 0.1;
+
+              return (
+                <div className="flex items-center justify-between text-[11px] px-1 pt-1.5 border-t border-slate-200/60 dark:border-slate-800">
+                  <span className="text-slate-600 dark:text-slate-400">
+                    Allocated: <strong className={isBalanced ? 'text-emerald-700 dark:text-emerald-300 font-bold' : 'text-amber-700 dark:text-amber-300 font-bold'}>{currentSum.toFixed(1)}h</strong> / {targetShiftHours.toFixed(1)}h Target
+                  </span>
+                  {isBalanced ? (
+                    <span className="text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1 text-[10px]">
+                      <CheckCircle2 size={12} /> Balanced
+                    </span>
+                  ) : (
+                    <span className="text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 text-[10px]">
+                      <AlertTriangle size={12} /> {diff > 0 ? `+${diff}h excess` : `${Math.abs(diff)}h remaining`}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Selection Controls & Apply Button */}
@@ -639,7 +833,7 @@ export function LaborEntryView({
             <button
               type="button"
               onClick={handleToggleSelectAll}
-              className="flex items-center gap-1.5 text-xs font-semibold text-blue-800 dark:text-blue-300 hover:underline"
+              className="flex items-center gap-1.5 text-xs font-semibold text-blue-800 dark:text-blue-300 hover:underline cursor-pointer"
             >
               {isAllFilteredSelected ? (
                 <CheckSquare size={16} className="text-blue-600" />
@@ -652,11 +846,11 @@ export function LaborEntryView({
             <button
               type="button"
               onClick={handleApplyBatchOut}
-              disabled={selectedWorkerIds.length === 0}
+              disabled={isDayLocked || selectedFilteredCount === 0}
               className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98]"
             >
               <Check size={14} />
-              <span>Apply to {selectedWorkerIds.length} Workers</span>
+              <span>Apply to {selectedFilteredCount} Workers</span>
             </button>
           </div>
         </div>
@@ -828,9 +1022,10 @@ export function LaborEntryView({
                         </label>
                         <input
                           type="time"
+                          disabled={isDayLocked}
                           value={worker.inTime}
                           onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
                         />
                       </div>
                       <div>
@@ -839,9 +1034,10 @@ export function LaborEntryView({
                         </label>
                         <input
                           type="time"
+                          disabled={isDayLocked}
                           value={worker.outTime}
                           onChange={(e) => handleIndividualTimeChange(worker.id, worker.inTime, e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
                         />
                       </div>
                     </div>
@@ -853,13 +1049,15 @@ export function LaborEntryView({
                           <Briefcase size={12} className="text-blue-600" />
                           Activity Code
                         </label>
-                        <button
-                          type="button"
-                          onClick={() => handleAddIndividualActivitySplit(worker.id)}
-                          className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5"
-                        >
-                          <Plus size={13} /> Add Task
-                        </button>
+                        {!isDayLocked && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddIndividualActivitySplit(worker.id)}
+                            className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5"
+                          >
+                            <Plus size={13} /> Add Task
+                          </button>
+                        )}
                       </div>
 
                       <div className="space-y-2">
@@ -869,9 +1067,10 @@ export function LaborEntryView({
                             className="flex items-center gap-2 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
                           >
                             <select
+                              disabled={isDayLocked}
                               value={act.activityCode}
                               onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'activityCode', e.target.value)}
-                              className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-600"
+                              className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-600"
                             >
                               {MASTER_ACTIVITIES.map((item) => (
                                 <option key={item.code} value={item.code}>
@@ -886,13 +1085,14 @@ export function LaborEntryView({
                                 step="0.5"
                                 min="0"
                                 max="24"
+                                disabled={isDayLocked}
                                 value={act.hours}
                                 onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'hours', parseFloat(e.target.value) || 0)}
-                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600"
+                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600"
                               />
                             </div>
 
-                            {worker.activities.length > 1 && (
+                            {!isDayLocked && worker.activities.length > 1 && (
                               <button
                                 type="button"
                                 onClick={() => handleRemoveIndividualActivitySplit(worker.id, act.id)}
@@ -923,30 +1123,32 @@ export function LaborEntryView({
                     </div>
 
                     {/* Individual Save Button */}
-                    <div className="pt-2">
-                      <button
-                        type="button"
-                        onClick={() => handleSaveIndividualDraft(worker.id)}
-                        className={[
-                          'w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl font-semibold text-xs transition-colors shadow-xs',
-                          isIndividualSaved
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-slate-800 dark:bg-slate-700 text-white hover:bg-slate-900'
-                        ].join(' ')}
-                      >
-                        {isIndividualSaved ? (
-                          <>
-                            <Check size={14} />
-                            <span>Saved Successfully!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Save size={14} />
-                            <span>Save Worker Updates</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
+                    {!isDayLocked && (
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveIndividualDraft(worker.id)}
+                          className={[
+                            'w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl font-semibold text-xs transition-colors shadow-xs',
+                            isIndividualSaved
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-slate-800 dark:bg-slate-700 text-white hover:bg-slate-900'
+                          ].join(' ')}
+                        >
+                          {isIndividualSaved ? (
+                            <>
+                              <Check size={14} />
+                              <span>Saved Successfully!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Save size={14} />
+                              <span>Save Worker Updates</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -954,6 +1156,82 @@ export function LaborEntryView({
           })
         )}
       </div>
+
+      {/* ── 7. Shift Hours Mismatch Error Modal (Popup) ── */}
+      {showShiftMismatchModal && mismatchData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 w-full max-w-sm shadow-2xl border border-amber-200 dark:border-amber-800 space-y-4 animate-in zoom-in-95 duration-150">
+            {/* Header with AlertTriangle */}
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle size={22} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Shift Hours Mismatch
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
+                  Cannot apply uniform activity hours to workers with different shift hours.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShiftMismatchModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Shift Breakdown List */}
+            <div className="bg-slate-50 dark:bg-slate-900/80 p-3 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                Selected Workers Breakdown:
+              </span>
+              <div className="space-y-1.5">
+                {Object.entries(mismatchData.groups).map(([shiftKey, workers]) => (
+                  <div 
+                    key={shiftKey} 
+                    className="flex items-center justify-between text-xs p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700"
+                  >
+                    <div className="flex items-center gap-1.5 font-medium">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                      <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">
+                        {shiftKey === 'pending_in' ? 'Pending In' : `${shiftKey} Shift`}
+                      </span>
+                      <span className="text-slate-400 text-[11px]">({workers.length} workers)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const groupIds = workers.map((w) => w.id);
+                        setSelectedWorkerIds(groupIds);
+                        handleSelectShiftFilter(shiftKey);
+                        setShowShiftMismatchModal(false);
+                      }}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
+                    >
+                      Select {workers.length} only
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+              💡 Click <strong>"Select only"</strong> above or use <strong>Filter by Shift Hours</strong> to assign activities to workers with matching hours.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setShowShiftMismatchModal(false)}
+              className="w-full py-2.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors"
+            >
+              Close & Adjust Selection
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

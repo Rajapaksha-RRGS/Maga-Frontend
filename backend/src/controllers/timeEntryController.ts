@@ -45,7 +45,34 @@ export async function getDayTypeRulesAndId(tenantId: string, date: Date): Promis
         dayTypeName: calendarDay.dayType.name,
       };
     }
-    // Shutdown and Normal Day follow Normal Day rules (8.0 hours cap, >8h is OT)
+    // 3. Shutdown: Indicator only! If someone works on a shutdown day, hours follow the actual day of week:
+    if (name.includes('shutdown')) {
+      const dayOfWeek = date.getUTCDay();
+      if (dayOfWeek === 0) {
+        return {
+          effectiveDayTypeId: calendarDay.dayTypeId,
+          standardHoursCap: 0.0,
+          isAllOvertime: true,
+          dayTypeName: 'Shutdown (Sunday - 100% OT)',
+        };
+      }
+      if (dayOfWeek === 6) {
+        return {
+          effectiveDayTypeId: calendarDay.dayTypeId,
+          standardHoursCap: 6.0,
+          isAllOvertime: false,
+          dayTypeName: 'Shutdown (Saturday - 6.0h Cap)',
+        };
+      }
+      return {
+        effectiveDayTypeId: calendarDay.dayTypeId,
+        standardHoursCap: 8.0,
+        isAllOvertime: false,
+        dayTypeName: 'Shutdown (Weekday - 8.0h Cap)',
+      };
+    }
+
+    // Normal Day (8.0 hours cap, >8h is OT)
     return {
       effectiveDayTypeId: calendarDay.dayTypeId,
       standardHoursCap: 8.0,
@@ -1073,6 +1100,129 @@ export const rejectTimeEntries = async (req: Request, res: Response): Promise<vo
   } catch (error) {
     console.error('Error rejecting time entries:', error);
     res.status(500).json({ error: 'Failed to return entries to draft' });
+  }
+};
+
+// 7.3 Admin: Inline edit worker time entry (In/Out & hours) during approval
+export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { supervisorId, employeeId, date, inTime, outTime, hours, overtimeHours } = req.body;
+    if (!employeeId || !date) {
+      res.status(400).json({ error: 'employeeId and date are required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
+    const targetDate = parseDate(date);
+    const { standardHoursCap, isAllOvertime, effectiveDayTypeId } = await getDayTypeRulesAndId(tenantId, targetDate);
+
+    // Calculate hours if inTime & outTime are provided
+    let calculatedHours = hours !== undefined ? parseFloat(hours) : 0;
+    let calculatedOt = overtimeHours !== undefined ? parseFloat(overtimeHours) : 0;
+    let breakHours = 0;
+
+    if (inTime && outTime) {
+      const [inH, inM] = inTime.split(':').map(Number);
+      const [outH, outM] = outTime.split(':').map(Number);
+      let diff = (outH * 60 + outM) - (inH * 60 + inM);
+      if (diff < 0) diff += 24 * 60;
+
+      const gross = Math.round((diff / 60) * 100) / 100;
+      breakHours = computeBreakHours(inTime, outTime);
+      const net = Math.max(0, Math.round((gross - breakHours) * 100) / 100);
+
+      calculatedHours = net;
+      if (isAllOvertime) {
+        calculatedOt = net;
+      } else if (net > standardHoursCap) {
+        calculatedOt = Math.round((net - standardHoursCap) * 100) / 100;
+      } else {
+        calculatedOt = 0;
+      }
+    }
+
+    // Find all existing records for this employee on this date
+    const existingEntries = await prisma.timeEntry.findMany({
+      where: {
+        tenantId,
+        employeeId,
+        date: targetDate,
+      },
+    });
+
+    if (existingEntries.length > 0) {
+      // If there's only 1 entry or 0 activity splits, update its hours as well
+      if (existingEntries.length === 1) {
+        await prisma.timeEntry.update({
+          where: { id: existingEntries[0].id },
+          data: {
+            inTime,
+            outTime,
+            hours: calculatedHours,
+            overtimeHours: calculatedOt,
+            breakHours,
+            remarks: 'Adjusted by Admin',
+          },
+        });
+      } else {
+        // Multiple activity splits: update attendance times for all
+        await prisma.timeEntry.updateMany({
+          where: {
+            tenantId,
+            employeeId,
+            date: targetDate,
+          },
+          data: {
+            inTime,
+            outTime,
+            breakHours,
+          },
+        });
+      }
+    } else {
+      // Create new record for this worker
+      const defaultActivity = (await prisma.activityCode.findFirst({
+        where: { tenantId },
+      })) || (await prisma.activityCode.create({
+        data: {
+          tenantId,
+          code: 'GEN-01',
+          description: 'General Site Work',
+          trade: 'General labour',
+        },
+      }));
+
+      await prisma.timeEntry.create({
+        data: {
+          tenantId,
+          employeeId,
+          supervisorId: supervisorId || '',
+          activityId: defaultActivity.id,
+          effectiveDayTypeId,
+          date: targetDate,
+          inTime,
+          outTime,
+          hours: calculatedHours,
+          overtimeHours: calculatedOt,
+          breakHours,
+          status: 'submitted',
+          remarks: 'Created & Adjusted by Admin',
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      employeeId,
+      inTime,
+      outTime,
+      hours: calculatedHours,
+      overtimeHours: calculatedOt,
+      message: 'Worker entry adjusted successfully by Admin.',
+    });
+  } catch (error) {
+    console.error('Error in adminAdjustWorkerTimeEntry:', error);
+    res.status(500).json({ error: 'Failed to adjust worker time entry' });
   }
 };
 

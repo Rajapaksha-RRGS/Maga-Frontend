@@ -127,3 +127,35 @@ export async function rejectSupervisor(supervisorId: string, date: string, reaso
   }
   return res.json();
 }
+
+/**
+ * Admin adjust a worker's In/Out time and hours directly during approval
+ */
+export async function adminAdjustWorker(payload: {
+  supervisorId: string;
+  employeeId: string;
+  date: string;
+  inTime: string;
+  outTime: string;
+  hours?: number;
+  overtimeHours?: number;
+}): Promise<{
+  success: boolean;
+  employeeId: string;
+  inTime: string;
+  outTime: string;
+  hours: number;
+  overtimeHours: number;
+}> {
+  const res = await apiFetch(`${API_URL}/time-entries/admin-adjust`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to adjust worker time entry');
+  }
+  return res.json();
+}
+

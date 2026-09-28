@@ -10,6 +10,7 @@ import {
   getApprovalOverview,
   approveTimeEntries,
   rejectTimeEntries,
+  adminAdjustWorkerTimeEntry,
   getOperatorEntries,
   saveOperatorEntry,
   saveBulkOperatorEntries,
@@ -30,6 +31,7 @@ router.post('/submit', submitDay);
 router.get('/approval-overview', getApprovalOverview);
 router.post('/approve', approveTimeEntries);
 router.post('/reject', rejectTimeEntries);
+router.post('/admin-adjust', adminAdjustWorkerTimeEntry);
 
 // Operator routes
 router.get('/operators', getOperatorEntries);

@@ -46,8 +46,9 @@ export function useCalendar() {
   };
 
   const setDayTypeForDate = async (date: string, dayTypeId: string) => {
-    await svc.setCalendarDayType(date, dayTypeId);
-    await load();
+    const res = await svc.setCalendarDayType(date, dayTypeId);
+    await load(true);
+    return res;
   };
 
   const markAllSundays = async () => {

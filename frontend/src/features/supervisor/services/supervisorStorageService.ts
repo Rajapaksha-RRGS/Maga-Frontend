@@ -67,8 +67,10 @@ export interface EquipmentLogEntry {
   type: string;
   
   // Rating Units (from Master Data)
+  primaryUnit?: EquipmentRatingUnit;
   availableUnits?: EquipmentRatingUnit[];
   activeUnit?: EquipmentRatingUnit;
+  additionalUnit?: EquipmentRatingUnit | null;
   
   // Values per unit
   startMeter: number;
@@ -487,38 +489,92 @@ export const supervisorStorage = {
   },
 
   // ── 2. Master Equipment (Backend + Offline Cache) ──────────────────────────
-  async fetchEquipment(): Promise<EquipmentLogEntry[]> {
-    const key = `${STORAGE_PREFIX}equipment_master`;
+  async fetchEquipment(supervisorId?: string, date?: string): Promise<EquipmentLogEntry[]> {
+    const key = date ? `${STORAGE_PREFIX}equipment_${date}` : `${STORAGE_PREFIX}equipment_master`;
     try {
-      const res = await apiFetch(`${API_URL}/equipment`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const mapped: EquipmentLogEntry[] = data.map((eq: any) => ({
-            id: eq.id,
-            code: eq.code || eq.name,
-            name: eq.name,
-            type: eq.type || 'Equipment',
-            availableUnits: ['Hrs', 'Days', 'EX.hrs', 'mth'],
-            activeUnit: 'Hrs',
-            startMeter: 0,
-            endMeter: 0,
-            netHours: 0,
-            workingHours: 0,
-            idleHours: 0,
-            breakdownHours: 0,
-            fuelIssuedLiters: 0,
-            status: 'pending',
-          }));
+      if (supervisorId && date) {
+        // Fetch only equipment assigned to this supervisor on this date
+        const res = await apiFetch(
+          `${API_URL}/assignments/equipment?date=${encodeURIComponent(date)}&supervisorId=${encodeURIComponent(supervisorId)}`
+        );
+        if (res.ok) {
+          const assignedData = await res.json();
+          const existingLocal = this.getEquipment(date);
+          const localMap = new Map(existingLocal.map((e) => [e.id, e]));
+
+          const mapped: EquipmentLogEntry[] = (assignedData || []).map((asgn: any) => {
+            const existing = localMap.get(asgn.equipmentId) || localMap.get(asgn.id);
+            // Determine the list of units this equipment supports from DB
+            const ALL_UNITS: EquipmentRatingUnit[] = ['Hrs', 'Days', 'EX.hrs', 'mth', 'm2'];
+            const dbPrimaryUnit: EquipmentRatingUnit = (asgn.primaryUnit as EquipmentRatingUnit) || 'mth';
+            // DB `availableUnits` stores ADDITIONAL units (not including primary by convention)
+            // If empty → show all 5; otherwise: primary + additional
+            const dbAvailableUnits: EquipmentRatingUnit[] =
+              Array.isArray(asgn.availableUnits) && asgn.availableUnits.length > 0
+                ? [dbPrimaryUnit, ...asgn.availableUnits.filter((u: string) => u !== dbPrimaryUnit)] as EquipmentRatingUnit[]
+                : ALL_UNITS; // empty = all units shown
+            // Prefer supervisor's already-chosen unit (local draft) over DB default
+            const resolvedActiveUnit: EquipmentRatingUnit = existing?.activeUnit ?? dbPrimaryUnit;
+            return {
+              id: asgn.equipmentId,
+              code: asgn.equipmentCode || asgn.equipmentName,
+              name: asgn.equipmentName,
+              type: asgn.equipmentType || 'Equipment',
+              primaryUnit: dbPrimaryUnit,
+              availableUnits: dbAvailableUnits,
+              activeUnit: resolvedActiveUnit,
+              additionalUnit: existing?.additionalUnit ?? null,
+              daysValue: existing?.daysValue,
+              hoursValue: existing?.hoursValue,
+              extraHoursValue: existing?.extraHoursValue,
+              areaValue: existing?.areaValue,
+              startMeter: existing?.startMeter ?? 0,
+              endMeter: existing?.endMeter ?? 0,
+              netHours: existing?.netHours ?? 0,
+              workingHours: existing?.workingHours ?? 0,
+              idleHours: existing?.idleHours ?? 0,
+              breakdownHours: existing?.breakdownHours ?? 0,
+              fuelIssuedLiters: existing?.fuelIssuedLiters ?? 0,
+              operatorId: existing?.operatorId,
+              activityCode: existing?.activityCode,
+              status: existing?.status || 'pending',
+              lastSavedAt: existing?.lastSavedAt,
+            };
+          });
+
           localStorage.setItem(key, JSON.stringify(mapped));
           return mapped;
+        }
+      } else {
+        const res = await apiFetch(`${API_URL}/equipment`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const mapped: EquipmentLogEntry[] = data.map((eq: any) => ({
+              id: eq.id,
+              code: eq.code || eq.name,
+              name: eq.name,
+              type: eq.type || 'Equipment',
+              availableUnits: ['Hrs', 'Days', 'EX.hrs', 'mth'],
+              activeUnit: 'Hrs',
+              startMeter: 0,
+              endMeter: 0,
+              netHours: 0,
+              workingHours: 0,
+              idleHours: 0,
+              breakdownHours: 0,
+              fuelIssuedLiters: 0,
+              status: 'pending',
+            }));
+            localStorage.setItem(key, JSON.stringify(mapped));
+            return mapped;
+          }
         }
       }
     } catch (err) {
       console.warn('Backend unavailable, using cached equipment:', err);
     }
-    const cached = localStorage.getItem(key);
-    return cached ? JSON.parse(cached) : [];
+    return date ? this.getEquipment(date) : (localStorage.getItem(key) ? JSON.parse(localStorage.getItem(key)!) : []);
   },
 
   // ── 3. Laborers (Admin-Assigned to Supervisor for Date) ────────────────────
@@ -639,27 +695,34 @@ export const supervisorStorage = {
   async fetchOperators(supervisorId: string, date: string): Promise<OperatorEntry[]> {
     const key = `${STORAGE_PREFIX}operators_${date}`;
     try {
-      const res = await apiFetch(`${API_URL}/time-entries/operators?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`);
+      const res = await apiFetch(
+        `${API_URL}/assignments/operator?date=${encodeURIComponent(date)}&supervisorId=${encodeURIComponent(supervisorId)}`
+      );
       if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          const mapped: OperatorEntry[] = data.map((op: any) => ({
-            id: op.operatorId || op.id,
-            callingName: op.callingName || op.fullName || 'Operator',
-            employeeNumber: op.employeeNumber || op.employeeCode || '',
-            licenseNo: op.licenseNo || '',
-            designation: op.designation || 'Machine Operator',
-            inTime: op.inTime || '',
-            outTime: op.outTime || '',
-            shiftHours: Number(op.hours) || 0,
-            otHours: Number(op.overtimeHours) || 0,
-            assignedEquipmentId: op.equipmentId || '',
-            status: op.status || 'pending',
-            notes: op.notes || '',
-          }));
-          localStorage.setItem(key, JSON.stringify(mapped));
-          return mapped;
-        }
+        const assignedData = await res.json();
+        const existingLocal = this.getOperators(date);
+        const localMap = new Map(existingLocal.map((o) => [o.id, o]));
+
+        const mapped: OperatorEntry[] = (assignedData || []).map((asgn: any) => {
+          const opId = asgn.operatorId || asgn.id;
+          const existing = localMap.get(opId);
+          return {
+            id: opId,
+            callingName: asgn.operatorName || asgn.callingName || 'Operator',
+            employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
+            licenseNo: asgn.licenseNo || '',
+            designation: asgn.operatorTrade || 'Machine Operator',
+            inTime: existing?.inTime || '',
+            outTime: existing?.outTime || '',
+            shiftHours: existing?.shiftHours || 0,
+            otHours: existing?.otHours || 0,
+            assignedEquipmentId: existing?.assignedEquipmentId || '',
+            status: existing?.status || 'pending',
+            notes: existing?.notes || '',
+          };
+        });
+        localStorage.setItem(key, JSON.stringify(mapped));
+        return mapped;
       }
     } catch (err) {
       console.warn('Backend unavailable for operators, using cache:', err);

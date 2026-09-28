@@ -60,7 +60,13 @@ const resolveTenantMiddleware = async (req, res, next) => {
             }
             // Check if it's a subdomain (e.g. '521M', '531M', 'maga')
             const tenantBySubdomain = await prisma_1.default.tenant.findFirst({
-                where: { subdomain: { equals: clean, mode: 'insensitive' } },
+                where: {
+                    OR: [
+                        { subdomain: { equals: clean, mode: 'insensitive' } },
+                        { subdomain: { equals: `${clean}M`, mode: 'insensitive' } },
+                        { subdomain: { equals: clean.replace(/M$/i, ''), mode: 'insensitive' } },
+                    ],
+                },
                 select: { id: true },
             });
             if (tenantBySubdomain) {

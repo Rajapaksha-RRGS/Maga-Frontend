@@ -13,8 +13,10 @@
  */
 import * as empSvc from '../../employees/services/employeeService';
 import * as supSvc from '../../supervisors/services/supervisorService';
+import * as equipSvc from '../../equipment/services/equipmentService';
 import type { Employee } from '../../employees/services/employeeService';
 import type { Supervisor } from '../../supervisors/services/supervisorService';
+import type { Equipment } from '../../equipment/services/equipmentService';
 
 export interface Assignment {
   id: string;
@@ -153,3 +155,193 @@ export async function getAssignmentContext(forceRefresh: boolean = false): Promi
     };
   }, null, forceRefresh);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATOR ASSIGNMENT SERVICE
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OperatorAssignment {
+  id: string;
+  date: string;
+  supervisorId: string;
+  operatorId: string;
+  supervisorName?: string;
+  operatorName?: string;
+  operatorCode?: string;
+  operatorTrade?: string;
+  licenseNo?: string | null;
+  businessPartner?: string;
+}
+
+export async function getOperatorAssignments(date: string, forceRefresh: boolean = false): Promise<OperatorAssignment[]> {
+  return cacheManager.fetchWithCache(`assignments:operator:date:${date}`, async () => {
+    const res = await apiFetch(`${API_URL}/assignments/operator?date=${encodeURIComponent(date)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error || `Failed to fetch operator assignments (${res.status})`);
+    }
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      return data;
+    }
+    return [];
+  }, null, forceRefresh);
+}
+
+export async function assignOperators(date: string, supervisorId: string, operatorIds: string[]): Promise<OperatorAssignment[]> {
+  const res = await apiFetch(`${API_URL}/assignments/operator`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, supervisorId, operatorIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to assign operators');
+  }
+  const data = await res.json();
+  cacheManager.invalidate('assignments');
+  return data.assignments || [];
+}
+
+export async function unassignOperator(assignmentId: string): Promise<void> {
+  const res = await apiFetch(`${API_URL}/assignments/operator/${encodeURIComponent(assignmentId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to remove operator assignment');
+  }
+  cacheManager.invalidate('assignments');
+}
+
+export async function copyOperatorGangsFromDate(
+  sourceDate: string,
+  destDate: string,
+  supervisorIds?: string[],
+  overwrite: boolean = true
+): Promise<number> {
+  const res = await apiFetch(`${API_URL}/assignments/operator/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceDate, targetDate: destDate, supervisorIds, overwrite }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to copy operator gang assignments');
+  }
+  const data = await res.json();
+  cacheManager.invalidate('assignments');
+  return data.copiedCount ?? 0;
+}
+
+export async function getOperatorAssignmentContext(forceRefresh: boolean = false): Promise<{
+  operators: Employee[];
+  supervisors: Supervisor[];
+}> {
+  return cacheManager.fetchWithCache('assignments:operator:context', async () => {
+    const [employees, supervisors] = await Promise.all([
+      empSvc.getAll(undefined, forceRefresh),
+      supSvc.getAll(forceRefresh),
+    ]);
+    const operators = employees.filter((e) => e.status === 'active' && Boolean(e.isOperator || e.tradeGroup?.toLowerCase() === 'operator'));
+    return {
+      operators,
+      supervisors: supervisors.filter((s) => s.status === 'active'),
+    };
+  }, null, forceRefresh);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EQUIPMENT ASSIGNMENT SERVICE
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface EquipmentAssignment {
+  id: string;
+  date: string;
+  supervisorId: string;
+  equipmentId: string;
+  supervisorName?: string;
+  equipmentName?: string;
+  equipmentCode?: string;
+  equipmentType?: string;
+  costRate?: number;
+}
+
+export async function getEquipmentAssignments(date: string, forceRefresh: boolean = false): Promise<EquipmentAssignment[]> {
+  return cacheManager.fetchWithCache(`assignments:equipment:date:${date}`, async () => {
+    const res = await apiFetch(`${API_URL}/assignments/equipment?date=${encodeURIComponent(date)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error || `Failed to fetch equipment assignments (${res.status})`);
+    }
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      return data;
+    }
+    return [];
+  }, null, forceRefresh);
+}
+
+export async function assignEquipment(date: string, supervisorId: string, equipmentIds: string[]): Promise<EquipmentAssignment[]> {
+  const res = await apiFetch(`${API_URL}/assignments/equipment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, supervisorId, equipmentIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to assign equipment');
+  }
+  const data = await res.json();
+  cacheManager.invalidate('assignments');
+  return data.assignments || [];
+}
+
+export async function unassignEquipment(assignmentId: string): Promise<void> {
+  const res = await apiFetch(`${API_URL}/assignments/equipment/${encodeURIComponent(assignmentId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to remove equipment assignment');
+  }
+  cacheManager.invalidate('assignments');
+}
+
+export async function copyEquipmentGangsFromDate(
+  sourceDate: string,
+  destDate: string,
+  supervisorIds?: string[],
+  overwrite: boolean = true
+): Promise<number> {
+  const res = await apiFetch(`${API_URL}/assignments/equipment/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceDate, targetDate: destDate, supervisorIds, overwrite }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to copy equipment gang assignments');
+  }
+  const data = await res.json();
+  cacheManager.invalidate('assignments');
+  return data.copiedCount ?? 0;
+}
+
+export async function getEquipmentAssignmentContext(forceRefresh: boolean = false): Promise<{
+  equipmentList: Equipment[];
+  supervisors: Supervisor[];
+}> {
+  return cacheManager.fetchWithCache('assignments:equipment:context', async () => {
+    const [equipmentList, supervisors] = await Promise.all([
+      equipSvc.getAll(),
+      supSvc.getAll(forceRefresh),
+    ]);
+    return {
+      equipmentList: equipmentList.filter((e) => e.status === 'active'),
+      supervisors: supervisors.filter((s) => s.status === 'active'),
+    };
+  }, null, forceRefresh);
+}
+
+
