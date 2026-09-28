@@ -13,20 +13,20 @@ const getParam = (param) => {
 };
 // Initial default equipment list if database table is empty for tenant
 const DEFAULT_EQUIPMENT = [
-    { code: 'MACM0075', name: 'AIR COMPRESSOR INGERSOLL RAND', type: 'Air compressor', status: 'active' },
-    { code: 'MACM0146', name: 'AIR COMPRESSOR FS CURTIS', type: 'Air compressor', status: 'active' },
-    { code: 'MACM0158', name: 'AIR COMPRESSOR SULLAIR', type: 'Air compressor', status: 'active' },
-    { code: 'MACM0163', name: 'AIR COMPRESSOR ATLAS COPCO', type: 'Air compressor', status: 'active' },
-    { code: 'MACM0164', name: 'AIR COMPRESSOR DOOSAN', type: 'Air compressor', status: 'active' },
-    { code: 'MACM0170', name: 'AIR COMPRESSOR KAESER', type: 'Air compressor', status: 'active' },
-    { code: 'MEXC0012', name: 'EXCAVATOR CAT 320D', type: 'Heavy machinery', status: 'active' },
-    { code: 'MJCB0034', name: 'BACKHOE LOADER JCB 3CX', type: 'Heavy machinery', status: 'active' },
-    { code: 'MCRN0018', name: 'TOWER CRANE TC-5010', type: 'Crane', status: 'active' },
-    { code: 'MTRK0056', name: 'DUMP TRUCK ISUZU 10T', type: 'Transport', status: 'active' },
-    { code: 'MMIX0025', name: 'CONCRETE MIXER 350L', type: 'Concrete', status: 'active' },
-    { code: 'MROL0042', name: 'COMPACTOR ROLLER BOMAG 8T', type: 'Compaction', status: 'active' },
-    { code: 'MGEN0088', name: 'GENERATOR CUMMINS 50kVA', type: 'Power', status: 'active' },
-    { code: 'MWEL0091', name: 'WELDING MACHINE INVERTER 400A', type: 'Welding', status: 'inactive' },
+    { code: 'MACM0075', name: 'AIR COMPRESSOR INGERSOLL RAND', type: 'Air compressor', costRate: 450.0, status: 'active' },
+    { code: 'MACM0146', name: 'AIR COMPRESSOR FS CURTIS', type: 'Air compressor', costRate: 450.0, status: 'active' },
+    { code: 'MACM0158', name: 'AIR COMPRESSOR SULLAIR', type: 'Air compressor', costRate: 500.0, status: 'active' },
+    { code: 'MACM0163', name: 'AIR COMPRESSOR ATLAS COPCO', type: 'Air compressor', costRate: 520.0, status: 'active' },
+    { code: 'MACM0164', name: 'AIR COMPRESSOR DOOSAN', type: 'Air compressor', costRate: 480.0, status: 'active' },
+    { code: 'MACM0170', name: 'AIR COMPRESSOR KAESER', type: 'Air compressor', costRate: 550.0, status: 'active' },
+    { code: 'MEXC0012', name: 'EXCAVATOR CAT 320D', type: 'Heavy machinery', costRate: 1800.0, status: 'active' },
+    { code: 'MJCB0034', name: 'BACKHOE LOADER JCB 3CX', type: 'Heavy machinery', costRate: 1200.0, status: 'active' },
+    { code: 'MCRN0018', name: 'TOWER CRANE TC-5010', type: 'Crane', costRate: 3500.0, status: 'active' },
+    { code: 'MTRK0056', name: 'DUMP TRUCK ISUZU 10T', type: 'Transport', costRate: 850.0, status: 'active' },
+    { code: 'MMIX0025', name: 'CONCRETE MIXER 350L', type: 'Concrete', costRate: 400.0, status: 'active' },
+    { code: 'MROL0042', name: 'COMPACTOR ROLLER BOMAG 8T', type: 'Compaction', costRate: 950.0, status: 'active' },
+    { code: 'MGEN0088', name: 'GENERATOR CUMMINS 50kVA', type: 'Power', costRate: 600.0, status: 'active' },
+    { code: 'MWEL0091', name: 'WELDING MACHINE INVERTER 400A', type: 'Welding', costRate: 250.0, status: 'inactive' },
 ];
 async function ensureSeedEquipment(tenantId) {
     const count = await prisma_1.default.equipment.count({ where: { tenantId } });
@@ -38,6 +38,7 @@ async function ensureSeedEquipment(tenantId) {
                     code: item.code,
                     name: item.name,
                     type: item.type,
+                    costRate: item.costRate,
                     status: item.status,
                 },
             });
@@ -98,7 +99,7 @@ exports.getEquipmentById = getEquipmentById;
 const createEquipment = async (req, res) => {
     try {
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const { code, name, type } = req.body;
+        const { code, name, type, costRate, primaryUnit, availableUnits } = req.body;
         if (!name || !name.trim()) {
             res.status(400).json({ error: 'Equipment name is required' });
             return;
@@ -109,6 +110,9 @@ const createEquipment = async (req, res) => {
                 code: code?.trim() || null,
                 name: name.trim(),
                 type: type?.trim() || null,
+                costRate: costRate !== undefined && costRate !== null && !isNaN(Number(costRate)) ? Number(costRate) : null,
+                primaryUnit: primaryUnit || 'mth',
+                availableUnits: Array.isArray(availableUnits) ? availableUnits : [],
                 status: 'active',
             },
         });
@@ -124,7 +128,7 @@ exports.createEquipment = createEquipment;
 const updateEquipment = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const { code, name, type, status } = req.body;
+        const { code, name, type, costRate, status, primaryUnit, availableUnits } = req.body;
         const data = {};
         if (code !== undefined)
             data.code = code?.trim() || null;
@@ -132,8 +136,15 @@ const updateEquipment = async (req, res) => {
             data.name = name.trim();
         if (type !== undefined)
             data.type = type?.trim() || null;
+        if (costRate !== undefined) {
+            data.costRate = costRate !== null && !isNaN(Number(costRate)) ? Number(costRate) : null;
+        }
         if (status !== undefined)
             data.status = status;
+        if (primaryUnit !== undefined)
+            data.primaryUnit = primaryUnit;
+        if (availableUnits !== undefined)
+            data.availableUnits = Array.isArray(availableUnits) ? availableUnits : [];
         const updated = await prisma_1.default.equipment.update({
             where: { id },
             data,

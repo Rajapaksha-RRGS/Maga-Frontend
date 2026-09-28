@@ -171,6 +171,17 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
 export const unassignEmployee = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+
+    const existing = await prisma.dailyAssignment.findFirst({
+      where: { id, tenantId },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Assignment record not found' });
+      return;
+    }
+
     await prisma.dailyAssignment.delete({
       where: { id },
     });
@@ -374,6 +385,17 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
 export const unassignOperator = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+
+    const existing = await prisma.dailyOperatorAssignment.findFirst({
+      where: { id, tenantId },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Operator assignment record not found' });
+      return;
+    }
+
     await prisma.dailyOperatorAssignment.delete({
       where: { id },
     });
@@ -575,6 +597,17 @@ export const assignEquipment = async (req: Request, res: Response): Promise<void
 export const unassignEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+
+    const existing = await prisma.dailyEquipmentAssignment.findFirst({
+      where: { id, tenantId },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Equipment assignment record not found' });
+      return;
+    }
+
     await prisma.dailyEquipmentAssignment.delete({
       where: { id },
     });

@@ -3,16 +3,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.batchSetCalendarDays = exports.setCalendarDay = exports.getCalendarMonth = exports.getDayTypes = void 0;
+exports.setCalendarEvents = exports.getCalendarEvents = exports.batchSetCalendarDays = exports.setCalendarDay = exports.getCalendarMonth = exports.getDayTypes = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
+const timeEntryController_1 = require("./timeEntryController");
 // Standard 5 fixed day types used in construction
 const DEFAULT_DAY_TYPES = [
     { name: 'Normal Day', code: 'normal', rateMultiplier: 1.0 },
     { name: 'Saturday', code: 'saturday', rateMultiplier: 1.0 },
     { name: 'Sunday', code: 'sunday', rateMultiplier: 1.5 },
     { name: 'Shutdown', code: 'shutdown', rateMultiplier: 1.0 },
-    { name: 'Public Holiday', code: 'public_holiday', rateMultiplier: 2.0 },
+    { name: 'Poya / Holiday', code: 'public_holiday', rateMultiplier: 2.0 },
 ];
 function deriveCode(name) {
     const lower = name.toLowerCase();
@@ -31,7 +32,10 @@ async function ensureSeedDayTypes(tenantId) {
         const existing = await prisma_1.default.dayType.findFirst({
             where: {
                 tenantId,
-                name: { equals: dt.name, mode: 'insensitive' },
+                OR: [
+                    { name: { equals: dt.name, mode: 'insensitive' } },
+                    ...(dt.code === 'public_holiday' ? [{ name: { equals: 'Public Holiday', mode: 'insensitive' } }] : []),
+                ],
             },
         });
         if (!existing) {
@@ -51,6 +55,75 @@ function parseCalendarDate(dateStr) {
 }
 function formatUtcDate(d) {
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+/**
+ * Helper: Recalculate hours and overtime for all open (draft/submitted) time entries
+ * when the calendar Day Type for a date is changed by Admin.
+ */
+async function recalculateUnapprovedEntriesForDate(tenantId, date) {
+    const rules = await (0, timeEntryController_1.getDayTypeRulesAndId)(tenantId, date);
+    const unapproved = await prisma_1.default.timeEntry.findMany({
+        where: {
+            tenantId,
+            date,
+            status: { in: ['draft', 'submitted'] },
+        },
+    });
+    if (unapproved.length > 0) {
+        for (const entry of unapproved) {
+            const netHours = Number(entry.hours) || 0;
+            let otHours = 0;
+            if (rules.isAllOvertime) {
+                otHours = netHours;
+            }
+            else if (netHours > rules.standardHoursCap) {
+                otHours = Math.round((netHours - rules.standardHoursCap) * 100) / 100;
+            }
+            else {
+                otHours = 0;
+            }
+            await prisma_1.default.timeEntry.update({
+                where: { id: entry.id },
+                data: {
+                    effectiveDayTypeId: rules.effectiveDayTypeId,
+                    overtimeHours: otHours,
+                },
+            });
+        }
+    }
+    // Also adjust unapproved OperatorTimeEntry records if any exist
+    const operatorAssignments = await prisma_1.default.dailyOperatorAssignment.findMany({
+        where: { tenantId, date },
+        include: { timeEntry: true },
+    });
+    for (const oa of operatorAssignments) {
+        if (oa.timeEntry && oa.timeEntry.status !== 'done') {
+            const shiftHours = Number(oa.timeEntry.shiftHours) || 0;
+            const totalHours = shiftHours + (Number(oa.timeEntry.otHours) || 0);
+            let newOt = 0;
+            let newShift = shiftHours;
+            if (rules.isAllOvertime) {
+                newOt = totalHours;
+                newShift = 0;
+            }
+            else if (totalHours > rules.standardHoursCap) {
+                newShift = rules.standardHoursCap;
+                newOt = Math.round((totalHours - rules.standardHoursCap) * 100) / 100;
+            }
+            else {
+                newShift = totalHours;
+                newOt = 0;
+            }
+            await prisma_1.default.operatorTimeEntry.update({
+                where: { id: oa.timeEntry.id },
+                data: {
+                    shiftHours: newShift,
+                    otHours: newOt,
+                },
+            });
+        }
+    }
+    return unapproved.length;
 }
 // 1. GET /api/calendar/day-types
 const getDayTypes = async (req, res) => {
@@ -104,7 +177,10 @@ const getCalendarMonth = async (req, res) => {
         });
         const savedMap = new Map();
         savedDays.forEach((sd) => {
-            savedMap.set(formatUtcDate(new Date(sd.date)), sd.dayTypeId);
+            savedMap.set(formatUtcDate(new Date(sd.date)), {
+                dayTypeId: sd.dayTypeId,
+                remarks: sd.remarks,
+            });
         });
         // Build complete month array
         const entries = [];
@@ -112,7 +188,8 @@ const getCalendarMonth = async (req, res) => {
             const date = new Date(Date.UTC(year, month, d));
             const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             const dow = date.getUTCDay(); // 0 = Sun, 6 = Sat
-            let dayTypeId = savedMap.get(key);
+            const savedItem = savedMap.get(key);
+            let dayTypeId = savedItem?.dayTypeId;
             if (!dayTypeId) {
                 if (dow === 0 && sunType)
                     dayTypeId = sunType.id;
@@ -121,7 +198,7 @@ const getCalendarMonth = async (req, res) => {
                 else
                     dayTypeId = normalType ? normalType.id : '';
             }
-            entries.push({ date: key, dayTypeId });
+            entries.push({ date: key, dayTypeId, remarks: savedItem?.remarks || null });
         }
         res.json(entries);
     }
@@ -141,6 +218,21 @@ const setCalendarDay = async (req, res) => {
             return;
         }
         const date = parseCalendarDate(dateStr);
+        // Guard: Prevent day type alteration if entries are already approved by Admin
+        const approvedCount = await prisma_1.default.timeEntry.count({
+            where: {
+                tenantId,
+                date,
+                status: 'approved',
+            },
+        });
+        if (approvedCount > 0) {
+            res.status(400).json({
+                error: `Cannot change Day Type: ${approvedCount} time entry record(s) on ${dateStr} are already Approved by Admin. Please return records to draft in Approvals before changing calendar settings.`,
+                isLocked: true,
+            });
+            return;
+        }
         const entry = await prisma_1.default.calendarDay.upsert({
             where: {
                 tenantId_date: {
@@ -157,9 +249,15 @@ const setCalendarDay = async (req, res) => {
                 dayTypeId,
             },
         });
+        // Cascade: Automatically recalculate open (draft/submitted) time entries
+        const recalculatedCount = await recalculateUnapprovedEntriesForDate(tenantId, date);
         res.json({
             date: formatUtcDate(new Date(entry.date)),
             dayTypeId: entry.dayTypeId,
+            recalculatedCount,
+            message: recalculatedCount > 0
+                ? `Day type updated and ${recalculatedCount} open time entries recalculated.`
+                : 'Day type updated successfully.',
         });
     }
     catch (error) {
@@ -177,9 +275,18 @@ const batchSetCalendarDays = async (req, res) => {
             res.status(400).json({ error: 'entries array is required' });
             return;
         }
-        const results = await prisma_1.default.$transaction(entries.map((item) => {
+        let updatedCount = 0;
+        let totalRecalculated = 0;
+        for (const item of entries) {
             const date = parseCalendarDate(item.date);
-            return prisma_1.default.calendarDay.upsert({
+            // Check if approved records exist; skip if approved
+            const approvedCount = await prisma_1.default.timeEntry.count({
+                where: { tenantId, date, status: 'approved' },
+            });
+            if (approvedCount > 0) {
+                continue;
+            }
+            await prisma_1.default.calendarDay.upsert({
                 where: {
                     tenantId_date: {
                         tenantId,
@@ -195,8 +302,11 @@ const batchSetCalendarDays = async (req, res) => {
                     dayTypeId: item.dayTypeId,
                 },
             });
-        }));
-        res.json({ updatedCount: results.length });
+            const recCount = await recalculateUnapprovedEntriesForDate(tenantId, date);
+            totalRecalculated += recCount;
+            updatedCount++;
+        }
+        res.json({ updatedCount, totalRecalculated });
     }
     catch (error) {
         console.error('Error batch setting calendar days:', error);
@@ -204,3 +314,91 @@ const batchSetCalendarDays = async (req, res) => {
     }
 };
 exports.batchSetCalendarDays = batchSetCalendarDays;
+// 5. GET /api/calendar/events?date=YYYY-MM-DD
+const getCalendarEvents = async (req, res) => {
+    try {
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const dateStr = req.query.date;
+        if (!dateStr) {
+            res.status(400).json({ error: 'date query parameter is required' });
+            return;
+        }
+        const date = parseCalendarDate(dateStr);
+        const day = await prisma_1.default.calendarDay.findUnique({
+            where: {
+                tenantId_date: {
+                    tenantId,
+                    date,
+                },
+            },
+        });
+        let events = [];
+        if (day?.remarks) {
+            try {
+                events = JSON.parse(day.remarks);
+                if (!Array.isArray(events))
+                    events = [];
+            }
+            catch {
+                events = [];
+            }
+        }
+        res.json({ date: dateStr, events });
+    }
+    catch (error) {
+        console.error('Error fetching calendar events:', error);
+        res.status(500).json({ error: 'Failed to fetch calendar events' });
+    }
+};
+exports.getCalendarEvents = getCalendarEvents;
+// 6. POST /api/calendar/events
+const setCalendarEvents = async (req, res) => {
+    try {
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const { date: dateStr, events } = req.body;
+        if (!dateStr || !Array.isArray(events)) {
+            res.status(400).json({ error: 'date and events array are required' });
+            return;
+        }
+        const date = parseCalendarDate(dateStr);
+        const remarksJson = JSON.stringify(events);
+        // If day exists, update remarks. If not, determine default day type and create.
+        const allTypes = await prisma_1.default.dayType.findMany({ where: { tenantId } });
+        const normalType = allTypes.find((t) => deriveCode(t.name) === 'normal') || allTypes[0];
+        const satType = allTypes.find((t) => deriveCode(t.name) === 'saturday') || normalType;
+        const sunType = allTypes.find((t) => deriveCode(t.name) === 'sunday') || normalType;
+        const dow = date.getUTCDay();
+        let defaultDayTypeId = normalType ? normalType.id : '';
+        if (dow === 0 && sunType)
+            defaultDayTypeId = sunType.id;
+        else if (dow === 6 && satType)
+            defaultDayTypeId = satType.id;
+        const entry = await prisma_1.default.calendarDay.upsert({
+            where: {
+                tenantId_date: {
+                    tenantId,
+                    date,
+                },
+            },
+            update: {
+                remarks: remarksJson,
+            },
+            create: {
+                tenantId,
+                date,
+                dayTypeId: defaultDayTypeId,
+                remarks: remarksJson,
+            },
+        });
+        res.json({
+            success: true,
+            date: formatUtcDate(new Date(entry.date)),
+            events,
+        });
+    }
+    catch (error) {
+        console.error('Error saving calendar events:', error);
+        res.status(500).json({ error: 'Failed to save calendar events' });
+    }
+};
+exports.setCalendarEvents = setCalendarEvents;
