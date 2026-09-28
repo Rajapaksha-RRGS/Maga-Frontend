@@ -210,20 +210,23 @@ const checkInEmployee = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const entryDate = parseDate(date);
-        // Strict lock: Check if records for this employee or supervisor are already submitted
-        const submittedCheck = await prisma_1.default.timeEntry.findFirst({
+        // Strict lock: Check if records for this employee or supervisor are already submitted or approved
+        const lockedCheck = await prisma_1.default.timeEntry.findFirst({
             where: {
                 tenantId,
                 date: entryDate,
-                status: 'submitted',
+                status: { in: ['submitted', 'approved'] },
                 OR: [
                     { employeeId },
                     ...(supervisorId ? [{ supervisorId }] : []),
                 ],
             },
         });
-        if (submittedCheck) {
-            res.status(403).json({ error: 'Cannot check in: Daily attendance has already been submitted and locked.' });
+        if (lockedCheck) {
+            const msg = lockedCheck.status === 'approved'
+                ? 'Cannot edit time entry: Daily attendance has already been Approved by Admin.'
+                : 'Cannot check in: Daily attendance has already been submitted and locked.';
+            res.status(403).json({ error: msg });
             return;
         }
         // Check if time entries already exist for this employee and date
@@ -306,20 +309,23 @@ const checkOutEmployee = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const entryDate = parseDate(date);
-        // Strict lock: Check if records for this employee or supervisor are already submitted
-        const submittedCheck = await prisma_1.default.timeEntry.findFirst({
+        // Strict lock: Check if records for this employee or supervisor are already submitted or approved
+        const lockedCheck = await prisma_1.default.timeEntry.findFirst({
             where: {
                 tenantId,
                 date: entryDate,
-                status: 'submitted',
+                status: { in: ['submitted', 'approved'] },
                 OR: [
                     { employeeId },
                     ...(supervisorId ? [{ supervisorId }] : []),
                 ],
             },
         });
-        if (submittedCheck) {
-            res.status(403).json({ error: 'Cannot record checkout: Daily attendance has already been submitted and locked.' });
+        if (lockedCheck) {
+            const msg = lockedCheck.status === 'approved'
+                ? 'Cannot edit time entry: Daily attendance has already been Approved by Admin.'
+                : 'Cannot record checkout: Daily attendance has already been submitted and locked.';
+            res.status(403).json({ error: msg });
             return;
         }
         const existingEntries = await prisma_1.default.timeEntry.findMany({
@@ -412,17 +418,20 @@ const assignActivityBulk = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
-        // Strict lock: Check if records for this supervisor or date are already submitted
-        const submittedCheck = await prisma_1.default.timeEntry.findFirst({
+        // Strict lock: Check if records for this supervisor or date are already submitted or approved
+        const lockedCheck = await prisma_1.default.timeEntry.findFirst({
             where: {
                 tenantId,
                 date: targetDate,
-                status: 'submitted',
+                status: { in: ['submitted', 'approved'] },
                 ...(supervisorId ? { supervisorId } : {}),
             },
         });
-        if (submittedCheck) {
-            res.status(403).json({ error: 'Cannot update activities: Daily records have already been submitted and locked.' });
+        if (lockedCheck) {
+            const msg = lockedCheck.status === 'approved'
+                ? 'Cannot update activities: Daily records have already been Approved by Admin.'
+                : 'Cannot update activities: Daily records have already been submitted and locked.';
+            res.status(403).json({ error: msg });
             return;
         }
         // Validate that all employees have both inTime and outTime recorded before assigning activities
@@ -561,6 +570,27 @@ const assignActivityBulk = async (req, res) => {
                 }
             }
         }
+        // Recalculate and persist activity split totals and OT for each modified employee
+        for (const empId of employeeIds) {
+            const allEmpEntries = await prisma_1.default.timeEntry.findMany({
+                where: { tenantId, employeeId: empId, date: targetDate },
+            });
+            const totalEmpHours = allEmpEntries.reduce((acc, curr) => acc + Number(curr.hours), 0);
+            let dayOt = 0;
+            if (isAllOvertime) {
+                dayOt = totalEmpHours;
+            }
+            else if (totalEmpHours > standardHoursCap) {
+                dayOt = Math.round((totalEmpHours - standardHoursCap) * 100) / 100;
+            }
+            await prisma_1.default.timeEntry.updateMany({
+                where: { tenantId, employeeId: empId, date: targetDate },
+                data: {
+                    shiftHours: totalEmpHours,
+                    otHours: dayOt,
+                },
+            });
+        }
         res.status(201).json({
             success: true,
             count: createdEntries.length,
@@ -599,7 +629,24 @@ const upsertTimeEntry = async (req, res) => {
         const finalInTime = inTime ?? existing?.inTime ?? null;
         const finalOutTime = outTime ?? existing?.outTime ?? null;
         const breakHours = computeBreakHours(finalInTime, finalOutTime);
+        // Guard against modifying approved entries
+        const approvedCheck = await prisma_1.default.timeEntry.findFirst({
+            where: {
+                tenantId,
+                employeeId,
+                date: targetDate,
+                status: 'approved',
+            },
+        });
+        if (approvedCheck) {
+            res.status(403).json({ error: 'Cannot edit time entry: Daily attendance has already been Approved by Admin.' });
+            return;
+        }
         if (existing) {
+            if (existing.status === 'submitted') {
+                res.status(403).json({ error: 'Cannot edit time entry: Daily attendance has already been submitted and locked.' });
+                return;
+            }
             const updated = await prisma_1.default.timeEntry.update({
                 where: { id: existing.id },
                 data: {
@@ -1224,6 +1271,14 @@ const saveOperatorEntry = async (req, res) => {
                     operatorId,
                 },
             });
+        }
+        // Guard: Prevent edits to approved/done operator time entries
+        const existingEntry = await prisma_1.default.operatorTimeEntry.findUnique({
+            where: { assignmentId: assignment.id },
+        });
+        if (existingEntry && (existingEntry.status === 'approved' || existingEntry.status === 'done')) {
+            res.status(403).json({ error: 'Cannot edit operator time entry: Record has already been Approved or Completed.' });
+            return;
         }
         // 2. Upsert OperatorTimeEntry
         const timeEntry = await prisma_1.default.operatorTimeEntry.upsert({

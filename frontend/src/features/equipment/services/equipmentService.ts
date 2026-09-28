@@ -45,7 +45,7 @@ function mapEquipment(item: any): Equipment {
   };
 }
 
-export async function getAll(): Promise<Equipment[]> {
+export async function getAll(forceRefresh = false): Promise<Equipment[]> {
   return cacheManager.fetchWithCache('equipment:list', async () => {
     const res = await apiFetch(`${API_URL}/equipment`);
     if (!res.ok) {
@@ -57,7 +57,7 @@ export async function getAll(): Promise<Equipment[]> {
       return data.map(mapEquipment);
     }
     return [];
-  });
+  }, null, forceRefresh);
 }
 
 export async function getById(id: string): Promise<Equipment> {

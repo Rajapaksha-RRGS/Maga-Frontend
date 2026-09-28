@@ -25,6 +25,7 @@ interface EquipmentLogsViewProps {
   equipment: EquipmentLogEntry[];
   operators: OperatorEntry[];
   onSaveEquipment: (updated: EquipmentLogEntry[]) => void;
+  isDayLocked?: boolean;
 }
 
 const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon: string }> = {
@@ -97,6 +98,7 @@ export function EquipmentLogsView({
   equipment,
   operators,
   onSaveEquipment,
+  isDayLocked = false,
 }: EquipmentLogsViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
@@ -560,6 +562,14 @@ export function EquipmentLogsView({
 
   return (
     <div className="space-y-3 pb-24 animate-in fade-in duration-150">
+      {/* ── 0. Locked State Banner ────────────────────────────────────────── */}
+      {isDayLocked && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2.5 text-amber-800 text-xs font-medium">
+          <Lock size={16} className="text-amber-600 shrink-0" />
+          <span>Daily records have been submitted and locked. Equipment logs are in read-only mode.</span>
+        </div>
+      )}
+
       {/* ── Search Bar ──────────────────────────────────────────────────────── */}
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />

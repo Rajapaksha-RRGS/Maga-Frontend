@@ -59,7 +59,7 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
       {
         header: 'Business Partner',
         accessor: 'businessPartner',
-        render: (e) => <span className="text-slate-700">{e.businessPartnerId}</span>,
+        render: (e) => <span className="text-slate-700">{e.businessPartner || 'Direct'}</span>,
       },
      
       
@@ -75,10 +75,13 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
         header: 'Actions',
         accessor: 'actions',
         render:(e) => (
-           <div className="flex items-center gap-2">
+           <div className="flex items-center gap-2" onClick={(evt) => evt.stopPropagation()}>
             <button
               type="button"
-              onClick={() => onToggleStatus?.(e.id, e.status)}
+              onClick={(evt) => {
+                evt.stopPropagation();
+                onToggleStatus?.(e.id, e.status);
+              }}
               title={e.status === 'active' ? 'Deactivate employee' : 'Activate employee'}
               className={`text-xs px-2 py-0.5 rounded font-medium transition-colors ${e.status === 'active'
                   ? 'text-slate-500 hover:text-amber-700 hover:bg-amber-50 border border-slate-200'

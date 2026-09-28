@@ -216,6 +216,7 @@ export default function SupervisorMobileApp() {
             operators={operators}
             equipment={equipment}
             onSaveOperators={handleSaveOperators}
+            isDayLocked={isDayLocked}
           />
         )}
 
@@ -224,6 +225,7 @@ export default function SupervisorMobileApp() {
             equipment={equipment}
             operators={operators}
             onSaveEquipment={handleSaveEquipment}
+            isDayLocked={isDayLocked}
           />
         )}
 

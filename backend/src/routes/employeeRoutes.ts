@@ -9,12 +9,13 @@ import {
   getCrossTenantEmployeeStatus,
   transferEmployee,
 } from '../controllers/employeeController';
+import { requireAdmin } from '../middleware/authMiddleware';
 
 const router = Router();
 
-// Cross-tenant & Transfer routes (must be before :id)
-router.post('/cross-tenant-status', getCrossTenantEmployeeStatus);
-router.post('/transfer', transferEmployee);
+// Cross-tenant & Transfer routes (protected with authorization)
+router.post('/cross-tenant-status', requireAdmin, getCrossTenantEmployeeStatus);
+router.post('/transfer', requireAdmin, transferEmployee);
 
 // Standard routes matching frontend expectations
 router.get('/', getAllEmployees);

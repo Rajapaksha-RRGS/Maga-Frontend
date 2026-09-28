@@ -16,7 +16,7 @@ export function useEquipment() {
       setIsLoading(true);
     }
     try {
-      const data = await svc.getAll();
+      const data = await svc.getAll(forceRefresh);
       setItems(data);
     } finally {
       setIsLoading(false);
@@ -36,9 +36,9 @@ export function useEquipment() {
     );
   });
 
-  const add = async (data: EquipmentFormData) => { await svc.create(data); await load(); };
-  const edit = async (id: string, data: Partial<EquipmentFormData>) => { await svc.update(id, data); await load(); };
-  const remove = async (id: string) => { await svc.deactivate(id); await load(); };
+  const add = async (data: EquipmentFormData) => { await svc.create(data); await load(true); };
+  const edit = async (id: string, data: Partial<EquipmentFormData>) => { await svc.update(id, data); await load(true); };
+  const remove = async (id: string) => { await svc.deactivate(id); await load(true); };
 
   return { items, filtered, isLoading, search, setSearch, add, edit, remove, refresh: load };
 }

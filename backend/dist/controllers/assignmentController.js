@@ -123,6 +123,25 @@ const assignEmployees = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
+        // Validate supervisor belongs to tenant
+        const supervisor = await prisma_1.default.user.findFirst({
+            where: { id: supervisorId, tenantId },
+        });
+        if (!supervisor) {
+            res.status(404).json({ error: 'Supervisor not found for this tenant' });
+            return;
+        }
+        // Validate employee IDs belong to tenant
+        const validEmployees = await prisma_1.default.employee.findMany({
+            where: { id: { in: employeeIds }, tenantId },
+            select: { id: true },
+        });
+        const validEmpIdSet = new Set(validEmployees.map((e) => e.id));
+        const invalidEmpIds = employeeIds.filter((id) => !validEmpIdSet.has(id));
+        if (invalidEmpIds.length > 0) {
+            res.status(400).json({ error: `The following employee ID(s) do not belong to this tenant: ${invalidEmpIds.join(', ')}` });
+            return;
+        }
         const createdAssignments = [];
         for (const empId of employeeIds) {
             const assignment = await prisma_1.default.dailyAssignment.upsert({
@@ -321,6 +340,25 @@ const assignOperators = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
+        // Validate supervisor belongs to tenant
+        const supervisor = await prisma_1.default.user.findFirst({
+            where: { id: supervisorId, tenantId },
+        });
+        if (!supervisor) {
+            res.status(404).json({ error: 'Supervisor not found for this tenant' });
+            return;
+        }
+        // Validate operator IDs belong to tenant
+        const validOperators = await prisma_1.default.employee.findMany({
+            where: { id: { in: operatorIds }, tenantId },
+            select: { id: true },
+        });
+        const validOpIdSet = new Set(validOperators.map((o) => o.id));
+        const invalidOpIds = operatorIds.filter((id) => !validOpIdSet.has(id));
+        if (invalidOpIds.length > 0) {
+            res.status(400).json({ error: `The following operator ID(s) do not belong to this tenant: ${invalidOpIds.join(', ')}` });
+            return;
+        }
         const createdAssignments = [];
         for (const opId of operatorIds) {
             const assignment = await prisma_1.default.dailyOperatorAssignment.upsert({
@@ -517,6 +555,25 @@ const assignEquipment = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
+        // Validate supervisor belongs to tenant
+        const supervisor = await prisma_1.default.user.findFirst({
+            where: { id: supervisorId, tenantId },
+        });
+        if (!supervisor) {
+            res.status(404).json({ error: 'Supervisor not found for this tenant' });
+            return;
+        }
+        // Validate equipment IDs belong to tenant
+        const validEquipment = await prisma_1.default.equipment.findMany({
+            where: { id: { in: equipmentIds }, tenantId },
+            select: { id: true },
+        });
+        const validEqIdSet = new Set(validEquipment.map((eq) => eq.id));
+        const invalidEqIds = equipmentIds.filter((id) => !validEqIdSet.has(id));
+        if (invalidEqIds.length > 0) {
+            res.status(400).json({ error: `The following equipment ID(s) do not belong to this tenant: ${invalidEqIds.join(', ')}` });
+            return;
+        }
         const createdAssignments = [];
         for (const eqId of equipmentIds) {
             const assignment = await prisma_1.default.dailyEquipmentAssignment.upsert({

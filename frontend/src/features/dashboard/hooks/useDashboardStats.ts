@@ -94,7 +94,7 @@ export function useDashboardStats(): DashboardStats {
         let status: SupervisorStatus['status'];
         if (supEntries.length === 0) {
           status = 'not-started';
-        } else if (supEntries.every((t) => t.status === 'submitted')) {
+        } else if (supEntries.every((t) => t.status === 'submitted' || t.status === 'approved')) {
           status = 'submitted';
           submittedSupervisors++;
         } else {

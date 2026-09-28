@@ -352,6 +352,22 @@ const transferEmployee = async (req, res) => {
             res.status(400).json({ error: 'Calling name and NIC number are required' });
             return;
         }
+        // Find previous record across tenants to preserve operator metadata if not explicitly provided
+        const prevRecord = await prisma_1.default.employee.findFirst({
+            where: {
+                OR: [
+                    { nicNo },
+                    employeeCode ? { employeeCode } : undefined,
+                ].filter(Boolean),
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+        const isOperatorVal = req.body.isOperator !== undefined
+            ? Boolean(req.body.isOperator)
+            : (prevRecord?.isOperator ?? false);
+        const licenseNoVal = req.body.licenseNo !== undefined
+            ? req.body.licenseNo
+            : (prevRecord?.licenseNo || null);
         // 1. Deactivate this worker in any previous tenant (where active)
         await prisma_1.default.employee.updateMany({
             where: {
@@ -412,6 +428,8 @@ const transferEmployee = async (req, res) => {
                     tradeGroup: tradeGroup || 'General labour',
                     dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
                     epfNo: epfNo || '',
+                    isOperator: isOperatorVal,
+                    licenseNo: licenseNoVal,
                     status: 'active',
                     businessPartnerId: targetBpId,
                 },
@@ -432,6 +450,8 @@ const transferEmployee = async (req, res) => {
                     nicNo,
                     dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
                     epfNo: epfNo || '',
+                    isOperator: isOperatorVal,
+                    licenseNo: licenseNoVal,
                     status: 'active',
                     businessPartnerId: targetBpId,
                 },
