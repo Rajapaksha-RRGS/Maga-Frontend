@@ -12,6 +12,7 @@ import { useAssignments } from '../features/assignments/hooks/useAssignments';
 import UnassignedPanel from '../features/assignments/components/UnassignedPanel';
 import SupervisorPanel from '../features/assignments/components/SupervisorPanel';
 import AssignmentToolbar from '../features/assignments/components/AssignmentToolbar';
+import Breadcrumb from '../components/Breadcrumb';
 
 export default function AssignmentsPage() {
   const hook = useAssignments();
@@ -31,7 +32,7 @@ export default function AssignmentsPage() {
         </div>
         <div>
           <h1 className="text-base font-medium text-slate-800">Labour assign</h1>
-          <p className="text-xs text-slate-400 mt-0.5">Assign labour employees to supervisors for daily operations</p>
+          <Breadcrumb items={[{ label: 'Assignments', to: '/admin/assignments/labour' }, { label: 'Labour assign' }]} className="mt-1" />
         </div>
       </div>
 

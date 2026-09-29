@@ -3,15 +3,16 @@
  * Assembles feature components only — no business logic (per spec).
  */
 import { useState, useMemo } from 'react';
-import { Plus, Database } from 'lucide-react';
+import { Database } from 'lucide-react';
 import { useEquipment } from '../features/equipment/hooks/useEquipment';
 import EquipmentTable from '../features/equipment/components/EquipmentTable';
 import EquipmentCardList from '../features/equipment/components/EquipmentCardList';
 import EquipmentForm from '../features/equipment/components/EquipmentForm';
+import EquipmentImportView from '../features/equipment/components/EquipmentImportView';
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
-import MasterImportModal from '../features/master-import/components/MasterImportModal';
+import Breadcrumb from '../components/Breadcrumb';
 import { CORPORATE_EQUIPMENT_CATALOG } from '../features/master-import/services/corporateMasterService';
 import type { CorporateEquipment } from '../features/master-import/services/corporateMasterService';
 import type { Equipment, EquipmentFormData } from '../features/equipment/services/equipmentService';
@@ -20,9 +21,8 @@ export default function EquipmentPage() {
   const { filtered, isLoading, search, setSearch, add, edit, remove } = useEquipment();
   const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<Equipment | null>(null);
-  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
-  const openAdd = () => { setEditing(null); setPanelOpen(true); };
   const openEdit = (e: Equipment) => { setEditing(e); setPanelOpen(true); };
   const close = () => { setPanelOpen(false); setEditing(null); };
 
@@ -42,59 +42,43 @@ export default function EquipmentPage() {
         code: item.code,
         name: item.name,
         type: item.type,
+        costRate: item.costRate !== undefined && item.costRate !== null ? Number(item.costRate) : 0,
       });
     }
+    setShowImport(false);
   };
 
-  const equipmentColumns = [
-    {
-      key: 'model',
-      header: 'Model / Capacity',
-      render: (item: CorporateEquipment) => (
-        <div>
-          <span className="font-medium text-slate-700">{item.model}</span>
-          <span className="block text-[11px] text-slate-400">{item.capacity}</span>
-        </div>
-      ),
-    },
-    {
-      key: 'reg',
-      header: 'Reg No',
-      render: (item: CorporateEquipment) => (
-        <span className="font-mono text-xs text-slate-600 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
-          {item.registrationNo}
-        </span>
-      ),
-    },
-  ];
+  // ── Full-screen import view ──────────────────────────────────────────────────
+  if (showImport) {
+    return (
+      <div className="h-full max-h-full flex-1 flex flex-col min-h-0 overflow-hidden box-border overscroll-none">
+        <EquipmentImportView
+          onBack={() => setShowImport(false)}
+          catalog={CORPORATE_EQUIPMENT_CATALOG}
+          existingCodes={existingCodes}
+          onImport={handleBatchImport}
+        />
+      </div>
+    );
+  }
 
+  // ── Normal page ──────────────────────────────────────────────────────────────
   return (
     <div className="px-4 md:px-6 py-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
         <div>
           <h1 className="text-base font-semibold text-slate-800">Equipment Master</h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Heavy machinery, tools and vehicles allocated to this project workspace
-          </p>
+          <Breadcrumb items={[{ label: 'Master Data' }, { label: 'Equipment Master' }]} className="mt-1" />
         </div>
 
         <div className="flex items-center gap-2">
           <button
             id="equip-import-btn"
-            onClick={() => setImportModalOpen(true)}
+            onClick={() => setShowImport(true)}
             className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 cursor-pointer shadow-xs"
           >
             <Database size={16} />
             <span>Add from ERP Master</span>
-          </button>
-          <button
-            id="equip-add-btn"
-            onClick={openAdd}
-            className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 font-medium text-sm rounded-lg px-3 min-h-[44px] transition-colors hover:bg-slate-50 active:bg-slate-100 cursor-pointer"
-            title="Create ad-hoc equipment record manually"
-          >
-            <Plus size={16} />
-            <span className="hidden sm:inline">Manual entry</span>
           </button>
         </div>
       </div>
@@ -112,24 +96,6 @@ export default function EquipmentPage() {
           <p className="text-xs text-slate-400 mt-3">{filtered.length} item{filtered.length !== 1 ? 's' : ''}</p>
         </>
       )}
-
-      {/* Corporate ERP Master Import Modal */}
-      <MasterImportModal<CorporateEquipment>
-        isOpen={importModalOpen}
-        onClose={() => setImportModalOpen(false)}
-        title="Corporate ERP Master Catalog — Equipment"
-        subtitle="Search verified plant & heavy machinery from central corporate pool and import into this project."
-        entityName="Equipment"
-        catalog={CORPORATE_EQUIPMENT_CATALOG}
-        existingCodes={existingCodes}
-        getItemCode={(item) => item.code}
-        getItemName={(item) => item.name}
-        getItemCategory={(item) => item.type}
-        getItemSourceProject={(item) => item.sourceProject}
-        columns={equipmentColumns}
-        onImport={handleBatchImport}
-        onOpenManualAdd={openAdd}
-      />
 
       {/* Manual Slide Panel Form */}
       <SlidePanel open={panelOpen} onClose={close} title={editing ? 'Edit equipment' : 'Add equipment'}>

@@ -9,7 +9,7 @@
  *
  * All business logic lives in features/reports/ (hooks, services, components).
  */
-import { FileSpreadsheet, Download } from 'lucide-react';
+import { FileSpreadsheet, Download, CheckCircle2 } from 'lucide-react';
 import { useReports } from '../features/reports/hooks/useReports';
 import ReportTypeSelector from '../features/reports/components/ReportTypeSelector';
 import ReportFiltersBar from '../features/reports/components/ReportFilters';
@@ -19,6 +19,7 @@ import BpBillTable from '../features/reports/components/BpBillTable';
 import ErpUploadTable from '../features/reports/components/ErpUploadTable';
 import RunningChartTable from '../features/reports/components/RunningChartTable';
 import EmptyState from '../components/EmptyState';
+import Breadcrumb from '../components/Breadcrumb';
 
 export default function ReportsPage() {
   const {
@@ -48,13 +49,17 @@ export default function ReportsPage() {
       {/* ── 1. Page Header with Export Button ──────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
-            <FileSpreadsheet size={20} className="text-blue-700" />
-            Reports & Payroll Export
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Generate consolidated attendance summaries, daily OT grids, business partner billing sheets, and ERP export files.
-          </p>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+              <FileSpreadsheet size={20} className="text-blue-700" />
+              Reports & Payroll Export
+            </h1>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <CheckCircle2 size={12} className="text-emerald-600" />
+              Approved Records Only
+            </span>
+          </div>
+          <Breadcrumb items={[{ label: 'Reports & Payroll' }]} className="mt-1" />
         </div>
 
         {/* Top-Right "Export to Excel" Button */}

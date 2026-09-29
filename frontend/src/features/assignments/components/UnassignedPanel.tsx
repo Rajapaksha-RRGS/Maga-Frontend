@@ -2,7 +2,7 @@
  * UnassignedPanel.tsx — Left panel: unassigned employees with checkbox multi-select.
  * Clean card design with header, search + filters, and employee list.
  */
-import { UserX, CheckSquare, Square } from 'lucide-react';
+import { UserX, CheckSquare, Square, Check } from 'lucide-react';
 import SearchInput from '../../../components/SearchInput';
 import type { Employee } from '../../employees/services/employeeService';
 
@@ -104,12 +104,24 @@ export default function UnassignedPanel({
                       : 'hover:bg-slate-50',
                   ].join(' ')}
                 >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => onToggle(emp.id)}
-                    className="w-4 h-4 rounded border-slate-300 text-blue-700 accent-blue-700 flex-shrink-0"
-                  />
+                  <div className="relative inline-flex items-center justify-center flex-shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggle(emp.id)}
+                      className="opacity-0 absolute inset-0 w-full h-full cursor-pointer z-10 m-0 p-0"
+                    />
+                    <div
+                      className={[
+                        'w-[18px] h-[18px] rounded-[5px] border-2 flex items-center justify-center transition-all',
+                        isSelected
+                          ? 'bg-blue-600 border-blue-600 shadow-sm'
+                          : 'bg-white border-slate-300 hover:border-blue-400 shadow-2xs',
+                      ].join(' ')}
+                    >
+                      {isSelected && <Check size={12} className="text-white stroke-[3.5]" />}
+                    </div>
+                  </div>
                   <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-medium"
                     style={{
                       backgroundColor: isSelected ? '#dbeafe' : '#f1f5f9',

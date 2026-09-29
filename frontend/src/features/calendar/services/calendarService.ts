@@ -114,18 +114,36 @@ export async function getCalendarMonth(year: number, month: number): Promise<Cal
   });
 }
 
-export async function setCalendarDayType(date: string, dayTypeId: string): Promise<void> {
-  // Update local cache immediately
-  CALENDAR.set(date, dayTypeId);
-  cacheManager.invalidate('calendar');
-
+export async function setCalendarDayType(
+  date: string,
+  dayTypeId: string
+): Promise<{ success: boolean; recalculatedCount?: number; message?: string }> {
   try {
-    await apiFetch(`${API_URL}/calendar/set-day`, {
+    const res = await apiFetch(`${API_URL}/calendar/set-day`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ date, dayTypeId }),
     });
-  } catch (err) {
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to update day type on server');
+    }
+
+    const data = await res.json();
+    CALENDAR.set(date, dayTypeId);
+    cacheManager.invalidate('calendar');
+    cacheManager.invalidate('time-entries');
+    cacheManager.invalidate('approvals');
+
+    return {
+      success: true,
+      recalculatedCount: data.recalculatedCount,
+      message: data.message,
+    };
+  } catch (err: any) {
     console.warn('Failed to set calendar day on backend:', err);
+    throw err;
   }
 }
 
@@ -152,6 +170,7 @@ export async function bulkMarkSundays(year: number, month: number): Promise<numb
   try {
     await apiFetch(`${API_URL}/calendar/batch-set`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entries }),
     });
   } catch (err) {
@@ -183,6 +202,7 @@ export async function bulkMarkSaturdays(year: number, month: number): Promise<nu
   try {
     await apiFetch(`${API_URL}/calendar/batch-set`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entries }),
     });
   } catch (err) {

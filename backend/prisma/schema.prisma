@@ -181,6 +181,10 @@ model Equipment {
   code           String?  // Preserved as `code` for query compatibility (e.g. "EX-04")
   name           String   // e.g. "CAT 320D Excavator"
   type           String?  // e.g. "Heavy Earthmover"
+  costRate       Decimal? @default(0.00) @map("cost_rate") @db.Decimal(10, 2)
+  // Rating Units
+  primaryUnit    String   @default("mth") @map("primary_unit")      // 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2'
+  availableUnits String[] @default([]) @map("available_units")      // e.g. ["mth", "Days", "Hrs"] — empty = all 5 units
   status         String   @default("active")
   meterUnitId    String?  @map("meter_unit_id")
   ownerPartnerId String?  @map("owner_partner_id")
@@ -473,3 +477,94 @@ model EquipmentDailyLog {
   @@index([tenantId])
   @@map("equipment_daily_logs")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 16. CENTRAL CORPORATE ERP MASTER DATA (Head-Office / Global Catalog)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CorporateEquipment {
+  id                    String   @id @default(uuid())
+  code                  String   @unique
+  description           String
+  searchKey             String   @map("search_key")
+  costRate              Decimal  @default(0.00) @map("cost_rate") @db.Decimal(12, 2)
+  currency              String   @default("LKR")
+  type                  String?
+  model                 String?
+  registrationNo        String?  @map("registration_no")
+  capacity              String?
+  // Rating Units (Corporate-level defaults; project equipment may override)
+  primaryUnit           String   @default("mth") @map("primary_unit")    // 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2'
+  availableUnits        String[] @default([]) @map("available_units")    // [] = all 5 units available
+  currentWorkingProject String?  @map("current_working_project")
+  status                String   @default("active")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@map("corporate_equipment")
+}
+
+model CorporateEmployee {
+  id                    String   @id @default(uuid())
+  employeeCode          String   @unique @map("employee_code")
+  callingName           String   @map("calling_name")
+  fullName              String   @map("full_name")
+  nicNo                 String   @map("nic_no")
+  tradeGroup            String   @map("trade_group")
+  isOperator            Boolean  @default(false) @map("is_operator")
+  licenseNo             String?  @map("license_no")
+  epfNo                 String?  @map("epf_no")
+  businessPartnerCode   String?  @map("business_partner_code")
+  businessPartnerName   String?  @map("business_partner_name")
+  currentWorkingProject String?  @map("current_working_project")
+  status                String   @default("active")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@map("corporate_employees")
+}
+
+model CorporateBusinessPartner {
+  id                    String   @id @default(uuid())
+  code                  String   @unique
+  name                  String
+  type                  String   @default("subcontractor")
+  contactPerson         String?  @map("contact_person")
+  phone                 String?
+  email                 String?
+  rating                String?
+  currentWorkingProject String?  @map("current_working_project")
+  status                String   @default("active")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@map("corporate_business_partners")
+}
+
+model CorporateActivityCode {
+  id                    String   @id @default(uuid())
+  code                  String   @unique
+  description           String
+  searchKey             String?  @map("search_key")
+  activityType          String?  @map("activity_type")
+  unit                  String?
+  timeUnit              String?  @map("time_unit")
+  currentWorkingProject String?  @map("current_working_project")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@map("corporate_activity_codes")
+}
+
+model CorporateProject {
+  id             String   @id @default(uuid())
+  projectCode    String   @unique @map("project_code")
+  description    String
+  searchKey      String   @map("search_key")
+  projectManager String?  @map("project_manager")
+  addressCode    String?  @map("address_code")
+  projectName    String?  @map("project_name")
+  enterpriseUnit String?  @map("enterprise_unit")
+  currency       String   @default("LKR")
+  status         String   @default("Active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("corporate_projects")
+}
+

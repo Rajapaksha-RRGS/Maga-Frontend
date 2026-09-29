@@ -17,7 +17,10 @@ export interface Equipment {
   id: string;
   code: string;
   name: string;
-  type: string;
+  type?: string;
+  costRate?: number;
+  primaryUnit?: string;      // 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2'
+  availableUnits?: string[]; // subset; empty = all 5 units available
   status: 'active' | 'inactive';
 }
 
@@ -27,16 +30,22 @@ import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
 function mapEquipment(item: any): Equipment {
+  const rawRate = item.costRate ?? item.cost_rate;
   return {
     id: item.id,
     code: item.code || '',
     name: item.name,
     type: item.type || '',
+    costRate: rawRate !== null && rawRate !== undefined && !isNaN(Number(rawRate)) ? Number(rawRate) : 0,
+    primaryUnit: item.primaryUnit || item.primary_unit || 'mth',
+    availableUnits: Array.isArray(item.availableUnits || item.available_units)
+      ? (item.availableUnits || item.available_units)
+      : [],
     status: item.status === 'inactive' ? 'inactive' : 'active',
   };
 }
 
-export async function getAll(): Promise<Equipment[]> {
+export async function getAll(forceRefresh = false): Promise<Equipment[]> {
   return cacheManager.fetchWithCache('equipment:list', async () => {
     const res = await apiFetch(`${API_URL}/equipment`);
     if (!res.ok) {
@@ -48,7 +57,7 @@ export async function getAll(): Promise<Equipment[]> {
       return data.map(mapEquipment);
     }
     return [];
-  });
+  }, null, forceRefresh);
 }
 
 export async function getById(id: string): Promise<Equipment> {

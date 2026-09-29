@@ -32,7 +32,7 @@ export default function DataTable<T>({
   onRowClick,
 }: DataTableProps<T>) {
   return (
-    <div className="hidden md:block bg-white rounded-lg border border-slate-200 overflow-hidden">
+    <div className="hidden md:block bg-white rounded-lg border border-slate-200 overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-slate-50 border-b border-slate-200">

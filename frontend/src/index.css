@@ -56,16 +56,21 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  width: 100%;
+  overflow: visible;
+  overscroll-behavior: none;
 }
 
 #root {
   /* Remove Vite template centering — we handle layout per-page */
   width: 100%;
   max-width: 100%;
+  height: 100%;
   margin: 0;
   text-align: left;
   border: none;
-  min-height: 100svh;
+  overflow: visible;
+  overscroll-behavior: none;
   display: flex;
   flex-direction: column;
   font-family: var(--font-sans);
@@ -203,4 +208,4 @@ code {
 
 .animate-splash-progress-indeterminate {
   animation: splashProgressIndeterminate 1.4s infinite cubic-bezier(0.4, 0, 0.2, 1);
-}
+}

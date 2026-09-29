@@ -147,7 +147,7 @@ export interface BackendTimeEntry {
   hours: number | string;
   overtimeHours: number | string;
   remarks: string | null;
-  status: 'draft' | 'submitted';
+  status: 'draft' | 'submitted' | 'approved';
   submittedAt: string | null;
   activity?: {
     id: string;
