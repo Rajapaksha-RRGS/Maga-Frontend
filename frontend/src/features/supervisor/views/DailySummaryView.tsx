@@ -26,7 +26,7 @@ interface DailySummaryViewProps {
   operators: OperatorEntry[];
   equipment: EquipmentLogEntry[];
   isDayLocked: boolean;
-  onLockDay: () => void;
+  onLockDay: () => Promise<void> | void;
   onUnlockDay: () => void;
   onNavigateTab: (tab: 'labor' | 'operators' | 'equipment') => void;
 }
@@ -69,11 +69,20 @@ export function DailySummaryView({
     completedLaborers < totalLaborers || 
     unmappedOperators > 0;
 
-  const handleConfirmSubmit = () => {
-    onLockDay();
-    setShowConfirmModal(false);
-    setSubmitSuccessToast(true);
-    setTimeout(() => setSubmitSuccessToast(false), 3000);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleConfirmSubmit = async () => {
+    setIsSubmitting(true);
+    try {
+      await onLockDay();
+      setShowConfirmModal(false);
+      setSubmitSuccessToast(true);
+      setTimeout(() => setSubmitSuccessToast(false), 3000);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to submit and lock day');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const formattedDate = new Date(selectedDate).toLocaleDateString('en-GB', {
@@ -343,9 +352,10 @@ export function DailySummaryView({
               <button
                 type="button"
                 onClick={handleConfirmSubmit}
-                className="flex-1 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold transition-colors"
+                disabled={isSubmitting}
+                className="flex-1 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
               >
-                Confirm & Lock
+                {isSubmitting ? 'Submitting...' : 'Confirm & Lock'}
               </button>
             </div>
           </div>

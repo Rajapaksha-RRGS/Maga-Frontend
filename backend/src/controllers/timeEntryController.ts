@@ -159,6 +159,30 @@ export function computeBreakHours(inTime?: string | null, outTime?: string | nul
   return diffMins >= 300 ? 1.0 : 0.0;
 }
 
+// Master Helper: calculate net shift hours and Overtime (OT) strictly from In/Out attendance times
+export function calculateShiftAndOvertime(
+  inTime?: string | null,
+  outTime?: string | null,
+  standardHoursCap = 8.0,
+  isAllOvertime = false
+): { shiftHours: number; otHours: number; breakHours: number } {
+  if (!inTime || !outTime) return { shiftHours: 0, otHours: 0, breakHours: 0 };
+  const [inH, inM] = inTime.split(':').map(Number);
+  const [outH, outM] = outTime.split(':').map(Number);
+  let diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+  if (diffMins < 0) diffMins += 24 * 60; // Handles shifts crossing midnight
+  const breakHours = diffMins >= 300 ? 1.0 : 0.0;
+  if (diffMins >= 300) diffMins -= 60; // 1-hour lunch break deduction
+  const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 10) / 10 : 0;
+  let otHours = 0;
+  if (isAllOvertime) {
+    otHours = shiftHours;
+  } else if (shiftHours > standardHoursCap) {
+    otHours = Math.round((shiftHours - standardHoursCap) * 10) / 10;
+  }
+  return { shiftHours, otHours, breakHours };
+}
+
 // 1. Get assigned employees for supervisor & date
 export const getAssignedEmployees = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -365,7 +389,13 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
 
     if (existingEntries.length > 0) {
       const inTime = existingEntries.find((e) => e.inTime)?.inTime;
-      const breakHours = computeBreakHours(inTime, outTime);
+      const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, entryDate);
+      const { shiftHours, otHours, breakHours } = calculateShiftAndOvertime(
+        inTime,
+        outTime,
+        standardHoursCap,
+        isAllOvertime
+      );
 
       await prisma.timeEntry.updateMany({
         where: {
@@ -373,9 +403,15 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
           employeeId,
           date: entryDate,
         },
-        data: { outTime, breakHours },
+        data: {
+          outTime,
+          breakHours,
+          shiftHours,
+          otHours,
+          overtimeHours: otHours,
+        },
       });
-      res.json({ success: true, employeeId, outTime, breakHours, count: existingEntries.length });
+      res.json({ success: true, employeeId, outTime, breakHours, shiftHours, otHours, count: existingEntries.length });
       return;
     }
 
@@ -676,12 +712,6 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
     const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
 
     const numHours = hours !== undefined ? parseFloat(hours) : 0;
-    let overtimeHours = 0;
-    if (isAllOvertime) {
-      overtimeHours = numHours;
-    } else if (numHours > standardHoursCap) {
-      overtimeHours = numHours - standardHoursCap;
-    }
 
     const existing = await prisma.timeEntry.findFirst({
       where: {
@@ -694,7 +724,29 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
 
     const finalInTime = inTime ?? existing?.inTime ?? null;
     const finalOutTime = outTime ?? existing?.outTime ?? null;
-    const breakHours = computeBreakHours(finalInTime, finalOutTime);
+
+    let shiftHoursVal: number | null = null;
+    let overtimeHours = 0;
+    let otHoursVal = 0;
+    let breakHours = 0;
+
+    // Strict In/Out Overtime calculation
+    if (finalInTime && finalOutTime) {
+      const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, standardHoursCap, isAllOvertime);
+      shiftHoursVal = calc.shiftHours;
+      overtimeHours = calc.otHours;
+      otHoursVal = calc.otHours;
+      breakHours = calc.breakHours;
+    } else {
+      breakHours = computeBreakHours(finalInTime, finalOutTime);
+      if (isAllOvertime) {
+        overtimeHours = numHours;
+        otHoursVal = numHours;
+      } else if (numHours > standardHoursCap) {
+        overtimeHours = numHours - standardHoursCap;
+        otHoursVal = numHours - standardHoursCap;
+      }
+    }
 
     // Guard against modifying approved entries
     const approvedCheck = await prisma.timeEntry.findFirst({
@@ -719,7 +771,9 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
         where: { id: existing.id },
         data: {
           hours: numHours,
+          shiftHours: shiftHoursVal,
           overtimeHours,
+          otHours: otHoursVal,
           breakHours,
           inTime: finalInTime,
           outTime: finalOutTime,
@@ -727,6 +781,27 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
           remarks: remarks ?? existing.remarks,
         },
       });
+
+      // Keep attendance times in sync across any other activity splits for this employee on this date
+      if (finalInTime && finalOutTime) {
+        await prisma.timeEntry.updateMany({
+          where: {
+            tenantId,
+            employeeId,
+            date: targetDate,
+            id: { not: existing.id },
+          },
+          data: {
+            inTime: finalInTime,
+            outTime: finalOutTime,
+            breakHours,
+            shiftHours: shiftHoursVal,
+            overtimeHours,
+            otHours: otHoursVal,
+          },
+        });
+      }
+
       res.json(updated);
       return;
     }
@@ -741,7 +816,9 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
         effectiveDayTypeId,
         date: targetDate,
         hours: numHours,
+        shiftHours: shiftHoursVal,
         overtimeHours,
+        otHours: otHoursVal,
         breakHours,
         inTime: finalInTime,
         outTime: finalOutTime,
@@ -749,6 +826,26 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
         status: 'draft',
       },
     });
+
+    // Keep attendance times in sync across any other activity splits for this employee on this date
+    if (finalInTime && finalOutTime) {
+      await prisma.timeEntry.updateMany({
+        where: {
+          tenantId,
+          employeeId,
+          date: targetDate,
+          id: { not: created.id },
+        },
+        data: {
+          inTime: finalInTime,
+          outTime: finalOutTime,
+          breakHours,
+          shiftHours: shiftHoursVal,
+          overtimeHours,
+          otHours: otHoursVal,
+        },
+      });
+    }
 
     res.status(201).json(created);
   } catch (error) {
@@ -845,43 +942,44 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Auto-populate default shift hours for any entries that have inTime & outTime but hours === 0
-    const zeroHourDrafts = await prisma.timeEntry.findMany({
+    // Recalculate shiftHours, otHours, overtimeHours, and breakHours strictly from inTime & outTime
+    const attendedDrafts = await prisma.timeEntry.findMany({
       where: {
         ...whereClause,
         inTime: { not: null },
         outTime: { not: null },
-        hours: 0,
       },
     });
 
-    if (zeroHourDrafts.length > 0) {
+    if (attendedDrafts.length > 0) {
       const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
 
-      for (const entry of zeroHourDrafts) {
-        if (!entry.inTime || !entry.outTime) continue;
-        const [inH, inM] = entry.inTime.split(':').map(Number);
-        const [outH, outM] = entry.outTime.split(':').map(Number);
-        const diff = (outH * 60 + outM) - (inH * 60 + inM);
-        if (diff > 0) {
-          const gross = Math.round((diff / 60) * 100) / 100;
-          const breakHours = computeBreakHours(entry.inTime, entry.outTime);
-          const netHours = Math.max(0, Math.round((gross - breakHours) * 100) / 100);
-          let otHours = 0;
-          if (isAllOvertime) {
-            otHours = netHours;
-          } else if (netHours > standardHoursCap) {
-            otHours = Math.round((netHours - standardHoursCap) * 100) / 100;
+      const updates = attendedDrafts
+        .filter((entry) => entry.inTime && entry.outTime)
+        .map((entry) => {
+          const { shiftHours, otHours, breakHours } = calculateShiftAndOvertime(
+            entry.inTime,
+            entry.outTime,
+            standardHoursCap,
+            isAllOvertime
+          );
+          const updateData: any = {
+            shiftHours,
+            otHours,
+            overtimeHours: otHours,
+            breakHours,
+          };
+          if (Number(entry.hours || 0) === 0 && shiftHours > 0) {
+            updateData.hours = shiftHours;
           }
-          await prisma.timeEntry.update({
+          return prisma.timeEntry.update({
             where: { id: entry.id },
-            data: {
-              hours: netHours,
-              overtimeHours: otHours,
-              breakHours,
-            },
+            data: updateData,
           });
-        }
+        });
+
+      if (updates.length > 0) {
+        await prisma.$transaction(updates);
       }
     }
 
@@ -989,9 +1087,6 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
       const assignedWorkerIds = new Set(supAssignments.map((a) => a.employeeId));
       const workedWorkerIds = new Set(supEntries.map((t) => t.employeeId));
 
-      const totalHours = supEntries.reduce((sum, t) => sum + Number(t.hours || 0), 0);
-      const totalOvertime = supEntries.reduce((sum, t) => sum + Number(t.overtimeHours || 0), 0);
-
       const hasSubmitted = supEntries.some((t) => t.status === 'submitted');
       const allApproved = supEntries.length > 0 && supEntries.every((t) => t.status === 'approved');
 
@@ -1004,8 +1099,24 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
 
         const inTime = entries[0]?.inTime || '';
         const outTime = entries[0]?.outTime || '';
-        const hours = entries.reduce((sum, e) => sum + Number(e.hours || 0), 0);
-        const otHours = entries.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0);
+        const totalActivityHours = entries.reduce((sum, e) => sum + Number(e.hours || 0), 0);
+
+        // Strict In/Out Attendance Overtime & Shift calculation
+        let workerShiftHours = totalActivityHours;
+        let workerOtHours = 0;
+
+        if (inTime && outTime) {
+          const { shiftHours, otHours } = calculateShiftAndOvertime(
+            inTime,
+            outTime,
+            dayTypeRules.standardHoursCap,
+            dayTypeRules.isAllOvertime
+          );
+          workerShiftHours = shiftHours > 0 ? shiftHours : totalActivityHours;
+          workerOtHours = otHours;
+        } else {
+          workerOtHours = entries.reduce((sum, e) => sum + Number(e.overtimeHours || e.otHours || 0), 0);
+        }
 
         const activities = entries.map((e) => ({
           code: e.activity?.code || 'N/A',
@@ -1024,12 +1135,15 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           businessPartner: emp?.businessPartner?.name || 'Direct',
           inTime,
           outTime,
-          hours,
-          otHours,
+          hours: workerShiftHours,
+          otHours: workerOtHours,
           activities,
           status,
         };
       });
+
+      const totalHours = workerDetails.reduce((sum, w) => sum + Number(w.hours || 0), 0);
+      const totalOvertime = workerDetails.reduce((sum, w) => sum + Number(w.otHours || 0), 0);
 
       const groupData = {
         supervisorId: supId,
@@ -1096,6 +1210,42 @@ export const approveTimeEntries = async (req: Request, res: Response): Promise<v
     };
     if (supervisorId) {
       where.supervisorId = supervisorId;
+    }
+
+    // Recalculate shiftHours, otHours, and overtimeHours strictly from inTime & outTime
+    const attended = await prisma.timeEntry.findMany({
+      where: {
+        ...where,
+        inTime: { not: null },
+        outTime: { not: null },
+      },
+    });
+
+    if (attended.length > 0) {
+      const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
+      const updates = attended
+        .filter((entry) => entry.inTime && entry.outTime)
+        .map((entry) => {
+          const { shiftHours, otHours, breakHours } = calculateShiftAndOvertime(
+            entry.inTime,
+            entry.outTime,
+            standardHoursCap,
+            isAllOvertime
+          );
+          return prisma.timeEntry.update({
+            where: { id: entry.id },
+            data: {
+              shiftHours,
+              otHours,
+              overtimeHours: otHours,
+              breakHours,
+            },
+          });
+        });
+
+      if (updates.length > 0) {
+        await prisma.$transaction(updates);
+      }
     }
 
     const result = await prisma.timeEntry.updateMany({
@@ -1213,7 +1363,7 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
           },
         });
       } else {
-        // Multiple activity splits: update attendance times for all
+        // Multiple activity splits: update attendance times, breakHours, and OT for all
         await prisma.timeEntry.updateMany({
           where: {
             tenantId,
@@ -1224,6 +1374,9 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
             inTime,
             outTime,
             breakHours,
+            shiftHours: calculatedHours,
+            overtimeHours: calculatedOt,
+            otHours: calculatedOt,
           },
         });
       }

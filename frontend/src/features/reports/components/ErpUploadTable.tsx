@@ -114,7 +114,7 @@ export default function ErpUploadTable({ data }: Props) {
                         <span className="text-slate-300">—</span>
                       ) : isZidleRow ? (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded bg-red-600 text-white font-mono text-xs font-bold shadow-xs">
-                          {row.hours < 0 ? `(${Math.abs(row.hours).toFixed(2)})` : `(${row.hours.toFixed(2)})`}
+                          {row.hours < 0 ? `(${Math.abs(row.hours).toFixed(2)})` : row.hours.toFixed(2)}
                         </span>
                       ) : (
                         row.hours.toFixed(2)

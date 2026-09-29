@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { 
   Tractor, 
   AlertTriangle, 
@@ -14,11 +14,13 @@ import {
   Trash2,
   Lock,
 } from 'lucide-react';
-import { MASTER_ACTIVITIES } from '../services/supervisorStorageService';
-import type { 
-  EquipmentLogEntry, 
-  OperatorEntry,
-  EquipmentRatingUnit 
+import { 
+  MASTER_ACTIVITIES, 
+  supervisorStorage,
+  type ActivityCodeItem,
+  type EquipmentLogEntry, 
+  type OperatorEntry,
+  type EquipmentRatingUnit 
 } from '../services/supervisorStorageService';
 
 interface EquipmentLogsViewProps {
@@ -104,6 +106,15 @@ export function EquipmentLogsView({
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [saveSuccessId, setSaveSuccessId] = useState<string | null>(null);
+  const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>(MASTER_ACTIVITIES);
+
+  useEffect(() => {
+    supervisorStorage.getActivityCodes().then((codes) => {
+      if (Array.isArray(codes) && codes.length > 0) {
+        setActivityOptions(codes);
+      }
+    }).catch(() => {});
+  }, []);
 
   // Counts based on whether equipment has any logged quantity
   const doneCount = equipment.filter((e) => getEquipmentSummary(e).isDone).length;
@@ -838,12 +849,12 @@ export function EquipmentLogsView({
                         name="activityCode" 
                         value={eq.activityCode || ''} 
                         onChange={(e) => handleActivityCodeChange(eq.id, e.target.value)} 
-                        className="w-full px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                        className="w-full px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 truncate"
                       >
                         <option value="">-- Select Activity Code --</option>
-                        {MASTER_ACTIVITIES.map((act) => (
+                        {activityOptions.map((act) => (
                           <option key={act.code} value={act.code}>
-                            {act.code} - {act.name}
+                            {act.code} - {act.name || act.code}
                           </option>
                         ))}
                       </select>

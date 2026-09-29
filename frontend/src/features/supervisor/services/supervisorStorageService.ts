@@ -616,29 +616,56 @@ export const supervisorStorage = {
           this.lockDay(date);
         }
 
+        // Existing local drafts map for smart reconciliation
+        const existingLocal = this.getLaborers(date);
+        const localMap = new Map(existingLocal.map((l) => [l.id, l]));
+
         // Map assigned workers with attendance, hours, and activity splits
         const laborList: LaborerEntry[] = (assignedList || []).map((emp: any) => {
           const myEntries = timeEntryList.filter((e: any) => e.employeeId === emp.id);
+          const localDraft = localMap.get(emp.id);
 
-          const inTime = myEntries.length > 0 ? (myEntries[0].inTime || '') : '';
-          const outTime = myEntries.length > 0 ? (myEntries[0].outTime || '') : '';
+          const hasBackendEntries = myEntries.length > 0 && (myEntries[0].inTime || myEntries[0].outTime || myEntries[0].hours > 0);
 
-          const shiftHours = myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0);
-          const otHours = myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0);
+          // Priority rule:
+          // If backend has submitted/approved records OR recorded time entries, prioritize backend.
+          // If backend has no recorded entries for this worker, preserve the supervisor's local draft.
+          const inTime = (isSubmitted || hasBackendEntries)
+            ? (myEntries[0]?.inTime || '')
+            : (localDraft?.inTime || '');
 
-          const activities: ActivitySplit[] = myEntries
-            .filter((e: any) => e.activity?.code || e.activityId)
-            .map((e: any, idx: number) => ({
-              id: e.id || `act-${idx}`,
-              activityCode: e.activity?.code || '',
-              hours: Number(e.hours) || 0,
-            }));
+          const outTime = (isSubmitted || hasBackendEntries)
+            ? (myEntries[0]?.outTime || '')
+            : (localDraft?.outTime || '');
+
+          const shiftHours = (isSubmitted || hasBackendEntries)
+            ? myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0)
+            : (localDraft?.shiftHours || 0);
+
+          const otHours = (isSubmitted || hasBackendEntries)
+            ? myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0)
+            : (localDraft?.otHours || 0);
+
+          let activities: ActivitySplit[] = [];
+          if (isSubmitted || hasBackendEntries) {
+            activities = myEntries
+              .filter((e: any) => e.activity?.code || e.activityId)
+              .map((e: any, idx: number) => ({
+                id: e.id || `act-${idx}`,
+                activityCode: e.activity?.code || '',
+                hours: Number(e.hours) || 0,
+              }));
+          } else {
+            activities = localDraft?.activities || [];
+          }
 
           let status: 'draft' | 'pending' | 'done' = 'pending';
           if (isSubmitted) {
             status = 'done';
           } else if (inTime && outTime) {
-            status = myEntries.some((e: any) => e.status === 'draft') ? 'draft' : 'done';
+            status = myEntries.some((e: any) => e.status === 'draft') ? 'draft' : (localDraft?.status || 'done');
+          } else if (inTime || outTime) {
+            status = 'draft';
           }
 
           return {
@@ -654,10 +681,11 @@ export const supervisorStorage = {
             otHours,
             activities,
             status,
+            lastSavedAt: localDraft?.lastSavedAt,
           };
         });
 
-        // Cache real data in localStorage for offline accessibility
+        // Cache safe reconciled data in localStorage
         localStorage.setItem(key, JSON.stringify(laborList));
         return laborList;
       }
@@ -799,12 +827,18 @@ export const supervisorStorage = {
     const operators = this.getOperators(date);
 
     try {
+      // Pre-fetch all real tenant activity codes once
+      const allActivities = await this.getActivityCodes();
+      const defaultActivityId = allActivities[0]?.id;
+
       // 1. Sync Laborers attendance and activity splits
       for (const lab of laborers) {
         if (lab.activities.length > 0) {
           for (const act of lab.activities) {
-            const actObj = await this.resolveActivityByCode(act.activityCode);
-            if (actObj?.id) {
+            const actObj = allActivities.find((a) => a.code === act.activityCode);
+            const resolvedActId = actObj?.id || defaultActivityId;
+
+            if (resolvedActId) {
               await apiFetch(`${API_URL}/time-entries/upsert`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -812,7 +846,7 @@ export const supervisorStorage = {
                   employeeId: lab.id,
                   supervisorId,
                   date,
-                  activityId: actObj.id,
+                  activityId: resolvedActId,
                   hours: act.hours,
                   inTime: lab.inTime || undefined,
                   outTime: lab.outTime || undefined,
@@ -821,29 +855,46 @@ export const supervisorStorage = {
             }
           }
         } else if (lab.inTime || lab.outTime) {
-          if (lab.inTime) {
-            await apiFetch(`${API_URL}/time-entries/check-in`, {
+          // If worker has in/out times but no explicit activity split, still create/upsert a time entry using default activity
+          if (defaultActivityId) {
+            await apiFetch(`${API_URL}/time-entries/upsert`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 employeeId: lab.id,
                 supervisorId,
                 date,
-                inTime: lab.inTime,
+                activityId: defaultActivityId,
+                hours: lab.shiftHours || 0,
+                inTime: lab.inTime || undefined,
+                outTime: lab.outTime || undefined,
               }),
             });
-          }
-          if (lab.outTime) {
-            await apiFetch(`${API_URL}/time-entries/check-out`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                employeeId: lab.id,
-                supervisorId,
-                date,
-                outTime: lab.outTime,
-              }),
-            });
+          } else {
+            if (lab.inTime) {
+              await apiFetch(`${API_URL}/time-entries/check-in`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  employeeId: lab.id,
+                  supervisorId,
+                  date,
+                  inTime: lab.inTime,
+                }),
+              });
+            }
+            if (lab.outTime) {
+              await apiFetch(`${API_URL}/time-entries/check-out`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  employeeId: lab.id,
+                  supervisorId,
+                  date,
+                  outTime: lab.outTime,
+                }),
+              });
+            }
           }
         }
       }

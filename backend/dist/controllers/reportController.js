@@ -46,6 +46,51 @@ function getDayTypeRule(dateStr) {
         return { standardCap: 6.0, isAllOvertime: false, label: 'Saturday' };
     return { standardCap: 8.0, isAllOvertime: false, label: 'Normal Day' };
 }
+// ─── Helper: Compute shift work hours and OT with Database Fast-Path ─────────
+function computeAttendanceHoursAndOt(inTime, outTime, fallbackHours = 0, standardCap = 8.0, isAllOvertime = false, precomputedShiftHours, precomputedOtHours) {
+    // FAST-PATH: If already pre-computed & stored in database, use directly (0ms latency, bypasses string parsing)
+    if (precomputedShiftHours !== null &&
+        precomputedShiftHours !== undefined &&
+        precomputedOtHours !== null &&
+        precomputedOtHours !== undefined) {
+        return {
+            workHours: Number(precomputedShiftHours),
+            otHours: Number(precomputedOtHours),
+        };
+    }
+    // FALLBACK: Parse in/out times only for legacy entries
+    if (inTime && outTime) {
+        const [inH, inM] = inTime.split(':').map(Number);
+        const [outH, outM] = outTime.split(':').map(Number);
+        if (!isNaN(inH) && !isNaN(outH)) {
+            let diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+            if (diffMins < 0)
+                diffMins += 24 * 60; // Crosses midnight
+            if (diffMins >= 300)
+                diffMins -= 60; // 1-hour lunch break deduction
+            const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 10) / 10 : 0;
+            if (shiftHours > 0) {
+                let ot = 0;
+                if (isAllOvertime) {
+                    ot = shiftHours;
+                }
+                else if (shiftHours > standardCap) {
+                    ot = Math.round((shiftHours - standardCap) * 10) / 10;
+                }
+                return { workHours: shiftHours, otHours: ot };
+            }
+        }
+    }
+    // Fallback if no in/out times were recorded
+    let ot = 0;
+    if (isAllOvertime) {
+        ot = fallbackHours;
+    }
+    else if (fallbackHours > standardCap) {
+        ot = Math.round((fallbackHours - standardCap) * 10) / 10;
+    }
+    return { workHours: fallbackHours, otHours: ot };
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. SUMMARY REPORT
 // GET /api/reports/summary?dateFrom=&dateTo=&employeeQuery=&businessPartner=&tenantId=
@@ -84,52 +129,66 @@ const getSummaryReport = async (req, res) => {
             },
             orderBy: { date: 'asc' },
         });
-        // Group by employee
-        const empMap = new Map();
+        // Group entries by employee AND date to compute daily shift and OT from In/Out times
+        const empDailyMap = new Map();
+        const empInfoMap = new Map();
         for (const entry of entries) {
             const empId = entry.employeeId;
-            const existing = empMap.get(empId);
             const dateKey = entry.date.toISOString().split('T')[0];
-            const entryHours = Number(entry.hours);
-            const otH = Number(entry.overtimeHours);
-            if (!existing) {
-                empMap.set(empId, {
+            if (!empInfoMap.has(empId)) {
+                empInfoMap.set(empId, {
                     employeeId: empId,
                     employeeCode: entry.employee.employeeCode || '',
                     callingName: entry.employee.callingName || '',
                     employeeName: entry.employee.fullName || entry.employee.callingName,
                     tradeGroup: entry.employee.tradeGroup || '',
                     businessPartner: entry.employee.businessPartner?.name || '',
-                    dates: new Set([dateKey]),
-                    totalHours: entryHours,
-                    otHours: otH,
                 });
             }
-            else {
-                existing.dates.add(dateKey);
-                existing.totalHours += entryHours;
-                existing.otHours += otH;
+            if (!empDailyMap.has(empId)) {
+                empDailyMap.set(empId, new Map());
             }
+            const dayMap = empDailyMap.get(empId);
+            if (!dayMap.has(dateKey)) {
+                dayMap.set(dateKey, []);
+            }
+            dayMap.get(dateKey).push(entry);
         }
-        const items = Array.from(empMap.values()).map((e, idx) => {
-            const empIdentifier = e.employeeCode || e.callingName || e.employeeName || e.employeeId;
-            const totalHours = Math.round(e.totalHours * 100) / 100;
-            const totalOtHours = Math.round(e.otHours * 100) / 100;
-            const totalNormalHours = Math.max(0, Math.round((totalHours - totalOtHours) * 100) / 100);
+        const items = Array.from(empDailyMap.entries()).map(([empId, dayMap], idx) => {
+            const empInfo = empInfoMap.get(empId);
+            let totalEffectiveHours = 0;
+            let totalOtHours = 0;
+            let totalDays = 0;
+            for (const [dateKey, dayEntries] of dayMap.entries()) {
+                totalDays += 1;
+                const { standardCap, isAllOvertime } = getDayTypeRule(dateKey);
+                const inTime = dayEntries.find((e) => e.inTime)?.inTime;
+                const outTime = dayEntries.find((e) => e.outTime)?.outTime;
+                const activitySum = dayEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+                const precomputedShift = dayEntries.find((e) => e.shiftHours !== null)?.shiftHours;
+                const precomputedOt = dayEntries.find((e) => e.otHours !== null)?.otHours;
+                const { workHours, otHours } = computeAttendanceHoursAndOt(inTime, outTime, activitySum, standardCap, isAllOvertime, precomputedShift !== undefined && precomputedShift !== null ? Number(precomputedShift) : null, precomputedOt !== undefined && precomputedOt !== null ? Number(precomputedOt) : null);
+                totalEffectiveHours += workHours;
+                totalOtHours += otHours;
+            }
+            totalEffectiveHours = Math.round(totalEffectiveHours * 100) / 100;
+            totalOtHours = Math.round(totalOtHours * 100) / 100;
+            const totalNormalHours = Math.max(0, Math.round((totalEffectiveHours - totalOtHours) * 100) / 100);
+            const empIdentifier = empInfo.employeeCode || empInfo.callingName || empInfo.employeeName || empId;
             return {
                 id: `sum-${idx}`,
-                employeeId: e.employeeId,
-                employeeCode: e.employeeCode,
-                callingName: e.callingName,
-                employeeName: e.employeeName,
+                employeeId: empId,
+                employeeCode: empInfo.employeeCode,
+                callingName: empInfo.callingName,
+                employeeName: empInfo.employeeName,
                 employeeIdentifier: empIdentifier,
-                tradeGroup: e.tradeGroup,
-                businessPartner: e.businessPartner,
-                totalDays: e.dates.size,
+                tradeGroup: empInfo.tradeGroup,
+                businessPartner: empInfo.businessPartner,
+                totalDays,
                 totalNormalHours,
                 totalOtHours,
-                totalEffectiveHours: totalHours,
-                totalHours,
+                totalEffectiveHours,
+                totalHours: totalEffectiveHours,
             };
         });
         const totals = items.reduce((acc, curr) => ({
@@ -188,54 +247,78 @@ const getDayOtSummaryReport = async (req, res) => {
         const dates = dateRange(dateFrom, dateTo).filter((d) => allDatesSet.has(d) || allDatesSet.size === 0);
         // If no entries, fall back to full dateRange
         const finalDates = entries.length === 0 ? dateRange(dateFrom, dateTo) : Array.from(allDatesSet).sort();
-        const empMap = new Map();
-        const dateTotals = {};
+        // Group by employee AND date to compute daily shift and OT from In/Out times
+        const empDailyMap = new Map();
+        const empInfoMap = new Map();
         for (const entry of entries) {
-            const dateKey = entry.date.toISOString().split('T')[0];
-            const otH = Number(entry.overtimeHours);
-            const wH = Number(entry.hours);
             const empId = entry.employeeId;
-            if (!dateTotals[dateKey])
-                dateTotals[dateKey] = { days: 0, otHours: 0, workHours: 0 };
-            if (!empMap.has(empId)) {
-                empMap.set(empId, {
+            const dateKey = entry.date.toISOString().split('T')[0];
+            if (!empInfoMap.has(empId)) {
+                empInfoMap.set(empId, {
                     employeeId: empId,
                     employeeName: entry.employee.fullName || entry.employee.callingName,
                     tradeGroup: entry.employee.tradeGroup || '',
                     businessPartner: entry.employee.businessPartner?.name || '',
-                    dailyEntries: {},
                 });
             }
-            const emp = empMap.get(empId);
-            if (!emp.dailyEntries[dateKey]) {
-                emp.dailyEntries[dateKey] = { days: 1, otHours: 0, workHours: 0 };
-                dateTotals[dateKey].days += 1;
+            if (!empDailyMap.has(empId)) {
+                empDailyMap.set(empId, new Map());
             }
-            emp.dailyEntries[dateKey].otHours += otH;
-            emp.dailyEntries[dateKey].workHours += wH;
-            dateTotals[dateKey].otHours += otH;
-            dateTotals[dateKey].workHours += wH;
+            const dayMap = empDailyMap.get(empId);
+            if (!dayMap.has(dateKey)) {
+                dayMap.set(dateKey, []);
+            }
+            dayMap.get(dateKey).push(entry);
+        }
+        const dateTotals = {};
+        for (const d of finalDates) {
+            dateTotals[d] = { days: 0, otHours: 0, workHours: 0 };
         }
         let grandTotalDays = 0;
         let grandTotalOt = 0;
         let grandTotalWork = 0;
-        const items = Array.from(empMap.values()).map((e, idx) => {
-            const totalDays = Object.values(e.dailyEntries).filter((de) => de.days > 0).length;
-            const totalOt = Object.values(e.dailyEntries).reduce((s, de) => s + de.otHours, 0);
-            const totalWork = Object.values(e.dailyEntries).reduce((s, de) => s + de.workHours, 0);
-            grandTotalDays += totalDays;
-            grandTotalOt += totalOt;
-            grandTotalWork += totalWork;
+        const items = Array.from(empDailyMap.entries()).map(([empId, dayMap], idx) => {
+            const empInfo = empInfoMap.get(empId);
+            const dailyEntries = {};
+            let totalEmpDays = 0;
+            let totalEmpWork = 0;
+            let totalEmpOt = 0;
+            for (const [dateKey, dayEntries] of dayMap.entries()) {
+                const { standardCap, isAllOvertime } = getDayTypeRule(dateKey);
+                const inTime = dayEntries.find((e) => e.inTime)?.inTime;
+                const outTime = dayEntries.find((e) => e.outTime)?.outTime;
+                const activitySum = dayEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+                const precomputedShift = dayEntries.find((e) => e.shiftHours !== null)?.shiftHours;
+                const precomputedOt = dayEntries.find((e) => e.otHours !== null)?.otHours;
+                const { workHours, otHours } = computeAttendanceHoursAndOt(inTime, outTime, activitySum, standardCap, isAllOvertime, precomputedShift !== undefined && precomputedShift !== null ? Number(precomputedShift) : null, precomputedOt !== undefined && precomputedOt !== null ? Number(precomputedOt) : null);
+                dailyEntries[dateKey] = {
+                    days: 1,
+                    workHours,
+                    otHours,
+                };
+                totalEmpDays += 1;
+                totalEmpWork += workHours;
+                totalEmpOt += otHours;
+                if (!dateTotals[dateKey]) {
+                    dateTotals[dateKey] = { days: 0, otHours: 0, workHours: 0 };
+                }
+                dateTotals[dateKey].days += 1;
+                dateTotals[dateKey].workHours += workHours;
+                dateTotals[dateKey].otHours += otHours;
+            }
+            grandTotalDays += totalEmpDays;
+            grandTotalWork += totalEmpWork;
+            grandTotalOt += totalEmpOt;
             return {
                 id: `dayot-${idx}`,
-                employeeId: e.employeeId,
-                employeeName: e.employeeName,
-                tradeGroup: e.tradeGroup,
-                businessPartner: e.businessPartner,
-                dailyEntries: e.dailyEntries,
-                totalDays,
-                totalOtHours: Math.round(totalOt * 100) / 100,
-                totalWorkHours: Math.round(totalWork * 100) / 100,
+                employeeId: empId,
+                employeeName: empInfo.employeeName,
+                tradeGroup: empInfo.tradeGroup,
+                businessPartner: empInfo.businessPartner,
+                dailyEntries,
+                totalDays: totalEmpDays,
+                totalWorkHours: Math.round(totalEmpWork * 100) / 100,
+                totalOtHours: Math.round(totalEmpOt * 100) / 100,
             };
         });
         res.json({
@@ -482,22 +565,22 @@ const getErpUploadReport = async (req, res) => {
                 totalHours += hours;
             }
             // ── ZIDLE Balancing Row ────────────────────────────────────────────────
-            // When sum of activity hours exceeds actual physical effective shift hours,
-            // an offsetting ZIDLE line with negative hours balances the ERP record.
-            if (shiftEffectiveHours > 0 && totalDayHours > shiftEffectiveHours) {
-                const excessHours = Math.round((totalDayHours - shiftEffectiveHours) * 100) / 100;
+            // When sum of activity hours is LESS than actual physical effective shift hours,
+            // the unallocated shortage is added as an idle time row (ZIDLE) to account for full shift attendance.
+            if (shiftEffectiveHours > 0 && totalDayHours < shiftEffectiveHours) {
+                const idleHours = Math.round((shiftEffectiveHours - totalDayHours) * 100) / 100;
                 finalRows.push({
                     id: `erp-zidle-${first.employeeId}-${dateKey}`,
                     employeeId: first.employee.employeeCode || first.employeeId,
                     employeeName: first.employee.fullName || first.employee.callingName,
                     date: dateKey,
                     activityCode: 'ZIDLE',
-                    activityDescription: 'Idle / Balancing Hours',
-                    hours: -excessHours,
+                    activityDescription: 'Idle / Unallocated Hours',
+                    hours: idleHours,
                     overtimeHours: 0,
-                    remarks: '',
+                    remarks: 'Unallocated idle shift hours',
                 });
-                totalHours -= excessHours;
+                totalHours += idleHours;
             }
             // Calculate OT line based on day type calendar rules on the effective hours
             const effectiveForOt = shiftEffectiveHours > 0 ? shiftEffectiveHours : totalDayHours;

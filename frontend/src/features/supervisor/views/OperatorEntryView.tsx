@@ -179,6 +179,7 @@ export function OperatorEntryView({
     });
 
     onSaveOperators(updated);
+    setSelectedOperatorIds([]);
   };
 
   // ── APPLY BATCH OUT TIME & EQUIPMENT (No activity codes) ──
@@ -204,6 +205,7 @@ export function OperatorEntryView({
     });
 
     onSaveOperators(updated);
+    setSelectedOperatorIds([]);
   };
 
   // ── INDIVIDUAL UPDATES ──
