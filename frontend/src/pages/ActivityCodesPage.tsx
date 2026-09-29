@@ -1,8 +1,8 @@
 /**
  * ActivityCodesPage.tsx — Admin activity code CRUD page.
  */
-import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Database } from 'lucide-react';
 import { useActivityCodes } from '../features/activity-codes/hooks/useActivityCodes';
 import ActivityCodeTable from '../features/activity-codes/components/ActivityCodeTable';
 import ActivityCodeCardList from '../features/activity-codes/components/ActivityCodeCardList';
@@ -10,14 +10,18 @@ import ActivityCodeForm from '../features/activity-codes/components/ActivityCode
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
+import MasterImportModal from '../features/master-import/components/MasterImportModal';
+import Breadcrumb from '../components/Breadcrumb';
+import { CORPORATE_ACTIVITY_CATALOG } from '../features/master-import/services/corporateMasterService';
+import type { CorporateActivityCode } from '../features/master-import/services/corporateMasterService';
 import type { ActivityCode } from '../features/activity-codes/services/activityCodeService';
 
 export default function ActivityCodesPage() {
   const { filtered, isLoading, search, setSearch, add, edit, del, checkUnique } = useActivityCodes();
   const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<ActivityCode | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
-  const openAdd = () => { setEditing(null); setPanelOpen(true); };
   const openEdit = (c: ActivityCode) => { setEditing(c); setPanelOpen(true); };
   const close = () => { setPanelOpen(false); setEditing(null); };
 
@@ -27,19 +31,75 @@ export default function ActivityCodesPage() {
   };
   const handleDelete = async (id: string) => { await del(id); close(); };
 
+  const existingCodes = useMemo(() => {
+    return new Set(filtered.map((c) => c.code.toUpperCase()));
+  }, [filtered]);
+
+  const handleBatchImport = async (items: CorporateActivityCode[]) => {
+    for (const item of items) {
+      await add({
+        code: item.code,
+        description: item.description,
+      });
+    }
+  };
+
+  const activityColumns = [
+    {
+      key: 'searchKey',
+      header: 'Search Key',
+      render: (item: CorporateActivityCode) => (
+        <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+          {item.searchKey || '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'activityType',
+      header: 'Activity Type',
+      render: (item: CorporateActivityCode) => (
+        <span className="text-xs font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">
+          {item.activityType || 'Work Package'}
+        </span>
+      ),
+    },
+    {
+      key: 'unit',
+      header: 'Unit / Time',
+      render: (item: CorporateActivityCode) => (
+        <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+          {item.unit || '—'} {item.timeUnit ? `(${item.timeUnit})` : ''}
+        </span>
+      ),
+    },
+  ];
+
   return (
     <div className="px-4 md:px-6 py-5">
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-base font-medium text-slate-800">Activity codes</h1>
-        <button id="ac-add-btn" onClick={openAdd} className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors active:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">
-          <Plus size={16} /><span>Add code</span>
-        </button>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+        <div>
+          <h1 className="text-base font-semibold text-slate-800">Activity Codes Master</h1>
+          <Breadcrumb items={[{ label: 'Master Data' }, { label: 'Activity Codes' }]} className="mt-1" />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            id="ac-import-btn"
+            onClick={() => setImportModalOpen(true)}
+            className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 cursor-pointer shadow-xs"
+          >
+            <Database size={16} />
+            <span>Add from ERP Master</span>
+          </button>
+        </div>
       </div>
+
       <div className="mb-4">
         <SearchInput value={search} onChange={setSearch} placeholder="Search codes…" />
       </div>
+
       {isLoading && <p className="text-sm text-slate-400 py-8 text-center">Loading…</p>}
-      {!isLoading && filtered.length === 0 && <EmptyState message="No activity codes found." />}
+      {!isLoading && filtered.length === 0 && <EmptyState message="No activity codes found in this project." />}
       {!isLoading && filtered.length > 0 && (
         <>
           <ActivityCodeTable data={filtered} onRowClick={openEdit} />
@@ -47,6 +107,25 @@ export default function ActivityCodesPage() {
           <p className="text-xs text-slate-400 mt-3">{filtered.length} code{filtered.length !== 1 ? 's' : ''}</p>
         </>
       )}
+
+      {/* Corporate ERP Master Import Modal */}
+      <MasterImportModal<CorporateActivityCode>
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Corporate ERP Master Catalog — Activity & BOQ Codes"
+        subtitle="Search standard CIDA/ICTAD & SSCM construction activity codes and import into this project."
+        entityName="Activity Code"
+        catalog={CORPORATE_ACTIVITY_CATALOG}
+        existingCodes={existingCodes}
+        getItemCode={(item) => item.code}
+        getItemName={(item) => item.description}
+        getItemCategory={(item) => item.activityType || item.tradeGroup || 'Work Package'}
+        getItemSourceProject={(item) => item.currentWorkingProject || item.sourceProject || 'Maga - CWS'}
+        columns={activityColumns}
+        onImport={handleBatchImport}
+      />
+
+      {/* Manual Slide Panel Form */}
       <SlidePanel open={panelOpen} onClose={close} title={editing ? 'Edit activity code' : 'Add activity code'}>
         <ActivityCodeForm activityCode={editing} onSave={handleSave} onDelete={handleDelete} onCancel={close} checkUnique={checkUnique} />
       </SlidePanel>

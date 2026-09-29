@@ -45,7 +45,34 @@ export async function getDayTypeRulesAndId(tenantId: string, date: Date): Promis
         dayTypeName: calendarDay.dayType.name,
       };
     }
-    // Shutdown and Normal Day follow Normal Day rules (8.0 hours cap, >8h is OT)
+    // 3. Shutdown: Indicator only! If someone works on a shutdown day, hours follow the actual day of week:
+    if (name.includes('shutdown')) {
+      const dayOfWeek = date.getUTCDay();
+      if (dayOfWeek === 0) {
+        return {
+          effectiveDayTypeId: calendarDay.dayTypeId,
+          standardHoursCap: 0.0,
+          isAllOvertime: true,
+          dayTypeName: 'Shutdown (Sunday - 100% OT)',
+        };
+      }
+      if (dayOfWeek === 6) {
+        return {
+          effectiveDayTypeId: calendarDay.dayTypeId,
+          standardHoursCap: 6.0,
+          isAllOvertime: false,
+          dayTypeName: 'Shutdown (Saturday - 6.0h Cap)',
+        };
+      }
+      return {
+        effectiveDayTypeId: calendarDay.dayTypeId,
+        standardHoursCap: 8.0,
+        isAllOvertime: false,
+        dayTypeName: 'Shutdown (Weekday - 8.0h Cap)',
+      };
+    }
+
+    // Normal Day (8.0 hours cap, >8h is OT)
     return {
       effectiveDayTypeId: calendarDay.dayTypeId,
       standardHoursCap: 8.0,
@@ -199,12 +226,12 @@ export const checkInEmployee = async (req: Request, res: Response): Promise<void
     const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const entryDate = parseDate(date);
 
-    // Strict lock: Check if records for this employee or supervisor are already submitted
-    const submittedCheck = await prisma.timeEntry.findFirst({
+    // Strict lock: Check if records for this employee or supervisor are already submitted or approved
+    const lockedCheck = await prisma.timeEntry.findFirst({
       where: {
         tenantId,
         date: entryDate,
-        status: 'submitted',
+        status: { in: ['submitted', 'approved'] },
         OR: [
           { employeeId },
           ...(supervisorId ? [{ supervisorId }] : []),
@@ -212,8 +239,11 @@ export const checkInEmployee = async (req: Request, res: Response): Promise<void
       },
     });
 
-    if (submittedCheck) {
-      res.status(403).json({ error: 'Cannot check in: Daily attendance has already been submitted and locked.' });
+    if (lockedCheck) {
+      const msg = lockedCheck.status === 'approved'
+        ? 'Cannot edit time entry: Daily attendance has already been Approved by Admin.'
+        : 'Cannot check in: Daily attendance has already been submitted and locked.';
+      res.status(403).json({ error: msg });
       return;
     }
 
@@ -304,12 +334,12 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
     const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const entryDate = parseDate(date);
 
-    // Strict lock: Check if records for this employee or supervisor are already submitted
-    const submittedCheck = await prisma.timeEntry.findFirst({
+    // Strict lock: Check if records for this employee or supervisor are already submitted or approved
+    const lockedCheck = await prisma.timeEntry.findFirst({
       where: {
         tenantId,
         date: entryDate,
-        status: 'submitted',
+        status: { in: ['submitted', 'approved'] },
         OR: [
           { employeeId },
           ...(supervisorId ? [{ supervisorId }] : []),
@@ -317,8 +347,11 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
       },
     });
 
-    if (submittedCheck) {
-      res.status(403).json({ error: 'Cannot record checkout: Daily attendance has already been submitted and locked.' });
+    if (lockedCheck) {
+      const msg = lockedCheck.status === 'approved'
+        ? 'Cannot edit time entry: Daily attendance has already been Approved by Admin.'
+        : 'Cannot record checkout: Daily attendance has already been submitted and locked.';
+      res.status(403).json({ error: msg });
       return;
     }
 
@@ -429,18 +462,21 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
     const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
     const targetDate = parseDate(date);
 
-    // Strict lock: Check if records for this supervisor or date are already submitted
-    const submittedCheck = await prisma.timeEntry.findFirst({
+    // Strict lock: Check if records for this supervisor or date are already submitted or approved
+    const lockedCheck = await prisma.timeEntry.findFirst({
       where: {
         tenantId,
         date: targetDate,
-        status: 'submitted',
+        status: { in: ['submitted', 'approved'] },
         ...(supervisorId ? { supervisorId } : {}),
       },
     });
 
-    if (submittedCheck) {
-      res.status(403).json({ error: 'Cannot update activities: Daily records have already been submitted and locked.' });
+    if (lockedCheck) {
+      const msg = lockedCheck.status === 'approved'
+        ? 'Cannot update activities: Daily records have already been Approved by Admin.'
+        : 'Cannot update activities: Daily records have already been submitted and locked.';
+      res.status(403).json({ error: msg });
       return;
     }
 
@@ -588,6 +624,27 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
       }
     }
 
+    // Recalculate and persist activity split totals and OT for each modified employee
+    for (const empId of employeeIds) {
+      const allEmpEntries = await prisma.timeEntry.findMany({
+        where: { tenantId, employeeId: empId, date: targetDate },
+      });
+      const totalEmpHours = allEmpEntries.reduce((acc, curr) => acc + Number(curr.hours), 0);
+      let dayOt = 0;
+      if (isAllOvertime) {
+        dayOt = totalEmpHours;
+      } else if (totalEmpHours > standardHoursCap) {
+        dayOt = Math.round((totalEmpHours - standardHoursCap) * 100) / 100;
+      }
+      await prisma.timeEntry.updateMany({
+        where: { tenantId, employeeId: empId, date: targetDate },
+        data: {
+          shiftHours: totalEmpHours,
+          otHours: dayOt,
+        },
+      });
+    }
+
     res.status(201).json({
       success: true,
       count: createdEntries.length,
@@ -639,7 +696,25 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
     const finalOutTime = outTime ?? existing?.outTime ?? null;
     const breakHours = computeBreakHours(finalInTime, finalOutTime);
 
+    // Guard against modifying approved entries
+    const approvedCheck = await prisma.timeEntry.findFirst({
+      where: {
+        tenantId,
+        employeeId,
+        date: targetDate,
+        status: 'approved',
+      },
+    });
+    if (approvedCheck) {
+      res.status(403).json({ error: 'Cannot edit time entry: Daily attendance has already been Approved by Admin.' });
+      return;
+    }
+
     if (existing) {
+      if (existing.status === 'submitted') {
+        res.status(403).json({ error: 'Cannot edit time entry: Daily attendance has already been submitted and locked.' });
+        return;
+      }
       const updated = await prisma.timeEntry.update({
         where: { id: existing.id },
         data: {
@@ -832,3 +907,631 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: 'Failed to submit daily entries' });
   }
 };
+
+// 7. Admin: Get Approval Overview for Date (Submitted, Not Submitted, Approved)
+export const getApprovalOverview = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const dateStr = req.query.date as string;
+    if (!dateStr) {
+      res.status(400).json({ error: 'Date query parameter (YYYY-MM-DD) is required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+    const targetDate = parseDate(dateStr);
+
+    // 1. Get Day Type rules for this date
+    const dayTypeRules = await getDayTypeRulesAndId(tenantId, targetDate);
+
+    // 2. Fetch all daily assignments for this date
+    const assignments = await prisma.dailyAssignment.findMany({
+      where: { tenantId, date: targetDate },
+      include: {
+        supervisor: { select: { id: true, fullName: true, username: true } },
+        employee: {
+          select: {
+            id: true,
+            employeeCode: true,
+            callingName: true,
+            fullName: true,
+            tradeGroup: true,
+            businessPartner: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { supervisor: { fullName: 'asc' } },
+    });
+
+    // 3. Fetch all time entries for this date
+    const timeEntries = await prisma.timeEntry.findMany({
+      where: { tenantId, date: targetDate },
+      include: {
+        supervisor: { select: { id: true, fullName: true, username: true } },
+        employee: {
+          select: {
+            id: true,
+            employeeCode: true,
+            callingName: true,
+            fullName: true,
+            tradeGroup: true,
+            businessPartner: { select: { name: true } },
+          },
+        },
+        activity: { select: { id: true, code: true, description: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // 4. Collect all distinct supervisors involved on this date
+    const supervisorMap = new Map<string, { id: string; fullName: string; username: string }>();
+
+    assignments.forEach((a) => {
+      if (a.supervisor) {
+        supervisorMap.set(a.supervisor.id, a.supervisor);
+      }
+    });
+
+    timeEntries.forEach((t) => {
+      if (t.supervisor) {
+        supervisorMap.set(t.supervisor.id, t.supervisor);
+      }
+    });
+
+    const submitted: any[] = [];
+    const notSubmitted: any[] = [];
+    const approved: any[] = [];
+
+    // 5. Categorize per supervisor
+    for (const [supId, supInfo] of supervisorMap.entries()) {
+      const supAssignments = assignments.filter((a) => a.supervisorId === supId);
+      const supEntries = timeEntries.filter((t) => t.supervisorId === supId);
+
+      const assignedWorkerIds = new Set(supAssignments.map((a) => a.employeeId));
+      const workedWorkerIds = new Set(supEntries.map((t) => t.employeeId));
+
+      const totalHours = supEntries.reduce((sum, t) => sum + Number(t.hours || 0), 0);
+      const totalOvertime = supEntries.reduce((sum, t) => sum + Number(t.overtimeHours || 0), 0);
+
+      const hasSubmitted = supEntries.some((t) => t.status === 'submitted');
+      const allApproved = supEntries.length > 0 && supEntries.every((t) => t.status === 'approved');
+
+      // Group workers
+      const allEmpIds = Array.from(new Set([...assignedWorkerIds, ...workedWorkerIds]));
+      const workerDetails = allEmpIds.map((empId) => {
+        const assignment = supAssignments.find((a) => a.employeeId === empId);
+        const entries = supEntries.filter((t) => t.employeeId === empId);
+        const emp = assignment?.employee || entries[0]?.employee;
+
+        const inTime = entries[0]?.inTime || '';
+        const outTime = entries[0]?.outTime || '';
+        const hours = entries.reduce((sum, e) => sum + Number(e.hours || 0), 0);
+        const otHours = entries.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0);
+
+        const activities = entries.map((e) => ({
+          code: e.activity?.code || 'N/A',
+          description: e.activity?.description || '',
+          hours: Number(e.hours || 0),
+        }));
+
+        const status = entries[0]?.status || (inTime && outTime ? 'draft' : 'pending');
+
+        return {
+          employeeId: empId,
+          employeeCode: emp?.employeeCode || 'N/A',
+          callingName: emp?.callingName || emp?.fullName || 'Worker',
+          fullName: emp?.fullName || '',
+          tradeGroup: emp?.tradeGroup || 'General labour',
+          businessPartner: emp?.businessPartner?.name || 'Direct',
+          inTime,
+          outTime,
+          hours,
+          otHours,
+          activities,
+          status,
+        };
+      });
+
+      const groupData = {
+        supervisorId: supId,
+        supervisorName: supInfo.fullName,
+        username: supInfo.username,
+        assignedCount: supAssignments.length,
+        workedCount: workerDetails.filter((w) => w.inTime || w.hours > 0).length,
+        totalHours,
+        totalOvertime,
+        submittedAt: supEntries[0]?.submittedAt || null,
+        status: allApproved ? 'approved' : (hasSubmitted ? 'submitted' : (supEntries.length > 0 ? 'draft' : 'not_started')),
+        workers: workerDetails,
+      };
+
+      if (allApproved) {
+        approved.push(groupData);
+      } else if (hasSubmitted) {
+        submitted.push(groupData);
+      } else {
+        notSubmitted.push(groupData);
+      }
+    }
+
+    res.json({
+      date: dateStr,
+      dayType: {
+        name: dayTypeRules.dayTypeName,
+        standardHoursCap: dayTypeRules.standardHoursCap,
+        isAllOvertime: dayTypeRules.isAllOvertime,
+      },
+      submitted,
+      notSubmitted,
+      approved,
+      stats: {
+        totalSupervisors: supervisorMap.size,
+        submittedCount: submitted.length,
+        notSubmittedCount: notSubmitted.length,
+        approvedCount: approved.length,
+        totalWorkers: assignments.length,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching approval overview:', error);
+    res.status(500).json({ error: 'Failed to fetch approval overview' });
+  }
+};
+
+// 7.1 Admin: Approve supervisor day / records
+export const approveTimeEntries = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { supervisorId, date } = req.body;
+    if (!date) {
+      res.status(400).json({ error: 'date (YYYY-MM-DD) is required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
+    const targetDate = parseDate(date);
+
+    const where: Record<string, any> = {
+      tenantId,
+      date: targetDate,
+      status: { in: ['submitted', 'draft'] },
+    };
+    if (supervisorId) {
+      where.supervisorId = supervisorId;
+    }
+
+    const result = await prisma.timeEntry.updateMany({
+      where,
+      data: {
+        status: 'approved',
+      },
+    });
+
+    res.json({
+      success: true,
+      approvedCount: result.count,
+      message: `Successfully approved ${result.count} time entry record(s).`,
+    });
+  } catch (error) {
+    console.error('Error approving time entries:', error);
+    res.status(500).json({ error: 'Failed to approve time entries' });
+  }
+};
+
+// 7.2 Admin: Reject supervisor day / return to draft
+export const rejectTimeEntries = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { supervisorId, date, reason } = req.body;
+    if (!date || !supervisorId) {
+      res.status(400).json({ error: 'supervisorId and date are required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
+    const targetDate = parseDate(date);
+
+    const result = await prisma.timeEntry.updateMany({
+      where: {
+        tenantId,
+        supervisorId,
+        date: targetDate,
+      },
+      data: {
+        status: 'draft',
+        remarks: reason ? `Returned by Admin: ${reason}` : undefined,
+      },
+    });
+
+    res.json({
+      success: true,
+      rejectedCount: result.count,
+      message: `Returned ${result.count} record(s) to draft for supervisor to edit.`,
+    });
+  } catch (error) {
+    console.error('Error rejecting time entries:', error);
+    res.status(500).json({ error: 'Failed to return entries to draft' });
+  }
+};
+
+// 7.3 Admin: Inline edit worker time entry (In/Out & hours) during approval
+export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { supervisorId, employeeId, date, inTime, outTime, hours, overtimeHours } = req.body;
+    if (!employeeId || !date) {
+      res.status(400).json({ error: 'employeeId and date are required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
+    const targetDate = parseDate(date);
+    const { standardHoursCap, isAllOvertime, effectiveDayTypeId } = await getDayTypeRulesAndId(tenantId, targetDate);
+
+    // Calculate hours if inTime & outTime are provided
+    let calculatedHours = hours !== undefined ? parseFloat(hours) : 0;
+    let calculatedOt = overtimeHours !== undefined ? parseFloat(overtimeHours) : 0;
+    let breakHours = 0;
+
+    if (inTime && outTime) {
+      const [inH, inM] = inTime.split(':').map(Number);
+      const [outH, outM] = outTime.split(':').map(Number);
+      let diff = (outH * 60 + outM) - (inH * 60 + inM);
+      if (diff < 0) diff += 24 * 60;
+
+      const gross = Math.round((diff / 60) * 100) / 100;
+      breakHours = computeBreakHours(inTime, outTime);
+      const net = Math.max(0, Math.round((gross - breakHours) * 100) / 100);
+
+      calculatedHours = net;
+      if (isAllOvertime) {
+        calculatedOt = net;
+      } else if (net > standardHoursCap) {
+        calculatedOt = Math.round((net - standardHoursCap) * 100) / 100;
+      } else {
+        calculatedOt = 0;
+      }
+    }
+
+    // Find all existing records for this employee on this date
+    const existingEntries = await prisma.timeEntry.findMany({
+      where: {
+        tenantId,
+        employeeId,
+        date: targetDate,
+      },
+    });
+
+    if (existingEntries.length > 0) {
+      // If there's only 1 entry or 0 activity splits, update its hours as well
+      if (existingEntries.length === 1) {
+        await prisma.timeEntry.update({
+          where: { id: existingEntries[0].id },
+          data: {
+            inTime,
+            outTime,
+            hours: calculatedHours,
+            overtimeHours: calculatedOt,
+            breakHours,
+            remarks: 'Adjusted by Admin',
+          },
+        });
+      } else {
+        // Multiple activity splits: update attendance times for all
+        await prisma.timeEntry.updateMany({
+          where: {
+            tenantId,
+            employeeId,
+            date: targetDate,
+          },
+          data: {
+            inTime,
+            outTime,
+            breakHours,
+          },
+        });
+      }
+    } else {
+      // Create new record for this worker
+      const defaultActivity = (await prisma.activityCode.findFirst({
+        where: { tenantId },
+      })) || (await prisma.activityCode.create({
+        data: {
+          tenantId,
+          code: 'GEN-01',
+          description: 'General Site Work',
+          trade: 'General labour',
+        },
+      }));
+
+      await prisma.timeEntry.create({
+        data: {
+          tenantId,
+          employeeId,
+          supervisorId: supervisorId || '',
+          activityId: defaultActivity.id,
+          effectiveDayTypeId,
+          date: targetDate,
+          inTime,
+          outTime,
+          hours: calculatedHours,
+          overtimeHours: calculatedOt,
+          breakHours,
+          status: 'submitted',
+          remarks: 'Created & Adjusted by Admin',
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      employeeId,
+      inTime,
+      outTime,
+      hours: calculatedHours,
+      overtimeHours: calculatedOt,
+      message: 'Worker entry adjusted successfully by Admin.',
+    });
+  } catch (error) {
+    console.error('Error in adminAdjustWorkerTimeEntry:', error);
+    res.status(500).json({ error: 'Failed to adjust worker time entry' });
+  }
+};
+
+// ─── OPERATOR TIME ENTRIES ──────────────────────────────────────────────────
+
+// 8. Get operator entries for supervisor & date
+export const getOperatorEntries = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const supervisorId = req.query.supervisorId as string;
+    const dateStr = req.query.date as string;
+    if (!dateStr) {
+      res.status(400).json({ error: 'Date query parameter (YYYY-MM-DD) is required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+    const targetDate = parseDate(dateStr);
+
+    const assignments = await prisma.dailyOperatorAssignment.findMany({
+      where: {
+        tenantId,
+        date: targetDate,
+        ...(supervisorId ? { supervisorId } : {}),
+      },
+      include: {
+        operator: true,
+        timeEntry: {
+          include: {
+            assignedEquipment: true,
+          },
+        },
+      },
+      orderBy: {
+        operator: {
+          employeeCode: 'asc',
+        },
+      },
+    });
+
+    const result = assignments.map((a) => {
+      const entry = a.timeEntry;
+      return {
+        id: a.id,
+        operatorId: a.operator.id,
+        callingName: a.operator.callingName || a.operator.fullName,
+        employeeNumber: a.operator.employeeCode,
+        licenseNo: a.operator.nicNo || 'N/A',
+        designation: a.operator.tradeGroup || 'Operator',
+        inTime: entry?.inTime || '',
+        outTime: entry?.outTime || '',
+        shiftHours: entry ? Number(entry.shiftHours) : 0,
+        otHours: entry ? Number(entry.otHours) : 0,
+        assignedEquipmentId: entry?.assignedEquipmentId || '',
+        assignedEquipmentCode: entry?.assignedEquipment?.code || '',
+        status: entry?.status || 'draft',
+        notes: entry?.notes || '',
+        lastSavedAt: entry?.updatedAt ? new Date(entry.updatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : undefined,
+      };
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching operator entries:', error);
+    res.status(500).json({ error: 'Failed to fetch operator entries' });
+  }
+};
+
+// 9. Save / Upsert single operator entry
+export const saveOperatorEntry = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      operatorId,
+      supervisorId,
+      date,
+      inTime,
+      outTime,
+      shiftHours,
+      otHours,
+      assignedEquipmentId,
+      notes,
+      status,
+    } = req.body;
+
+    if (!operatorId || !date) {
+      res.status(400).json({ error: 'operatorId and date (YYYY-MM-DD) are required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
+    const targetDate = parseDate(date);
+
+    let effectiveSupervisorId = supervisorId;
+    if (!effectiveSupervisorId) {
+      const defaultSupervisor = await prisma.user.findFirst({
+        where: { tenantId, role: { in: ['supervisor', 'admin'] } },
+      });
+      effectiveSupervisorId = defaultSupervisor?.id;
+    }
+
+    if (!effectiveSupervisorId) {
+      res.status(400).json({ error: 'Valid supervisorId is required' });
+      return;
+    }
+
+    // 1. Ensure DailyOperatorAssignment exists
+    let assignment = await prisma.dailyOperatorAssignment.findUnique({
+      where: {
+        tenantId_date_operatorId: {
+          tenantId,
+          date: targetDate,
+          operatorId,
+        },
+      },
+    });
+
+    if (!assignment) {
+      assignment = await prisma.dailyOperatorAssignment.create({
+        data: {
+          tenantId,
+          date: targetDate,
+          supervisorId: effectiveSupervisorId,
+          operatorId,
+        },
+      });
+    }
+
+    // Guard: Prevent edits to approved/done operator time entries
+    const existingEntry = await prisma.operatorTimeEntry.findUnique({
+      where: { assignmentId: assignment.id },
+    });
+    if (existingEntry && (existingEntry.status === 'approved' || existingEntry.status === 'done')) {
+      res.status(403).json({ error: 'Cannot edit operator time entry: Record has already been Approved or Completed.' });
+      return;
+    }
+
+    // 2. Upsert OperatorTimeEntry
+    const timeEntry = await prisma.operatorTimeEntry.upsert({
+      where: {
+        assignmentId: assignment.id,
+      },
+      create: {
+        tenantId,
+        assignmentId: assignment.id,
+        inTime: inTime || null,
+        outTime: outTime || null,
+        shiftHours: shiftHours !== undefined ? shiftHours : 0,
+        otHours: otHours !== undefined ? otHours : 0,
+        assignedEquipmentId: assignedEquipmentId || null,
+        notes: notes || null,
+        status: status || 'draft',
+      },
+      update: {
+        inTime: inTime !== undefined ? inTime : undefined,
+        outTime: outTime !== undefined ? outTime : undefined,
+        shiftHours: shiftHours !== undefined ? shiftHours : undefined,
+        otHours: otHours !== undefined ? otHours : undefined,
+        assignedEquipmentId: assignedEquipmentId !== undefined ? (assignedEquipmentId || null) : undefined,
+        notes: notes !== undefined ? notes : undefined,
+        status: status || undefined,
+      },
+      include: {
+        assignedEquipment: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      assignmentId: assignment.id,
+      timeEntry,
+    });
+  } catch (error) {
+    console.error('Error saving operator entry:', error);
+    res.status(500).json({ error: 'Failed to save operator entry' });
+  }
+};
+
+// 10. Save / Upsert bulk operator entries
+export const saveBulkOperatorEntries = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { entries, date, supervisorId } = req.body;
+    if (!Array.isArray(entries) || !date) {
+      res.status(400).json({ error: 'entries array and date are required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
+    const targetDate = parseDate(date);
+
+    let effectiveSupervisorId = supervisorId;
+    if (!effectiveSupervisorId) {
+      const defaultSupervisor = await prisma.user.findFirst({
+        where: { tenantId, role: { in: ['supervisor', 'admin'] } },
+      });
+      effectiveSupervisorId = defaultSupervisor?.id;
+    }
+
+    const savedResults = [];
+
+    for (const item of entries) {
+      const opId = item.operatorId || item.id;
+      if (!opId) continue;
+
+      let assignment = await prisma.dailyOperatorAssignment.findUnique({
+        where: {
+          tenantId_date_operatorId: {
+            tenantId,
+            date: targetDate,
+            operatorId: opId,
+          },
+        },
+      });
+
+      if (!assignment && effectiveSupervisorId) {
+        assignment = await prisma.dailyOperatorAssignment.create({
+          data: {
+            tenantId,
+            date: targetDate,
+            supervisorId: effectiveSupervisorId,
+            operatorId: opId,
+          },
+        });
+      }
+
+      if (assignment) {
+        const timeEntry = await prisma.operatorTimeEntry.upsert({
+          where: {
+            assignmentId: assignment.id,
+          },
+          create: {
+            tenantId,
+            assignmentId: assignment.id,
+            inTime: item.inTime || null,
+            outTime: item.outTime || null,
+            shiftHours: item.shiftHours !== undefined ? item.shiftHours : 0,
+            otHours: item.otHours !== undefined ? item.otHours : 0,
+            assignedEquipmentId: item.assignedEquipmentId || null,
+            notes: item.notes || null,
+            status: item.status || 'draft',
+          },
+          update: {
+            inTime: item.inTime !== undefined ? item.inTime : undefined,
+            outTime: item.outTime !== undefined ? item.outTime : undefined,
+            shiftHours: item.shiftHours !== undefined ? item.shiftHours : undefined,
+            otHours: item.otHours !== undefined ? item.otHours : undefined,
+            assignedEquipmentId: item.assignedEquipmentId !== undefined ? (item.assignedEquipmentId || null) : undefined,
+            notes: item.notes !== undefined ? item.notes : undefined,
+            status: item.status || undefined,
+          },
+        });
+        savedResults.push(timeEntry);
+      }
+    }
+
+    res.json({
+      success: true,
+      count: savedResults.length,
+      savedResults,
+    });
+  } catch (error) {
+    console.error('Error in bulk saving operator entries:', error);
+    res.status(500).json({ error: 'Failed to bulk save operator entries' });
+  }
+};
+

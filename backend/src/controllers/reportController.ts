@@ -62,6 +62,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
     const entries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
+        status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(businessPartner
           ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
@@ -181,6 +182,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
     const entries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
+        status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(businessPartner
           ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
@@ -306,6 +308,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     const entries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
+        status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(businessPartner
           ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
@@ -467,6 +470,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
     const entries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
+        status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(activityCode ? { activity: { code: activityCode } } : {}),
         ...(businessPartner
@@ -662,6 +666,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
     const entries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
+        status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(businessPartner
           ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }

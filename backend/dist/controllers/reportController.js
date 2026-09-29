@@ -62,6 +62,7 @@ const getSummaryReport = async (req, res) => {
         const entries = await prisma_1.default.timeEntry.findMany({
             where: {
                 tenantId,
+                status: 'approved',
                 ...(dateFilter ? { date: dateFilter } : {}),
                 ...(businessPartner
                     ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
@@ -161,6 +162,7 @@ const getDayOtSummaryReport = async (req, res) => {
         const entries = await prisma_1.default.timeEntry.findMany({
             where: {
                 tenantId,
+                status: 'approved',
                 ...(dateFilter ? { date: dateFilter } : {}),
                 ...(businessPartner
                     ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
@@ -268,6 +270,7 @@ const getBpBillReport = async (req, res) => {
         const entries = await prisma_1.default.timeEntry.findMany({
             where: {
                 tenantId,
+                status: 'approved',
                 ...(dateFilter ? { date: dateFilter } : {}),
                 ...(businessPartner
                     ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
@@ -406,6 +409,7 @@ const getErpUploadReport = async (req, res) => {
         const entries = await prisma_1.default.timeEntry.findMany({
             where: {
                 tenantId,
+                status: 'approved',
                 ...(dateFilter ? { date: dateFilter } : {}),
                 ...(activityCode ? { activity: { code: activityCode } } : {}),
                 ...(businessPartner
@@ -586,6 +590,7 @@ const getRunningChartReport = async (req, res) => {
         const entries = await prisma_1.default.timeEntry.findMany({
             where: {
                 tenantId,
+                status: 'approved',
                 ...(dateFilter ? { date: dateFilter } : {}),
                 ...(businessPartner
                     ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }

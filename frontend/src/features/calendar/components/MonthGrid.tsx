@@ -5,13 +5,14 @@
 import { useState } from 'react';
 import type { DayType } from '../services/calendarService';
 import DayTypePicker from './DayTypePicker';
+import { DayTypeConfirmModal } from './DayTypeConfirmModal';
 
 interface Props {
   year: number;
   month: number; // 0-indexed
   getDayTypeForDate: (date: string) => DayType | undefined;
   dayTypes: DayType[];
-  onSetDayType: (date: string, dayTypeId: string) => Promise<void>;
+  onSetDayType: (date: string, dayTypeId: string) => Promise<any>;
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -36,6 +37,13 @@ const BADGE_STYLES: Record<string, { bg: string; text: string; border: string }>
 
 export default function MonthGrid({ year, month, getDayTypeForDate, dayTypes, onSetDayType }: Props) {
   const [pickerDate, setPickerDate] = useState<string | null>(null);
+  const [pendingChange, setPendingChange] = useState<{
+    date: string;
+    currentDayType?: DayType;
+    newDayType?: DayType;
+  } | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const today = new Date();
   const todayStr = formatDate(today.getFullYear(), today.getMonth(), today.getDate());
@@ -53,11 +61,44 @@ export default function MonthGrid({ year, month, getDayTypeForDate, dayTypes, on
     setPickerDate(pickerDate === dateStr ? null : dateStr);
   };
 
-  const handlePickerSelect = async (dayTypeId: string) => {
+  const handlePickerSelect = (dayTypeId: string) => {
     if (pickerDate) {
-      await onSetDayType(pickerDate, dayTypeId);
+      const currentDt = getDayTypeForDate(pickerDate);
+      const newDt = dayTypes.find((d) => d.id === dayTypeId);
+
+      if (currentDt?.id === dayTypeId) {
+        setPickerDate(null);
+        return;
+      }
+
       setPickerDate(null);
+      setModalError(null);
+      setPendingChange({
+        date: pickerDate,
+        currentDayType: currentDt,
+        newDayType: newDt,
+      });
     }
+  };
+
+  const handleConfirmChange = async () => {
+    if (!pendingChange?.newDayType) return;
+    setIsProcessing(true);
+    setModalError(null);
+    try {
+      await onSetDayType(pendingChange.date, pendingChange.newDayType.id);
+      setPendingChange(null);
+    } catch (err: any) {
+      setModalError(err?.message || 'Failed to update day type on server');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCancelModal = () => {
+    if (isProcessing) return;
+    setPendingChange(null);
+    setModalError(null);
   };
 
   return (
@@ -153,6 +194,18 @@ export default function MonthGrid({ year, month, getDayTypeForDate, dayTypes, on
           );
         })}
       </div>
+
+      {/* Confirmation & Cascade Recalculation Modal (ආරක්ෂක පියවර 2 & 3) */}
+      <DayTypeConfirmModal
+        isOpen={Boolean(pendingChange)}
+        date={pendingChange?.date || ''}
+        currentDayType={pendingChange?.currentDayType}
+        newDayType={pendingChange?.newDayType}
+        onConfirm={handleConfirmChange}
+        onCancel={handleCancelModal}
+        isProcessing={isProcessing}
+        errorMessage={modalError}
+      />
     </div>
   );
 }

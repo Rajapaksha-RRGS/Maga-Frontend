@@ -23,6 +23,7 @@ import TenantTable from '../features/tenants/components/TenantTable';
 import TenantCardList from '../features/tenants/components/TenantCardList';
 import TenantForm from '../features/tenants/components/TenantForm';
 import SearchInput from '../components/SearchInput';
+import Breadcrumb from '../components/Breadcrumb';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
 
@@ -92,9 +93,7 @@ export default function TenantsPage() {
               Projects & Site Admins
             </h1>
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Manage construction project sites, project codes (M-Code), and site admin login accounts.
-          </p>
+          <Breadcrumb items={[{ label: 'Project Tenants' }]} className="mt-1" />
         </div>
 
         <button

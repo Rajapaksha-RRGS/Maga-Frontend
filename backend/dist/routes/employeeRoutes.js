@@ -2,8 +2,12 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const employeeController_1 = require("../controllers/employeeController");
+const authMiddleware_1 = require("../middleware/authMiddleware");
 const router = (0, express_1.Router)();
-// Routes matching frontend expectations
+// Cross-tenant & Transfer routes (protected with authorization)
+router.post('/cross-tenant-status', authMiddleware_1.requireAdmin, employeeController_1.getCrossTenantEmployeeStatus);
+router.post('/transfer', authMiddleware_1.requireAdmin, employeeController_1.transferEmployee);
+// Standard routes matching frontend expectations
 router.get('/', employeeController_1.getAllEmployees);
 router.get('/:id', employeeController_1.getEmployeeById);
 router.post('/', employeeController_1.createEmployee);

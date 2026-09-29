@@ -368,10 +368,13 @@ value, border-radius, font-weight, and component pattern used in this app.
    It must not appear in body text, headings, or decorative elements. Green and
    amber are strictly semantic (success / warning) — never decorative.
 
-4. **Typography guard-rails.** Only font-weights 400 and 500 are used. If a
-   design mock shows bold (600+), translate it to 500 (medium). Labels use
-   sentence case or uppercase-xs — never Title Case.
+4. **Typography & Font Enforcement (Inter Standard).**
+   - **Primary Font:** Strictly use `'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif` (`--font-sans` / `font-sans`) across ALL screens, admin portal pages, supervisor mobile app, modals, tables, and cards. Never introduce foreign or inconsistent fonts.
+   - **Monospace Font:** Strictly `ui-monospace, 'Cascadia Code', Consolas, monospace` (`--font-mono` / `font-mono`) for activity codes, equipment IDs, employee numbers, NICs, and timestamps.
+   - **Font Weights:** Limit to 400 (regular — body text, descriptions) and 500 (medium — headings, controls, labels, buttons), with 600 (semibold) reserved for badges, counters, and table headers. Never use heavy bold (>700) or decorative styling.
+   - **Letter Casing:** Labels and buttons must strictly use clean Sentence Case (e.g., 'Approve day', 'Add employee', 'Check in') — never Title Case. Small tags and column headers use uppercase with letter tracking (`uppercase tracking-wider text-xs`).
 
 5. **Accessibility minimums.** Every tappable element must be ≥ 44px tall
    (`min-h-[44px]`), must have a `focus-visible:ring-2 ring-blue-600` ring,
    and must include `transition-colors` for press feedback.
+

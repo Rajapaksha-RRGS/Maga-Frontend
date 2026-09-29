@@ -15,7 +15,7 @@ const getParam = (param) => {
 const getAllActivityCodes = async (req, res) => {
     try {
         const { search } = req.query;
-        const tenantId = req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const where = { tenantId };
         if (search && typeof search === 'string') {
             where.OR = [
@@ -62,7 +62,7 @@ const createActivityCode = async (req, res) => {
             res.status(400).json({ error: 'Code is required' });
             return;
         }
-        const tenantId = req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const newCode = await prisma_1.default.activityCode.create({
             data: {
                 tenantId,

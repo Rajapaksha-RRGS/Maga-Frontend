@@ -9,7 +9,10 @@
  *   - Offline sync queue & simulated sync with realistic feedback
  */
 
+import { apiFetch, API_URL } from "../../../config/api";
+
 export interface ActivityCodeItem {
+  id?: string;
   code: string;
   name: string;
   trade: string;
@@ -64,8 +67,10 @@ export interface EquipmentLogEntry {
   type: string;
   
   // Rating Units (from Master Data)
+  primaryUnit?: EquipmentRatingUnit;
   availableUnits?: EquipmentRatingUnit[];
   activeUnit?: EquipmentRatingUnit;
+  additionalUnit?: EquipmentRatingUnit | null;
   
   // Values per unit
   startMeter: number;
@@ -142,7 +147,7 @@ export const STANDBY_WORKERS_POOL = [
 
 // ─── Initial Seed Records ───────────────────────────────────────────────────
 
-const INITIAL_LABORERS: LaborerEntry[] = [
+export const INITIAL_LABORERS: LaborerEntry[] = [
   {
     id: 'L-101',
     employeeCode: 'EMP-101',
@@ -246,7 +251,7 @@ const INITIAL_LABORERS: LaborerEntry[] = [
   },
 ];
 
-const INITIAL_OPERATORS: OperatorEntry[] = [
+export const INITIAL_OPERATORS: OperatorEntry[] = [
   {
     id: 'OP-201',
     callingName: 'Anura Gunasekara',
@@ -307,7 +312,7 @@ const INITIAL_OPERATORS: OperatorEntry[] = [
   },
 ];
 
-const INITIAL_EQUIPMENT: EquipmentLogEntry[] = [
+export const INITIAL_EQUIPMENT: EquipmentLogEntry[] = [
   {
     id: 'EQ-01',
     code: 'EX-04',
@@ -431,7 +436,7 @@ const SYNC_QUEUE_KEY = 'maga_supervisor_sync_queue';
 const ACTIVE_SITE_KEY = 'maga_supervisor_active_site';
 
 export const supervisorStorage = {
-  // Get active site
+  // ── Site Management ───────────────────────────────────────────────────────
   getActiveSite(): SiteProject {
     try {
       const saved = localStorage.getItem(ACTIVE_SITE_KEY);
@@ -446,30 +451,222 @@ export const supervisorStorage = {
     localStorage.setItem(ACTIVE_SITE_KEY, JSON.stringify(site));
   },
 
-  // Load labor data for a given date
+  // ── 1. Master Activity Codes (Backend with Tenant Isolation + Offline Cache) 
+  async getActivityCodes(): Promise<ActivityCodeItem[]> {
+    const key = `${STORAGE_PREFIX}activities_cache`;
+    try {
+      const res = await apiFetch(`${API_URL}/activity-codes`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const mapped: ActivityCodeItem[] = data.map((d: any) => ({
+            id: d.id,
+            code: d.code,
+            name: d.description || d.code,
+            trade: d.trade || '',
+            category: d.category || '',
+          }));
+          localStorage.setItem(key, JSON.stringify(mapped));
+          return mapped;
+        }
+      }
+    } catch (err) {
+      console.warn('Backend unavailable, using cached activities:', err);
+    }
+
+    const cached = localStorage.getItem(key);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {}
+    }
+    return MASTER_ACTIVITIES;
+  },
+
+  async resolveActivityByCode(code: string): Promise<ActivityCodeItem | undefined> {
+    const list = await this.getActivityCodes();
+    return list.find((a) => a.code === code);
+  },
+
+  // ── 2. Master Equipment (Backend + Offline Cache) ──────────────────────────
+  async fetchEquipment(supervisorId?: string, date?: string): Promise<EquipmentLogEntry[]> {
+    const key = date ? `${STORAGE_PREFIX}equipment_${date}` : `${STORAGE_PREFIX}equipment_master`;
+    try {
+      if (supervisorId && date) {
+        // Fetch only equipment assigned to this supervisor on this date
+        const res = await apiFetch(
+          `${API_URL}/assignments/equipment?date=${encodeURIComponent(date)}&supervisorId=${encodeURIComponent(supervisorId)}`
+        );
+        if (res.ok) {
+          const assignedData = await res.json();
+          const existingLocal = this.getEquipment(date);
+          const localMap = new Map(existingLocal.map((e) => [e.id, e]));
+
+          const mapped: EquipmentLogEntry[] = (assignedData || []).map((asgn: any) => {
+            const existing = localMap.get(asgn.equipmentId) || localMap.get(asgn.id);
+            // Determine the list of units this equipment supports from DB
+            const ALL_UNITS: EquipmentRatingUnit[] = ['Hrs', 'Days', 'EX.hrs', 'mth', 'm2'];
+            const dbPrimaryUnit: EquipmentRatingUnit = (asgn.primaryUnit as EquipmentRatingUnit) || 'mth';
+            // DB `availableUnits` stores ADDITIONAL units (not including primary by convention)
+            // If empty → show all 5; otherwise: primary + additional
+            const dbAvailableUnits: EquipmentRatingUnit[] =
+              Array.isArray(asgn.availableUnits) && asgn.availableUnits.length > 0
+                ? [dbPrimaryUnit, ...asgn.availableUnits.filter((u: string) => u !== dbPrimaryUnit)] as EquipmentRatingUnit[]
+                : ALL_UNITS; // empty = all units shown
+            // Prefer supervisor's already-chosen unit (local draft) over DB default
+            const resolvedActiveUnit: EquipmentRatingUnit = existing?.activeUnit ?? dbPrimaryUnit;
+            return {
+              id: asgn.equipmentId,
+              code: asgn.equipmentCode || asgn.equipmentName,
+              name: asgn.equipmentName,
+              type: asgn.equipmentType || 'Equipment',
+              primaryUnit: dbPrimaryUnit,
+              availableUnits: dbAvailableUnits,
+              activeUnit: resolvedActiveUnit,
+              additionalUnit: existing?.additionalUnit ?? null,
+              daysValue: existing?.daysValue,
+              hoursValue: existing?.hoursValue,
+              extraHoursValue: existing?.extraHoursValue,
+              areaValue: existing?.areaValue,
+              startMeter: existing?.startMeter ?? 0,
+              endMeter: existing?.endMeter ?? 0,
+              netHours: existing?.netHours ?? 0,
+              workingHours: existing?.workingHours ?? 0,
+              idleHours: existing?.idleHours ?? 0,
+              breakdownHours: existing?.breakdownHours ?? 0,
+              fuelIssuedLiters: existing?.fuelIssuedLiters ?? 0,
+              operatorId: existing?.operatorId,
+              activityCode: existing?.activityCode,
+              status: existing?.status || 'pending',
+              lastSavedAt: existing?.lastSavedAt,
+            };
+          });
+
+          localStorage.setItem(key, JSON.stringify(mapped));
+          return mapped;
+        }
+      } else {
+        const res = await apiFetch(`${API_URL}/equipment`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const mapped: EquipmentLogEntry[] = data.map((eq: any) => ({
+              id: eq.id,
+              code: eq.code || eq.name,
+              name: eq.name,
+              type: eq.type || 'Equipment',
+              availableUnits: ['Hrs', 'Days', 'EX.hrs', 'mth'],
+              activeUnit: 'Hrs',
+              startMeter: 0,
+              endMeter: 0,
+              netHours: 0,
+              workingHours: 0,
+              idleHours: 0,
+              breakdownHours: 0,
+              fuelIssuedLiters: 0,
+              status: 'pending',
+            }));
+            localStorage.setItem(key, JSON.stringify(mapped));
+            return mapped;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Backend unavailable, using cached equipment:', err);
+    }
+    return date ? this.getEquipment(date) : (localStorage.getItem(key) ? JSON.parse(localStorage.getItem(key)!) : []);
+  },
+
+  // ── 3. Laborers (Admin-Assigned to Supervisor for Date) ────────────────────
+  // Instant synchronous read from localStorage cache for offline render
   getLaborers(date: string): LaborerEntry[] {
     const key = `${STORAGE_PREFIX}labor_${date}`;
     try {
       const saved = localStorage.getItem(key);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((l: any, index: number) => {
-            const seed = INITIAL_LABORERS.find((s) => s.id === l.id) || INITIAL_LABORERS[index % INITIAL_LABORERS.length];
-            return {
-              ...seed,
-              ...l,
-              employeeCode: l.employeeCode || seed?.employeeCode || `EMP-10${index + 1}`,
-            };
-          });
+        if (Array.isArray(parsed)) {
+          return parsed;
         }
       }
     } catch {
       // ignore
     }
-    // Return seed on first load and cache
-    this.saveLaborers(date, INITIAL_LABORERS);
-    return INITIAL_LABORERS;
+    return [];
+  },
+
+  // Real data fetch from backend with reconciliation and offline cache
+  async getAssignedEmployees(supervisorId: string, date: string): Promise<LaborerEntry[]> {
+    const key = `${STORAGE_PREFIX}labor_${date}`;
+
+    try {
+      // Fetch assigned workers (admin assigned) and existing recorded entries concurrently
+      const [resAssigned, resEntries] = await Promise.all([
+        apiFetch(`${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`),
+        apiFetch(`${API_URL}/time-entries?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`),
+      ]);
+
+      if (resAssigned.ok) {
+        const assignedList = await resAssigned.json();
+        const timeEntryList = resEntries.ok ? await resEntries.json() : [];
+
+        // Check if entries for this day are already submitted and locked
+        const isSubmitted = timeEntryList.some((t: any) => t.status === 'submitted');
+        if (isSubmitted) {
+          this.lockDay(date);
+        }
+
+        // Map assigned workers with attendance, hours, and activity splits
+        const laborList: LaborerEntry[] = (assignedList || []).map((emp: any) => {
+          const myEntries = timeEntryList.filter((e: any) => e.employeeId === emp.id);
+
+          const inTime = myEntries.length > 0 ? (myEntries[0].inTime || '') : '';
+          const outTime = myEntries.length > 0 ? (myEntries[0].outTime || '') : '';
+
+          const shiftHours = myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0);
+          const otHours = myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0);
+
+          const activities: ActivitySplit[] = myEntries
+            .filter((e: any) => e.activity?.code || e.activityId)
+            .map((e: any, idx: number) => ({
+              id: e.id || `act-${idx}`,
+              activityCode: e.activity?.code || '',
+              hours: Number(e.hours) || 0,
+            }));
+
+          let status: 'draft' | 'pending' | 'done' = 'pending';
+          if (isSubmitted) {
+            status = 'done';
+          } else if (inTime && outTime) {
+            status = myEntries.some((e: any) => e.status === 'draft') ? 'draft' : 'done';
+          }
+
+          return {
+            id: emp.id,
+            employeeCode: emp.employeeCode || '',
+            callingName: emp.callingName || emp.fullName || '',
+            tradeGroup: emp.tradeGroup || 'General labour',
+            businessPartner: emp.businessPartner || 'Direct',
+            nic: emp.nicNo || '',
+            inTime,
+            outTime,
+            shiftHours,
+            otHours,
+            activities,
+            status,
+          };
+        });
+
+        // Cache real data in localStorage for offline accessibility
+        localStorage.setItem(key, JSON.stringify(laborList));
+        return laborList;
+      }
+    } catch (error) {
+      console.warn('Backend unavailable, using cached laborers:', error);
+    }
+
+    // Fallback to local cache when offline or if request fails
+    return this.getLaborers(date);
   },
 
   saveLaborers(date: string, laborers: LaborerEntry[]) {
@@ -478,29 +675,59 @@ export const supervisorStorage = {
     this.incrementPendingSync();
   },
 
-  // Load operators data for a given date
+  // ── 4. Operators ──────────────────────────────────────────────────────────
   getOperators(date: string): OperatorEntry[] {
     const key = `${STORAGE_PREFIX}operators_${date}`;
     try {
       const saved = localStorage.getItem(key);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((op: any, index: number) => {
-            const seed = INITIAL_OPERATORS.find((s) => s.id === op.id) || INITIAL_OPERATORS[index % INITIAL_OPERATORS.length];
-            return {
-              ...seed,
-              ...op,
-              employeeNumber: op.employeeNumber || seed?.employeeNumber || `R045${6 + index}`,
-            };
-          });
+        if (Array.isArray(parsed)) {
+          return parsed;
         }
       }
     } catch {
       // ignore
     }
-    this.saveOperators(date, INITIAL_OPERATORS);
-    return INITIAL_OPERATORS;
+    return [];
+  },
+
+  async fetchOperators(supervisorId: string, date: string): Promise<OperatorEntry[]> {
+    const key = `${STORAGE_PREFIX}operators_${date}`;
+    try {
+      const res = await apiFetch(
+        `${API_URL}/assignments/operator?date=${encodeURIComponent(date)}&supervisorId=${encodeURIComponent(supervisorId)}`
+      );
+      if (res.ok) {
+        const assignedData = await res.json();
+        const existingLocal = this.getOperators(date);
+        const localMap = new Map(existingLocal.map((o) => [o.id, o]));
+
+        const mapped: OperatorEntry[] = (assignedData || []).map((asgn: any) => {
+          const opId = asgn.operatorId || asgn.id;
+          const existing = localMap.get(opId);
+          return {
+            id: opId,
+            callingName: asgn.operatorName || asgn.callingName || 'Operator',
+            employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
+            licenseNo: asgn.licenseNo || '',
+            designation: asgn.operatorTrade || 'Machine Operator',
+            inTime: existing?.inTime || '',
+            outTime: existing?.outTime || '',
+            shiftHours: existing?.shiftHours || 0,
+            otHours: existing?.otHours || 0,
+            assignedEquipmentId: existing?.assignedEquipmentId || '',
+            status: existing?.status || 'pending',
+            notes: existing?.notes || '',
+          };
+        });
+        localStorage.setItem(key, JSON.stringify(mapped));
+        return mapped;
+      }
+    } catch (err) {
+      console.warn('Backend unavailable for operators, using cache:', err);
+    }
+    return this.getOperators(date);
   },
 
   saveOperators(date: string, operators: OperatorEntry[]) {
@@ -509,34 +736,21 @@ export const supervisorStorage = {
     this.incrementPendingSync();
   },
 
-  // Load equipment data for a given date
+  // ── 5. Equipment Logs ─────────────────────────────────────────────────────
   getEquipment(date: string): EquipmentLogEntry[] {
     const key = `${STORAGE_PREFIX}equipment_${date}`;
     try {
       const saved = localStorage.getItem(key);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((eq: any, index: number) => {
-            const seed = INITIAL_EQUIPMENT.find((s) => s.id === eq.id) || INITIAL_EQUIPMENT[index % INITIAL_EQUIPMENT.length];
-            return {
-              ...seed,
-              ...eq,
-              availableUnits: eq.availableUnits || seed?.availableUnits || ['mth', 'Days', 'Hrs'],
-              activeUnit: eq.activeUnit || seed?.activeUnit || 'mth',
-              daysValue: eq.daysValue ?? seed?.daysValue ?? (eq.netHours > 0 ? 1 : 0),
-              hoursValue: eq.hoursValue ?? seed?.hoursValue ?? eq.netHours,
-              extraHoursValue: eq.extraHoursValue ?? seed?.extraHoursValue ?? 0,
-              areaValue: eq.areaValue ?? seed?.areaValue ?? 0,
-            };
-          });
+        if (Array.isArray(parsed)) {
+          return parsed;
         }
       }
     } catch {
       // ignore
     }
-    this.saveEquipment(date, INITIAL_EQUIPMENT);
-    return INITIAL_EQUIPMENT;
+    return [];
   },
 
   saveEquipment(date: string, equipment: EquipmentLogEntry[]) {
@@ -545,7 +759,7 @@ export const supervisorStorage = {
     this.incrementPendingSync();
   },
 
-  // Day Submission Lock Status
+  // ── 6. Day Lock Status ────────────────────────────────────────────────────
   isDayLocked(date: string): boolean {
     const key = `${STORAGE_PREFIX}locked_${date}`;
     return localStorage.getItem(key) === 'true';
@@ -554,7 +768,6 @@ export const supervisorStorage = {
   lockDay(date: string) {
     const key = `${STORAGE_PREFIX}locked_${date}`;
     localStorage.setItem(key, 'true');
-    this.incrementPendingSync();
   },
 
   unlockDay(date: string) {
@@ -562,12 +775,12 @@ export const supervisorStorage = {
     localStorage.removeItem(key);
   },
 
-  // Offline Sync Management
+  // ── 7. Offline Sync Queue ─────────────────────────────────────────────────
   getPendingSyncCount(): number {
     try {
-      return parseInt(localStorage.getItem(SYNC_QUEUE_KEY) || '3', 10);
+      return parseInt(localStorage.getItem(SYNC_QUEUE_KEY) || '0', 10);
     } catch {
-      return 3;
+      return 0;
     }
   },
 
@@ -578,5 +791,117 @@ export const supervisorStorage = {
 
   resetPendingSync() {
     localStorage.setItem(SYNC_QUEUE_KEY, '0');
+  },
+
+  // ── 8. Sync Pending Drafts to Backend ──────────────────────────────────────
+  async syncToBackend(supervisorId: string, date: string): Promise<boolean> {
+    const laborers = this.getLaborers(date);
+    const operators = this.getOperators(date);
+
+    try {
+      // 1. Sync Laborers attendance and activity splits
+      for (const lab of laborers) {
+        if (lab.activities.length > 0) {
+          for (const act of lab.activities) {
+            const actObj = await this.resolveActivityByCode(act.activityCode);
+            if (actObj?.id) {
+              await apiFetch(`${API_URL}/time-entries/upsert`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  employeeId: lab.id,
+                  supervisorId,
+                  date,
+                  activityId: actObj.id,
+                  hours: act.hours,
+                  inTime: lab.inTime || undefined,
+                  outTime: lab.outTime || undefined,
+                }),
+              });
+            }
+          }
+        } else if (lab.inTime || lab.outTime) {
+          if (lab.inTime) {
+            await apiFetch(`${API_URL}/time-entries/check-in`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                employeeId: lab.id,
+                supervisorId,
+                date,
+                inTime: lab.inTime,
+              }),
+            });
+          }
+          if (lab.outTime) {
+            await apiFetch(`${API_URL}/time-entries/check-out`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                employeeId: lab.id,
+                supervisorId,
+                date,
+                outTime: lab.outTime,
+              }),
+            });
+          }
+        }
+      }
+
+      // 2. Sync Operators if any
+      if (operators.length > 0) {
+        const validOps = operators.filter((o) => o.inTime || o.assignedEquipmentId);
+        if (validOps.length > 0) {
+          await apiFetch(`${API_URL}/time-entries/operators/bulk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              supervisorId,
+              date,
+              entries: validOps.map((op) => ({
+                operatorId: op.id,
+                equipmentId: op.assignedEquipmentId || undefined,
+                inTime: op.inTime || undefined,
+                outTime: op.outTime || undefined,
+                hours: op.shiftHours || 0,
+                overtimeHours: op.otHours || 0,
+                notes: op.notes || undefined,
+              })),
+            }),
+          });
+        }
+      }
+
+      this.resetPendingSync();
+      return true;
+    } catch (err) {
+      console.error('Failed to sync to backend:', err);
+      throw err;
+    }
+  },
+
+  // ── 9. Submit & Lock Day on Backend ───────────────────────────────────────
+  async submitDayToBackend(supervisorId: string, date: string): Promise<boolean> {
+    // Sync all pending drafts first
+    await this.syncToBackend(supervisorId, date);
+
+    // Call submit endpoint to validate complete check-in/out and lock
+    const res = await apiFetch(`${API_URL}/time-entries/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        supervisorId,
+        date,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error || 'Failed to submit and lock day on backend');
+    }
+
+    this.lockDay(date);
+    this.resetPendingSync();
+    return true;
   },
 };

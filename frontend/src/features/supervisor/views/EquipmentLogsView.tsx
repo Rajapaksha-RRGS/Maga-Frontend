@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
 import { 
   Tractor, 
-  Gauge, 
   AlertTriangle, 
   Save, 
   Check, 
@@ -10,13 +9,10 @@ import {
   HardHat, 
   Search,
   X,
-  Calendar,
   Tag,  
-  Clock,
-  Zap,
-  Maximize2,
-  Sliders, 
-  
+  Plus,
+  Trash2,
+  Lock,
 } from 'lucide-react';
 import { MASTER_ACTIVITIES } from '../services/supervisorStorageService';
 import type { 
@@ -29,6 +25,7 @@ interface EquipmentLogsViewProps {
   equipment: EquipmentLogEntry[];
   operators: OperatorEntry[];
   onSaveEquipment: (updated: EquipmentLogEntry[]) => void;
+  isDayLocked?: boolean;
 }
 
 const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon: string }> = {
@@ -39,15 +36,14 @@ const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon:
   'm2': { label: 'm²', sub: 'Work Area (Square Meters)', icon: '📐' },
 };
 
-function getEquipmentActiveValue(eq: EquipmentLogEntry): { value: number; label: string; display: string } {
-  const unit: EquipmentRatingUnit = eq.activeUnit || 'mth';
+function getUnitValueInfo(eq: EquipmentLogEntry, unit: EquipmentRatingUnit): { value: number; label: string; display: string } {
   switch (unit) {
     case 'Days': {
-      const v = eq.daysValue ?? (eq.netHours > 0 ? 1 : 0);
+      const v = eq.daysValue ?? 0;
       return { value: v, label: 'Days', display: `${v} Day${v === 1 ? '' : 's'}` };
     }
     case 'Hrs': {
-      const v = eq.hoursValue ?? eq.netHours;
+      const v = eq.hoursValue ?? 0;
       return { value: v, label: 'Hrs', display: `${v.toFixed(1)} Hrs` };
     }
     case 'EX.hrs': {
@@ -55,7 +51,7 @@ function getEquipmentActiveValue(eq: EquipmentLogEntry): { value: number; label:
       return { value: v, label: 'EX.hrs', display: `${v.toFixed(1)} EX.hrs` };
     }
     case 'mth': {
-      const v = eq.netHours;
+      const v = eq.netHours ?? 0;
       return { value: v, label: 'mth', display: `${v.toFixed(1)} mth` };
     }
     case 'm2': {
@@ -63,22 +59,54 @@ function getEquipmentActiveValue(eq: EquipmentLogEntry): { value: number; label:
       return { value: v, label: 'm²', display: `${v} m²` };
     }
     default:
-      return { value: eq.netHours, label: 'mth', display: `${eq.netHours} mth` };
+      return { value: eq.netHours ?? 0, label: 'mth', display: `${eq.netHours ?? 0} mth` };
   }
+}
+
+function getEquipmentSummary(eq: EquipmentLogEntry): { isDone: boolean; display: string; subText?: string } {
+  const pUnit: EquipmentRatingUnit = eq.primaryUnit || eq.activeUnit || 'mth';
+  const pInfo = getUnitValueInfo(eq, pUnit);
+  const aUnit = eq.additionalUnit;
+  const aInfo = aUnit ? getUnitValueInfo(eq, aUnit) : null;
+
+  const hasPrimary = pInfo.value > 0;
+  const hasAdditional = aInfo && aInfo.value > 0;
+
+  if (hasPrimary && hasAdditional) {
+    return {
+      isDone: true,
+      display: `${pInfo.display} + ${aInfo.display}`,
+      subText: `${pUnit} + ${aUnit}`,
+    };
+  } else if (hasPrimary) {
+    return {
+      isDone: true,
+      display: pInfo.display,
+      subText: pUnit === 'mth' ? `${eq.startMeter} → ${eq.endMeter}` : `Unit: ${pUnit}`,
+    };
+  } else if (hasAdditional) {
+    return {
+      isDone: true,
+      display: aInfo.display,
+      subText: `Unit: ${aUnit}`,
+    };
+  }
+  return { isDone: false, display: 'Pending' };
 }
 
 export function EquipmentLogsView({
   equipment,
   operators,
   onSaveEquipment,
+  isDayLocked = false,
 }: EquipmentLogsViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [saveSuccessId, setSaveSuccessId] = useState<string | null>(null);
 
-  // Counts based on active unit value
-  const doneCount = equipment.filter((e) => getEquipmentActiveValue(e).value > 0).length;
+  // Counts based on whether equipment has any logged quantity
+  const doneCount = equipment.filter((e) => getEquipmentSummary(e).isDone).length;
   const pendingCount = equipment.length - doneCount;
 
   // Filtered machinery
@@ -92,7 +120,7 @@ export function EquipmentLogsView({
         eq.type.toLowerCase().includes(q);
       
       if (!matchesSearch) return false;
-      const isDone = getEquipmentActiveValue(eq).value > 0;
+      const isDone = getEquipmentSummary(eq).isDone;
       if (statusFilter === 'pending') return !isDone;
       if (statusFilter === 'done') return isDone;
       return true;
@@ -101,24 +129,6 @@ export function EquipmentLogsView({
 
   const toggleExpand = (id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
-  };
-
-  // ── Unit Switching Handler ──
-  const handleUnitChange = (id: string, newUnit: EquipmentRatingUnit) => {
-    const updated = equipment.map((eq) => {
-      if (eq.id !== id) return eq;
-      let daysVal = eq.daysValue;
-      if (newUnit === 'Days' && (daysVal === undefined || daysVal === 0)) {
-        daysVal = 1; // 1-click default for 1 Day
-      }
-      return {
-        ...eq,
-        activeUnit: newUnit,
-        daysValue: daysVal,
-        status: 'draft' as const,
-      };
-    });
-    onSaveEquipment(updated);
   };
 
   // ── Days Rate Handler ──
@@ -194,12 +204,43 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
+  // ── Add Additional Unit Handler ──
+  const handleAddAdditionalUnit = (id: string, unit: EquipmentRatingUnit) => {
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+      let daysVal = eq.daysValue;
+      if (unit === 'Days' && (daysVal === undefined || daysVal === 0)) {
+        daysVal = 1; // 1-click default for 1 Day
+      }
+      return {
+        ...eq,
+        additionalUnit: unit,
+        daysValue: daysVal,
+        status: 'draft' as const,
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
+  // ── Remove Additional Unit Handler ──
+  const handleRemoveAdditionalUnit = (id: string) => {
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+      return {
+        ...eq,
+        additionalUnit: null,
+        status: 'draft' as const,
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
+  // ── Save Draft Action ──
   const handleSaveDraft = (id: string) => {
     const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
-      const activeInfo = getEquipmentActiveValue(eq);
-      const isComplete = activeInfo.value > 0;
+      const isComplete = getEquipmentSummary(eq).isDone;
       return {
         ...eq,
         status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
@@ -211,14 +252,324 @@ export function EquipmentLogsView({
     setTimeout(() => setSaveSuccessId(null), 2000);
   };
 
-  const handleActivityCodeChange= (id:string , code:string)=>{
-    const update = equipment.map((eq)=>eq.id === id ? {...eq,activityCode:code,status:'draft' as const}:eq
-  )
-  onSaveEquipment(update);
-  }
+  const handleActivityCodeChange = (id: string, code: string) => {
+    const update = equipment.map((eq) => 
+      eq.id === id ? { ...eq, activityCode: code, status: 'draft' as const } : eq
+    );
+    onSaveEquipment(update);
+  };
+
+  // ── Render Input Box for Specific Unit ──
+  const renderUnitInputs = (
+    eq: EquipmentLogEntry,
+    unit: EquipmentRatingUnit,
+    isAdditional: boolean
+  ) => {
+    const isMeterInvalid = unit === 'mth' && eq.endMeter < eq.startMeter;
+
+    return (
+      <div 
+        key={`${eq.id}-${unit}-${isAdditional ? 'add' : 'prim'}`}
+        className={[
+          'space-y-2.5 p-3 rounded-xl border shadow-2xs transition-all',
+          isAdditional
+            ? 'bg-amber-50/40 dark:bg-amber-950/20 border-amber-200/90 dark:border-amber-900/60'
+            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+        ].join(' ')}
+      >
+        {/* Unit Block Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <span className="text-base">{UNIT_META[unit]?.icon || '⚙️'}</span>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                  {UNIT_META[unit]?.label}
+                </span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 hidden sm:inline">
+                  — {UNIT_META[unit]?.sub}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isAdditional ? (
+              <button
+                type="button"
+                onClick={() => handleRemoveAdditionalUnit(eq.id)}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 bg-red-50 dark:bg-red-950/60 hover:bg-red-100 px-2 py-0.5 rounded-lg border border-red-200 dark:border-red-900 transition-colors"
+                title="Remove additional unit"
+              >
+                <Trash2 size={11} />
+                <span>Remove</span>
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                <Lock size={10} />
+                <span>Primary (Fixed)</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ── Inputs by Unit Type ── */}
+
+        {/* DAYS RATE */}
+        {unit === 'Days' && (
+          <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium">Logged Days:</span>
+              <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                {eq.daysValue ?? 0} Day{(eq.daysValue ?? 0) === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select:</span>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[1, 0.5, 1.5, 2].map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => handleDaysChange(eq.id, d)}
+                    className={[
+                      'py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
+                      (eq.daysValue ?? 0) === d
+                        ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs ring-1 ring-emerald-500/20'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+                    ].join(' ')}
+                  >
+                    {d === 1 ? '1 Day' : d === 0.5 ? '½ Day' : `${d} Days`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                Or custom days:
+              </span>
+              <div className="w-24">
+                <input
+                  type="number"
+                  step="0.25"
+                  min="0"
+                  value={eq.daysValue ?? 0}
+                  onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SERVICE METER HOURS (mth) */}
+        {unit === 'mth' && (
+          <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
+                  Start / Initial Meter
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={eq.startMeter}
+                  onChange={(e) => handleMeterChange(eq.id, parseFloat(e.target.value) || 0, eq.endMeter)}
+                  className="w-full px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
+                  End / Final Meter
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={eq.endMeter}
+                  onChange={(e) => handleMeterChange(eq.id, eq.startMeter, parseFloat(e.target.value) || 0)}
+                  className={[
+                    'w-full px-3 py-1.5 text-xs font-bold rounded-xl border focus:ring-2 focus:ring-emerald-500 transition-colors',
+                    isMeterInvalid
+                      ? 'border-red-500 bg-red-50 dark:bg-red-950/40 text-red-900'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100'
+                  ].join(' ')}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 text-xs">
+              <span className="text-slate-600 dark:text-slate-400">Net SMH Utilization:</span>
+              {isMeterInvalid ? (
+                <span className="text-red-600 dark:text-red-400 font-bold flex items-center gap-1 text-[11px]">
+                  <AlertTriangle size={12} /> Final meter cannot be less than initial!
+                </span>
+              ) : (
+                <span className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
+                  {eq.netHours.toFixed(1)} mth
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* OPERATING HOURS (Hrs) */}
+        {unit === 'Hrs' && (
+          <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium">Recorded Hours:</span>
+              <span className="font-bold text-blue-700 dark:text-blue-400">
+                {(eq.hoursValue ?? 0).toFixed(1)} Hrs
+              </span>
+            </div>
+
+            <div>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select:</span>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[4, 8, 9, 10].map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => handleHoursChange(eq.id, h)}
+                    className={[
+                      'py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
+                      (eq.hoursValue ?? 0) === h
+                        ? 'bg-blue-600 border-blue-600 text-white shadow-xs ring-1 ring-blue-500/20'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+                    ].join(' ')}
+                  >
+                    {h}.0h
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                Exact Operating Hours:
+              </span>
+              <div className="w-24">
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={eq.hoursValue ?? 0}
+                  onChange={(e) => handleHoursChange(eq.id, parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* EXTRA / OVERTIME HOURS (EX.hrs) */}
+        {unit === 'EX.hrs' && (
+          <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium">Overtime / Extra Hours:</span>
+              <span className="font-bold text-amber-700 dark:text-amber-400">
+                {(eq.extraHoursValue ?? 0).toFixed(1)} EX.hrs
+              </span>
+            </div>
+
+            <div>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select:</span>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[1, 1.5, 2, 3].map((ex) => (
+                  <button
+                    key={ex}
+                    type="button"
+                    onClick={() => handleExtraHoursChange(eq.id, ex)}
+                    className={[
+                      'py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
+                      (eq.extraHoursValue ?? 0) === ex
+                        ? 'bg-amber-600 border-amber-600 text-white shadow-xs ring-1 ring-amber-500/20'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+                    ].join(' ')}
+                  >
+                    +{ex}h
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                Custom Extra Hours:
+              </span>
+              <div className="w-24">
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={eq.extraHoursValue ?? 0}
+                  onChange={(e) => handleExtraHoursChange(eq.id, parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* WORK AREA (m2) */}
+        {unit === 'm2' && (
+          <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium">Area Completed:</span>
+              <span className="font-bold text-purple-700 dark:text-purple-400">
+                {eq.areaValue ?? 0} m²
+              </span>
+            </div>
+
+            <div>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Add:</span>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[50, 100, 250, 500].map((area) => (
+                  <button
+                    key={area}
+                    type="button"
+                    onClick={() => handleAreaChange(eq.id, (eq.areaValue ?? 0) + area)}
+                    className="py-1.5 rounded-lg text-xs font-bold transition-all border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 active:scale-95"
+                  >
+                    +{area} m²
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                Total Area (m²):
+              </span>
+              <div className="w-28">
+                <input
+                  type="number"
+                  step="10"
+                  min="0"
+                  value={eq.areaValue ?? 0}
+                  onChange={(e) => handleAreaChange(eq.id, parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-3 pb-24 animate-in fade-in duration-150">
+      {/* ── 0. Locked State Banner ────────────────────────────────────────── */}
+      {isDayLocked && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2.5 text-amber-800 text-xs font-medium">
+          <Lock size={16} className="text-amber-600 shrink-0" />
+          <span>Daily records have been submitted and locked. Equipment logs are in read-only mode.</span>
+        </div>
+      )}
+
       {/* ── Search Bar ──────────────────────────────────────────────────────── */}
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -265,7 +616,7 @@ export function EquipmentLogsView({
                 : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
             ].join(' ')}
           >
-            Active / Operating ({doneCount})
+            Active / Logged ({doneCount})
           </button>
           <button
             type="button"
@@ -298,10 +649,16 @@ export function EquipmentLogsView({
           filteredEquipment.map((eq) => {
             const isExpanded = expandedId === eq.id;
             const mappedOp = operators.find((o) => o.id === eq.operatorId);
-            const activeVal = getEquipmentActiveValue(eq);
-            const activeUnit: EquipmentRatingUnit = eq.activeUnit || 'mth';
-            const isMeterInvalid = activeUnit === 'mth' && eq.endMeter < eq.startMeter;
+            const primaryUnit: EquipmentRatingUnit = eq.primaryUnit || 'mth';
+            const additionalUnit = eq.additionalUnit;
+            const summary = getEquipmentSummary(eq);
             const isSavedJustNow = saveSuccessId === eq.id;
+
+            // Compute available additional units (all allowed units excluding primary)
+            const allAllowedUnits: EquipmentRatingUnit[] = eq.availableUnits && eq.availableUnits.length > 0
+              ? eq.availableUnits
+              : ['mth', 'Hrs', 'Days', 'EX.hrs', 'm2'];
+            const availableAdditionalUnits = allAllowedUnits.filter((u) => u !== primaryUnit);
 
             return (
               <div
@@ -331,8 +688,19 @@ export function EquipmentLogsView({
                         <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                           {eq.code}
                         </span>
+                        
+                        {/* Primary Unit Badge (FIXED — never changes) */}
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-mono flex items-center gap-0.5">
+                          {UNIT_META[primaryUnit]?.icon || '⚙️'} {primaryUnit}
+                        </span>
+
+                        {/* Additional Unit Badge (shows if supervisor added one) */}
+                        {additionalUnit && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-mono flex items-center gap-0.5">
+                            +{additionalUnit}
+                          </span>
+                        )}
                       </div>
-                      
 
                       {/* Operator Link Badge */}
                       <div className="mt-1 flex items-center gap-1.5 flex-wrap">
@@ -351,14 +719,16 @@ export function EquipmentLogsView({
 
                   {/* Right: Active Rating Unit Result Pill */}
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {activeVal.value > 0 ? (
+                    {summary.isDone ? (
                       <div className="text-right">
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 font-mono">
-                          {activeVal.display}
+                          {summary.display}
                         </span>
-                        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 font-medium">
-                          {activeUnit === 'mth' ? `${eq.startMeter} → ${eq.endMeter}` : `Unit: ${activeUnit}`}
-                        </p>
+                        {summary.subText && (
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 font-medium">
+                            {summary.subText}
+                          </p>
+                        )}
                       </div>
                     ) : (
                       <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
@@ -372,328 +742,112 @@ export function EquipmentLogsView({
                   </div>
                 </button>
 
-                {/* ── Expanded Content: Dynamic Rating Unit Selection & Inputs ── */}
+                {/* ── Expanded Content ── */}
                 {isExpanded && (
                   <div className="px-3.5 pb-4 pt-1 border-t border-slate-100 dark:border-slate-800 space-y-3 animate-in slide-in-from-top-1 duration-150">
                     
-                    {/* ── 1. Horizontal Rating Unit Selector ── */}
-                    <div className="bg-slate-100/90 dark:bg-slate-900/70 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between px-0.5">
-                        <span className="text-[10px] uppercase font-bold text-slate-600 dark:text-slate-400 tracking-wider flex items-center gap-1">
-                          <Sliders size={12} className="text-emerald-600 dark:text-emerald-400" />
-                          Rating Unit
+                    {/* ── Mode Status Banner ── */}
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-slate-100/90 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">
+                          Primary:
                         </span>
-                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
-                          Active: {activeUnit}
+                        <span className="font-bold text-emerald-700 dark:text-emerald-400 font-mono flex items-center gap-1">
+                          {UNIT_META[primaryUnit]?.icon || '⚙️'} {primaryUnit}
+                        </span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                          Fixed
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
-                        {(eq.availableUnits || ['mth', 'Days', 'Hrs']).map((unit) => {
-                          const isSelected = activeUnit === unit;
-                          return (
-                            <button
-                              key={unit}
-                              type="button"
-                              onClick={() => handleUnitChange(eq.id, unit)}
-                              className={[
-                                'py-1.5 px-3 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 flex-shrink-0 shadow-2xs',
-                                isSelected
-                                  ? 'bg-emerald-600 text-white shadow-xs scale-[1.02] ring-2 ring-emerald-500/20'
-                                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700'
-                              ].join(' ')}
-                            >
-                              <span>{UNIT_META[unit]?.icon || '⚙️'}</span>
-                              <span>{unit}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                      {additionalUnit ? (
+                        <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                          ⚡ Dual Units: {primaryUnit} + {additionalUnit}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">
+                          Single Unit Mode
+                        </span>
+                      )}
                     </div>
 
-                    {/* ── 2. Dynamic Input Section Based on Active Unit ── */}
-                    
-                    {/* CASE A: DAYS (Day rate: 1-click select for 1 Day, 0.5 Day, etc.) */}
-                    {activeUnit === 'Days' && (
-                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                            <Calendar size={13} className="text-emerald-600" />
-                            Daily Rate Log
-                          </label>
-                          <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                            {eq.daysValue ?? 1} Day{(eq.daysValue ?? 1) === 1 ? '' : 's'}
-                          </span>
-                        </div>
+                    {/* ── 1. PRIMARY UNIT SECTION (Fixed - Always Present) ── */}
+                    {renderUnitInputs(eq, primaryUnit, false)}
 
-                        {/* 1-Click Quick Select: "day ekak nm eka click ekaki 1 day" */}
-                        <div>
-                          <span className="text-[10px] text-slate-400 block mb-1">1-Click Quick Select:</span>
-                          <div className="grid grid-cols-4 gap-1.5">
-                            {[1, 0.5, 1.5, 2].map((d) => (
-                              <button
-                                key={d}
-                                type="button"
-                                onClick={() => handleDaysChange(eq.id, d)}
-                                className={[
-                                  'py-2 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
-                                  (eq.daysValue ?? 1) === d
-                                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs ring-1 ring-emerald-500/20'
-                                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
-                                ].join(' ')}
-                              >
-                                {d === 1 ? '1 Day' : d === 0.5 ? '½ Day' : `${d} Days`}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Custom Day Input */}
-                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-750">
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                            Or enter custom days:
-                          </span>
-                          <div className="w-24">
-                            <input
-                              type="number"
-                              step="0.25"
-                              min="0"
-                              value={eq.daysValue ?? 1}
-                              onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* CASE B: MTH (Service Meter Hours: Start Meter -> End Meter) */}
-                    {activeUnit === 'mth' && (
-                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                            <Gauge size={13} className="text-emerald-600" />
-                            Service Meter Hours (mth)
-                          </label>
-                          {eq.lastSavedAt && (
-                            <span className="text-[10px] text-slate-400">Saved: {eq.lastSavedAt}</span>
-                          )}
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2.5">
-                          <div>
-                            <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
-                              Start / Initial Meter
-                            </label>
-                            <input
-                              type="number"
-                              step="0.1"
-                              value={eq.startMeter}
-                              onChange={(e) => handleMeterChange(eq.id, parseFloat(e.target.value) || 0, eq.endMeter)}
-                              className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
-                              End / Final Meter
-                            </label>
-                            <input
-                              type="number"
-                              step="0.1"
-                              value={eq.endMeter}
-                              onChange={(e) => handleMeterChange(eq.id, eq.startMeter, parseFloat(e.target.value) || 0)}
-                              className={[
-                                'w-full px-3 py-2 text-xs font-bold rounded-xl border focus:ring-2 focus:ring-emerald-500 transition-colors',
-                                isMeterInvalid
-                                  ? 'border-red-500 bg-red-50 dark:bg-red-950/40 text-red-900'
-                                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100'
-                              ].join(' ')}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 text-xs">
-                          <span className="text-slate-600 dark:text-slate-400">Net Utilization:</span>
-                          {isMeterInvalid ? (
-                            <span className="text-red-600 dark:text-red-400 font-bold flex items-center gap-1 text-[11px]">
-                              <AlertTriangle size={12} /> Final meter cannot be less than initial!
+                    {/* ── 2. ADDITIONAL UNIT SECTION (Optional) ── */}
+                    {additionalUnit ? (
+                      renderUnitInputs(eq, additionalUnit, true)
+                    ) : (
+                      /* "+ Add Additional Unit" Quick Buttons */
+                      availableAdditionalUnits.length > 0 && (
+                        <div className="p-2.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                              <Plus size={13} className="text-emerald-600 dark:text-emerald-400" />
+                              Add Additional Unit (e.g. Overtime / Shift Rate)?
                             </span>
-                          ) : (
-                            <span className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
-                              {eq.netHours.toFixed(1)} mth
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                            <span className="text-[10px] text-slate-400">Optional</span>
+                          </div>
 
-                    {/* CASE C: HRS (Direct Operating Hours) */}
-                    {activeUnit === 'Hrs' && (
-                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                            <Clock size={13} className="text-blue-600" />
-                            Operating Hours (Hrs)
-                          </label>
-                          <span className="text-xs font-bold text-blue-700 dark:text-blue-400">
-                            {(eq.hoursValue ?? 8).toFixed(1)} Hrs
-                          </span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] text-slate-400 block mb-1">Quick Select:</span>
-                          <div className="grid grid-cols-4 gap-1.5">
-                            {[4, 8, 9, 10].map((h) => (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {availableAdditionalUnits.map((unit) => (
                               <button
-                                key={h}
+                                key={unit}
                                 type="button"
-                                onClick={() => handleHoursChange(eq.id, h)}
-                                className={[
-                                  'py-2 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
-                                  (eq.hoursValue ?? 8) === h
-                                    ? 'bg-blue-600 border-blue-600 text-white shadow-xs ring-1 ring-blue-500/20'
-                                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
-                                ].join(' ')}
+                                onClick={() => handleAddAdditionalUnit(eq.id, unit)}
+                                className="py-1 px-2.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-slate-750 dark:hover:text-emerald-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 shadow-2xs transition-all active:scale-95"
                               >
-                                {h}.0h
+                                <Plus size={11} className="text-emerald-600" />
+                                <span>{UNIT_META[unit]?.icon || '⚙️'}</span>
+                                <span>{unit}</span>
                               </button>
                             ))}
                           </div>
                         </div>
+                      )
+                    )}
 
-                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-750">
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                            Exact Operating Hours:
-                          </span>
-                          <div className="w-24">
-                            <input
-                              type="number"
-                              step="0.5"
-                              min="0"
-                              value={eq.hoursValue ?? 8}
-                              onChange={(e) => handleHoursChange(eq.id, parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500"
-                            />
-                          </div>
-                        </div>
+                    {/* ── Combined Summary Pill (Shown when both primary & additional have values) ── */}
+                    {summary.isDone && additionalUnit && (
+                      <div className="p-2.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between text-xs">
+                        <span className="font-semibold text-emerald-900 dark:text-emerald-200">
+                          Total Logged Output:
+                        </span>
+                        <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono">
+                          {summary.display}
+                        </span>
                       </div>
                     )}
 
-                    {/* CASE D: EX.HRS (Extra / Overtime Hours) */}
-                    {activeUnit === 'EX.hrs' && (
-                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                            <Zap size={13} className="text-amber-500" />
-                            Extra / Overtime Hours (EX.hrs)
-                          </label>
-                          <span className="text-xs font-bold text-amber-700 dark:text-amber-400">
-                            {(eq.extraHoursValue ?? 0).toFixed(1)} EX.hrs
+                    {/* ── Activity Code for Equipment ── */}
+                    <div className="p-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 shadow-2xs space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label htmlFor={`activityCode-${eq.id}`} className="text-[10px] font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1">
+                          <Tag className="text-emerald-600" size={12} />
+                          Activity Code
+                        </label>
+                        {eq.activityCode && (
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-100 font-mono">
+                            {eq.activityCode}
                           </span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] text-slate-400 block mb-1">Quick Select:</span>
-                          <div className="grid grid-cols-4 gap-1.5">
-                            {[1, 1.5, 2, 3].map((ex) => (
-                              <button
-                                key={ex}
-                                type="button"
-                                onClick={() => handleExtraHoursChange(eq.id, ex)}
-                                className={[
-                                  'py-2 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
-                                  (eq.extraHoursValue ?? 0) === ex
-                                    ? 'bg-amber-600 border-amber-600 text-white shadow-xs ring-1 ring-amber-500/20'
-                                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
-                                ].join(' ')}
-                              >
-                                +{ex}h
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-750">
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                            Custom Extra Hours:
-                          </span>
-                          <div className="w-24">
-                            <input
-                              type="number"
-                              step="0.5"
-                              min="0"
-                              value={eq.extraHoursValue ?? 0}
-                              onChange={(e) => handleExtraHoursChange(eq.id, parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-amber-500"
-                            />
-                          </div>
-                        </div>
+                        )}
                       </div>
-                    )}
-
-                    {/* CASE E: M2 (Square Meters / Area Output) */}
-                    {activeUnit === 'm2' && (
-                      <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                            <Maximize2 size={13} className="text-purple-600" />
-                            Work Area Output (m²)
-                          </label>
-                          <span className="text-xs font-bold text-purple-700 dark:text-purple-400">
-                            {eq.areaValue ?? 0} m²
-                          </span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] text-slate-400 block mb-1">Quick Add:</span>
-                          <div className="grid grid-cols-4 gap-1.5">
-                            {[50, 100, 250, 500].map((area) => (
-                              <button
-                                key={area}
-                                type="button"
-                                onClick={() => handleAreaChange(eq.id, (eq.areaValue ?? 0) + area)}
-                                className="py-2 rounded-lg text-xs font-bold transition-all border bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-100 active:scale-95"
-                              >
-                                +{area} m²
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-750">
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                            Total Area (m²):
-                          </span>
-                          <div className="w-28">
-                            <input
-                              type="number"
-                              step="10"
-                              min="0"
-                              value={eq.areaValue ?? 0}
-                              onChange={(e) => handleAreaChange(eq.id, parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-purple-500"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    {/* i need to add acitivity code for equpment */}
-                    <div className='  md-1.5 p-3 my-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 shadow-2xs'>
-                       
-                       <div className='flex items-center justify-between mb-2'>
-                        <label htmlFor="activityCode" className="text-[10px]  font-medium text-slate-500 uppercase tracking-wide">
-                        <Tag className="text-green-600" size={12} />Activity Code</label>
-                        {eq.activityCode && (<span className="text-xs font-bold text-slate-800 dark:text-slate-100">{eq.activityCode}</span>)}
-                       </div>
-                        
-                      <select name="activityCode" id="activityCode" value={eq.activityCode} onChange={(e)=>handleActivityCodeChange(eq.id , e.target.value)} className='w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 '>
-                        {MASTER_ACTIVITIES.map((act)=>{
-                          return<option key={act.code} value={act.code}>{act.code}</option>
-                        })}
+                      
+                      <select 
+                        id={`activityCode-${eq.id}`}
+                        name="activityCode" 
+                        value={eq.activityCode || ''} 
+                        onChange={(e) => handleActivityCodeChange(eq.id, e.target.value)} 
+                        className="w-full px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                      >
+                        <option value="">-- Select Activity Code --</option>
+                        {MASTER_ACTIVITIES.map((act) => (
+                          <option key={act.code} value={act.code}>
+                            {act.code} - {act.name}
+                          </option>
+                        ))}
                       </select>
                     </div>
-
 
                     {/* ── 3. Save Draft Action ── */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -703,7 +857,7 @@ export function EquipmentLogsView({
                         className={[
                           'w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl font-semibold text-xs transition-all shadow-xs active:scale-[0.99]',
                           isSavedJustNow
-                            ? 'bg-emerald-600 text-white'
+                            ? 'bg-emerald-700 text-white'
                             : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                         ].join(' ')}
                       >

@@ -15,7 +15,8 @@ import {
   LogOut,
   Clock,
   Filter,
-  CheckCircle2
+  CheckCircle2,
+  Lock,
 } from 'lucide-react';
 import type { 
   OperatorEntry, 
@@ -28,6 +29,7 @@ interface OperatorEntryViewProps {
   onSaveOperators: (updated: OperatorEntry[]) => void;
   searchQuery?: string;
   statusFilter?: 'all' | 'pending' | 'done';
+  isDayLocked?: boolean;
 }
 
 function computeHours(inTime: string, outTime: string): { shift: number; ot: number } {
@@ -51,6 +53,7 @@ export function OperatorEntryView({
   onSaveOperators,
   searchQuery: externalSearchQuery = '',
   statusFilter: externalStatusFilter = 'all',
+  isDayLocked = false,
 }: OperatorEntryViewProps) {
   // Mode: In Time or Out Time (matching Labor view layout)
   const [tabMode, setTabMode] = useState<'in' | 'out'>('in');
@@ -256,6 +259,14 @@ export function OperatorEntryView({
 
   return (
     <div className="space-y-3 pb-16 animate-in fade-in duration-150">
+      {/* ── 0. Locked State Banner ────────────────────────────────────────── */}
+      {isDayLocked && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2.5 text-amber-800 text-xs font-medium">
+          <Lock size={16} className="text-amber-600 shrink-0" />
+          <span>Daily records have been submitted and locked. Operator entries are view-only.</span>
+        </div>
+      )}
+
       {/* ── 1. IN / OUT Dual Tabs (Compact, Matches Labor View) ─────────────────── */}
       <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-200/70 dark:bg-slate-900/90 rounded-2xl border border-slate-300/80 dark:border-slate-800 shadow-inner">
         <button

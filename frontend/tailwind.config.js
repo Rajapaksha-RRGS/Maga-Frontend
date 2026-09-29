@@ -7,6 +7,10 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        mono: ['ui-monospace', 'Cascadia Code', 'Consolas', 'monospace'],
+      },
       colors: {
         slate: {
           750: '#293548',
