@@ -13,14 +13,27 @@
  *   DELETE /api/equipment/:id
  */
 
+export interface EquipmentUnitRate {
+  id?: string;
+  equipmentId?: string;
+  unit: string;
+  erpBillingCode?: string;
+  rate: number;
+  minUtilization?: number;
+}
+
 export interface Equipment {
   id: string;
   code: string;
+  vehicleNo?: string;
+  magaNo?: string;
   name: string;
   type?: string;
+  condition?: 'DRY' | 'WET';
   costRate?: number;
-  primaryUnit?: string;      // 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2'
-  availableUnits?: string[]; // subset; empty = all 5 units available
+  primaryUnit?: string;      // 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2' | 'km'
+  availableUnits?: string[]; // subset; empty = all units available
+  unitRates?: EquipmentUnitRate[];
   status: 'active' | 'inactive';
 }
 
@@ -34,13 +47,17 @@ function mapEquipment(item: any): Equipment {
   return {
     id: item.id,
     code: item.code || '',
+    vehicleNo: item.vehicleNo || item.vehicle_no || item.code || '',
+    magaNo: item.magaNo || item.maga_no || '',
     name: item.name,
     type: item.type || '',
+    condition: (item.condition || 'DRY').toUpperCase() as 'DRY' | 'WET',
     costRate: rawRate !== null && rawRate !== undefined && !isNaN(Number(rawRate)) ? Number(rawRate) : 0,
     primaryUnit: item.primaryUnit || item.primary_unit || 'mth',
     availableUnits: Array.isArray(item.availableUnits || item.available_units)
       ? (item.availableUnits || item.available_units)
       : [],
+    unitRates: Array.isArray(item.unitRates) ? item.unitRates : [],
     status: item.status === 'inactive' ? 'inactive' : 'active',
   };
 }
@@ -127,4 +144,24 @@ export async function deleteEquipment(id: string): Promise<void> {
   }
   cacheManager.invalidate('equipment');
 }
+
+export async function batchImportErp(items: any[]): Promise<{ success: boolean; importedCount: number; equipment: Equipment[] }> {
+  const res = await apiFetch(`${API_URL}/equipment/batch-erp-import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to batch import equipment from ERP');
+  }
+  const result = await res.json();
+  cacheManager.invalidate('equipment');
+  return {
+    success: true,
+    importedCount: result.importedCount,
+    equipment: Array.isArray(result.equipment) ? result.equipment.map(mapEquipment) : [],
+  };
+}
+
 

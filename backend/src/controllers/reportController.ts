@@ -98,9 +98,29 @@ function computeAttendanceHoursAndOt(
   return { workHours: fallbackHours, otHours: ot };
 }
 
+function buildEmployeeFilter(workerType?: string, businessPartner?: string, employeeQuery?: string) {
+  const filter: any = {};
+  if (workerType === 'operator') {
+    filter.isOperator = true;
+  } else if (workerType === 'labor') {
+    filter.isOperator = false;
+  }
+  if (businessPartner) {
+    filter.businessPartner = { name: { contains: businessPartner, mode: 'insensitive' } };
+  }
+  if (employeeQuery) {
+    filter.OR = [
+      { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+      { fullName: { contains: employeeQuery, mode: 'insensitive' } },
+      { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
+    ];
+  }
+  return Object.keys(filter).length > 0 ? filter : undefined;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. SUMMARY REPORT
-// GET /api/reports/summary?dateFrom=&dateTo=&employeeQuery=&businessPartner=&tenantId=
+// GET /api/reports/summary?dateFrom=&dateTo=&employeeQuery=&businessPartner=&workerType=&tenantId=
 // ─────────────────────────────────────────────────────────────────────────────
 export const getSummaryReport = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -109,8 +129,10 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
+    const workerType = qStr(req.query.workerType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
 
     // Fetch time entries with employee + business partner data
     const entries = await prisma.timeEntry.findMany({
@@ -118,20 +140,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
         tenantId,
         status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
-        ...(businessPartner
-          ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
-          : {}),
-        ...(employeeQuery
-          ? {
-              employee: {
-                OR: [
-                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { fullName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
-                ],
-              },
-            }
-          : {}),
+        ...(empFilter ? { employee: empFilter } : {}),
       },
       include: {
         employee: { include: { businessPartner: true } },
@@ -166,6 +175,65 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
         dayMap.set(dateKey, []);
       }
       dayMap.get(dateKey)!.push(entry);
+    }
+
+    if (workerType === 'operator' || !workerType) {
+      const opEntries = await prisma.operatorTimeEntry.findMany({
+        where: {
+          tenantId,
+          ...(dateFilter ? { assignment: { date: dateFilter } } : {}),
+          ...(businessPartner ? { assignment: { operator: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } } } : {}),
+          ...(employeeQuery ? {
+            assignment: {
+              operator: {
+                OR: [
+                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+                  { fullName: { contains: employeeQuery, mode: 'insensitive' } },
+                  { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
+                ],
+              },
+            },
+          } : {}),
+        },
+        include: {
+          assignment: {
+            include: {
+              operator: { include: { businessPartner: true } },
+            },
+          },
+        },
+      });
+
+      for (const op of opEntries) {
+        const emp = op.assignment.operator;
+        const empId = emp.id;
+        const dateKey = op.assignment.date.toISOString().split('T')[0];
+
+        if (!empInfoMap.has(empId)) {
+          empInfoMap.set(empId, {
+            employeeId: empId,
+            employeeCode: emp.employeeCode || '',
+            callingName: emp.callingName || '',
+            employeeName: emp.fullName || emp.callingName,
+            tradeGroup: emp.tradeGroup || 'Operator',
+            businessPartner: emp.businessPartner?.name || 'Direct / Maga',
+          });
+        }
+
+        if (!empDailyMap.has(empId)) {
+          empDailyMap.set(empId, new Map());
+        }
+        const dayMap = empDailyMap.get(empId)!;
+        if (!dayMap.has(dateKey)) {
+          dayMap.set(dateKey, [{
+            inTime: op.inTime,
+            outTime: op.outTime,
+            shiftHours: op.shiftHours,
+            otHours: op.otHours,
+            hours: op.shiftHours,
+          } as any]);
+        }
+      }
     }
 
     const items = Array.from(empDailyMap.entries()).map(([empId, dayMap], idx) => {
@@ -249,28 +317,17 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
+    const workerType = qStr(req.query.workerType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
 
     const entries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
         status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
-        ...(businessPartner
-          ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
-          : {}),
-        ...(employeeQuery
-          ? {
-              employee: {
-                OR: [
-                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { fullName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
-                ],
-              },
-            }
-          : {}),
+        ...(empFilter ? { employee: empFilter } : {}),
       },
       include: { employee: { include: { businessPartner: true } } },
       orderBy: { date: 'asc' },
@@ -406,35 +463,21 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
+    const workerType = qStr(req.query.workerType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
 
     const entries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
         status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
-        ...(businessPartner
-          ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
-          : {}),
-        ...(employeeQuery
-          ? {
-              employee: {
-                OR: [
-                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { fullName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
-                ],
-              },
-            }
-          : {}),
+        ...(empFilter ? { employee: empFilter } : {}),
       },
       include: { employee: { include: { businessPartner: true } } },
       orderBy: { date: 'asc' },
     });
-
-    // Collect all dates
-    const allDates = [...new Set(entries.map((e) => e.date.toISOString().split('T')[0]))].sort();
 
     // Group by businessPartner -> employee
     type EmpData = {
@@ -467,6 +510,69 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
       const empData = empMap.get(empId)!;
       empData.dailyHours[dateKey] = (empData.dailyHours[dateKey] || 0) + hours;
     }
+
+    // Also include operators if applicable
+    if (workerType === 'operator' || !workerType) {
+      const opEntries = await prisma.operatorTimeEntry.findMany({
+        where: {
+          tenantId,
+          ...(dateFilter ? { assignment: { date: dateFilter } } : {}),
+          ...(businessPartner ? { assignment: { operator: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } } } : {}),
+          ...(employeeQuery ? {
+            assignment: {
+              operator: {
+                OR: [
+                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+                  { fullName: { contains: employeeQuery, mode: 'insensitive' } },
+                  { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
+                ],
+              },
+            },
+          } : {}),
+        },
+        include: {
+          assignment: {
+            include: {
+              operator: { include: { businessPartner: true } },
+            },
+          },
+        },
+      });
+
+      for (const op of opEntries) {
+        const dateKey = op.assignment.date.toISOString().split('T')[0];
+        const bpName = op.assignment.operator.businessPartner?.name || 'Direct / Maga';
+        const empId = op.assignment.operator.id;
+        const hours = Number(op.shiftHours || 0) + Number(op.otHours || 0);
+
+        if (!bpMap.has(bpName)) bpMap.set(bpName, new Map());
+        const empMap = bpMap.get(bpName)!;
+
+        if (!empMap.has(empId)) {
+          empMap.set(empId, {
+            employeeId: empId,
+            employeeName: op.assignment.operator.fullName || op.assignment.operator.callingName,
+            tradeGroup: op.assignment.operator.tradeGroup || 'Operator',
+            dailyHours: {},
+            dailyRate: Number(op.assignment.operator.dailyRate) || 1600,
+          });
+        }
+        const empData = empMap.get(empId)!;
+        if (!empData.dailyHours[dateKey]) {
+          empData.dailyHours[dateKey] = hours;
+        }
+      }
+    }
+
+    // Collect all dates from all BPs and employees
+    const allDatesSet = new Set<string>();
+    entries.forEach((e) => allDatesSet.add(e.date.toISOString().split('T')[0]));
+    for (const [, empMap] of bpMap) {
+      for (const [, empData] of empMap) {
+        Object.keys(empData.dailyHours).forEach((d) => allDatesSet.add(d));
+      }
+    }
+    const allDates = Array.from(allDatesSet).sort();
 
     let grandTotalHours = 0;
     let grandTotalPayment = 0;
@@ -764,28 +870,17 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
     const activityCode = qStr(req.query.activityCode);
+    const workerType = qStr(req.query.workerType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
 
     const entries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
         status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
-        ...(businessPartner
-          ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
-          : {}),
-        ...(employeeQuery
-          ? {
-              employee: {
-                OR: [
-                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { fullName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
-                ],
-              },
-            }
-          : {}),
+        ...(empFilter ? { employee: empFilter } : {}),
         ...(activityCode
           ? { activity: { code: { contains: activityCode, mode: 'insensitive' } } }
           : {}),
@@ -914,6 +1009,69 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       });
     }
 
+    if (workerType === 'operator' || !workerType) {
+      const opEntries = await prisma.operatorTimeEntry.findMany({
+        where: {
+          tenantId,
+          ...(dateFilter ? { assignment: { date: dateFilter } } : {}),
+          ...(businessPartner ? { assignment: { operator: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } } } : {}),
+          ...(employeeQuery ? {
+            assignment: {
+              operator: {
+                OR: [
+                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+                  { fullName: { contains: employeeQuery, mode: 'insensitive' } },
+                  { employeeCode: { contains: employeeQuery, mode: 'insensitive' } },
+                ],
+              },
+            },
+          } : {}),
+        },
+        include: {
+          assignment: {
+            include: {
+              operator: { include: { businessPartner: true } },
+              supervisor: { select: { id: true, fullName: true, username: true } },
+            },
+          },
+          assignedEquipment: true,
+        },
+        orderBy: { assignment: { date: 'desc' } },
+      });
+
+      for (const op of opEntries) {
+        const dateKey = op.assignment.date.toISOString().split('T')[0];
+        const key = `${op.assignment.operatorId}___${dateKey}`;
+        if (!grouped.has(key)) {
+          const shiftH = Number(op.shiftHours) || 0;
+          const otH = Number(op.otHours) || 0;
+          const totalH = shiftH + otH;
+          grandWorkHours += shiftH;
+          grandOtHours += otH;
+          grandTotalHours += totalH;
+
+          items.push({
+            id: `op-rc-${op.id}`,
+            date: dateKey,
+            supervisorName: op.assignment.supervisor?.fullName || (op.assignment.supervisor?.username ? `@${op.assignment.supervisor.username}` : 'Site Supervisor'),
+            employeeCode: op.assignment.operator.employeeCode || op.assignment.operatorId,
+            callingName: op.assignment.operator.callingName || op.assignment.operator.fullName || '—',
+            businessPartner: op.assignment.operator.businessPartner?.name || 'Direct / Maga',
+            inTime: op.inTime || '—',
+            outTime: op.outTime || '—',
+            breakHours: 0,
+            workHours: shiftH,
+            otHours: otH,
+            totalHours: totalH,
+            activities: [],
+            activitiesDisplay: op.assignedEquipment 
+              ? `Machine: ${op.assignedEquipment.code || op.assignedEquipment.name} (${op.assignedEquipment.vehicleNo || 'Active'})`
+              : 'Plant Machinery Operation',
+          });
+        }
+      }
+    }
+
     res.json({
       items,
       totals: {
@@ -928,3 +1086,658 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
     res.status(500).json({ error: 'Failed to generate running chart report' });
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. OFFICIAL LABOUR & OPERATOR TIME CARD (Maga Engineering Format)
+// ─────────────────────────────────────────────────────────────────────────────
+export const getTimeCardReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.resolvedTenantId || req.body?.tenantId || (await getDefaultTenantId());
+    const monthParam = qStr(req.query.month) || new Date().toISOString().slice(0, 7); // YYYY-MM
+    const employeeId = qStr(req.query.employeeId);
+    const workerType = qStr(req.query.workerType) || 'all'; // 'all' | 'labor' | 'operator'
+    const bpId = qStr(req.query.businessPartnerId);
+
+    const [yearStr, monthNumStr] = monthParam.split('-');
+    const year = parseInt(yearStr, 10);
+    const monthIndex = parseInt(monthNumStr, 10) - 1; // 0-based
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+
+    const startDate = new Date(Date.UTC(year, monthIndex, 1, 0, 0, 0));
+    const endDate = new Date(Date.UTC(year, monthIndex, daysInMonth, 23, 59, 59, 999));
+
+    // 1. Fetch Tenant details
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { companyName: true, subdomain: true },
+    });
+
+    // 2. Fetch Calendar days for holiday / shutdown markings
+    const calendarDays = await prisma.calendarDay.findMany({
+      where: {
+        tenantId,
+        date: { gte: startDate, lte: endDate },
+      },
+      include: { dayType: true },
+    });
+    const holidayDateMap = new Map<string, string>();
+    for (const cd of calendarDays) {
+      const dStr = cd.date.toISOString().slice(0, 10);
+      const dtName = cd.dayType?.name?.toLowerCase() || '';
+      if (dtName.includes('holiday') || dtName.includes('poya')) holidayDateMap.set(dStr, '*');
+      else if (dtName.includes('shut')) holidayDateMap.set(dStr, '@');
+    }
+
+    // 3. Fetch Employees
+    const empWhere: any = {
+      tenantId,
+      status: 'active',
+    };
+    if (employeeId) {
+      empWhere.id = employeeId;
+    }
+    if (bpId) {
+      empWhere.businessPartnerId = bpId;
+    }
+    if (workerType === 'labor') {
+      empWhere.isOperator = false;
+    } else if (workerType === 'operator') {
+      empWhere.isOperator = true;
+    }
+
+    const employees = await prisma.employee.findMany({
+      where: empWhere,
+      include: {
+        businessPartner: true,
+        tradeGroupRel: true,
+      },
+      orderBy: [
+        { isOperator: 'asc' },
+        { employeeCode: 'asc' },
+      ],
+    });
+
+    // 4. Fetch TimeEntries in range
+    const timeEntries = await prisma.timeEntry.findMany({
+      where: {
+        tenantId,
+        date: { gte: startDate, lte: endDate },
+        ...(employeeId ? { employeeId } : {}),
+      },
+      include: {
+        equipment: true,
+      },
+    });
+
+    // Group TimeEntries by employeeId + date string (YYYY-MM-DD)
+    const entryMap = new Map<string, Array<any>>();
+    for (const te of timeEntries) {
+      const dStr = te.date.toISOString().slice(0, 10);
+      const key = `${te.employeeId}_${dStr}`;
+      if (!entryMap.has(key)) {
+        entryMap.set(key, []);
+      }
+      entryMap.get(key)!.push(te);
+    }
+
+    // 5. Month display label (e.g. "Jul-26")
+    const monthDateObj = new Date(year, monthIndex, 1);
+    const monthShort = monthDateObj.toLocaleString('en-US', { month: 'short' });
+    const yearShort = String(year).slice(-2);
+    const monthLabel = `${monthShort}-${yearShort}`;
+
+    // 6. Build TimeCards
+    const timeCards = [];
+
+    for (const emp of employees) {
+      const dailyRateVal = Number(emp.dailyRate || 1400);
+      const hourlyOtRate = Math.round((dailyRateVal / 8 * 1.5) * 100) / 100;
+
+      const days = [];
+      let totalDays = 0;
+      let totalOtHours = 0;
+
+      for (let dayNum = 1; dayNum <= 31; dayNum++) {
+        if (dayNum > daysInMonth) {
+          days.push({
+            day: dayNum,
+            date: '',
+            key: '',
+            inTime: '-',
+            outTime: '-',
+            daysWorked: null,
+            otHours: null,
+            advance: null,
+            equipmentCode: null,
+            isOffMonth: true,
+          });
+          continue;
+        }
+
+        const dateObj = new Date(Date.UTC(year, monthIndex, dayNum));
+        const dateStr = dateObj.toISOString().slice(0, 10);
+        const dow = dateObj.getUTCDay(); // 0 = Sun, 6 = Sat
+
+        // Determine Key marker:
+        let keyMarker = '';
+        if (dow === 0) keyMarker = 'X';
+        else if (dow === 6) keyMarker = '\\';
+        else if (holidayDateMap.has(dateStr)) keyMarker = holidayDateMap.get(dateStr)!;
+
+        // Find entries
+        const dayEntries = entryMap.get(`${emp.id}_${dateStr}`) || [];
+        let inTimeStr = '-';
+        let outTimeStr = '-';
+        let dayWorked = 0;
+        let dayOt = 0;
+        let eqCode: string | null = null;
+
+        if (dayEntries.length > 0) {
+          const first = dayEntries[0];
+          inTimeStr = first.inTime || '-';
+          outTimeStr = first.outTime || '-';
+          eqCode = first.equipment?.vehicleNo || first.equipment?.code || null;
+
+          // Sum hours across activities
+          let sumShiftHours = 0;
+          let sumOtHours = 0;
+          for (const e of dayEntries) {
+            sumShiftHours += Number(e.hours || 0);
+            sumOtHours += Number(e.overtimeHours || 0);
+          }
+
+          // Compute Days worked: 8h = 1.0 day, 4h = 0.5 day
+          if (sumShiftHours >= 7.5) {
+            dayWorked = 1.0;
+          } else if (sumShiftHours >= 3.5) {
+            dayWorked = 0.5;
+          } else if (sumShiftHours > 0) {
+            dayWorked = Math.round((sumShiftHours / 8) * 100) / 100;
+          }
+
+          dayOt = Math.round(sumOtHours * 100) / 100;
+          totalDays += dayWorked;
+          totalOtHours += dayOt;
+        }
+
+        days.push({
+          day: dayNum,
+          date: dateStr,
+          key: keyMarker,
+          inTime: inTimeStr,
+          outTime: outTimeStr,
+          daysWorked: dayWorked > 0 ? dayWorked : null,
+          otHours: dayOt > 0 ? dayOt : null,
+          advance: null,
+          equipmentCode: eqCode,
+          isOffMonth: false,
+        });
+      }
+
+      const basicPay = Math.round(totalDays * dailyRateVal * 100) / 100;
+      const otPay = Math.round(totalOtHours * hourlyOtRate * 100) / 100;
+      const allowances = 0;
+      const otherEarnings = 0;
+      const grossPay = Math.round((basicPay + otPay + allowances + otherEarnings) * 100) / 100;
+      
+      const messAdvances = 0;
+      const totalDeductions = messAdvances;
+      const netPay = Math.round((grossPay - totalDeductions) * 100) / 100;
+
+      timeCards.push({
+        employeeId: emp.id,
+        employeeCode: emp.employeeCode || emp.id.slice(0, 6),
+        callingName: emp.callingName || '—',
+        fullName: emp.fullName || emp.callingName,
+        trade: emp.tradeGroup || (emp.isOperator ? 'Operator' : 'General'),
+        nicNo: emp.nicNo || '—',
+        epfNo: emp.epfNo || '0',
+        dailyRate: dailyRateVal,
+        hourlyOtRate,
+        isOperator: emp.isOperator,
+        businessPartner: emp.businessPartner?.name || 'Direct',
+        siteName: tenant?.companyName ? `${tenant.companyName}` : 'Main Project Site',
+        companyName: 'Maga Engineering (Pvt) Ltd.',
+        month: monthLabel,
+        days,
+        totals: {
+          totalDays: Math.round(totalDays * 100) / 100,
+          totalOtHours: Math.round(totalOtHours * 100) / 100,
+          basicPay,
+          otPay,
+          allowances,
+          otherEarnings,
+          grossPay,
+          deductions: {
+            advances: 0,
+            epf: 0,
+            loans: 0,
+            messAdvances,
+            advancesOtherSite: 0,
+            festivalAdvances: 0,
+            others: 0,
+            total: totalDeductions,
+          },
+          netPay,
+        },
+      });
+    }
+
+    res.json({
+      month: monthParam,
+      monthLabel,
+      totalCards: timeCards.length,
+      cards: timeCards,
+    });
+  } catch (error) {
+    console.error('Error generating time card report:', error);
+    res.status(500).json({ error: 'Failed to generate time card report' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. REPORTS HUB STATS
+// GET /api/reports/hub-stats?tenantId=
+// ─────────────────────────────────────────────────────────────────────────────
+export const getReportsHubStats = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const [
+      laborCount,
+      operatorCount,
+      equipmentCount,
+      laborHoursAgg,
+      operatorHoursAgg,
+      equipmentAssignmentsCount,
+      laborBpsCount,
+    ] = await Promise.all([
+      prisma.employee.count({
+        where: { tenantId, isOperator: false, status: 'active' },
+      }),
+      prisma.employee.count({
+        where: { tenantId, isOperator: true, status: 'active' },
+      }),
+      prisma.equipment.count({
+        where: { tenantId, status: 'active' },
+      }),
+      prisma.timeEntry.aggregate({
+        where: {
+          tenantId,
+          status: 'approved',
+          date: { gte: startOfMonth, lte: endOfMonth },
+          employee: { isOperator: false },
+        },
+        _sum: { hours: true, otHours: true },
+      }),
+      prisma.timeEntry.aggregate({
+        where: {
+          tenantId,
+          status: 'approved',
+          date: { gte: startOfMonth, lte: endOfMonth },
+          employee: { isOperator: true },
+        },
+        _sum: { hours: true, otHours: true },
+      }),
+      prisma.dailyEquipmentAssignment.count({
+        where: {
+          tenantId,
+          date: { gte: startOfMonth, lte: endOfMonth },
+        },
+      }),
+      prisma.businessPartner.count({
+        where: { tenantId, status: 'active' },
+      }),
+    ]);
+
+    const laborTotalHours = (Number(laborHoursAgg._sum.hours) || 0) + (Number(laborHoursAgg._sum.otHours) || 0);
+    const operatorTotalHours = (Number(operatorHoursAgg._sum.hours) || 0) + (Number(operatorHoursAgg._sum.otHours) || 0);
+
+    res.json({
+      labor: {
+        totalWorkers: laborCount,
+        monthlyHours: Math.round(laborTotalHours),
+        subcontractorsCount: laborBpsCount,
+        reportsCount: 5,
+      },
+      operator: {
+        totalOperators: operatorCount,
+        monthlyHours: Math.round(operatorTotalHours),
+        reportsCount: 4,
+      },
+      equipment: {
+        totalEquipment: equipmentCount,
+        monthlyAssignments: equipmentAssignmentsCount,
+        reportsCount: 3,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching hub stats:', error);
+    res.status(500).json({ error: 'Failed to fetch hub stats' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. EQUIPMENT RUNNING CHART REPORT
+// GET /api/reports/equipment-running-chart?dateFrom=&dateTo=&equipmentQuery=&condition=&tenantId=
+// ─────────────────────────────────────────────────────────────────────────────
+export const getEquipmentRunningChartReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const dateFrom = qStr(req.query.dateFrom);
+    const dateTo = qStr(req.query.dateTo);
+    const equipmentQuery = qStr(req.query.equipmentQuery);
+    const condition = qStr(req.query.condition);
+
+    const dateFilter = buildDateFilter(dateFrom, dateTo);
+
+    const assignments = await prisma.dailyEquipmentAssignment.findMany({
+      where: {
+        tenantId,
+        ...(dateFilter ? { date: dateFilter } : {}),
+        ...(equipmentQuery
+          ? {
+              equipment: {
+                OR: [
+                  { name: { contains: equipmentQuery, mode: 'insensitive' } },
+                  { code: { contains: equipmentQuery, mode: 'insensitive' } },
+                  { vehicleNo: { contains: equipmentQuery, mode: 'insensitive' } },
+                  { magaNo: { contains: equipmentQuery, mode: 'insensitive' } },
+                ],
+              },
+            }
+          : {}),
+        ...(condition
+          ? { equipment: { condition: { equals: condition, mode: 'insensitive' } } }
+          : {}),
+      },
+      include: {
+        equipment: {
+          include: {
+            ownerPartner: true,
+            unitRates: true,
+          },
+        },
+        supervisor: { select: { id: true, fullName: true, username: true } },
+        dailyLog: true,
+      },
+      orderBy: [{ date: 'desc' }, { equipment: { code: 'asc' } }],
+    });
+
+    let totalWorkingHours = 0;
+    let totalIdleHours = 0;
+    let totalFuelLiters = 0;
+    let totalNetHours = 0;
+
+    const items = assignments.map((a) => {
+      const log = a.dailyLog;
+      const workingH = Number(log?.workingHours) || 0;
+      const idleH = Number(log?.idleHours) || 0;
+      const breakdownH = Number(log?.breakdownHours) || 0;
+      const netH = Number(log?.netRunningHours) || (workingH + idleH);
+      const fuel = Number(log?.fuelLiters) || 0;
+
+      totalWorkingHours += workingH;
+      totalIdleHours += idleH;
+      totalFuelLiters += fuel;
+      totalNetHours += netH;
+
+      return {
+        id: a.id,
+        date: a.date.toISOString().split('T')[0],
+        equipmentId: a.equipmentId,
+        equipmentCode: a.equipment.code || a.equipment.vehicleNo || '—',
+        equipmentName: a.equipment.name,
+        vehicleNo: a.equipment.vehicleNo || '—',
+        magaNo: a.equipment.magaNo || '—',
+        condition: a.equipment.condition || 'DRY',
+        primaryUnit: a.equipment.primaryUnit || 'Hrs',
+        supervisorName: a.supervisor.fullName || a.supervisor.username,
+        initialMeter: Number(log?.initialMeter) || 0,
+        finalMeter: Number(log?.finalMeter) || 0,
+        netRunningHours: netH,
+        workingHours: workingH,
+        idleHours: idleH,
+        breakdownHours: breakdownH,
+        fuelLiters: fuel,
+        remarks: log?.remarks || '—',
+        status: log?.status || 'pending',
+      };
+    });
+
+    res.json({
+      items,
+      totals: {
+        totalRecords: items.length,
+        totalNetHours: Math.round(totalNetHours * 100) / 100,
+        totalWorkingHours: Math.round(totalWorkingHours * 100) / 100,
+        totalIdleHours: Math.round(totalIdleHours * 100) / 100,
+        totalFuelLiters: Math.round(totalFuelLiters * 100) / 100,
+      },
+    });
+  } catch (error) {
+    console.error('Error generating equipment running chart:', error);
+    res.status(500).json({ error: 'Failed to generate equipment running chart' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10. EQUIPMENT SUMMARY REPORT (EQUIPMENT ENTRY SHEET - Maga Format)
+// GET /api/reports/equipment-summary?month=&dateFrom=&dateTo=&condition=&equipmentQuery=&tenantId=
+// ─────────────────────────────────────────────────────────────────────────────
+export const getEquipmentSummaryReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const dateFrom = qStr(req.query.dateFrom);
+    const dateTo = qStr(req.query.dateTo);
+    const month = qStr(req.query.month);
+    const equipmentQuery = qStr(req.query.equipmentQuery);
+    const condition = qStr(req.query.condition);
+
+    let from = dateFrom;
+    let to = dateTo;
+    if (month && (!from || !to)) {
+      const [y, m] = month.split('-');
+      const lastDay = new Date(parseInt(y, 10), parseInt(m, 10), 0).getDate();
+      from = `${month}-01`;
+      to = `${month}-${String(lastDay).padStart(2, '0')}`;
+    }
+
+    const dateFilter = buildDateFilter(from, to);
+
+    // 1. Fetch all active equipment
+    const equipmentList = await prisma.equipment.findMany({
+      where: {
+        tenantId,
+        status: 'active',
+        ...(equipmentQuery
+          ? {
+              OR: [
+                { name: { contains: equipmentQuery, mode: 'insensitive' } },
+                { code: { contains: equipmentQuery, mode: 'insensitive' } },
+                { vehicleNo: { contains: equipmentQuery, mode: 'insensitive' } },
+                { magaNo: { contains: equipmentQuery, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+        ...(condition
+          ? { condition: { equals: condition, mode: 'insensitive' } }
+          : {}),
+      },
+      include: {
+        ownerPartner: true,
+        unitRates: true,
+        dailyAssignments: {
+          where: dateFilter ? { date: dateFilter } : undefined,
+          include: { dailyLog: true },
+        },
+      },
+      orderBy: [{ magaNo: 'asc' }, { code: 'asc' }],
+    });
+
+    const rows = equipmentList.map((eq) => {
+      const logs = eq.dailyAssignments.map((a) => a.dailyLog).filter(Boolean);
+      const primaryUnit = (eq.primaryUnit || 'hrs').toLowerCase();
+      
+      let totalUtilization = 0;
+      let totalMileage = 0;
+
+      if (primaryUnit === 'mth') {
+        totalUtilization = 1.00; // standard 1 month line
+      } else if (primaryUnit === 'day' || primaryUnit === 'days') {
+        totalUtilization = logs.length > 0 ? logs.length : 27.00;
+      } else if (primaryUnit === 'km') {
+        totalMileage = logs.reduce((sum, l) => sum + (Number(l?.totalMileage) || 0), 0);
+        totalUtilization = totalMileage;
+      } else {
+        // hrs / running hours
+        totalUtilization = logs.reduce((sum, l) => {
+          const net = Number(l?.netRunningHours) || (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0);
+          return sum + net;
+        }, 0);
+      }
+
+      // Find unit rate for minimum utilization
+      const matchingRate = eq.unitRates.find((r) => r.unit.toLowerCase() === primaryUnit);
+      const minUtil = matchingRate?.minUtilization ? Number(matchingRate.minUtilization) : null;
+
+      const vehicleOrMaga = eq.magaNo || eq.vehicleNo || eq.code || '—';
+
+      return {
+        id: eq.id,
+        vehicleOrMagaNo: vehicleOrMaga,
+        equipmentName: eq.name || '',
+        businessPartner: eq.ownerPartner?.name || '—',
+        condition: eq.condition || 'DRY',
+        unit: primaryUnit,
+        minUtilization: minUtil !== null ? minUtil.toFixed(2) : '—',
+        totalUtilization: totalUtilization > 0 ? totalUtilization.toFixed(2) : (primaryUnit === 'mth' ? '1.00' : '—'),
+        totalMileage: totalMileage > 0 ? totalMileage.toFixed(2) : '—',
+      };
+    });
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { companyName: true, subdomain: true },
+    });
+
+    res.json({
+      sheetTitle: 'EQUIPMENT ENTRY SHEET',
+      companyName: tenant?.companyName || 'Mäga Engineering (Pvt) Ltd',
+      address: '200, Nawala Road, Narahenpita, Colombo 05, Sri Lanka',
+      phone: '2808835-44',
+      fax: '2808846-48',
+      email: 'maga@maga.lk',
+      date: to || from || new Date().toISOString().split('T')[0],
+      projectCentre: 'Project / Activity Centre',
+      totalRecords: rows.length,
+      rows,
+    });
+  } catch (error) {
+    console.error('Error fetching equipment summary report:', error);
+    res.status(500).json({ error: 'Failed to generate equipment summary report' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 11. EQUIPMENT ERP UPLOAD EXPORT (Matches Maga SAP/ERP Excel template)
+// GET /api/reports/equipment-erp-upload?month=&dateFrom=&dateTo=&condition=&activityCode=&tenantId=
+// ─────────────────────────────────────────────────────────────────────────────
+export const getEquipmentErpUploadReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.resolvedTenantId || qStr(req.query.tenantId) || (await getDefaultTenantId());
+    const dateFrom = qStr(req.query.dateFrom);
+    const dateTo = qStr(req.query.dateTo);
+    const month = qStr(req.query.month);
+    const condition = qStr(req.query.condition);
+    const activityCode = qStr(req.query.activityCode) || '00-00-10-00';
+
+    let from = dateFrom;
+    let to = dateTo;
+    let uploadDateFormatted = '31-10-2026';
+
+    if (month) {
+      const [y, m] = month.split('-');
+      const lastDay = new Date(parseInt(y, 10), parseInt(m, 10), 0).getDate();
+      from = `${month}-01`;
+      to = `${month}-${String(lastDay).padStart(2, '0')}`;
+      uploadDateFormatted = `${String(lastDay).padStart(2, '0')}-${String(m).padStart(2, '0')}-${y}`;
+    } else if (to) {
+      const [y, m, d] = to.split('-');
+      uploadDateFormatted = `${d}-${m}-${y}`;
+    } else {
+      const now = new Date();
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      uploadDateFormatted = `${String(lastDay).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()}`;
+    }
+
+    const dateFilter = buildDateFilter(from, to);
+
+    const equipmentList = await prisma.equipment.findMany({
+      where: {
+        tenantId,
+        status: 'active',
+        ...(condition
+          ? { condition: { equals: condition, mode: 'insensitive' } }
+          : {}),
+      },
+      include: {
+        unitRates: true,
+        dailyAssignments: {
+          where: dateFilter ? { date: dateFilter } : undefined,
+          include: { dailyLog: true },
+        },
+      },
+      orderBy: [{ magaNo: 'asc' }, { code: 'asc' }],
+    });
+
+    const rows = equipmentList.map((eq) => {
+      const logs = eq.dailyAssignments.map((a) => a.dailyLog).filter(Boolean);
+      const primaryUnit = (eq.primaryUnit || 'hrs').toLowerCase();
+
+      // Find rate / ERP code override (e.g. MGEN0140A for mth)
+      const matchingRate = eq.unitRates.find((r) => r.unit.toLowerCase() === primaryUnit);
+      const erpCode = matchingRate?.erpBillingCode || eq.magaNo || eq.code || eq.vehicleNo || 'EQUIP';
+
+      let totalUtilization = 0;
+      if (primaryUnit === 'mth') {
+        totalUtilization = 1.00;
+      } else if (primaryUnit === 'day' || primaryUnit === 'days') {
+        totalUtilization = logs.length > 0 ? logs.length : 27.00;
+      } else if (primaryUnit === 'km') {
+        totalUtilization = logs.reduce((sum, l) => sum + (Number(l?.totalMileage) || 0), 0);
+      } else {
+        totalUtilization = logs.reduce((sum, l) => {
+          const net = Number(l?.netRunningHours) || (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0);
+          return sum + net;
+        }, 0);
+        if (totalUtilization === 0) totalUtilization = 108.00;
+      }
+
+      return {
+        equipment: erpCode,
+        condition: (eq.condition || 'DRY').toUpperCase(),
+        unit: primaryUnit,
+        date: uploadDateFormatted,
+        activity: activityCode,
+        utilization: totalUtilization.toFixed(2),
+      };
+    });
+
+    res.json({
+      date: uploadDateFormatted,
+      activityCode,
+      totalRows: rows.length,
+      rows,
+    });
+  } catch (error) {
+    console.error('Error generating equipment ERP upload report:', error);
+    res.status(500).json({ error: 'Failed to generate equipment ERP upload report' });
+  }
+};
+
+

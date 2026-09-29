@@ -97,7 +97,10 @@ export default function RunningChartTable({ data }: Props) {
                       </span>
                     </td>
                     <td className="px-3.5 py-2.5 font-medium text-slate-900 whitespace-nowrap">
-                      {row.callingName}
+                      <div>{row.callingName}</div>
+                      {row.tradeGroup && (
+                        <div className="text-[11px] text-slate-400 font-normal">{row.tradeGroup}</div>
+                      )}
                     </td>
                     <td className="px-3.5 py-2.5 text-slate-500 whitespace-nowrap">
                       {row.businessPartner}

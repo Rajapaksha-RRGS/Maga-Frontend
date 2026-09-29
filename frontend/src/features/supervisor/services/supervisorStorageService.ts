@@ -58,13 +58,24 @@ export interface OperatorEntry {
   lastSavedAt?: string;
 }
 
-export type EquipmentRatingUnit = 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2';
+export type EquipmentRatingUnit = 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2' | 'km';
+
+export interface EquipmentActivitySplit {
+  id: string;
+  activityCode: string;
+  unit: EquipmentRatingUnit;
+  utilization: number;
+  remarks?: string;
+}
 
 export interface EquipmentLogEntry {
   id: string;
   code: string;
+  vehicleNo?: string;
+  magaNo?: string;
   name: string;
   type: string;
+  condition?: 'DRY' | 'WET';
   
   // Rating Units (from Master Data)
   primaryUnit?: EquipmentRatingUnit;
@@ -80,6 +91,10 @@ export interface EquipmentLogEntry {
   hoursValue?: number; // for 'Hrs'
   extraHoursValue?: number; // for 'EX.hrs'
   areaValue?: number; // for 'm2'
+  startMileage?: number; // for 'km'
+  endMileage?: number;
+  totalMileage?: number;
+  totalUtilization?: number;
   
   workingHours: number;
   idleHours: number;
@@ -87,6 +102,14 @@ export interface EquipmentLogEntry {
   fuelIssuedLiters: number;
   operatorId?: string;
   activityCode?: string;
+  activitySplits?: EquipmentActivitySplit[];
+  activities?: Array<{
+    id?: string;
+    activityCode: string;
+    unit?: string;
+    utilization: number;
+    remarks?: string;
+  }>;
   status: 'draft' | 'pending' | 'done';
   remarks?: string;
   lastSavedAt?: string;
@@ -500,7 +523,7 @@ export const supervisorStorage = {
         if (res.ok) {
           const assignedData = await res.json();
           const existingLocal = this.getEquipment(date);
-          const localMap = new Map(existingLocal.map((e) => [e.id, e]));
+          const localMap = new Map<string, EquipmentLogEntry>(existingLocal.map((e) => [e.id, e]));
 
           const mapped: EquipmentLogEntry[] = (assignedData || []).map((asgn: any) => {
             const existing = localMap.get(asgn.equipmentId) || localMap.get(asgn.id);
@@ -618,7 +641,7 @@ export const supervisorStorage = {
 
         // Existing local drafts map for smart reconciliation
         const existingLocal = this.getLaborers(date);
-        const localMap = new Map(existingLocal.map((l) => [l.id, l]));
+        const localMap = new Map<string, LaborerEntry>(existingLocal.map((l) => [l.id, l]));
 
         // Map assigned workers with attendance, hours, and activity splits
         const laborList: LaborerEntry[] = (assignedList || []).map((emp: any) => {
@@ -729,7 +752,7 @@ export const supervisorStorage = {
       if (res.ok) {
         const assignedData = await res.json();
         const existingLocal = this.getOperators(date);
-        const localMap = new Map(existingLocal.map((o) => [o.id, o]));
+        const localMap = new Map<string, OperatorEntry>(existingLocal.map((o) => [o.id, o]));
 
         const mapped: OperatorEntry[] = (assignedData || []).map((asgn: any) => {
           const opId = asgn.operatorId || asgn.id;

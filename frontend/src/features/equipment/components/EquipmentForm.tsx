@@ -15,17 +15,21 @@ const INPUT_CLASS =
   'w-full px-4 py-3 rounded-lg border border-slate-200 bg-white text-slate-800 text-sm min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-colors placeholder:text-slate-400';
 
 const ALL_RATING_UNITS = [
-  { code: 'mth',    label: 'mth – Service Meter Hours',  icon: '⚙️' },
-  { code: 'Days',   label: 'Days – Day / Shift Rate',    icon: '📅' },
-  { code: 'Hrs',    label: 'Hrs – Operating Hours',      icon: '⏱️' },
-  { code: 'EX.hrs', label: 'EX.hrs – Extra / OT Hours', icon: '⚡' },
-  { code: 'm2',     label: 'm² – Work Area (Sq. Meters)',icon: '📐' },
+  { code: 'mth',    label: 'mth – Service Meter Hours',   icon: '⚙️' },
+  { code: 'km',     label: 'km – Mileage / Kilometers',   icon: '🚗' },
+  { code: 'Days',   label: 'Days – Day / Shift Rate',     icon: '📅' },
+  { code: 'Hrs',    label: 'Hrs – Operating Hours',       icon: '⏱️' },
+  { code: 'EX.hrs', label: 'EX.hrs – Extra / OT Hours',  icon: '⚡' },
+  { code: 'm2',     label: 'm² – Work Area (Sq. Meters)', icon: '📐' },
 ] as const;
 
 export default function EquipmentForm({ equipment, onSave, onDeactivate, onCancel }: Props) {
   const [code, setCode] = useState('');
+  const [vehicleNo, setVehicleNo] = useState('');
+  const [magaNo, setMagaNo] = useState('');
   const [name, setName] = useState('');
   const [type, setType] = useState('');
+  const [condition, setCondition] = useState<'DRY' | 'WET'>('DRY');
   const [costRate, setCostRate] = useState<string>('');
   const [primaryUnit, setPrimaryUnit] = useState<string>('mth');
   const [availableUnits, setAvailableUnits] = useState<string[]>([]);
@@ -34,8 +38,11 @@ export default function EquipmentForm({ equipment, onSave, onDeactivate, onCance
   useEffect(() => {
     if (equipment) {
       setCode(equipment.code || '');
+      setVehicleNo(equipment.vehicleNo || equipment.code || '');
+      setMagaNo(equipment.magaNo || '');
       setName(equipment.name);
       setType(equipment.type || '');
+      setCondition(equipment.condition || 'DRY');
       setCostRate(equipment.costRate !== undefined && equipment.costRate !== null ? String(equipment.costRate) : '');
       setPrimaryUnit(equipment.primaryUnit || 'mth');
       setAvailableUnits(Array.isArray(equipment.availableUnits) && equipment.availableUnits.length > 0
@@ -43,8 +50,11 @@ export default function EquipmentForm({ equipment, onSave, onDeactivate, onCance
         : []);
     } else {
       setCode('');
+      setVehicleNo('');
+      setMagaNo('');
       setName('');
       setType('');
+      setCondition('DRY');
       setCostRate('');
       setPrimaryUnit('mth');
       setAvailableUnits([]);
@@ -72,8 +82,11 @@ export default function EquipmentForm({ equipment, onSave, onDeactivate, onCance
     try {
       await onSave({
         code: code.trim().toUpperCase(),
+        vehicleNo: vehicleNo.trim() || code.trim().toUpperCase(),
+        magaNo: magaNo.trim() || undefined,
         name: name.trim(),
         type: type.trim(),
+        condition,
         costRate: costRate.trim() ? Number(costRate) : 0,
         primaryUnit,
         // Save the additional units (excluding primary which is always available)
@@ -91,20 +104,46 @@ export default function EquipmentForm({ equipment, onSave, onDeactivate, onCance
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       {/* Code */}
       <div className="flex flex-col gap-1">
-        <label htmlFor="equip-code" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Code *</label>
+        <label htmlFor="equip-code" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Code / ID *</label>
         <input id="equip-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} className={`${INPUT_CLASS} font-mono`} placeholder="e.g. MACM0075" required />
+      </div>
+
+      {/* Vehicle No & Maga No (Dual ERP Identification) */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="equip-vehicle-no" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Vehicle No (වාහන අංකය)</label>
+          <input id="equip-vehicle-no" type="text" value={vehicleNo} onChange={(e) => setVehicleNo(e.target.value)} className={`${INPUT_CLASS} font-mono`} placeholder="e.g. PC-3450" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="equip-maga-no" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Maga No (ERP Master)</label>
+          <input id="equip-maga-no" type="text" value={magaNo} onChange={(e) => setMagaNo(e.target.value)} className={`${INPUT_CLASS} font-mono`} placeholder="e.g. XQ0002932" />
+        </div>
       </div>
 
       {/* Name */}
       <div className="flex flex-col gap-1">
-        <label htmlFor="equip-name" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Name *</label>
-        <input id="equip-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className={INPUT_CLASS} placeholder="Equipment name" required />
+        <label htmlFor="equip-name" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Description / Name *</label>
+        <input id="equip-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className={INPUT_CLASS} placeholder="e.g. CAT 320D Excavator" required />
       </div>
 
-      {/* Type */}
-      <div className="flex flex-col gap-1">
-        <label htmlFor="equip-type" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Type</label>
-        <input id="equip-type" type="text" value={type} onChange={(e) => setType(e.target.value)} className={INPUT_CLASS} placeholder="e.g. Heavy machinery" />
+      {/* Type & Condition */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="equip-type" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Type</label>
+          <input id="equip-type" type="text" value={type} onChange={(e) => setType(e.target.value)} className={INPUT_CLASS} placeholder="e.g. Heavy machinery" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="equip-condition" className="text-xs font-medium text-slate-500 uppercase tracking-wide">Condition (DRY / WET)</label>
+          <select 
+            id="equip-condition" 
+            value={condition} 
+            onChange={(e) => setCondition(e.target.value as 'DRY' | 'WET')} 
+            className={INPUT_CLASS}
+          >
+            <option value="DRY">DRY (Without Fuel / Machine Only)</option>
+            <option value="WET">WET (With Fuel & Operator)</option>
+          </select>
+        </div>
       </div>
 
       {/* Cost Rate */}

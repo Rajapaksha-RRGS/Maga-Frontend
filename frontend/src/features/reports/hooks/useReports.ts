@@ -16,6 +16,9 @@ import type {
   BpBillResponse,
   ErpUploadResponse,
   RunningChartResponse,
+  EquipmentRunningChartResponse,
+  EquipmentSummaryResponse,
+  EquipmentErpUploadResponse,
 } from '../services/reportService';
 import * as svc from '../services/reportService';
 import { cacheManager } from '../../../utils/cacheManager';
@@ -56,6 +59,9 @@ export function useReports() {
   const [bpBillData, setBpBillData] = useState<BpBillResponse | null>(null);
   const [erpData, setErpData] = useState<ErpUploadResponse | null>(null);
   const [runningChartData, setRunningChartData] = useState<RunningChartResponse | null>(null);
+  const [equipmentRunningChartData, setEquipmentRunningChartData] = useState<EquipmentRunningChartResponse | null>(null);
+  const [equipmentSummaryData, setEquipmentSummaryData] = useState<EquipmentSummaryResponse | null>(null);
+  const [equipmentErpData, setEquipmentErpData] = useState<EquipmentErpUploadResponse | null>(null);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -77,6 +83,9 @@ export function useReports() {
     cacheManager.invalidate('reports:last-bp-bill');
     cacheManager.invalidate('reports:last-erp');
     cacheManager.invalidate('reports:last-running-chart');
+    cacheManager.invalidate('reports:last-equipment-running-chart');
+    cacheManager.invalidate('reports:last-equipment-summary');
+    cacheManager.invalidate('reports:last-equipment-erp');
     // Load filter dropdown options (these are stable reference data — OK to cache)
     svc.getBusinessPartnerOptions().then(setBusinessPartners);
     svc.getActivityCodeOptions().then(setActivityCodes);
@@ -112,10 +121,13 @@ export function useReports() {
       (tab === 'day-ot-summary' && !!dayOtData && dayOtData.items.length > 0) ||
       (tab === 'bp-bill' && !!bpBillData && bpBillData.groups.length > 0) ||
       (tab === 'erp-upload' && !!erpData && erpData.rows.length > 0) ||
-      (tab === 'running-chart' && !!runningChartData && runningChartData.items.length > 0)
+      (tab === 'running-chart' && !!runningChartData && runningChartData.items.length > 0) ||
+      (tab === 'equipment-running-chart' && !!equipmentRunningChartData && equipmentRunningChartData.items.length > 0) ||
+      (tab === 'equipment-summary' && !!equipmentSummaryData && equipmentSummaryData.rows.length > 0) ||
+      (tab === 'equipment-erp-upload' && !!equipmentErpData && equipmentErpData.rows.length > 0)
     );
     setHasQueried(hasResult);
-  }, [summaryData, dayOtData, bpBillData, erpData, runningChartData]);
+  }, [summaryData, dayOtData, bpBillData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData]);
 
   // Execute report query for the active tab
   const runQuery = useCallback(async () => {
@@ -145,6 +157,18 @@ export function useReports() {
         const res = await svc.getRunningChartReport(filters);
         setRunningChartData(res);
         cacheManager.set('reports:last-running-chart', res);
+      } else if (activeTab === 'equipment-running-chart') {
+        const res = await svc.getEquipmentRunningChartReport(filters);
+        setEquipmentRunningChartData(res);
+        cacheManager.set('reports:last-equipment-running-chart', res);
+      } else if (activeTab === 'equipment-summary') {
+        const res = await svc.getEquipmentSummaryReport(filters);
+        setEquipmentSummaryData(res);
+        cacheManager.set('reports:last-equipment-summary', res);
+      } else if (activeTab === 'equipment-erp-upload') {
+        const res = await svc.getEquipmentErpUploadReport(filters);
+        setEquipmentErpData(res);
+        cacheManager.set('reports:last-equipment-erp', res);
       }
     } catch (err) {
       console.error('Failed to run report query:', err);
@@ -152,6 +176,13 @@ export function useReports() {
       setIsLoading(false);
     }
   }, [activeTab, filters]);
+
+  // Auto-fetch report data when tab or worker category changes
+  useEffect(() => {
+    if (activeTab !== 'time-card') {
+      runQuery();
+    }
+  }, [activeTab, filters.workerType]);
 
   // Export current report as Excel (.xlsx) file download with tenant letterhead
   const exportExcel = useCallback(async () => {
@@ -185,8 +216,11 @@ export function useReports() {
     if (activeTab === 'bp-bill') return !!bpBillData && bpBillData.groups.length > 0;
     if (activeTab === 'erp-upload') return !!erpData && erpData.rows.length > 0;
     if (activeTab === 'running-chart') return !!runningChartData && runningChartData.items.length > 0;
+    if (activeTab === 'equipment-running-chart') return !!equipmentRunningChartData && equipmentRunningChartData.items.length > 0;
+    if (activeTab === 'equipment-summary') return !!equipmentSummaryData && equipmentSummaryData.rows.length > 0;
+    if (activeTab === 'equipment-erp-upload') return !!equipmentErpData && equipmentErpData.rows.length > 0;
     return false;
-  }, [activeTab, summaryData, dayOtData, bpBillData, erpData, runningChartData]);
+  }, [activeTab, summaryData, dayOtData, bpBillData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData]);
 
   return {
     activeTab,
@@ -209,5 +243,8 @@ export function useReports() {
     bpBillData,
     erpData,
     runningChartData,
+    equipmentRunningChartData,
+    equipmentSummaryData,
+    equipmentErpData,
   };
 }

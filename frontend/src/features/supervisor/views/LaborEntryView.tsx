@@ -7,7 +7,6 @@ import {
   AlertTriangle, 
   ChevronDown, 
   ChevronUp, 
-  Save, 
   Check, 
   Briefcase, 
   Search, 
@@ -94,9 +93,6 @@ export function LaborEntryView({
 
   // Expanded card state for individual inspection
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // Save feedback state
-  const [individualSaveId, setIndividualSaveId] = useState<string | null>(null);
 
   // Dynamic real activity codes from Backend
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>(MASTER_ACTIVITIES);
@@ -470,22 +466,6 @@ export function LaborEntryView({
       return { ...l, activities, status: 'draft' as const };
     });
     onSaveLaborers(updated);
-  };
-
-  const handleSaveIndividualDraft = (laborerId: string) => {
-    const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const updated = laborers.map((l) => {
-      if (l.id !== laborerId) return l;
-      const isComplete = l.inTime && l.outTime && l.activities.length > 0;
-      return {
-        ...l,
-        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
-        lastSavedAt: now,
-      };
-    });
-    onSaveLaborers(updated);
-    setIndividualSaveId(laborerId);
-    setTimeout(() => setIndividualSaveId(null), 2000);
   };
 
   const isAllFilteredSelected = 
@@ -899,7 +879,6 @@ export function LaborEntryView({
             const isExpanded = tabMode === 'out' && expandedId === worker.id;
             const activitySum = worker.activities.reduce((acc, a) => acc + (Number(a.hours) || 0), 0);
             const hasDiscrepancy = worker.shiftHours > 0 && Math.abs(activitySum - worker.shiftHours) >= 0.1;
-            const isIndividualSaved = individualSaveId === worker.id;
 
             return (
               <div
@@ -1147,33 +1126,14 @@ export function LaborEntryView({
                       </div>
                     </div>
 
-                    {/* Individual Save Button */}
-                    {!isDayLocked && (
-                      <div className="pt-2">
-                        <button
-                          type="button"
-                          onClick={() => handleSaveIndividualDraft(worker.id)}
-                          className={[
-                            'w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl font-semibold text-xs transition-colors shadow-xs',
-                            isIndividualSaved
-                              ? 'bg-emerald-600 text-white'
-                              : 'bg-slate-800 dark:bg-slate-700 text-white hover:bg-slate-900'
-                          ].join(' ')}
-                        >
-                          {isIndividualSaved ? (
-                            <>
-                              <Check size={14} />
-                              <span>Saved Successfully!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Save size={14} />
-                              <span>Save Worker Updates</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    )}
+                    {/* ── Auto-save Status ── */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
+                      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                        <Check size={13} className="text-emerald-500" />
+                        <span>Auto-saved</span>
+                      </span>
+                      <span className="text-[10px]">Changes save automatically</span>
+                    </div>
                   </div>
                 )}
               </div>

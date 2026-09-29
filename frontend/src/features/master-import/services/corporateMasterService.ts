@@ -19,6 +19,20 @@ export interface CorporateEquipment {
   capacity: string;
   sourceProject: string;
   status: 'active';
+  
+  // Real Project & ERP Suffix Fields
+  standardEquipmentNumber?: string;
+  equipmentName?: string;
+  vehicleNo?: string;
+  magaNo?: string;
+  condition?: 'DRY' | 'WET';
+  unit?: string;
+  erpSuffixCode?: string;
+  erpNewCode?: string;
+  dailyRate?: number;
+  minimumUtilization?: number;
+  minUtilization?: number;
+  businessPartner?: string;
 }
 
 export interface CorporateBusinessPartner {
@@ -78,6 +92,95 @@ export interface CorporateProject {
 
 // ── 1. Central Corporate Equipment Master ─────────────────────────────────────
 export const CORPORATE_EQUIPMENT_CATALOG: CorporateEquipment[] = [
+  // ── Multi-Tariff ERP Master Examples from User Specification ──
+  {
+    code: 'MGEN0140',
+    standardEquipmentNumber: 'MGEN0140',
+    name: 'EX-demo',
+    equipmentName: 'EX-demo',
+    searchKey: 'EX-DEMO',
+    costRate: 1000.0,
+    dailyRate: 1000.0,
+    unit: 'hrs',
+    minimumUtilization: 178,
+    minUtilization: 178,
+    businessPartner: 'BP 1000562',
+    condition: 'DRY',
+    erpNewCode: 'MGEN0140',
+    currency: 'LKR',
+    type: 'Heavy Machinery',
+    model: 'EX-DEMO',
+    registrationNo: '',
+    capacity: 'Heavy Machinery',
+    sourceProject: 'Central Depot',
+    status: 'active',
+  },
+  {
+    code: 'MGEN0140A',
+    standardEquipmentNumber: 'MGEN0140',
+    name: 'EX-demo',
+    equipmentName: 'EX-demo',
+    searchKey: 'EX-DEMO',
+    costRate: 220000.0,
+    dailyRate: 220000.0,
+    unit: 'Mth',
+    minimumUtilization: 178,
+    minUtilization: 178,
+    businessPartner: 'BP 1000562',
+    condition: 'DRY',
+    erpNewCode: 'MGEN0140A',
+    currency: 'LKR',
+    type: 'Heavy Machinery',
+    model: 'EX-DEMO',
+    registrationNo: '',
+    capacity: 'Heavy Machinery',
+    sourceProject: 'Central Depot',
+    status: 'active',
+  },
+  {
+    code: 'MGEN0160',
+    standardEquipmentNumber: 'MGEN0160',
+    name: 'Generator Denyo DCA45SPI 14KV',
+    equipmentName: 'Generator Denyo DCA45SPI 14KV',
+    searchKey: 'DENYO DCA45SPI',
+    costRate: 1200.0,
+    dailyRate: 1200.0,
+    unit: 'hrs',
+    minimumUtilization: 125,
+    minUtilization: 125,
+    businessPartner: 'BP 1000561',
+    condition: 'DRY',
+    erpNewCode: 'MGEN0160',
+    currency: 'LKR',
+    type: 'Generator',
+    model: 'DCA45SPI 14KV',
+    registrationNo: '',
+    capacity: '14 kVA',
+    sourceProject: 'Central Depot',
+    status: 'active',
+  },
+  {
+    code: 'MGEN0127',
+    standardEquipmentNumber: 'MGEN0127',
+    name: 'Ex',
+    equipmentName: 'Ex',
+    searchKey: 'EX',
+    costRate: 1560.0,
+    dailyRate: 1560.0,
+    unit: 'hrs',
+    minimumUtilization: 156,
+    minUtilization: 156,
+    businessPartner: 'BP 1000560',
+    condition: 'DRY',
+    erpNewCode: 'MGEN0127',
+    currency: 'LKR',
+    type: 'Heavy Machinery',
+    model: 'Ex',
+    registrationNo: '',
+    capacity: 'Heavy',
+    sourceProject: 'Central Depot',
+    status: 'active',
+  },
   // ── Maga ERP Live Central Master Records ──
   {
     code: 'MCBW0005',

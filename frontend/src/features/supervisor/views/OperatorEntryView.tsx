@@ -3,7 +3,6 @@ import {
   HardHat, 
   Tractor, 
   AlertTriangle, 
-  Save, 
   Check, 
   ChevronDown, 
   ChevronUp, 
@@ -68,9 +67,6 @@ export function OperatorEntryView({
 
   // Expanded card state
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // Save feedback state
-  const [individualSaveId, setIndividualSaveId] = useState<string | null>(null);
 
   // ── IN MODE BATCH STATE ──
   const [batchInTime, setBatchInTime] = useState('07:00');
@@ -237,22 +233,6 @@ export function OperatorEntryView({
       };
     });
     onSaveOperators(updated);
-  };
-
-  const handleIndividualSave = (id: string) => {
-    const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const updated = operators.map((o) => {
-      if (o.id !== id) return o;
-      const isComplete = o.inTime && o.outTime && o.assignedEquipmentId;
-      return {
-        ...o,
-        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
-        lastSavedAt: now,
-      };
-    });
-    onSaveOperators(updated);
-    setIndividualSaveId(id);
-    setTimeout(() => setIndividualSaveId(null), 2000);
   };
 
   const isAllFilteredSelected = 
@@ -558,7 +538,6 @@ export function OperatorEntryView({
             const isExpanded = tabMode === 'out' && expandedId === operator.id;
             const mappedEquip = equipment.find((e) => e.id === operator.assignedEquipmentId);
             const conflict = getMappedConflict(operator.assignedEquipmentId, operator.id);
-            const isSavedJustNow = individualSaveId === operator.id;
 
             return (
               <div
@@ -736,29 +715,14 @@ export function OperatorEntryView({
 
                    
 
-                    {/* Individual Save Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleIndividualSave(operator.id)}
-                      className={[
-                        'w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl font-semibold text-xs transition-colors shadow-xs',
-                        isSavedJustNow
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-800 dark:bg-slate-700 text-white hover:bg-slate-900'
-                      ].join(' ')}
-                    >
-                      {isSavedJustNow ? (
-                        <>
-                          <Check size={14} />
-                          <span>Saved Successfully!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Save size={14} />
-                          <span>Save Operator Entry</span>
-                        </>
-                      )}
-                    </button>
+                    {/* ── Auto-save Status ── */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
+                      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                        <Check size={13} className="text-emerald-500" />
+                        <span>Auto-saved</span>
+                      </span>
+                      <span className="text-[10px]">Changes save automatically</span>
+                    </div>
                   </div>
                 )}
               </div>

@@ -14,6 +14,8 @@ import type {
   BpBillResponse,
   ErpUploadResponse,
   RunningChartResponse,
+  EquipmentSummaryResponse,
+  EquipmentErpUploadResponse,
 } from './reportService';
 
 // ── Formatting Helpers ───────────────────────────────────────────────────────
@@ -1048,3 +1050,150 @@ export async function exportRunningChartToExcel(
   const filename = `${tenant.subdomain}-running-chart-${new Date().toISOString().slice(0, 10)}.xlsx`;
   await downloadWorkbook(workbook, filename);
 }
+
+/**
+ * 6. Equipment ERP Upload Export (Matches User Image 2 exact Excel format)
+ * Columns: Equipment | Condition | Unit | Date | Activity | Utilization
+ */
+export async function exportEquipmentErpToExcel(
+  data: EquipmentErpUploadResponse,
+  filename?: string
+): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Equipment ERP Upload');
+
+  ws.columns = [
+    { header: 'Equipment', key: 'equipment', width: 16 },
+    { header: 'Condition', key: 'condition', width: 14 },
+    { header: 'Unit', key: 'unit', width: 10 },
+    { header: 'Date', key: 'date', width: 14 },
+    { header: 'Activity', key: 'activity', width: 16 },
+    { header: 'Utilization', key: 'utilization', width: 14 },
+  ];
+
+  const headerRow = ws.getRow(1);
+  headerRow.height = 24;
+  headerRow.eachCell((cell) => {
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE5E7EB' },
+    };
+    cell.font = {
+      bold: true,
+      color: { argb: 'FF4C1D95' },
+      size: 11,
+    };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+      left: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+      bottom: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+      right: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+    };
+  });
+
+  data.rows.forEach((r) => {
+    const row = ws.addRow({
+      equipment: r.equipment,
+      condition: r.condition,
+      unit: r.unit,
+      date: r.date,
+      activity: r.activity,
+      utilization: parseFloat(r.utilization) || 0,
+    });
+    row.height = 20;
+    row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(5).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(6).alignment = { horizontal: 'right', vertical: 'middle' };
+    row.getCell(6).numFmt = '#,##0.00';
+
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'dotted', color: { argb: 'FFD1D5DB' } },
+        left: { style: 'dotted', color: { argb: 'FFD1D5DB' } },
+        bottom: { style: 'dotted', color: { argb: 'FFD1D5DB' } },
+        right: { style: 'dotted', color: { argb: 'FFD1D5DB' } },
+      };
+      cell.font = {
+        color: { argb: 'FF312E81' },
+      };
+    });
+  });
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || `Equipment_ERP_Upload_${data.date}.xlsx`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+}
+
+/**
+ * 7. Equipment Entry Sheet (Summary Report) Export (Matches User Image 1 format)
+ */
+export async function exportEquipmentSummaryToExcel(
+  data: EquipmentSummaryResponse,
+  filename?: string
+): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Equipment Entry Sheet');
+
+  ws.columns = [
+    { header: 'Vehicle No. / Maga No.', key: 'vehicleOrMagaNo', width: 20 },
+    { header: 'Equipment', key: 'equipmentName', width: 28 },
+    { header: 'Business Partner', key: 'businessPartner', width: 18 },
+    { header: 'Condition', key: 'condition', width: 12 },
+    { header: 'Unit', key: 'unit', width: 10 },
+    { header: 'Minimum Utilization', key: 'minUtilization', width: 18 },
+    { header: 'Total Utilization', key: 'totalUtilization', width: 16 },
+    { header: 'Total Mileage', key: 'totalMileage', width: 14 },
+    { header: 'Signature', key: 'signature', width: 14 },
+  ];
+
+  const headerRow = ws.getRow(1);
+  headerRow.height = 24;
+  headerRow.eachCell((cell) => {
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE2E8F0' },
+    };
+    cell.font = { bold: true, size: 10, color: { argb: 'FF0F172A' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    cell.border = THIN_BORDER;
+  });
+
+  data.rows.forEach((r) => {
+    const row = ws.addRow({
+      vehicleOrMagaNo: r.vehicleOrMagaNo,
+      equipmentName: r.equipmentName,
+      businessPartner: r.businessPartner,
+      condition: r.condition,
+      unit: r.unit,
+      minUtilization: r.minUtilization,
+      totalUtilization: r.totalUtilization,
+      totalMileage: r.totalMileage,
+      signature: '',
+    });
+    row.height = 20;
+    row.eachCell((cell) => {
+      cell.border = THIN_BORDER;
+    });
+  });
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || `Equipment_Entry_Sheet_${data.date}.xlsx`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+}
+

@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect } from 'react';
 import { 
   Tractor, 
   AlertTriangle, 
-  Save, 
   Check, 
   ChevronDown, 
   ChevronUp, 
@@ -20,7 +19,8 @@ import {
   type ActivityCodeItem,
   type EquipmentLogEntry, 
   type OperatorEntry,
-  type EquipmentRatingUnit 
+  type EquipmentRatingUnit,
+  type EquipmentActivitySplit,
 } from '../services/supervisorStorageService';
 
 interface EquipmentLogsViewProps {
@@ -34,8 +34,9 @@ const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon:
   'Days': { label: 'Days', sub: 'Day / Shift Rate', icon: '📅' },
   'Hrs': { label: 'Hrs', sub: 'Operating Hours', icon: '⏱️' },
   'EX.hrs': { label: 'EX.hrs', sub: 'Extra / OT Hours', icon: '⚡' },
-  'mth': { label: 'mth', sub: 'Meter Hours (SMH)', icon: '⚙️' },
+  'mth': { label: 'Mth', sub: 'Month (Monthly Hire)', icon: '📆' },
   'm2': { label: 'm²', sub: 'Work Area (Square Meters)', icon: '📐' },
+  'km': { label: 'km', sub: 'Mileage / Kilometers', icon: '🚗' },
 };
 
 function getUnitValueInfo(eq: EquipmentLogEntry, unit: EquipmentRatingUnit): { value: number; label: string; display: string } {
@@ -54,11 +55,15 @@ function getUnitValueInfo(eq: EquipmentLogEntry, unit: EquipmentRatingUnit): { v
     }
     case 'mth': {
       const v = eq.netHours ?? 0;
-      return { value: v, label: 'mth', display: `${v.toFixed(1)} mth` };
+      return { value: v, label: 'Hours (Mth)', display: `${v.toFixed(1)} hrs` };
     }
     case 'm2': {
       const v = eq.areaValue ?? 0;
       return { value: v, label: 'm²', display: `${v} m²` };
+    }
+    case 'km': {
+      const v = eq.totalMileage ?? (eq.endMileage && eq.startMileage ? Math.max(0, eq.endMileage - eq.startMileage) : 0);
+      return { value: v, label: 'km', display: `${v.toFixed(1)} km` };
     }
     default:
       return { value: eq.netHours ?? 0, label: 'mth', display: `${eq.netHours ?? 0} mth` };
@@ -84,7 +89,9 @@ function getEquipmentSummary(eq: EquipmentLogEntry): { isDone: boolean; display:
     return {
       isDone: true,
       display: pInfo.display,
-      subText: pUnit === 'mth' ? `${eq.startMeter} → ${eq.endMeter}` : `Unit: ${pUnit}`,
+      subText: pUnit === 'mth' 
+        ? (eq.endMeter > eq.startMeter ? `${eq.startMeter} → ${eq.endMeter} Meter` : 'Monthly Contract (Hrs)')
+        : `Unit: ${pUnit}`,
     };
   } else if (hasAdditional) {
     return {
@@ -105,8 +112,8 @@ export function EquipmentLogsView({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [saveSuccessId, setSaveSuccessId] = useState<string | null>(null);
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>(MASTER_ACTIVITIES);
+  const [showMeterMap, setShowMeterMap] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     supervisorStorage.getActivityCodes().then((codes) => {
@@ -215,6 +222,50 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
+  // ── Direct Net Hours (mth) Handler ──
+  const handleNetHoursChange = (id: string, hours: number) => {
+    const safeHours = Math.max(0, hours);
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+      return {
+        ...eq,
+        netHours: safeHours,
+        workingHours: safeHours,
+        status: (safeHours > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
+  // ── Mileage (km) Handler ──
+  const handleMileageChange = (id: string, mileage: number) => {
+    const safeMileage = Math.max(0, mileage);
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+      return {
+        ...eq,
+        totalMileage: safeMileage,
+        status: (safeMileage > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
+  const handleMileageMeterChange = (id: string, start: number, end: number) => {
+    const total = end >= start ? parseFloat((end - start).toFixed(1)) : 0;
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+      return {
+        ...eq,
+        startMileage: start,
+        endMileage: end,
+        totalMileage: total,
+        status: (total > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
   // ── Add Additional Unit Handler ──
   const handleAddAdditionalUnit = (id: string, unit: EquipmentRatingUnit) => {
     const updated = equipment.map((eq) => {
@@ -246,28 +297,61 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
-  // ── Save Draft Action ──
-  const handleSaveDraft = (id: string) => {
-    const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const updated = equipment.map((eq) => {
-      if (eq.id !== id) return eq;
-      const isComplete = getEquipmentSummary(eq).isDone;
+  // ── Unit-Specific Activity Split Handlers ──
+  const handleAddActivitySplit = (eqId: string, unit: EquipmentRatingUnit) => {
+    const eq = equipment.find((e) => e.id === eqId);
+    if (!eq) return;
+
+    const unitInfo = getUnitValueInfo(eq, unit);
+    const existingSplits = (eq.activitySplits || []).filter((s) => s.unit === unit);
+    const allocated = existingSplits.reduce((sum, s) => sum + (s.utilization || 0), 0);
+    const remaining = Math.max(0, parseFloat((unitInfo.value - allocated).toFixed(2)));
+
+    const newSplit: EquipmentActivitySplit = {
+      id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      activityCode: activityOptions[0]?.code || '',
+      unit,
+      utilization: remaining > 0 ? remaining : 1,
+    };
+
+    const updated = equipment.map((e) => {
+      if (e.id !== eqId) return e;
+      const splits = [...(e.activitySplits || []), newSplit];
       return {
-        ...eq,
-        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
-        lastSavedAt: now,
+        ...e,
+        activitySplits: splits,
+        status: 'draft' as const,
       };
     });
     onSaveEquipment(updated);
-    setSaveSuccessId(id);
-    setTimeout(() => setSaveSuccessId(null), 2000);
   };
 
-  const handleActivityCodeChange = (id: string, code: string) => {
-    const update = equipment.map((eq) => 
-      eq.id === id ? { ...eq, activityCode: code, status: 'draft' as const } : eq
-    );
-    onSaveEquipment(update);
+  const handleRemoveActivitySplit = (eqId: string, splitId: string) => {
+    const updated = equipment.map((e) => {
+      if (e.id !== eqId) return e;
+      return {
+        ...e,
+        activitySplits: (e.activitySplits || []).filter((s) => s.id !== splitId),
+        status: 'draft' as const,
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
+  const handleUpdateActivitySplit = (
+    eqId: string,
+    splitId: string,
+    updates: Partial<EquipmentActivitySplit>
+  ) => {
+    const updated = equipment.map((e) => {
+      if (e.id !== eqId) return e;
+      return {
+        ...e,
+        activitySplits: (e.activitySplits || []).map((s) => (s.id === splitId ? { ...s, ...updates } : s)),
+        status: 'draft' as const,
+      };
+    });
+    onSaveEquipment(updated);
   };
 
   // ── Render Input Box for Specific Unit ──
@@ -277,24 +361,29 @@ export function EquipmentLogsView({
     isAdditional: boolean
   ) => {
     const isMeterInvalid = unit === 'mth' && eq.endMeter < eq.startMeter;
+    const unitInfo = getUnitValueInfo(eq, unit);
+    const unitSplits = (eq.activitySplits || []).filter((s) => s.unit === unit);
+    const allocatedSum = unitSplits.reduce((sum, s) => sum + (Number(s.utilization) || 0), 0);
+    const meterKey = `${eq.id}-${unit}`;
+    const showMeter = !!showMeterMap[meterKey];
 
     return (
       <div 
         key={`${eq.id}-${unit}-${isAdditional ? 'add' : 'prim'}`}
         className={[
-          'space-y-2.5 p-3 rounded-xl border shadow-2xs transition-all',
+          'space-y-3 p-3.5 rounded-2xl border shadow-xs transition-all',
           isAdditional
-            ? 'bg-amber-50/40 dark:bg-amber-950/20 border-amber-200/90 dark:border-amber-900/60'
+            ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200/90 dark:border-amber-900/60'
             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
         ].join(' ')}
       >
         {/* Unit Block Header */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <span className="text-base">{UNIT_META[unit]?.icon || '⚙️'}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-lg p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700/60">{UNIT_META[unit]?.icon || '⚙️'}</span>
             <div>
               <div className="flex items-center gap-1.5">
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                   {UNIT_META[unit]?.label}
                 </span>
                 <span className="text-[10px] text-slate-500 dark:text-slate-400 hidden sm:inline">
@@ -318,7 +407,7 @@ export function EquipmentLogsView({
             ) : (
               <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-lg border border-emerald-200 dark:border-emerald-800">
                 <Lock size={10} />
-                <span>Primary (Fixed)</span>
+                <span>Primary Unit</span>
               </span>
             )}
           </div>
@@ -331,7 +420,7 @@ export function EquipmentLogsView({
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500 font-medium">Logged Days:</span>
-              <span className="font-bold text-emerald-700 dark:text-emerald-400">
+              <span className="font-bold text-emerald-700 dark:text-emerald-400 font-mono text-sm">
                 {eq.daysValue ?? 0} Day{(eq.daysValue ?? 0) === 1 ? '' : 's'}
               </span>
             </div>
@@ -375,52 +464,186 @@ export function EquipmentLogsView({
           </div>
         )}
 
-        {/* SERVICE METER HOURS (mth) */}
+        {/* MONTHLY HIRE (mth) - Logged in Operating Hours */}
         {unit === 'mth' && (
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
-            <div className="grid grid-cols-2 gap-2.5">
-              <div>
-                <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
-                  Start / Initial Meter
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={eq.startMeter}
-                  onChange={(e) => handleMeterChange(eq.id, parseFloat(e.target.value) || 0, eq.endMeter)}
-                  className="w-full px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium">Logged Operating Hours:</span>
+              <span className="font-bold text-emerald-700 dark:text-emerald-400 font-mono text-sm">
+                {eq.netHours.toFixed(1)} hrs
+              </span>
+            </div>
 
-              <div>
-                <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
-                  End / Final Meter
-                </label>
+            {/* Quick Hours Select */}
+            <div>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Hours:</span>
+              <div className="grid grid-cols-5 gap-1.5">
+                {[4, 8, 10, 12, 14].map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => handleNetHoursChange(eq.id, h)}
+                    className={[
+                      'py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
+                      eq.netHours === h
+                        ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs ring-1 ring-emerald-500/20'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+                    ].join(' ')}
+                  >
+                    {h}.0h
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                Operating Hours (hrs):
+              </span>
+              <div className="w-28">
                 <input
                   type="number"
-                  step="0.1"
-                  value={eq.endMeter}
-                  onChange={(e) => handleMeterChange(eq.id, eq.startMeter, parseFloat(e.target.value) || 0)}
-                  className={[
-                    'w-full px-3 py-1.5 text-xs font-bold rounded-xl border focus:ring-2 focus:ring-emerald-500 transition-colors',
-                    isMeterInvalid
-                      ? 'border-red-500 bg-red-50 dark:bg-red-950/40 text-red-900'
-                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100'
-                  ].join(' ')}
+                  step="0.5"
+                  min="0"
+                  value={eq.netHours}
+                  onChange={(e) => handleNetHoursChange(eq.id, parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 font-mono"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 text-xs">
-              <span className="text-slate-600 dark:text-slate-400">Net SMH Utilization:</span>
-              {isMeterInvalid ? (
-                <span className="text-red-600 dark:text-red-400 font-bold flex items-center gap-1 text-[11px]">
-                  <AlertTriangle size={12} /> Final meter cannot be less than initial!
-                </span>
-              ) : (
-                <span className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
-                  {eq.netHours.toFixed(1)} mth
-                </span>
+            {/* Optional Collapsible Meter Readings Toggle */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => setShowMeterMap((prev) => ({ ...prev, [meterKey]: !prev[meterKey] }))}
+                className="text-[10px] text-slate-500 hover:text-emerald-600 dark:text-slate-400 flex items-center gap-1 font-medium transition-colors"
+              >
+                <span>{showMeter ? '▼ Hide Meter Readings' : '▶ Optional: Enter Meter Readings (Start / End)'}</span>
+              </button>
+
+              {showMeter && (
+                <div className="mt-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-750 space-y-2">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-1">Start Meter</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={eq.startMeter}
+                        onChange={(e) => handleMeterChange(eq.id, parseFloat(e.target.value) || 0, eq.endMeter)}
+                        className="w-full px-2 py-1 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-1">End Meter</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={eq.endMeter}
+                        onChange={(e) => handleMeterChange(eq.id, eq.startMeter, parseFloat(e.target.value) || 0)}
+                        className={[
+                          'w-full px-2 py-1 text-xs font-bold rounded-lg border font-mono',
+                          isMeterInvalid
+                            ? 'border-red-500 bg-red-50 text-red-900'
+                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100'
+                        ].join(' ')}
+                      />
+                    </div>
+                  </div>
+                  {isMeterInvalid && (
+                    <span className="text-red-600 text-[10px] font-bold flex items-center gap-1">
+                      <AlertTriangle size={11} /> End meter cannot be less than start meter!
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* MILEAGE (km) */}
+        {unit === 'km' && (
+          <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium">Logged Distance:</span>
+              <span className="font-bold text-sky-700 dark:text-sky-400 font-mono text-sm">
+                {(eq.totalMileage ?? 0).toFixed(1)} km
+              </span>
+            </div>
+
+            <div>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select (km):</span>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[10, 25, 50, 100].map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => handleMileageChange(eq.id, k)}
+                    className={[
+                      'py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
+                      (eq.totalMileage ?? 0) === k
+                        ? 'bg-sky-600 border-sky-600 text-white shadow-xs'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+                    ].join(' ')}
+                  >
+                    {k} km
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                Direct Distance (km):
+              </span>
+              <div className="w-28">
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={eq.totalMileage ?? 0}
+                  onChange={(e) => handleMileageChange(eq.id, parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-sky-500 font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Optional Collapsible Odometer Readings */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => setShowMeterMap((prev) => ({ ...prev, [meterKey]: !prev[meterKey] }))}
+                className="text-[10px] text-slate-500 hover:text-sky-600 dark:text-slate-400 flex items-center gap-1 font-medium transition-colors"
+              >
+                <span>{showMeter ? '▼ Hide Odometer Readings' : '▶ Optional: Enter Start / End Mileage'}</span>
+              </button>
+
+              {showMeter && (
+                <div className="mt-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-750 space-y-2">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-1">Start Mileage</label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={eq.startMileage ?? 0}
+                        onChange={(e) => handleMileageMeterChange(eq.id, parseFloat(e.target.value) || 0, eq.endMileage ?? 0)}
+                        className="w-full px-2 py-1 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-1">End Mileage</label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={eq.endMileage ?? 0}
+                        onChange={(e) => handleMileageMeterChange(eq.id, eq.startMileage ?? 0, parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -431,7 +654,7 @@ export function EquipmentLogsView({
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500 font-medium">Recorded Hours:</span>
-              <span className="font-bold text-blue-700 dark:text-blue-400">
+              <span className="font-bold text-blue-700 dark:text-blue-400 font-mono text-sm">
                 {(eq.hoursValue ?? 0).toFixed(1)} Hrs
               </span>
             </div>
@@ -468,7 +691,7 @@ export function EquipmentLogsView({
                   min="0"
                   value={eq.hoursValue ?? 0}
                   onChange={(e) => handleHoursChange(eq.id, parseFloat(e.target.value) || 0)}
-                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 font-mono"
                 />
               </div>
             </div>
@@ -480,7 +703,7 @@ export function EquipmentLogsView({
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500 font-medium">Overtime / Extra Hours:</span>
-              <span className="font-bold text-amber-700 dark:text-amber-400">
+              <span className="font-bold text-amber-700 dark:text-amber-400 font-mono text-sm">
                 {(eq.extraHoursValue ?? 0).toFixed(1)} EX.hrs
               </span>
             </div>
@@ -517,7 +740,7 @@ export function EquipmentLogsView({
                   min="0"
                   value={eq.extraHoursValue ?? 0}
                   onChange={(e) => handleExtraHoursChange(eq.id, parseFloat(e.target.value) || 0)}
-                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-amber-500"
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-amber-500 font-mono"
                 />
               </div>
             </div>
@@ -529,7 +752,7 @@ export function EquipmentLogsView({
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500 font-medium">Area Completed:</span>
-              <span className="font-bold text-purple-700 dark:text-purple-400">
+              <span className="font-bold text-purple-700 dark:text-purple-400 font-mono text-sm">
                 {eq.areaValue ?? 0} m²
               </span>
             </div>
@@ -561,12 +784,89 @@ export function EquipmentLogsView({
                   min="0"
                   value={eq.areaValue ?? 0}
                   onChange={(e) => handleAreaChange(eq.id, parseFloat(e.target.value) || 0)}
-                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-purple-500"
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-purple-500 font-mono"
                 />
               </div>
             </div>
           </div>
         )}
+
+        {/* ── ACTIVITY SPLITS FOR THIS SPECIFIC UNIT ── */}
+        <div className="mt-3 pt-3 border-t border-slate-200/90 dark:border-slate-700/80 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <Tag size={13} className="text-blue-600 dark:text-blue-400" />
+              <span>Activity Distribution ({unit === 'mth' ? 'Hours' : unit})</span>
+            </span>
+
+            {unitInfo.value > 0 && (
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                Math.abs(allocatedSum - unitInfo.value) < 0.05
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
+                  : 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'
+              }`}>
+                {allocatedSum.toFixed(1)} / {unitInfo.value.toFixed(1)} {unit === 'mth' ? 'hrs' : unit}
+                {Math.abs(allocatedSum - unitInfo.value) < 0.05 ? ' (100% Split)' : ` (${(unitInfo.value - allocatedSum).toFixed(1)} unassigned)`}
+              </span>
+            )}
+          </div>
+
+          {/* List of activity splits */}
+          {unitSplits.length > 0 && (
+            <div className="space-y-1.5">
+              {unitSplits.map((split, sIdx) => (
+                <div key={split.id} className="flex items-center gap-1.5 p-1.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-750">
+                  <span className="text-[10px] font-mono font-bold text-slate-400 w-4 text-center">
+                    {sIdx + 1}
+                  </span>
+                  <select
+                    value={split.activityCode}
+                    onChange={(e) => handleUpdateActivitySplit(eq.id, split.id, { activityCode: e.target.value })}
+                    className="flex-1 min-w-0 px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 text-slate-800 dark:text-slate-100 truncate focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">-- Select Activity Code --</option>
+                    {activityOptions.map((act) => (
+                      <option key={act.code} value={act.code}>
+                        {act.code} - {act.name || act.code}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="w-24 flex-shrink-0 flex items-center gap-1 bg-white dark:bg-slate-850 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      placeholder={unit === 'mth' ? 'Hours' : 'Qty'}
+                      value={split.utilization}
+                      onChange={(e) => handleUpdateActivitySplit(eq.id, split.id, { utilization: parseFloat(e.target.value) || 0 })}
+                      className="w-full text-xs font-bold text-center bg-transparent text-slate-800 dark:text-slate-100 outline-none font-mono"
+                    />
+                    <span className="text-[10px] font-semibold text-slate-400">{unit === 'mth' ? 'hrs' : unit}</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveActivitySplit(eq.id, split.id)}
+                    className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/60 transition-colors"
+                    title="Remove split"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => handleAddActivitySplit(eq.id, unit)}
+            className="w-full py-1.5 px-3 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-dashed border-blue-300 dark:border-blue-800 flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+          >
+            <Plus size={13} />
+            <span>+ Add Activity Split ({unit})</span>
+          </button>
+        </div>
       </div>
     );
   };
@@ -663,7 +963,6 @@ export function EquipmentLogsView({
             const primaryUnit: EquipmentRatingUnit = eq.primaryUnit || 'mth';
             const additionalUnit = eq.additionalUnit;
             const summary = getEquipmentSummary(eq);
-            const isSavedJustNow = saveSuccessId === eq.id;
 
             // Compute available additional units (all allowed units excluding primary)
             const allAllowedUnits: EquipmentRatingUnit[] = eq.availableUnits && eq.availableUnits.length > 0
@@ -696,8 +995,20 @@ export function EquipmentLogsView({
                         <span className="font-semibold text-sm text-slate-900 dark:text-slate-100 truncate">
                           {eq.name}
                         </span>
-                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                          {eq.code}
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-650">
+                          {eq.vehicleNo || eq.code}
+                        </span>
+                        {eq.magaNo && eq.magaNo !== (eq.vehicleNo || eq.code) && (
+                          <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                            ERP: {eq.magaNo}
+                          </span>
+                        )}
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${
+                          (eq.condition || 'DRY').toUpperCase() === 'WET'
+                            ? 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'
+                            : 'bg-sky-50 text-sky-700 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300'
+                        }`}>
+                          {(eq.condition || 'DRY').toUpperCase()}
                         </span>
                         
                         {/* Primary Unit Badge (FIXED — never changes) */}
@@ -830,60 +1141,38 @@ export function EquipmentLogsView({
                       </div>
                     )}
 
-                    {/* ── Activity Code for Equipment ── */}
-                    <div className="p-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 shadow-2xs space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <label htmlFor={`activityCode-${eq.id}`} className="text-[10px] font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1">
-                          <Tag className="text-emerald-600" size={12} />
-                          Activity Code
-                        </label>
-                        {eq.activityCode && (
-                          <span className="text-xs font-bold text-slate-800 dark:text-slate-100 font-mono">
-                            {eq.activityCode}
+                    {/* ── Summary of Activities Allocated Across All Units ── */}
+                    {Array.isArray(eq.activitySplits) && eq.activitySplits.length > 0 && (
+                      <div className="p-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/60 shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-200">
+                          <span className="flex items-center gap-1.5">
+                            <Tag className="text-blue-600" size={13} />
+                            <span>Allocated Activities Summary ({eq.activitySplits.length})</span>
                           </span>
-                        )}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {eq.activitySplits.map((s, idx) => (
+                            <span 
+                              key={s.id || idx} 
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 shadow-2xs"
+                            >
+                              <span className="font-bold text-blue-600">{s.unit}:</span>
+                              <span className="font-semibold">{s.activityCode}</span>
+                              <span className="text-slate-400">→</span>
+                              <span className="font-bold text-emerald-600">{s.utilization}</span>
+                            </span>
+                          ))}
+                        </div>
                       </div>
-                      
-                      <select 
-                        id={`activityCode-${eq.id}`}
-                        name="activityCode" 
-                        value={eq.activityCode || ''} 
-                        onChange={(e) => handleActivityCodeChange(eq.id, e.target.value)} 
-                        className="w-full px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 truncate"
-                      >
-                        <option value="">-- Select Activity Code --</option>
-                        {activityOptions.map((act) => (
-                          <option key={act.code} value={act.code}>
-                            {act.code} - {act.name || act.code}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    )}
 
-                    {/* ── 3. Save Draft Action ── */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <button
-                        type="button"
-                        onClick={() => handleSaveDraft(eq.id)}
-                        className={[
-                          'w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl font-semibold text-xs transition-all shadow-xs active:scale-[0.99]',
-                          isSavedJustNow
-                            ? 'bg-emerald-700 text-white'
-                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                        ].join(' ')}
-                      >
-                        {isSavedJustNow ? (
-                          <>
-                            <Check size={16} />
-                            <span>Equipment Log Saved!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Save size={15} />
-                            <span>Save Equipment Entry</span>
-                          </>
-                        )}
-                      </button>
+                    {/* ── Auto-save Status ── */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
+                      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                        <Check size={13} className="text-emerald-500" />
+                        <span>Auto-saved</span>
+                      </span>
+                      <span className="text-[10px]">Changes save automatically</span>
                     </div>
                   </div>
                 )}
