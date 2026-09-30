@@ -34,7 +34,7 @@ const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon:
   'Days': { label: 'Days', sub: 'Day / Shift Rate', icon: '📅' },
   'Hrs': { label: 'Hrs', sub: 'Operating Hours', icon: '⏱️' },
   'EX.hrs': { label: 'EX.hrs', sub: 'Extra / OT Hours', icon: '⚡' },
-  'mth': { label: 'Mth', sub: 'Month (Monthly Hire)', icon: '📆' },
+  'mth': { label: 'Mth', sub: 'Monthly Hire (Standard 26 Days)', icon: '📆' },
   'm2': { label: 'm²', sub: 'Work Area (Square Meters)', icon: '📐' },
   'km': { label: 'km', sub: 'Mileage / Kilometers', icon: '🚗' },
 };
@@ -54,8 +54,8 @@ function getUnitValueInfo(eq: EquipmentLogEntry, unit: EquipmentRatingUnit): { v
       return { value: v, label: 'EX.hrs', display: `${v.toFixed(1)} EX.hrs` };
     }
     case 'mth': {
-      const v = eq.netHours ?? 0;
-      return { value: v, label: 'Hours (Mth)', display: `${v.toFixed(1)} hrs` };
+      const v = eq.daysValue ?? 0;
+      return { value: v, label: 'Days (Mth)', display: `${v} Day${v === 1 ? '' : 's'}` };
     }
     case 'm2': {
       const v = eq.areaValue ?? 0;
@@ -151,14 +151,44 @@ export function EquipmentLogsView({
 
   // ── Days Rate Handler ──
   const handleDaysChange = (id: string, days: number) => {
-    const safeDays = Math.max(0, days);
-    const updated = equipment.map((eq) => 
-      eq.id === id ? { 
-        ...eq, 
-        daysValue: safeDays, 
-        status: (safeDays > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
-      } : eq
-    );
+    // Strictly max 1.0 Day for daily equipment entry (never 1.5, 2, etc.)
+    const safeDays = Math.min(1.0, Math.max(0, parseFloat(days.toFixed(2))));
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+
+      const pUnit = eq.primaryUnit || 'mth';
+      const isDayOrMth = pUnit === 'Days' || pUnit === 'mth';
+      let splits = eq.activitySplits || [];
+      const daySplits = splits.filter((s) => s.unit === pUnit || s.unit === 'Days' || s.unit === 'mth');
+
+      // If only 1 activity split exists, keep it equal to safeDays (e.g. 1.0 Day)
+      if (isDayOrMth) {
+        if (daySplits.length === 1) {
+          splits = splits.map((s) =>
+            (s.unit === pUnit || s.unit === 'Days' || s.unit === 'mth')
+              ? { ...s, utilization: safeDays, unit: pUnit }
+              : s
+          );
+        } else if (daySplits.length === 0 && safeDays > 0) {
+          splits = [
+            ...splits,
+            {
+              id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              activityCode: activityOptions[0]?.code || '',
+              unit: pUnit,
+              utilization: safeDays,
+            },
+          ];
+        }
+      }
+
+      return {
+        ...eq,
+        daysValue: safeDays,
+        activitySplits: splits,
+        status: (safeDays > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
+      };
+    });
     onSaveEquipment(updated);
   };
 
@@ -222,20 +252,6 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
-  // ── Direct Net Hours (mth) Handler ──
-  const handleNetHoursChange = (id: string, hours: number) => {
-    const safeHours = Math.max(0, hours);
-    const updated = equipment.map((eq) => {
-      if (eq.id !== id) return eq;
-      return {
-        ...eq,
-        netHours: safeHours,
-        workingHours: safeHours,
-        status: (safeHours > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
-      };
-    });
-    onSaveEquipment(updated);
-  };
 
   // ── Mileage (km) Handler ──
   const handleMileageChange = (id: string, mileage: number) => {
@@ -302,21 +318,41 @@ export function EquipmentLogsView({
     const eq = equipment.find((e) => e.id === eqId);
     if (!eq) return;
 
-    const unitInfo = getUnitValueInfo(eq, unit);
+    const isDayUnit = unit === 'Days' || unit === 'mth';
+    const totalTarget = isDayUnit
+      ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? Math.min(1.0, eq.daysValue) : 1.0)
+      : getUnitValueInfo(eq, unit).value;
+
     const existingSplits = (eq.activitySplits || []).filter((s) => s.unit === unit);
-    const allocated = existingSplits.reduce((sum, s) => sum + (s.utilization || 0), 0);
-    const remaining = Math.max(0, parseFloat((unitInfo.value - allocated).toFixed(2)));
+    const allocated = existingSplits.reduce((sum, s) => sum + (Number(s.utilization) || 0), 0);
+    let remaining = Math.max(0, parseFloat((totalTarget - allocated).toFixed(2)));
+
+    let updatedExistingSplits = [...(eq.activitySplits || [])];
+
+    // If first activity took the full amount (e.g. 1.0 Day) and supervisor adds 2nd activity,
+    // split 50/50 so first becomes 0.5 and new gets remaining 0.5!
+    // Or if supervisor already set the first activity to e.g. 0.7, remaining is 0.3 and will be given to new activity!
+    if (isDayUnit && existingSplits.length === 1 && remaining <= 0.001 && existingSplits[0].utilization >= totalTarget) {
+      const half = parseFloat((totalTarget / 2).toFixed(2));
+      const balance = parseFloat((totalTarget - half).toFixed(2));
+      updatedExistingSplits = updatedExistingSplits.map((s) =>
+        s.id === existingSplits[0].id ? { ...s, utilization: half } : s
+      );
+      remaining = balance;
+    }
+
+    const defaultAct = activityOptions.find((a) => !existingSplits.some((s) => s.activityCode === a.code))?.code || activityOptions[0]?.code || '';
 
     const newSplit: EquipmentActivitySplit = {
       id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      activityCode: activityOptions[0]?.code || '',
+      activityCode: defaultAct,
       unit,
-      utilization: remaining > 0 ? remaining : 1,
+      utilization: remaining > 0 ? remaining : (isDayUnit ? 0.2 : 1),
     };
 
     const updated = equipment.map((e) => {
       if (e.id !== eqId) return e;
-      const splits = [...(e.activitySplits || []), newSplit];
+      const splits = [...updatedExistingSplits, newSplit];
       return {
         ...e,
         activitySplits: splits,
@@ -345,9 +381,38 @@ export function EquipmentLogsView({
   ) => {
     const updated = equipment.map((e) => {
       if (e.id !== eqId) return e;
+      let splits = [...(e.activitySplits || [])];
+
+      const targetSplit = splits.find((s) => s.id === splitId);
+      if (!targetSplit) return e;
+
+      const isDayUnit = targetSplit.unit === 'Days' || targetSplit.unit === 'mth';
+      const totalTarget = isDayUnit
+        ? ((e.daysValue !== undefined && e.daysValue > 0) ? Math.min(1.0, e.daysValue) : 1.0)
+        : getUnitValueInfo(e, targetSplit.unit).value;
+
+      const sameUnitSplits = splits.filter((s) => s.unit === targetSplit.unit);
+
+      // If updating utilization in Day unit and exactly 2 splits exist:
+      // When supervisor updates one split (e.g. 0.7), automatically calculate the remaining balance on the other (0.3)
+      if (isDayUnit && updates.utilization !== undefined && sameUnitSplits.length === 2) {
+        const newUtil = Math.min(totalTarget, Math.max(0, parseFloat(Number(updates.utilization).toFixed(2))));
+        const otherSplit = sameUnitSplits.find((s) => s.id !== splitId);
+        if (otherSplit) {
+          const autoBalance = Math.max(0, parseFloat((totalTarget - newUtil).toFixed(2)));
+          splits = splits.map((s) => {
+            if (s.id === splitId) return { ...s, ...updates, utilization: newUtil };
+            if (s.id === otherSplit.id) return { ...s, utilization: autoBalance };
+            return s;
+          });
+          return { ...e, activitySplits: splits, status: 'draft' as const };
+        }
+      }
+
+      splits = splits.map((s) => (s.id === splitId ? { ...s, ...updates } : s));
       return {
         ...e,
-        activitySplits: (e.activitySplits || []).map((s) => (s.id === splitId ? { ...s, ...updates } : s)),
+        activitySplits: splits,
         status: 'draft' as const,
       };
     });
@@ -419,16 +484,21 @@ export function EquipmentLogsView({
         {unit === 'Days' && (
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-500 font-medium">Logged Days:</span>
+              <span className="text-slate-500 font-medium">Logged Days (Max 1 Day):</span>
               <span className="font-bold text-emerald-700 dark:text-emerald-400 font-mono text-sm">
                 {eq.daysValue ?? 0} Day{(eq.daysValue ?? 0) === 1 ? '' : 's'}
               </span>
             </div>
 
             <div>
-              <span className="text-[10px] text-slate-400 block mb-1">Quick Select:</span>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Days (Max 1 Day):</span>
               <div className="grid grid-cols-4 gap-1.5">
-                {[1, 0.5, 1.5, 2].map((d) => (
+                {[
+                  { d: 1, label: '1 Day' },
+                  { d: 0.75, label: '¾ Day' },
+                  { d: 0.5, label: '½ Day' },
+                  { d: 0.25, label: '¼ Day' }
+                ].map(({ d, label }) => (
                   <button
                     key={d}
                     type="button"
@@ -440,7 +510,7 @@ export function EquipmentLogsView({
                         : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
                     ].join(' ')}
                   >
-                    {d === 1 ? '1 Day' : d === 0.5 ? '½ Day' : `${d} Days`}
+                    {label}
                   </button>
                 ))}
               </div>
@@ -448,49 +518,58 @@ export function EquipmentLogsView({
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                Or custom days:
+                Or custom days (max 1.0):
               </span>
               <div className="w-24">
                 <input
                   type="number"
-                  step="0.25"
+                  step="0.05"
                   min="0"
+                  max="1"
                   value={eq.daysValue ?? 0}
                   onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
-                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 font-mono"
                 />
               </div>
             </div>
           </div>
         )}
 
-        {/* MONTHLY HIRE (mth) - Logged in Operating Hours */}
+        {/* MONTHLY HIRE (mth) - Logged in Days (Standard 26 days/month) */}
         {unit === 'mth' && (
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-500 font-medium">Logged Operating Hours:</span>
+              <span className="text-slate-500 font-medium">Logged Days (Monthly Hire):</span>
               <span className="font-bold text-emerald-700 dark:text-emerald-400 font-mono text-sm">
-                {eq.netHours.toFixed(1)} hrs
+                {eq.daysValue ?? 0} {(eq.daysValue ?? 0) === 1 ? 'Day' : 'Days'}
+                <span className="text-[11px] text-slate-500 font-normal ml-1.5">
+                  ({(((eq.daysValue ?? 0) / 26) * 1.0).toFixed(2)} mth)
+                </span>
               </span>
             </div>
 
-            {/* Quick Hours Select */}
+            {/* Quick Days Select */}
             <div>
-              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Hours:</span>
-              <div className="grid grid-cols-5 gap-1.5">
-                {[4, 8, 10, 12, 14].map((h) => (
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Days (Max 1 Day):</span>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[
+                  { d: 1, label: '1 Day' },
+                  { d: 0.75, label: '¾ Day' },
+                  { d: 0.5, label: '½ Day' },
+                  { d: 0.25, label: '¼ Day' }
+                ].map(({ d, label }) => (
                   <button
-                    key={h}
+                    key={d}
                     type="button"
-                    onClick={() => handleNetHoursChange(eq.id, h)}
+                    onClick={() => handleDaysChange(eq.id, d)}
                     className={[
                       'py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
-                      eq.netHours === h
+                      (eq.daysValue ?? 0) === d
                         ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs ring-1 ring-emerald-500/20'
                         : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
                     ].join(' ')}
                   >
-                    {h}.0h
+                    {label}
                   </button>
                 ))}
               </div>
@@ -498,15 +577,16 @@ export function EquipmentLogsView({
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                Operating Hours (hrs):
+                Or custom days (max 1.0):
               </span>
-              <div className="w-28">
+              <div className="w-24">
                 <input
                   type="number"
-                  step="0.5"
+                  step="0.05"
                   min="0"
-                  value={eq.netHours}
-                  onChange={(e) => handleNetHoursChange(eq.id, parseFloat(e.target.value) || 0)}
+                  max="1"
+                  value={eq.daysValue ?? 0}
+                  onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
                   className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 font-mono"
                 />
               </div>
@@ -792,81 +872,116 @@ export function EquipmentLogsView({
         )}
 
         {/* ── ACTIVITY SPLITS FOR THIS SPECIFIC UNIT ── */}
-        <div className="mt-3 pt-3 border-t border-slate-200/90 dark:border-slate-700/80 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-              <Tag size={13} className="text-blue-600 dark:text-blue-400" />
-              <span>Activity Distribution ({unit === 'mth' ? 'Hours' : unit})</span>
-            </span>
+        {(() => {
+          const isDayUnit = unit === 'Days' || unit === 'mth';
+          const targetValue = isDayUnit
+            ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? Math.min(1.0, eq.daysValue) : 1.0)
+            : unitInfo.value;
+          const unassigned = Math.max(0, parseFloat((targetValue - allocatedSum).toFixed(2)));
+          const isFullySplit = Math.abs(allocatedSum - targetValue) < 0.02;
 
-            {unitInfo.value > 0 && (
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                Math.abs(allocatedSum - unitInfo.value) < 0.05
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
-                  : 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'
-              }`}>
-                {allocatedSum.toFixed(1)} / {unitInfo.value.toFixed(1)} {unit === 'mth' ? 'hrs' : unit}
-                {Math.abs(allocatedSum - unitInfo.value) < 0.05 ? ' (100% Split)' : ` (${(unitInfo.value - allocatedSum).toFixed(1)} unassigned)`}
-              </span>
-            )}
-          </div>
+          return (
+            <div className="mt-3 pt-3 border-t border-slate-200/90 dark:border-slate-700/80 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Tag size={13} className="text-blue-600 dark:text-blue-400" />
+                  <span>Activity Distribution ({isDayUnit ? 'Days' : unit})</span>
+                </span>
 
-          {/* List of activity splits */}
-          {unitSplits.length > 0 && (
-            <div className="space-y-1.5">
-              {unitSplits.map((split, sIdx) => (
-                <div key={split.id} className="flex items-center gap-1.5 p-1.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-750">
-                  <span className="text-[10px] font-mono font-bold text-slate-400 w-4 text-center">
-                    {sIdx + 1}
+                {targetValue > 0 && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    isFullySplit
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
+                      : 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'
+                  }`}>
+                    {allocatedSum.toFixed(2)} / {targetValue.toFixed(2)} {isDayUnit ? 'Day(s)' : unit}
+                    {isFullySplit ? ' (100% Split)' : ` (${unassigned.toFixed(2)} unassigned)`}
                   </span>
-                  <select
-                    value={split.activityCode}
-                    onChange={(e) => handleUpdateActivitySplit(eq.id, split.id, { activityCode: e.target.value })}
-                    className="flex-1 min-w-0 px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 text-slate-800 dark:text-slate-100 truncate focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="">-- Select Activity Code --</option>
-                    {activityOptions.map((act) => (
-                      <option key={act.code} value={act.code}>
-                        {act.code} - {act.name || act.code}
-                      </option>
-                    ))}
-                  </select>
+                )}
+              </div>
 
-                  <div className="w-24 flex-shrink-0 flex items-center gap-1 bg-white dark:bg-slate-850 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      placeholder={unit === 'mth' ? 'Hours' : 'Qty'}
-                      value={split.utilization}
-                      onChange={(e) => handleUpdateActivitySplit(eq.id, split.id, { utilization: parseFloat(e.target.value) || 0 })}
-                      className="w-full text-xs font-bold text-center bg-transparent text-slate-800 dark:text-slate-100 outline-none font-mono"
-                    />
-                    <span className="text-[10px] font-semibold text-slate-400">{unit === 'mth' ? 'hrs' : unit}</span>
-                  </div>
-
+              {/* If no splits yet, provide quick 1-click button to assign 1st activity as 1 Day */}
+              {unitSplits.length === 0 && (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-dashed border-slate-200 dark:border-slate-700 text-center space-y-2">
+                  <p className="text-[11px] text-slate-500">No activity assigned yet for this machine.</p>
                   <button
                     type="button"
-                    onClick={() => handleRemoveActivitySplit(eq.id, split.id)}
-                    className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/60 transition-colors"
-                    title="Remove split"
+                    onClick={() => handleAddActivitySplit(eq.id, unit)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-2xs cursor-pointer"
                   >
-                    <Trash2 size={13} />
+                    <Plus size={13} />
+                    <span>Assign 1st Activity ({isDayUnit ? `${targetValue.toFixed(2)} Day` : `${targetValue} ${unit}`})</span>
                   </button>
                 </div>
-              ))}
-            </div>
-          )}
+              )}
 
-          <button
-            type="button"
-            onClick={() => handleAddActivitySplit(eq.id, unit)}
-            className="w-full py-1.5 px-3 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-dashed border-blue-300 dark:border-blue-800 flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-          >
-            <Plus size={13} />
-            <span>+ Add Activity Split ({unit})</span>
-          </button>
-        </div>
+              {/* List of activity splits */}
+              {unitSplits.length > 0 && (
+                <div className="space-y-1.5">
+                  {unitSplits.map((split, sIdx) => (
+                    <div key={split.id} className="flex items-center gap-1.5 p-1.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-750">
+                      <span className="text-[10px] font-mono font-bold text-slate-400 w-4 text-center">
+                        {sIdx + 1}
+                      </span>
+                      <select
+                        value={split.activityCode}
+                        onChange={(e) => handleUpdateActivitySplit(eq.id, split.id, { activityCode: e.target.value })}
+                        className="flex-1 min-w-0 px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 text-slate-800 dark:text-slate-100 truncate focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="">-- Select Activity Code --</option>
+                        {activityOptions.map((act) => (
+                          <option key={act.code} value={act.code}>
+                            {act.code} - {act.name || act.code}
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="w-28 flex-shrink-0 flex items-center gap-1 bg-white dark:bg-slate-850 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <input
+                          type="number"
+                          step={isDayUnit ? "0.05" : "0.1"}
+                          min="0"
+                          max={isDayUnit ? "1" : undefined}
+                          placeholder={isDayUnit ? 'Days' : 'Qty'}
+                          value={split.utilization}
+                          onChange={(e) => {
+                            let val = parseFloat(e.target.value) || 0;
+                            if (isDayUnit) val = Math.min(1.0, Math.max(0, parseFloat(val.toFixed(2))));
+                            handleUpdateActivitySplit(eq.id, split.id, { utilization: val });
+                          }}
+                          className="w-full text-xs font-bold text-center bg-transparent text-slate-800 dark:text-slate-100 outline-none font-mono"
+                        />
+                        <span className="text-[10px] font-semibold text-slate-400">
+                          {isDayUnit ? 'Day' : unit}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveActivitySplit(eq.id, split.id)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/60 transition-colors cursor-pointer"
+                        title="Remove split"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {unitSplits.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleAddActivitySplit(eq.id, unit)}
+                  className="w-full py-1.5 px-3 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-dashed border-blue-300 dark:border-blue-800 flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                >
+                  <Plus size={13} />
+                  <span>+ Add Activity Split ({isDayUnit ? 'Days' : unit})</span>
+                </button>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   };
@@ -1129,18 +1244,6 @@ export function EquipmentLogsView({
                       )
                     )}
 
-                    {/* ── Combined Summary Pill (Shown when both primary & additional have values) ── */}
-                    {summary.isDone && additionalUnit && (
-                      <div className="p-2.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between text-xs">
-                        <span className="font-semibold text-emerald-900 dark:text-emerald-200">
-                          Total Logged Output:
-                        </span>
-                        <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono">
-                          {summary.display}
-                        </span>
-                      </div>
-                    )}
-
                     {/* ── Summary of Activities Allocated Across All Units ── */}
                     {Array.isArray(eq.activitySplits) && eq.activitySplits.length > 0 && (
                       <div className="p-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/60 shadow-2xs space-y-2">
@@ -1156,10 +1259,10 @@ export function EquipmentLogsView({
                               key={s.id || idx} 
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 shadow-2xs"
                             >
-                              <span className="font-bold text-blue-600">{s.unit}:</span>
+                              <span className="font-bold text-blue-600">{s.unit === 'mth' ? 'Days' : s.unit}:</span>
                               <span className="font-semibold">{s.activityCode}</span>
                               <span className="text-slate-400">→</span>
-                              <span className="font-bold text-emerald-600">{s.utilization}</span>
+                              <span className="font-bold text-emerald-600">{s.utilization} {s.unit === 'mth' || s.unit === 'Days' ? 'Day' : s.unit}</span>
                             </span>
                           ))}
                         </div>

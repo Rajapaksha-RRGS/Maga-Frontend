@@ -6,7 +6,8 @@ import {
   type LaborerEntry, 
   type OperatorEntry, 
   type EquipmentLogEntry, 
-  type SiteProject 
+  type SiteProject,
+  type SupervisorDayStatus
 } from './services/supervisorStorageService';
 
 // Layout & Components
@@ -44,6 +45,13 @@ export default function SupervisorMobileApp() {
   const [operators, setOperators] = useState<OperatorEntry[]>([]);
   const [equipment, setEquipment] = useState<EquipmentLogEntry[]>([]);
   const [isDayLocked, setIsDayLocked] = useState(false);
+  const [dayStatus, setDayStatus] = useState<SupervisorDayStatus>({
+    status: 'draft',
+    isLocked: false,
+    submittedAt: null,
+    approvedAt: null,
+    remarks: null,
+  });
 
   // Load data whenever selectedDate changes (Offline-First: cached first, then fresh backend)
   useEffect(() => {
@@ -51,16 +59,24 @@ export default function SupervisorMobileApp() {
     const loadedLaborers = supervisorStorage.getLaborers(selectedDate);
     const loadedOperators = supervisorStorage.getOperators(selectedDate);
     const loadedEquipment = supervisorStorage.getEquipment(selectedDate);
-    const locked = supervisorStorage.isDayLocked(selectedDate);
+    const cachedStatus = supervisorStorage.getDayStatus(selectedDate);
 
     setLaborers(loadedLaborers);
     setOperators(loadedOperators);
     setEquipment(loadedEquipment);
-    setIsDayLocked(locked);
+    setDayStatus(cachedStatus);
+    setIsDayLocked(cachedStatus.isLocked);
     setPendingSyncCount(supervisorStorage.getPendingSyncCount());
 
-    // 2. Fetch fresh real data from backend (Admin assigned workers & entries)
+    // 2. Fetch fresh real data from backend (Admin assigned workers, entries & day status)
     if (user?.id) {
+      supervisorStorage.fetchDayStatus(user.id, selectedDate)
+        .then((freshStatus) => {
+          setDayStatus(freshStatus);
+          setIsDayLocked(freshStatus.isLocked);
+        })
+        .catch(() => {});
+
       supervisorStorage.getAssignedEmployees(user.id, selectedDate)
         .then((freshLaborers) => {
           setLaborers(freshLaborers);
@@ -82,6 +98,26 @@ export default function SupervisorMobileApp() {
     }
   }, [selectedDate, user?.id]);
 
+  // Auto-flush queued offline submissions when network reconnects
+  useEffect(() => {
+    const handleOnline = async () => {
+      if (!user?.id) return;
+      try {
+        const flushed = await supervisorStorage.flushQueuedSubmissions(user.id);
+        if (flushed.includes(selectedDate)) {
+          const fresh = await supervisorStorage.fetchDayStatus(user.id, selectedDate);
+          setDayStatus(fresh);
+          setIsDayLocked(fresh.isLocked);
+        }
+      } catch (err) {
+        console.warn('Could not flush queued submissions:', err);
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [user?.id, selectedDate]);
+
   // Site change
   const handleSelectSite = (site: SiteProject) => {
     setCurrentSite(site);
@@ -90,7 +126,7 @@ export default function SupervisorMobileApp() {
 
   // Sync trigger to backend
   const handleSync = async () => {
-    if (!user?.id) return;
+    if (!user?.id || isDayLocked) return;
     setIsSyncing(true);
     try {
       await supervisorStorage.syncToBackend(user.id, selectedDate);
@@ -124,17 +160,18 @@ export default function SupervisorMobileApp() {
   const handleLockDay = async () => {
     if (!user?.id) return;
     try {
-      await supervisorStorage.submitDayToBackend(user.id, selectedDate);
+      const result = await supervisorStorage.submitDayToBackend(user.id, selectedDate);
+      const freshStatus = supervisorStorage.getDayStatus(selectedDate);
+      setDayStatus(freshStatus);
       setIsDayLocked(true);
       setPendingSyncCount(0);
+      if (result.offline && result.message) {
+        alert(result.message);
+      }
     } catch (err: any) {
       alert(err.message || 'Failed to submit and lock day on backend');
+      throw err;
     }
-  };
-
-  const handleUnlockDay = () => {
-    supervisorStorage.unlockDay(selectedDate);
-    setIsDayLocked(false);
   };
 
 
@@ -155,6 +192,7 @@ export default function SupervisorMobileApp() {
         onSync={handleSync}
         isSyncing={isSyncing}
         onOpenDrawer={() => setDrawerOpen(true)}
+        isDayLocked={isDayLocked}
       />
 
       {/* ── Slide Drawer ────────────────────────────────────────────────────── */}
@@ -238,8 +276,9 @@ export default function SupervisorMobileApp() {
             operators={operators}
             equipment={equipment}
             isDayLocked={isDayLocked}
+            dayStatus={dayStatus.status}
+            adminRemarks={dayStatus.remarks}
             onLockDay={handleLockDay}
-            onUnlockDay={handleUnlockDay}
             onNavigateTab={(tab) => setActiveTab(tab)}
           />
         )}

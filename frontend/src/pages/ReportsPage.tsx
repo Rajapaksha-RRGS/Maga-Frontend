@@ -14,7 +14,6 @@
 import { useState, useCallback } from 'react';
 import { 
   Download, 
-  CheckCircle2, 
   Users, 
   HardHat, 
   Truck
@@ -105,10 +104,6 @@ export default function ReportsPage() {
               )}
             </h1>
 
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-300">
-              <CheckCircle2 size={12} className="text-emerald-700" />
-              Verified & Auto-Saved
-            </span>
           </div>
         </div>
 
@@ -156,26 +151,24 @@ export default function ReportsPage() {
             </button>
           </div>
 
-          {/* Export to Excel (when not in Time Card view) */}
-          {activeTab !== 'time-card' && (
-            <button
-              onClick={exportExcel}
-              disabled={isExporting}
-              className="flex items-center gap-2 border border-slate-300 text-slate-800 font-semibold text-xs rounded-xl px-3.5 min-h-[38px] transition-colors bg-white hover:bg-slate-50 active:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed shadow-2xs"
-            >
-              {isExporting ? (
-                <>
-                  <div className="w-3.5 h-3.5 border-2 border-slate-600 border-t-transparent rounded-full animate-spin" />
-                  <span>Exporting…</span>
-                </>
-              ) : (
-                <>
-                  <Download size={14} className="text-emerald-700" />
-                  <span>Export Excel</span>
-                </>
-              )}
-            </button>
-          )}
+          {/* Export to Excel */}
+          <button
+            onClick={exportExcel}
+            disabled={isExporting}
+            className="flex items-center gap-2 border border-slate-300 text-slate-800 font-semibold text-xs rounded-xl px-3.5 min-h-[38px] transition-colors bg-white hover:bg-slate-50 active:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed shadow-2xs"
+          >
+            {isExporting ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-slate-600 border-t-transparent rounded-full animate-spin" />
+                <span>Exporting…</span>
+              </>
+            ) : (
+              <>
+                <Download size={14} className="text-emerald-700" />
+                <span>Export Excel</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 

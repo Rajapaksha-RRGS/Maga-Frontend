@@ -19,6 +19,14 @@ export interface ActivityCodeItem {
   category: string;
 }
 
+export interface SupervisorDayStatus {
+  status: 'draft' | 'pending_submit' | 'submitted' | 'approved';
+  isLocked: boolean;
+  submittedAt?: string | null;
+  approvedAt?: string | null;
+  remarks?: string | null;
+}
+
 export interface ActivitySplit {
   id: string;
   activityCode: string;
@@ -633,11 +641,8 @@ export const supervisorStorage = {
         const assignedList = await resAssigned.json();
         const timeEntryList = resEntries.ok ? await resEntries.json() : [];
 
-        // Check if entries for this day are already submitted and locked
-        const isSubmitted = timeEntryList.some((t: any) => t.status === 'submitted');
-        if (isSubmitted) {
-          this.lockDay(date);
-        }
+        // Check if entries for this day are already submitted or approved
+        const isSubmitted = timeEntryList.some((t: any) => t.status === 'submitted' || t.status === 'approved');
 
         // Existing local drafts map for smart reconciliation
         const existingLocal = this.getLaborers(date);
@@ -810,10 +815,11 @@ export const supervisorStorage = {
     this.incrementPendingSync();
   },
 
-  // ── 6. Day Lock Status ────────────────────────────────────────────────────
+  // ── 6. Day Lock Status & Server Lifecycle ────────────────────────────────
   isDayLocked(date: string): boolean {
     const key = `${STORAGE_PREFIX}locked_${date}`;
-    return localStorage.getItem(key) === 'true';
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    return localStorage.getItem(key) === 'true' || localStorage.getItem(pendingKey) === 'true';
   },
 
   lockDay(date: string) {
@@ -823,7 +829,127 @@ export const supervisorStorage = {
 
   unlockDay(date: string) {
     const key = `${STORAGE_PREFIX}locked_${date}`;
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
     localStorage.removeItem(key);
+    localStorage.removeItem(pendingKey);
+    localStorage.removeItem(`${STORAGE_PREFIX}status_${date}`);
+  },
+
+  getDayStatus(date: string): SupervisorDayStatus {
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    if (localStorage.getItem(pendingKey) === 'true') {
+      return {
+        status: 'pending_submit',
+        isLocked: true,
+        submittedAt: null,
+        approvedAt: null,
+        remarks: null,
+      };
+    }
+
+    const serverStatus = localStorage.getItem(`${STORAGE_PREFIX}status_${date}`) as any;
+    const isLocked = this.isDayLocked(date);
+    const remarks = localStorage.getItem(`${STORAGE_PREFIX}remarks_${date}`);
+
+    return {
+      status: serverStatus || (isLocked ? 'submitted' : 'draft'),
+      isLocked,
+      submittedAt: localStorage.getItem(`${STORAGE_PREFIX}submitted_at_${date}`),
+      approvedAt: localStorage.getItem(`${STORAGE_PREFIX}approved_at_${date}`),
+      remarks: remarks || null,
+    };
+  },
+
+  async fetchDayStatus(supervisorId: string, date: string): Promise<SupervisorDayStatus> {
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    const isPendingOffline = localStorage.getItem(pendingKey) === 'true';
+
+    try {
+      const res = await apiFetch(
+        `${API_URL}/time-entries/day-status?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        const serverStatus = data.status || 'draft';
+
+        localStorage.setItem(`${STORAGE_PREFIX}status_${date}`, serverStatus);
+        if (data.remarks) {
+          localStorage.setItem(`${STORAGE_PREFIX}remarks_${date}`, data.remarks);
+        } else {
+          localStorage.removeItem(`${STORAGE_PREFIX}remarks_${date}`);
+        }
+        if (data.submittedAt) {
+          localStorage.setItem(`${STORAGE_PREFIX}submitted_at_${date}`, data.submittedAt);
+        }
+        if (data.approvedAt) {
+          localStorage.setItem(`${STORAGE_PREFIX}approved_at_${date}`, data.approvedAt);
+        }
+
+        if (serverStatus === 'submitted' || serverStatus === 'approved') {
+          this.lockDay(date);
+          localStorage.removeItem(pendingKey);
+        } else if (serverStatus === 'draft') {
+          // If server status is draft and not queued offline, unlock locally
+          // (This happens when Admin rejects / returns day for corrections)
+          if (!isPendingOffline) {
+            localStorage.removeItem(`${STORAGE_PREFIX}locked_${date}`);
+          }
+        }
+
+        return {
+          status: isPendingOffline ? 'pending_submit' : serverStatus,
+          isLocked: isPendingOffline || serverStatus === 'submitted' || serverStatus === 'approved',
+          submittedAt: data.submittedAt || null,
+          approvedAt: data.approvedAt || null,
+          remarks: data.remarks || null,
+        };
+      }
+    } catch (err) {
+      console.warn('Could not fetch server day status, using cached status:', err);
+    }
+
+    return this.getDayStatus(date);
+  },
+
+  queueOfflineSubmission(date: string) {
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    localStorage.setItem(pendingKey, 'true');
+    this.lockDay(date);
+
+    try {
+      const queueKey = `${STORAGE_PREFIX}offline_submits_queue`;
+      const currentQueue: string[] = JSON.parse(localStorage.getItem(queueKey) || '[]');
+      if (!currentQueue.includes(date)) {
+        currentQueue.push(date);
+        localStorage.setItem(queueKey, JSON.stringify(currentQueue));
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  clearOfflineSubmission(date: string) {
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    localStorage.removeItem(pendingKey);
+
+    try {
+      const queueKey = `${STORAGE_PREFIX}offline_submits_queue`;
+      let currentQueue: string[] = JSON.parse(localStorage.getItem(queueKey) || '[]');
+      currentQueue = currentQueue.filter((d) => d !== date);
+      localStorage.setItem(queueKey, JSON.stringify(currentQueue));
+    } catch {
+      // ignore
+    }
+  },
+
+  getQueuedSubmissions(): string[] {
+    try {
+      const queueKey = `${STORAGE_PREFIX}offline_submits_queue`;
+      return JSON.parse(localStorage.getItem(queueKey) || '[]');
+    } catch {
+      return [];
+    }
   },
 
   // ── 7. Offline Sync Queue ─────────────────────────────────────────────────
@@ -848,6 +974,7 @@ export const supervisorStorage = {
   async syncToBackend(supervisorId: string, date: string): Promise<boolean> {
     const laborers = this.getLaborers(date);
     const operators = this.getOperators(date);
+    const equipment = this.getEquipment(date);
 
     try {
       // Pre-fetch all real tenant activity codes once
@@ -935,11 +1062,49 @@ export const supervisorStorage = {
               entries: validOps.map((op) => ({
                 operatorId: op.id,
                 equipmentId: op.assignedEquipmentId || undefined,
+                assignedEquipmentId: op.assignedEquipmentId || undefined,
                 inTime: op.inTime || undefined,
                 outTime: op.outTime || undefined,
+                shiftHours: op.shiftHours || 0,
                 hours: op.shiftHours || 0,
+                otHours: op.otHours || 0,
                 overtimeHours: op.otHours || 0,
                 notes: op.notes || undefined,
+              })),
+            }),
+          });
+        }
+      }
+
+      // 3. Sync Equipment if any
+      if (equipment.length > 0) {
+        const validEq = equipment.filter((e: any) => (e.netHours && e.netHours > 0) || (e.daysValue && e.daysValue > 0) || (e.hoursValue && e.hoursValue > 0) || (e.totalMileage && e.totalMileage > 0) || e.startMeter > 0);
+        if (validEq.length > 0) {
+          await apiFetch(`${API_URL}/time-entries/equipment/bulk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              supervisorId,
+              date,
+              entries: validEq.map((eq: any) => ({
+                id: eq.id,
+                condition: eq.condition || 'DRY',
+                startMeter: eq.startMeter || 0,
+                endMeter: eq.endMeter || 0,
+                netHours: eq.netHours || 0,
+                daysValue: eq.daysValue,
+                hoursValue: eq.hoursValue,
+                workingHours: eq.workingHours || 0,
+                idleHours: eq.idleHours || 0,
+                breakdownHours: eq.breakdownHours || 0,
+                fuelLiters: eq.fuelIssuedLiters || 0,
+                totalMileage: eq.totalMileage || 0,
+                startMileage: eq.startMileage || 0,
+                endMileage: eq.endMileage || 0,
+                totalUtilization: eq.totalUtilization,
+                remarks: eq.remarks,
+                status: eq.status,
+                activitySplits: eq.activitySplits,
               })),
             }),
           });
@@ -954,28 +1119,84 @@ export const supervisorStorage = {
     }
   },
 
-  // ── 9. Submit & Lock Day on Backend ───────────────────────────────────────
-  async submitDayToBackend(supervisorId: string, date: string): Promise<boolean> {
-    // Sync all pending drafts first
-    await this.syncToBackend(supervisorId, date);
+  // ── 9. Submit & Lock Day on Backend (Offline-First Resilient) ─────────────
+  async submitDayToBackend(
+    supervisorId: string,
+    date: string
+  ): Promise<{ success: boolean; offline: boolean; message?: string }> {
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-    // Call submit endpoint to validate complete check-in/out and lock
-    const res = await apiFetch(`${API_URL}/time-entries/submit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        supervisorId,
-        date,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      throw new Error(err?.error || 'Failed to submit and lock day on backend');
+    if (!isOnline) {
+      this.queueOfflineSubmission(date);
+      return {
+        success: true,
+        offline: true,
+        message: 'Network offline: Shift roster locked locally and queued. It will automatically submit once internet is connected.',
+      };
     }
 
-    this.lockDay(date);
-    this.resetPendingSync();
-    return true;
+    try {
+      // 1. Sync all pending drafts first
+      await this.syncToBackend(supervisorId, date);
+
+      // 2. Call submit endpoint on backend
+      const res = await apiFetch(`${API_URL}/time-entries/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supervisorId, date }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || 'Failed to submit and lock day on backend');
+      }
+
+      // 3. Mark submitted permanently
+      this.clearOfflineSubmission(date);
+      this.lockDay(date);
+      localStorage.setItem(`${STORAGE_PREFIX}status_${date}`, 'submitted');
+      localStorage.removeItem(`${STORAGE_PREFIX}remarks_${date}`);
+      this.resetPendingSync();
+
+      return { success: true, offline: false };
+    } catch (err: any) {
+      const msg = err?.message || '';
+      const isNetworkError =
+        err?.name === 'TypeError' ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('Network') ||
+        msg.includes('aborted') ||
+        !navigator.onLine;
+
+      if (isNetworkError) {
+        this.queueOfflineSubmission(date);
+        return {
+          success: true,
+          offline: true,
+          message: 'Connection dropped during submission. Roster saved safely and queued to auto-submit when reconnected.',
+        };
+      }
+
+      // Validation or server error (e.g. incomplete check in/out) - throw so user sees and fixes it
+      throw err;
+    }
+  },
+
+  async flushQueuedSubmissions(supervisorId: string): Promise<string[]> {
+    const queuedDates = this.getQueuedSubmissions();
+    const successful: string[] = [];
+
+    for (const date of queuedDates) {
+      try {
+        const result = await this.submitDayToBackend(supervisorId, date);
+        if (!result.offline) {
+          successful.push(date);
+        }
+      } catch (err) {
+        console.warn(`Could not flush queued submit for ${date}:`, err);
+      }
+    }
+
+    return successful;
   },
 };

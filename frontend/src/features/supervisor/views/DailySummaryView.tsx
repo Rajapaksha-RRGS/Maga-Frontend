@@ -4,12 +4,13 @@ import {
   Users, 
   HardHat, 
   Lock, 
-  Unlock, 
   CheckCircle2, 
   AlertTriangle, 
   ShieldCheck, 
   Calendar, 
-  Building2 
+  Building2,
+  WifiOff,
+  RefreshCw
 } from 'lucide-react';
 import type { 
   LaborerEntry, 
@@ -26,8 +27,9 @@ interface DailySummaryViewProps {
   operators: OperatorEntry[];
   equipment: EquipmentLogEntry[];
   isDayLocked: boolean;
+  dayStatus?: 'draft' | 'pending_submit' | 'submitted' | 'approved';
+  adminRemarks?: string | null;
   onLockDay: () => Promise<void> | void;
-  onUnlockDay: () => void;
   onNavigateTab: (tab: 'labor' | 'operators' | 'equipment') => void;
 }
 
@@ -39,8 +41,9 @@ export function DailySummaryView({
   operators,
   equipment,
   isDayLocked,
+  dayStatus,
+  adminRemarks,
   onLockDay,
-  onUnlockDay,
   onNavigateTab,
 }: DailySummaryViewProps) {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -94,48 +97,109 @@ export function DailySummaryView({
 
   return (
     <div className="space-y-4 pb-24 animate-in fade-in duration-150">
-      {/* ── Lock / Verification Status Banner ─────────────────────────────────── */}
-      {isDayLocked ? (
-        <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-2xl p-4 shadow-xs flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0">
-            <Lock size={18} />
+      {/* ── Status Banner Lifecycle (Offline Queued, Submitted, Approved, or Admin Returned) ── */}
+      {dayStatus === 'pending_submit' ? (
+        <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 rounded-2xl p-4 shadow-xs flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-amber-600 text-white flex items-center justify-center flex-shrink-0">
+            <WifiOff size={18} />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
-                Shift Roster Locked & Submitted
+              <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                Offline: Queued for Submission
               </h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-100">
-                Audited
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200">
+                Queued
               </span>
             </div>
-            <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">
-              Signed by <strong className="font-semibold">{supervisorName}</strong> for {currentSite.name} on {formattedDate}.
+            <p className="text-xs text-amber-800 dark:text-amber-300 mt-1">
+              Your shift roster is locked and saved safely on this device. It will automatically submit to the server as soon as internet connection is restored.
             </p>
             <div className="mt-3">
               <button
                 type="button"
-                onClick={onUnlockDay}
-                className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-lg border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-800 text-emerald-800 dark:text-emerald-300 text-xs font-semibold hover:bg-emerald-50"
+                onClick={handleConfirmSubmit}
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-lg border border-amber-400 dark:border-amber-700 bg-white dark:bg-slate-800 text-amber-900 dark:text-amber-200 text-xs font-semibold hover:bg-amber-100 dark:hover:bg-slate-700"
               >
-                <Unlock size={14} />
-                <span>Unlock for Corrections</span>
+                <RefreshCw size={13} className={isSubmitting ? "animate-spin" : ""} />
+                <span>{isSubmitting ? 'Submitting...' : 'Retry Submit Now'}</span>
               </button>
             </div>
           </div>
         </div>
+      ) : dayStatus === 'approved' ? (
+        <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-400 dark:border-emerald-800 rounded-2xl p-4 shadow-xs flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0">
+            <ShieldCheck size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                Approved by Management
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-100">
+                Approved
+              </span>
+            </div>
+            <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">
+              Audited and approved by Project Management for {currentSite.name} on {formattedDate}. Roster is finalized and read-only.
+            </p>
+          </div>
+        </div>
+      ) : isDayLocked || dayStatus === 'submitted' ? (
+        <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-800 rounded-2xl p-4 shadow-xs flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-blue-700 text-white flex items-center justify-center flex-shrink-0">
+            <Lock size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-blue-950 dark:text-blue-200">
+                Shift Roster Submitted & Locked
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-200 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                Awaiting Approval
+              </span>
+            </div>
+            <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+              Signed and submitted by <strong className="font-semibold">{supervisorName}</strong> for {currentSite.name} on {formattedDate}. Roster cannot be edited unless returned by Admin.
+            </p>
+          </div>
+        </div>
+      ) : adminRemarks ? (
+        <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-2xl p-4 shadow-xs flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center flex-shrink-0">
+            <AlertTriangle size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-rose-900 dark:text-rose-200">
+                Returned for Corrections by Admin
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-200">
+                Action Required
+              </span>
+            </div>
+            <p className="text-xs text-rose-800 dark:text-rose-300 mt-1 font-medium">
+              {adminRemarks}
+            </p>
+            <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">
+              The day has been returned to editable draft. Please make the corrections and submit again.
+            </p>
+          </div>
+        </div>
       ) : (
-        <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 rounded-2xl p-4 shadow-xs">
+        <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-xl bg-blue-700 text-white flex items-center justify-center flex-shrink-0">
               <ClipboardCheck size={18} />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-blue-950 dark:text-blue-100">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                 End-of-Day Daily Consolidation
               </h3>
-              <p className="text-xs text-blue-700 dark:text-blue-300 mt-0.5">
-                Review verified hours and machine logs before locking today's shift.
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                Review verified hours and machine logs before submitting today's shift to project admin.
               </p>
             </div>
           </div>

@@ -162,7 +162,7 @@ export function useReports() {
         setEquipmentRunningChartData(res);
         cacheManager.set('reports:last-equipment-running-chart', res);
       } else if (activeTab === 'equipment-summary') {
-        const res = await svc.getEquipmentSummaryReport(filters);
+        const res = await svc.getEquipmentSummaryReport(filters, { preparedBy: user?.fullName });
         setEquipmentSummaryData(res);
         cacheManager.set('reports:last-equipment-summary', res);
       } else if (activeTab === 'equipment-erp-upload') {
@@ -175,7 +175,7 @@ export function useReports() {
     } finally {
       setIsLoading(false);
     }
-  }, [activeTab, filters]);
+  }, [activeTab, filters, user]);
 
   // Auto-fetch report data when tab or worker category changes
   useEffect(() => {

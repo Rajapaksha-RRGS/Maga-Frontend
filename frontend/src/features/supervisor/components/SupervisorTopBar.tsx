@@ -6,7 +6,8 @@ import {
   Sun, 
   Moon, 
   Menu, 
-  CheckCircle2
+  CheckCircle2,
+  Lock
 } from 'lucide-react';
 import { useTheme } from '../../../context/ThemeContext';
 import { type SiteProject } from '../services/supervisorStorageService';
@@ -19,6 +20,7 @@ interface SupervisorTopBarProps {
   onSync: () => Promise<void>;
   isSyncing: boolean;
   onOpenDrawer: () => void;
+  isDayLocked?: boolean;
 }
 
 export function SupervisorTopBar({
@@ -27,6 +29,7 @@ export function SupervisorTopBar({
   onSync,
   isSyncing,
   onOpenDrawer,
+  isDayLocked = false,
 }: SupervisorTopBarProps) {
   const { theme, toggleTheme } = useTheme();
   const [syncSuccessToast, setSyncSuccessToast] = useState(false);
@@ -62,30 +65,40 @@ export function SupervisorTopBar({
 
         {/* Right Actions: Sync Status, Theme Toggle, Drawer */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {/* Offline Sync Status & Trigger */}
-          <button
-            type="button"
-            onClick={handleSyncClick}
-            disabled={isSyncing}
-            title={pendingSyncCount > 0 ? `${pendingSyncCount} drafts waiting to sync` : 'All drafts synced'}
-            className={[
-              'flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border transition-all',
-              pendingSyncCount > 0
-                ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 active:scale-95'
-                : 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100'
-            ].join(' ')}
-          >
-            {isSyncing ? (
-              <RotateCw size={14} className="animate-spin text-blue-600 dark:text-blue-400" />
-            ) : pendingSyncCount > 0 ? (
-              <WifiOff size={14} className="text-amber-600 dark:text-amber-400" />
-            ) : (
-              <Wifi size={14} className="text-emerald-600 dark:text-emerald-400" />
-            )}
-            <span className="tabular-nums">
-              {isSyncing ? 'Syncing…' : pendingSyncCount > 0 ? `${pendingSyncCount}` : 'Synced'}
-            </span>
-          </button>
+          {/* Offline Sync Status or Locked indicator */}
+          {isDayLocked ? (
+            <div 
+              title="Shift Roster Locked & Submitted"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 shadow-2xs"
+            >
+              <Lock size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span>Locked</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSyncClick}
+              disabled={isSyncing}
+              title={pendingSyncCount > 0 ? `${pendingSyncCount} drafts waiting to sync` : 'All drafts synced'}
+              className={[
+                'flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border transition-all',
+                pendingSyncCount > 0
+                  ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 active:scale-95'
+                  : 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100'
+              ].join(' ')}
+            >
+              {isSyncing ? (
+                <RotateCw size={14} className="animate-spin text-blue-600 dark:text-blue-400" />
+              ) : pendingSyncCount > 0 ? (
+                <WifiOff size={14} className="text-amber-600 dark:text-amber-400" />
+              ) : (
+                <Wifi size={14} className="text-emerald-600 dark:text-emerald-400" />
+              )}
+              <span className="tabular-nums">
+                {isSyncing ? 'Syncing…' : pendingSyncCount > 0 ? `${pendingSyncCount}` : 'Synced'}
+              </span>
+            </button>
+          )}
 
           {/* Theme Toggle Button (Light/Dark) */}
           <button

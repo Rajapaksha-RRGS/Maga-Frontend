@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { getDefaultTenantId } from './employeeController';
+import { calculateShiftAndOvertime } from './timeEntryController';
 
 // ─── Helper: parse query param safely ─────────────────────────────────────────
 const qStr = (v: unknown): string | undefined =>
@@ -1157,7 +1158,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
       ],
     });
 
-    // 4. Fetch TimeEntries in range
+    // 4. Fetch Labor TimeEntries in range
     const timeEntries = await prisma.timeEntry.findMany({
       where: {
         tenantId,
@@ -1166,6 +1167,22 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
       },
       include: {
         equipment: true,
+      },
+    });
+
+    // 4.1 Fetch Operator TimeEntries in range
+    const opAssignments = await prisma.dailyOperatorAssignment.findMany({
+      where: {
+        tenantId,
+        date: { gte: startDate, lte: endDate },
+        ...(employeeId ? { operatorId: employeeId } : {}),
+      },
+      include: {
+        timeEntry: {
+          include: {
+            assignedEquipment: true,
+          },
+        },
       },
     });
 
@@ -1178,6 +1195,30 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
         entryMap.set(key, []);
       }
       entryMap.get(key)!.push(te);
+    }
+
+    for (const oa of opAssignments) {
+      if (oa.timeEntry) {
+        const dStr = oa.date.toISOString().slice(0, 10);
+        const key = `${oa.operatorId}_${dStr}`;
+        if (!entryMap.has(key)) {
+          entryMap.set(key, []);
+        }
+        let hours = Number(oa.timeEntry.shiftHours) || 0;
+        let otHours = Number(oa.timeEntry.otHours) || 0;
+        if (oa.timeEntry.inTime && oa.timeEntry.outTime && hours === 0) {
+          const calc = calculateShiftAndOvertime(oa.timeEntry.inTime, oa.timeEntry.outTime, 8, false);
+          hours = calc.shiftHours > 0 ? calc.shiftHours : hours;
+          otHours = calc.otHours;
+        }
+        entryMap.get(key)!.push({
+          inTime: oa.timeEntry.inTime,
+          outTime: oa.timeEntry.outTime,
+          hours,
+          overtimeHours: otHours,
+          equipment: oa.timeEntry.assignedEquipment,
+        });
+      }
     }
 
     // 5. Month display label (e.g. "Jul-26")
@@ -1272,6 +1313,11 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
           equipmentCode: eqCode,
           isOffMonth: false,
         });
+      }
+
+      // If employee did not work any days in the month (totalDays <= 0), do NOT generate a Time Card!
+      if (totalDays <= 0) {
+        continue;
       }
 
       const basicPay = Math.round(totalDays * dailyRateVal * 100) / 100;
@@ -1537,6 +1583,8 @@ export const getEquipmentSummaryReport = async (req: Request, res: Response): Pr
     const month = qStr(req.query.month);
     const equipmentQuery = qStr(req.query.equipmentQuery);
     const condition = qStr(req.query.condition);
+    const projectNameParam = qStr(req.query.projectName) || qStr(req.query.projectCentre) || qStr(req.query.siteCode);
+    const preparedByParam = qStr(req.query.preparedBy) || (req as any).user?.fullName;
 
     let from = dateFrom;
     let to = dateTo;
@@ -1548,6 +1596,28 @@ export const getEquipmentSummaryReport = async (req: Request, res: Response): Pr
     }
 
     const dateFilter = buildDateFilter(from, to);
+
+    // Dynamic resolution of Project / Activity Centre and Prepared By
+    let dynamicProjectCentre = projectNameParam;
+    let dynamicPreparedBy = preparedByParam;
+
+    if (!dynamicProjectCentre || !dynamicPreparedBy) {
+      const sampleSheet = await prisma.dailySheet.findFirst({
+        where: {
+          tenantId,
+          ...(dateFilter ? { date: dateFilter } : {}),
+        },
+        include: { supervisor: { select: { fullName: true } } },
+        orderBy: { date: 'desc' },
+      });
+
+      if (!dynamicProjectCentre && sampleSheet?.siteCode) {
+        dynamicProjectCentre = `${sampleSheet.siteCode} - Project Operations`;
+      }
+      if (!dynamicPreparedBy && sampleSheet?.supervisor?.fullName) {
+        dynamicPreparedBy = sampleSheet.supervisor.fullName;
+      }
+    }
 
     // 1. Fetch all active equipment
     const equipmentList = await prisma.equipment.findMany({
@@ -1573,32 +1643,60 @@ export const getEquipmentSummaryReport = async (req: Request, res: Response): Pr
         unitRates: true,
         dailyAssignments: {
           where: dateFilter ? { date: dateFilter } : undefined,
-          include: { dailyLog: true },
+          include: {
+            dailyLog: {
+              include: { activities: true },
+            },
+          },
         },
       },
       orderBy: [{ magaNo: 'asc' }, { code: 'asc' }],
     });
 
-    const rows = equipmentList.map((eq) => {
+    const allRows = equipmentList.map((eq) => {
       const logs = eq.dailyAssignments.map((a) => a.dailyLog).filter(Boolean);
       const primaryUnit = (eq.primaryUnit || 'hrs').toLowerCase();
       
       let totalUtilization = 0;
       let totalMileage = 0;
 
+      const totalRunningHours = logs.reduce((sum, l) => {
+        const net = Number(l?.netRunningHours) || (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0);
+        return sum + net;
+      }, 0);
+
       if (primaryUnit === 'mth') {
-        totalUtilization = 1.00; // standard 1 month line
+        // STANDARD: 26 working days per month
+        // Supervisor logs in Days (e.g. 1.0 Day, 0.5 Day)
+        const totalDays = logs.reduce((sum, l) => {
+          let dayVal = 0;
+          if (l?.activities && l.activities.length > 0) {
+            dayVal = l.activities.reduce((actSum, act) => actSum + (Number(act.utilization) || 0), 0);
+          } else if (l?.loggedQuantity && Number(l.loggedQuantity) > 0) {
+            dayVal = Number(l.loggedQuantity);
+          } else {
+            dayVal = 1; // Default 1 day for logged active deployment
+          }
+          return sum + dayVal;
+        }, 0);
+        totalUtilization = totalDays;
       } else if (primaryUnit === 'day' || primaryUnit === 'days') {
-        totalUtilization = logs.length > 0 ? logs.length : 27.00;
+        const totalDays = logs.reduce((sum, l) => {
+          let dayVal = 0;
+          if (l?.loggedQuantity && Number(l.loggedQuantity) > 0) {
+            dayVal = Number(l.loggedQuantity);
+          } else {
+            dayVal = 1;
+          }
+          return sum + dayVal;
+        }, 0);
+        totalUtilization = totalDays;
       } else if (primaryUnit === 'km') {
         totalMileage = logs.reduce((sum, l) => sum + (Number(l?.totalMileage) || 0), 0);
         totalUtilization = totalMileage;
       } else {
         // hrs / running hours
-        totalUtilization = logs.reduce((sum, l) => {
-          const net = Number(l?.netRunningHours) || (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0);
-          return sum + net;
-        }, 0);
+        totalUtilization = totalRunningHours;
       }
 
       // Find unit rate for minimum utilization
@@ -1615,27 +1713,77 @@ export const getEquipmentSummaryReport = async (req: Request, res: Response): Pr
         condition: eq.condition || 'DRY',
         unit: primaryUnit,
         minUtilization: minUtil !== null ? minUtil.toFixed(2) : '—',
-        totalUtilization: totalUtilization > 0 ? totalUtilization.toFixed(2) : (primaryUnit === 'mth' ? '1.00' : '—'),
+        totalUtilization: totalUtilization > 0 ? totalUtilization.toFixed(2) : '—',
         totalMileage: totalMileage > 0 ? totalMileage.toFixed(2) : '—',
+        numericUtilization: totalUtilization,
+        numericMileage: totalMileage,
       };
+    });
+
+    // 1. FILTER: Exclude equipment with zero utilization (only active deployed equipment)
+    const activeRows = allRows.filter((r) => r.numericUtilization > 0 || r.numericMileage > 0);
+
+    let grandTotalUtilization = 0;
+    let grandTotalMileage = 0;
+
+    const rows = activeRows.map(({ numericUtilization, numericMileage, ...rest }) => {
+      grandTotalUtilization += numericUtilization;
+      grandTotalMileage += numericMileage;
+      return rest;
     });
 
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { companyName: true, subdomain: true },
+      select: { 
+        companyName: true, 
+        subdomain: true,
+        addressLine1: true,
+        addressLine2: true,
+        phone: true,
+        fax: true,
+        email: true,
+      },
     });
+
+    const dynamicAddress = [tenant?.addressLine1, tenant?.addressLine2].filter(Boolean).join(', ')
+      || '200, Nawala Road, Narahenpita, Colombo 05, Sri Lanka';
+    const dynamicPhone = tenant?.phone || '2808835-44';
+    const dynamicFax = tenant?.fax || '2808846-48';
+    const dynamicEmail = tenant?.email || 'maga@maga.lk';
+
+    // Format period text
+    let periodText = '';
+    if (from && to) {
+      periodText = from === to ? from : `${from} to ${to}`;
+    } else if (to || from) {
+      periodText = to || from || '';
+    } else {
+      periodText = new Date().toISOString().split('T')[0];
+    }
+
+    const monthPart = (from || to || new Date().toISOString().split('T')[0]).slice(0, 7).replace('-', '');
+    const sheetNo = `EES-${monthPart}`;
 
     res.json({
       sheetTitle: 'EQUIPMENT ENTRY SHEET',
       companyName: tenant?.companyName || 'Mäga Engineering (Pvt) Ltd',
-      address: '200, Nawala Road, Narahenpita, Colombo 05, Sri Lanka',
-      phone: '2808835-44',
-      fax: '2808846-48',
-      email: 'maga@maga.lk',
+      address: dynamicAddress,
+      phone: dynamicPhone,
+      fax: dynamicFax,
+      email: dynamicEmail,
       date: to || from || new Date().toISOString().split('T')[0],
-      projectCentre: 'Project / Activity Centre',
+      dateFrom: from,
+      dateTo: to,
+      periodText,
+      sheetNo,
+      preparedBy: dynamicPreparedBy || 'Site Supervisor / Plant Eng.',
+      projectCentre: dynamicProjectCentre || (tenant?.companyName ? `${tenant.companyName} Central Project Operations` : 'Maga Central Project Operations'),
       totalRecords: rows.length,
       rows,
+      totals: {
+        totalUtilization: Number(grandTotalUtilization.toFixed(2)),
+        totalMileage: Number(grandTotalMileage.toFixed(2)),
+      },
     });
   } catch (error) {
     console.error('Error fetching equipment summary report:', error);
@@ -1689,43 +1837,116 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
         unitRates: true,
         dailyAssignments: {
           where: dateFilter ? { date: dateFilter } : undefined,
-          include: { dailyLog: true },
+          include: { 
+            dailyLog: {
+              include: {
+                activityCode: true,
+                activities: {
+                  include: {
+                    activityCode: true,
+                  },
+                },
+              },
+            },
+          },
         },
       },
       orderBy: [{ magaNo: 'asc' }, { code: 'asc' }],
     });
 
-    const rows = equipmentList.map((eq) => {
-      const logs = eq.dailyAssignments.map((a) => a.dailyLog).filter(Boolean);
-      const primaryUnit = (eq.primaryUnit || 'hrs').toLowerCase();
+    const rows: Array<{
+      equipment: string;
+      condition: string;
+      unit: string;
+      date: string;
+      activity: string;
+      utilization: string;
+    }> = [];
 
-      // Find rate / ERP code override (e.g. MGEN0140A for mth)
+    equipmentList.forEach((eq) => {
+      const logs = eq.dailyAssignments
+        .map((a) => a.dailyLog)
+        .filter((l): l is NonNullable<typeof l> => Boolean(l));
+      if (logs.length === 0) return; // Skip equipment with no logs (zero utilization)
+
+      const primaryUnit = (eq.primaryUnit || 'hrs').toLowerCase();
       const matchingRate = eq.unitRates.find((r) => r.unit.toLowerCase() === primaryUnit);
       const erpCode = matchingRate?.erpBillingCode || eq.magaNo || eq.code || eq.vehicleNo || 'EQUIP';
 
-      let totalUtilization = 0;
-      if (primaryUnit === 'mth') {
-        totalUtilization = 1.00;
-      } else if (primaryUnit === 'day' || primaryUnit === 'days') {
-        totalUtilization = logs.length > 0 ? logs.length : 27.00;
-      } else if (primaryUnit === 'km') {
-        totalUtilization = logs.reduce((sum, l) => sum + (Number(l?.totalMileage) || 0), 0);
-      } else {
-        totalUtilization = logs.reduce((sum, l) => {
-          const net = Number(l?.netRunningHours) || (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0);
-          return sum + net;
-        }, 0);
-        if (totalUtilization === 0) totalUtilization = 108.00;
-      }
+      // Aggregate hours / days / quantities per activity
+      const activityMap = new Map<string, number>();
 
-      return {
-        equipment: erpCode,
-        condition: (eq.condition || 'DRY').toUpperCase(),
-        unit: primaryUnit,
-        date: uploadDateFormatted,
-        activity: activityCode,
-        utilization: totalUtilization.toFixed(2),
-      };
+      logs.forEach((l) => {
+        if (l.activities && l.activities.length > 0) {
+          l.activities.forEach((act) => {
+            const code = act.activityCode?.code || l.activityCode?.code || activityCode;
+            const q = Number(act.utilization) || 0;
+            activityMap.set(code, (activityMap.get(code) || 0) + q);
+          });
+        } else {
+          const code = l.activityCode?.code || activityCode;
+          let q = 0;
+          if (primaryUnit === 'km') {
+            q = Number(l.totalMileage) || 0;
+          } else if (primaryUnit === 'mth' || primaryUnit === 'day' || primaryUnit === 'days') {
+            // Days logged (or 1 day per logged daily sheet)
+            q = Number(l.loggedQuantity) > 0 ? Number(l.loggedQuantity) : 1;
+          } else {
+            q = Number(l.netRunningHours) || (Number(l.workingHours) || 0) + (Number(l.idleHours) || 0);
+          }
+          activityMap.set(code, (activityMap.get(code) || 0) + q);
+        }
+      });
+
+      const totalAggregated = Array.from(activityMap.values()).reduce((sum, v) => sum + v, 0);
+      if (totalAggregated <= 0) return; // Exclude zero utilization
+
+      if (primaryUnit === 'mth') {
+        // STANDARD: 26 working days = 1.00 mth
+        // If equipment worked >= 25 days, consider full month (1.00 mth);
+        // otherwise proportional to 26 days (e.g. 13 days = 0.50 mth).
+        const standardDays = 26;
+        const totalMonthFraction = totalAggregated >= 25
+          ? 1.0
+          : Math.min(1.0, Number((totalAggregated / standardDays).toFixed(2)));
+
+        const entries = Array.from(activityMap.entries());
+        let allocatedSum = 0;
+
+        entries.forEach(([actKey, qty], index) => {
+          let val: number;
+          if (index === entries.length - 1) {
+            // Guarantee exact totalMonthFraction sum across split activities
+            val = entries.length === 1
+              ? totalMonthFraction
+              : Math.max(0, Number((totalMonthFraction - allocatedSum).toFixed(2)));
+          } else {
+            val = Number(((qty / totalAggregated) * totalMonthFraction).toFixed(2));
+            allocatedSum += val;
+          }
+
+          rows.push({
+            equipment: erpCode,
+            condition: (eq.condition || 'DRY').toUpperCase(),
+            unit: 'mth',
+            date: uploadDateFormatted,
+            activity: actKey,
+            utilization: val.toFixed(2),
+          });
+        });
+      } else {
+        // Hourly, Daily, or KM unit splits
+        activityMap.forEach((qty, actKey) => {
+          rows.push({
+            equipment: erpCode,
+            condition: (eq.condition || 'DRY').toUpperCase(),
+            unit: primaryUnit,
+            date: uploadDateFormatted,
+            activity: actKey,
+            utilization: qty.toFixed(2),
+          });
+        });
+      }
     });
 
     res.json({

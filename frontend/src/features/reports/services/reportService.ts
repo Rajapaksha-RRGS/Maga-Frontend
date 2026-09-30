@@ -490,7 +490,10 @@ import {
   exportRunningChartToExcel,
   exportEquipmentErpToExcel,
   exportEquipmentSummaryToExcel,
+  exportTimeCardToExcel,
 } from './excelExport';
+
+export { exportTimeCardToExcel };
 
 /**
  * Trigger Excel file download.
@@ -520,8 +523,11 @@ export async function exportReport(
     const data = await getEquipmentErpUploadReport(filters);
     await exportEquipmentErpToExcel(data);
   } else if (type === 'equipment-summary') {
-    const data = await getEquipmentSummaryReport(filters);
-    await exportEquipmentSummaryToExcel(data);
+    const data = await getEquipmentSummaryReport(filters, { preparedBy });
+    await exportEquipmentSummaryToExcel(data, tenant, preparedBy, filters);
+  } else if (type === 'time-card') {
+    const data = await getTimeCardReport(filters);
+    await exportTimeCardToExcel(data, tenant, preparedBy);
   }
 }
 
@@ -647,13 +653,23 @@ export interface EquipmentSummaryResponse {
   fax: string;
   email: string;
   date: string;
+  dateFrom?: string;
+  dateTo?: string;
+  periodText?: string;
+  sheetNo?: string;
+  preparedBy?: string;
   projectCentre: string;
   totalRecords: number;
   rows: EquipmentSummaryRow[];
+  totals?: {
+    totalUtilization: number;
+    totalMileage: number;
+  };
 }
 
 export async function getEquipmentSummaryReport(
-  filters: ReportFilters
+  filters: ReportFilters,
+  extra?: { preparedBy?: string; projectCentre?: string }
 ): Promise<EquipmentSummaryResponse> {
   const p = new URLSearchParams();
   const currentTenant = getCurrentTenantId();
@@ -663,6 +679,8 @@ export async function getEquipmentSummaryReport(
   if (filters.month) p.set('month', filters.month);
   if (filters.equipmentQuery) p.set('equipmentQuery', filters.equipmentQuery);
   if (filters.condition) p.set('condition', filters.condition);
+  if (extra?.preparedBy) p.set('preparedBy', extra.preparedBy);
+  if (extra?.projectCentre) p.set('projectCentre', extra.projectCentre);
 
   try {
     const r = await apiFetch(`${API_URL}/reports/equipment-summary?${p.toString()}`);
@@ -673,6 +691,10 @@ export async function getEquipmentSummaryReport(
     console.warn('Failed to fetch equipment summary, falling back:', err);
   }
 
+  const periodText = filters.dateFrom && filters.dateTo && filters.dateFrom !== filters.dateTo
+    ? `${filters.dateFrom} to ${filters.dateTo}`
+    : (filters.dateTo || filters.dateFrom || new Date().toISOString().split('T')[0]);
+
   return {
     sheetTitle: 'EQUIPMENT ENTRY SHEET',
     companyName: 'Mäga Engineering (Pvt) Ltd',
@@ -680,10 +702,19 @@ export async function getEquipmentSummaryReport(
     phone: '2808835-44',
     fax: '2808846-48',
     email: 'maga@maga.lk',
-    date: filters.dateTo || new Date().toISOString().split('T')[0],
-    projectCentre: 'Project / Activity Centre',
+    date: filters.dateTo || filters.dateFrom || new Date().toISOString().split('T')[0],
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+    periodText,
+    sheetNo: `EES-${(filters.dateFrom || filters.dateTo || new Date().toISOString()).slice(0, 7).replace('-', '')}`,
+    preparedBy: extra?.preparedBy || 'Site Supervisor / Plant Eng.',
+    projectCentre: extra?.projectCentre || 'Maga Central Project Operations',
     totalRecords: 0,
     rows: [],
+    totals: {
+      totalUtilization: 0,
+      totalMileage: 0,
+    },
   };
 }
 
