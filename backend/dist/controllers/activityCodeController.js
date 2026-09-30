@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteActivityCode = exports.updateActivityCode = exports.createActivityCode = exports.getActivityCodeById = exports.getAllActivityCodes = void 0;
+exports.importActivityCodesFromCorporate = exports.batchSyncCorporateActivityCodes = exports.getCorporateActivityCodesCatalog = exports.deleteActivityCode = exports.updateActivityCode = exports.createActivityCode = exports.getActivityCodeById = exports.getAllActivityCodes = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
 const getParam = (param) => {
@@ -14,9 +14,12 @@ const getParam = (param) => {
 // Get all activity codes (scoped to tenant)
 const getAllActivityCodes = async (req, res) => {
     try {
-        const { search } = req.query;
+        const { search, projectCode } = req.query;
         const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const where = { tenantId };
+        if (projectCode && typeof projectCode === 'string') {
+            where.projectCode = projectCode;
+        }
         if (search && typeof search === 'string') {
             where.OR = [
                 { code: { contains: search, mode: 'insensitive' } },
@@ -57,7 +60,7 @@ exports.getActivityCodeById = getActivityCodeById;
 // Create activity code
 const createActivityCode = async (req, res) => {
     try {
-        const { code, description } = req.body;
+        const { code, description, projectCode, trade, category } = req.body;
         if (!code) {
             res.status(400).json({ error: 'Code is required' });
             return;
@@ -66,8 +69,11 @@ const createActivityCode = async (req, res) => {
         const newCode = await prisma_1.default.activityCode.create({
             data: {
                 tenantId,
+                projectCode: projectCode || null,
                 code,
                 description: description || null,
+                trade: trade || null,
+                category: category || null,
             },
         });
         res.status(201).json(newCode);
@@ -86,13 +92,21 @@ exports.createActivityCode = createActivityCode;
 const updateActivityCode = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const { code, description } = req.body;
+        const { code, description, projectCode, trade, category } = req.body;
+        const data = {};
+        if (code !== undefined)
+            data.code = code;
+        if (description !== undefined)
+            data.description = description;
+        if (projectCode !== undefined)
+            data.projectCode = projectCode;
+        if (trade !== undefined)
+            data.trade = trade;
+        if (category !== undefined)
+            data.category = category;
         const updated = await prisma_1.default.activityCode.update({
             where: { id },
-            data: {
-                code,
-                description,
-            },
+            data,
         });
         res.json(updated);
     }
@@ -135,3 +149,132 @@ const deleteActivityCode = async (req, res) => {
     }
 };
 exports.deleteActivityCode = deleteActivityCode;
+// ── CENTRAL CORPORATE ERP ACTIVITY CATALOG CONTROLLERS ───────────────────────
+// GET /api/activity-codes/corporate-master
+const getCorporateActivityCodesCatalog = async (req, res) => {
+    try {
+        const { projectCode, search } = req.query;
+        const where = {};
+        if (projectCode && typeof projectCode === 'string') {
+            where.projectCode = projectCode;
+        }
+        if (search && typeof search === 'string') {
+            where.OR = [
+                { code: { contains: search, mode: 'insensitive' } },
+                { description: { contains: search, mode: 'insensitive' } },
+                { searchKey: { contains: search, mode: 'insensitive' } },
+            ];
+        }
+        const list = await prisma_1.default.corporateActivityCode.findMany({
+            where,
+            orderBy: [{ projectCode: 'asc' }, { code: 'asc' }],
+        });
+        res.json(list);
+    }
+    catch (error) {
+        console.error('Error fetching corporate activity codes catalog:', error);
+        res.status(500).json({ error: 'Failed to fetch corporate activity codes catalog' });
+    }
+};
+exports.getCorporateActivityCodesCatalog = getCorporateActivityCodesCatalog;
+// POST /api/activity-codes/corporate-master/batch
+const batchSyncCorporateActivityCodes = async (req, res) => {
+    try {
+        const { items } = req.body;
+        if (!Array.isArray(items) || items.length === 0) {
+            res.status(400).json({ error: 'Array of items required' });
+            return;
+        }
+        const results = [];
+        for (const item of items) {
+            const pCode = item.projectCode || item.currentWorkingProject || null;
+            const record = await prisma_1.default.corporateActivityCode.upsert({
+                where: {
+                    projectCode_code: {
+                        projectCode: pCode,
+                        code: item.code,
+                    },
+                },
+                update: {
+                    description: item.description,
+                    searchKey: item.searchKey || null,
+                    activityType: item.activityType || 'Work Package',
+                    unit: item.unit || null,
+                    timeUnit: item.timeUnit || null,
+                    currentWorkingProject: item.currentWorkingProject || pCode,
+                },
+                create: {
+                    projectCode: pCode,
+                    code: item.code,
+                    description: item.description,
+                    searchKey: item.searchKey || null,
+                    activityType: item.activityType || 'Work Package',
+                    unit: item.unit || null,
+                    timeUnit: item.timeUnit || null,
+                    currentWorkingProject: item.currentWorkingProject || pCode,
+                },
+            });
+            results.push(record);
+        }
+        res.json({ success: true, count: results.length });
+    }
+    catch (error) {
+        console.error('Error batch syncing corporate activity codes:', error);
+        res.status(500).json({ error: 'Failed to batch sync corporate activity codes' });
+    }
+};
+exports.batchSyncCorporateActivityCodes = batchSyncCorporateActivityCodes;
+// POST /api/activity-codes/import-from-corporate
+const importActivityCodesFromCorporate = async (req, res) => {
+    try {
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const { items, projectCode } = req.body;
+        if (!Array.isArray(items) || items.length === 0) {
+            res.status(400).json({ error: 'Array of items required' });
+            return;
+        }
+        const imported = [];
+        const skipped = [];
+        for (const item of items) {
+            const itemProject = item.projectCode || item.currentWorkingProject || null;
+            // Project code validation: If target projectCode is specified and item has a projectCode, validate match
+            if (projectCode && itemProject && itemProject.toLowerCase() !== projectCode.toLowerCase()) {
+                skipped.push({ code: item.code, reason: `Project code mismatch: expected ${projectCode}, got ${itemProject}` });
+                continue;
+            }
+            const upserted = await prisma_1.default.activityCode.upsert({
+                where: {
+                    tenantId_code: {
+                        tenantId,
+                        code: item.code,
+                    },
+                },
+                update: {
+                    description: item.description,
+                    projectCode: itemProject || projectCode || null,
+                    category: item.activityType || 'Civil',
+                },
+                create: {
+                    tenantId,
+                    code: item.code,
+                    description: item.description,
+                    projectCode: itemProject || projectCode || null,
+                    category: item.activityType || 'Civil',
+                },
+            });
+            imported.push(upserted);
+        }
+        res.json({
+            success: true,
+            importedCount: imported.length,
+            skippedCount: skipped.length,
+            skipped,
+            activities: imported,
+        });
+    }
+    catch (error) {
+        console.error('Error importing activity codes from corporate:', error);
+        res.status(500).json({ error: 'Failed to import activity codes' });
+    }
+};
+exports.importActivityCodesFromCorporate = importActivityCodesFromCorporate;

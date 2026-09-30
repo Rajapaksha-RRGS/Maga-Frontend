@@ -1459,11 +1459,14 @@ export function getUniqueCategories(items: { type?: string; tradeGroup?: string;
   ).sort();
 }
 
-// ── API Fetch Functions for Real Database Integration ──────────────────────────────
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-const getHeaders = () => {
+const getHeaders = (): Record<string, string> => {
   const token = localStorage.getItem('token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
 };
 
 export const fetchCorporateBusinessPartners = async (): Promise<CorporateBusinessPartner[]> => {

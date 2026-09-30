@@ -4,6 +4,7 @@ const express_1 = require("express");
 const businessPartnerController_1 = require("../controllers/businessPartnerController");
 const router = (0, express_1.Router)();
 // Routes
+router.get('/corporate-master', businessPartnerController_1.getCorporateBusinessPartnersCatalog);
 router.get('/next-code', businessPartnerController_1.getNextBusinessPartnerCode);
 router.get('/', businessPartnerController_1.getAllBusinessPartners);
 router.get('/:id', businessPartnerController_1.getBusinessPartnerById);

@@ -25,7 +25,7 @@ import {
   SlidersHorizontal,
   Table as TableIcon
 } from 'lucide-react';
-import { CORPORATE_PARTNERS_CATALOG, type CorporateBusinessPartner, fetchCorporateBusinessPartners } from '../../master-import/services/corporateMasterService';
+import { type CorporateBusinessPartner, fetchCorporateBusinessPartners } from '../../master-import/services/corporateMasterService';
 
 interface BusinessPartnerErpMasterViewProps {
   existingCodes: Set<string>;

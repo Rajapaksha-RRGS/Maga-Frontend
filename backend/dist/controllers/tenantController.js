@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resetTenantAdminPassword = exports.updateTenantStatus = exports.updateTenant = exports.registerTenant = exports.getTenantBySubdomain = exports.getTenantById = exports.getAllTenants = void 0;
+exports.getCorporateProjectsCatalog = exports.resetTenantAdminPassword = exports.updateTenantStatus = exports.updateTenant = exports.registerTenant = exports.getTenantBySubdomain = exports.getTenantById = exports.getAllTenants = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const prisma_1 = __importDefault(require("../config/prisma"));
 const getParam = (param) => {
@@ -149,7 +149,7 @@ exports.getTenantBySubdomain = getTenantBySubdomain;
 // 4. POST /api/tenants/register — Register new tenant & initial admin
 const registerTenant = async (req, res) => {
     try {
-        const { companyName, subdomain, addressLine1, addressLine2, phone, fax, email, adminFullName, adminUsername, adminPassword, } = req.body;
+        const { companyName, subdomain, addressLine1, addressLine2, phone, fax, email, adminFullName, adminUsername, adminPassword, } = req.body || {};
         if (!companyName?.trim() || !subdomain?.trim() || !adminFullName?.trim() || !adminUsername?.trim()) {
             res.status(400).json({
                 error: 'Project name, project code (M-Code), admin full name, and admin username are required.',
@@ -170,7 +170,8 @@ const registerTenant = async (req, res) => {
             return;
         }
         // Password to use
-        const passwordToUse = adminPassword?.trim() || generateTempPassword();
+        const isCustomPassword = Boolean(adminPassword && adminPassword.trim().length > 0);
+        const passwordToUse = isCustomPassword ? adminPassword.trim() : generateTempPassword();
         const passwordHash = await bcrypt_1.default.hash(passwordToUse, 10);
         const result = await prisma_1.default.$transaction(async (tx) => {
             const tenant = await tx.tenant.create({
@@ -193,7 +194,7 @@ const registerTenant = async (req, res) => {
                     passwordHash,
                     role: 'admin',
                     status: 'active',
-                    mustChangePassword: true,
+                    mustChangePassword: !isCustomPassword,
                 },
             });
             return { tenant, adminUser };
@@ -236,7 +237,7 @@ exports.registerTenant = registerTenant;
 const updateTenant = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const { companyName, addressLine1, addressLine2, phone, fax, email } = req.body;
+        const { companyName, addressLine1, addressLine2, phone, fax, email } = req.body || {};
         if (!companyName?.trim()) {
             res.status(400).json({ error: 'Company name is required.' });
             return;
@@ -264,7 +265,7 @@ exports.updateTenant = updateTenant;
 const updateTenantStatus = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const { status } = req.body;
+        const { status } = req.body || {};
         if (!status || !['active', 'suspended'].includes(status)) {
             res.status(400).json({ error: 'Status must be either "active" or "suspended".' });
             return;
@@ -314,3 +315,17 @@ const resetTenantAdminPassword = async (req, res) => {
     }
 };
 exports.resetTenantAdminPassword = resetTenantAdminPassword;
+// 8. GET /api/tenants/corporate-projects — Get all corporate projects catalog for dropdown/picker
+const getCorporateProjectsCatalog = async (_req, res) => {
+    try {
+        const list = await prisma_1.default.corporateProject.findMany({
+            orderBy: { projectCode: 'asc' },
+        });
+        res.json(list);
+    }
+    catch (error) {
+        console.error('Error fetching corporate projects catalog:', error);
+        res.status(500).json({ error: 'Failed to fetch corporate projects catalog' });
+    }
+};
+exports.getCorporateProjectsCatalog = getCorporateProjectsCatalog;

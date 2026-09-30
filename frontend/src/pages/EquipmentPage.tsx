@@ -13,7 +13,6 @@ import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
 import Breadcrumb from '../components/Breadcrumb';
-import { CORPORATE_EQUIPMENT_CATALOG } from '../features/master-import/services/corporateMasterService';
 import type { CorporateEquipment } from '../features/master-import/services/corporateMasterService';
 import type { Equipment, EquipmentFormData } from '../features/equipment/services/equipmentService';
 

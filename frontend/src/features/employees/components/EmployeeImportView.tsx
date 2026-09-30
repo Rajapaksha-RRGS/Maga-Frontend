@@ -69,11 +69,9 @@ export default function EmployeeImportView({
 }: EmployeeImportViewProps) {
   const [crossTenantStatusMap, setCrossTenantStatusMap] = useState<Record<string, CrossTenantStatus>>({});
   const [catalog, setCatalog] = useState<CorporateEmployee[]>([]);
-  const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
 
   const loadCatalog = async () => {
     setIsRefreshing(true);
-    setIsLoadingCatalog(true);
     try {
       const data = await fetchCorporateEmployees();
       setCatalog(data);
@@ -87,7 +85,6 @@ export default function EmployeeImportView({
     } catch (e) {
       console.error(e);
     } finally {
-      setIsLoadingCatalog(false);
       setIsRefreshing(false);
     }
   };

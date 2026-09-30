@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.transferEmployee = exports.getCrossTenantEmployeeStatus = exports.deleteEmployee = exports.updateEmployeeStatus = exports.updateEmployee = exports.createEmployee = exports.getEmployeeById = exports.getAllEmployees = exports.getDefaultTenantId = void 0;
+exports.getCorporateEmployeesCatalog = exports.transferEmployee = exports.getCrossTenantEmployeeStatus = exports.deleteEmployee = exports.updateEmployeeStatus = exports.updateEmployee = exports.createEmployee = exports.resolveOrCreateBusinessPartner = exports.getEmployeeById = exports.getAllEmployees = exports.getDefaultTenantId = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
 // Helper to get string param safely in Express 5
 const getParam = (param) => {
@@ -98,52 +98,104 @@ const getEmployeeById = async (req, res) => {
 };
 exports.getEmployeeById = getEmployeeById;
 // Create new employee
+// Helper to resolve or auto-create a business partner for a tenant
+const resolveOrCreateBusinessPartner = async (tenantId, input) => {
+    // 1. If explicit UUID provided, verify if it exists in tenant
+    if (input?.id && input.id.length > 20) {
+        const existing = await prisma_1.default.businessPartner.findFirst({
+            where: { id: input.id, tenantId },
+        });
+        if (existing)
+            return existing.id;
+    }
+    // 2. Search tenant by code or name
+    const searchCode = input?.code?.trim();
+    const searchName = input?.name?.trim();
+    if (searchCode || searchName) {
+        const existing = await prisma_1.default.businessPartner.findFirst({
+            where: {
+                tenantId,
+                OR: [
+                    ...(searchCode ? [{ code: { equals: searchCode, mode: 'insensitive' } }] : []),
+                    ...(searchName ? [{ name: { equals: searchName, mode: 'insensitive' } }] : []),
+                ],
+            },
+        });
+        if (existing)
+            return existing.id;
+        // 3. Look up in CorporateBusinessPartner
+        const corpBp = await prisma_1.default.corporateBusinessPartner.findFirst({
+            where: {
+                OR: [
+                    ...(searchCode ? [{ code: { equals: searchCode, mode: 'insensitive' } }] : []),
+                    ...(searchName ? [{ name: { equals: searchName, mode: 'insensitive' } }] : []),
+                ],
+            },
+        });
+        if (corpBp) {
+            const created = await prisma_1.default.businessPartner.create({
+                data: {
+                    tenantId,
+                    code: corpBp.code,
+                    name: corpBp.name,
+                    type: corpBp.type,
+                    contactPerson: corpBp.contactPerson,
+                    phone: corpBp.phone,
+                    status: 'active',
+                },
+            });
+            return created.id;
+        }
+        // If custom name/code provided, create it
+        const created = await prisma_1.default.businessPartner.create({
+            data: {
+                tenantId,
+                code: searchCode || `BP1${Date.now().toString().slice(-6)}`,
+                name: searchName || searchCode || 'Mäga Engineering (Pvt) Ltd',
+                type: (searchName || '').toLowerCase().includes('maga') ? 'internal' : 'subcontractor',
+                status: 'active',
+            },
+        });
+        return created.id;
+    }
+    // 4. Fallback to default corporate partner for this tenant
+    let defaultPartner = await prisma_1.default.businessPartner.findFirst({
+        where: { tenantId, code: 'BP1002885' },
+    });
+    if (!defaultPartner) {
+        defaultPartner = await prisma_1.default.businessPartner.findFirst({
+            where: { tenantId },
+        });
+    }
+    if (!defaultPartner) {
+        defaultPartner = await prisma_1.default.businessPartner.create({
+            data: {
+                tenantId,
+                code: 'BP1002885',
+                name: 'Mäga Engineering (Pvt) Ltd',
+                type: 'internal',
+                status: 'active',
+            },
+        });
+    }
+    return defaultPartner.id;
+};
+exports.resolveOrCreateBusinessPartner = resolveOrCreateBusinessPartner;
+// Create new employee
 const createEmployee = async (req, res) => {
     try {
-        const { employeeCode, callingName, fullName, businessPartnerId, tradeGroup, nicNo, dailyRate, epfNo, status, } = req.body;
+        const { employeeCode, callingName, fullName, businessPartnerId, businessPartnerCode, businessPartnerName, businessPartner, tradeGroup, nicNo, dailyRate, epfNo, status, isOperator, licenseNo, } = req.body;
         if (!callingName || !nicNo) {
             res.status(400).json({ error: 'Missing required fields' });
             return;
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, exports.getDefaultTenantId)());
-        // Prerequisite: At least one business partner must be registered
-        const bpCount = await prisma_1.default.businessPartner.count({ where: { tenantId } });
-        if (bpCount === 0) {
-            res.status(400).json({
-                error: 'No registered business partners found. Please register a business partner before adding employees.',
-            });
-            return;
-        }
-        let resolvedBpId = businessPartnerId;
-        if (!resolvedBpId && req.body.businessPartner) {
-            const bpNameOrCode = String(req.body.businessPartner).trim();
-            if (bpNameOrCode) {
-                const partner = await prisma_1.default.businessPartner.findFirst({
-                    where: {
-                        tenantId,
-                        OR: [
-                            { id: bpNameOrCode },
-                            { name: { equals: bpNameOrCode, mode: 'insensitive' } },
-                            { code: { equals: bpNameOrCode, mode: 'insensitive' } },
-                        ],
-                    },
-                });
-                if (partner) {
-                    resolvedBpId = partner.id;
-                }
-            }
-        }
-        if (!resolvedBpId) {
-            res.status(400).json({ error: 'Please select a registered business partner for this employee.' });
-            return;
-        }
-        const partnerExists = await prisma_1.default.businessPartner.findFirst({
-            where: { id: resolvedBpId, tenantId },
+        // Auto-resolve or create business partner for this tenant (from Corporate BP or default)
+        const resolvedBpId = await (0, exports.resolveOrCreateBusinessPartner)(tenantId, {
+            id: businessPartnerId,
+            code: businessPartnerCode || (typeof businessPartner === 'string' && businessPartner.startsWith('BP') ? businessPartner : undefined),
+            name: businessPartnerName || (typeof businessPartner === 'string' ? businessPartner : undefined),
         });
-        if (!partnerExists) {
-            res.status(400).json({ error: 'Selected business partner does not exist in this tenant.' });
-            return;
-        }
         const newEmployee = await prisma_1.default.employee.create({
             data: {
                 tenantId,
@@ -154,8 +206,12 @@ const createEmployee = async (req, res) => {
                 nicNo,
                 dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
                 epfNo: epfNo || '',
+                isOperator: Boolean(isOperator === true ||
+                    isOperator === 'true' ||
+                    (tradeGroup && ['operator', 'driver', 'heavy operator'].some(t => tradeGroup.toLowerCase().includes(t)))),
+                licenseNo: licenseNo || null,
                 status: status || 'active',
-                businessPartnerId: resolvedBpId || undefined,
+                businessPartnerId: resolvedBpId,
             },
             include: {
                 businessPartner: true,
@@ -473,3 +529,18 @@ const transferEmployee = async (req, res) => {
     }
 };
 exports.transferEmployee = transferEmployee;
+// ── CENTRAL CORPORATE ERP CATALOG CONTROLLERS ──────────────────────────────
+// Get all corporate employees
+const getCorporateEmployeesCatalog = async (_req, res) => {
+    try {
+        const list = await prisma_1.default.corporateEmployee.findMany({
+            orderBy: { employeeCode: 'asc' },
+        });
+        res.json(list);
+    }
+    catch (error) {
+        console.error('Error fetching corporate employees catalog:', error);
+        res.status(500).json({ error: 'Failed to fetch corporate employees catalog' });
+    }
+};
+exports.getCorporateEmployeesCatalog = getCorporateEmployeesCatalog;
