@@ -91,6 +91,11 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
     const assignedCode = code?.trim() || vehicleNo?.trim() || magaNo?.trim() || null;
     const numericCost = costRate !== undefined && costRate !== null && !isNaN(Number(costRate)) ? Number(costRate) : 0;
 
+    const assignedUnit = primaryUnit || req.body.unit || 'Hrs';
+    const assignedAvailableUnits = Array.isArray(availableUnits) && availableUnits.length > 0 
+      ? availableUnits 
+      : [assignedUnit];
+
     const created = await prisma.equipment.create({
       data: {
         tenantId,
@@ -101,8 +106,8 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
         type: type?.trim() || null,
         condition: condition?.trim() || 'DRY',
         costRate: numericCost,
-        primaryUnit: primaryUnit || 'mth',
-        availableUnits: Array.isArray(availableUnits) ? availableUnits : [],
+        primaryUnit: assignedUnit,
+        availableUnits: assignedAvailableUnits,
         status: 'active',
       },
     });
@@ -135,7 +140,7 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
       await prisma.equipmentUnitRate.create({
         data: {
           equipmentId: created.id,
-          unit: primaryUnit || 'mth',
+          unit: assignedUnit,
           rate: numericCost,
         },
       });

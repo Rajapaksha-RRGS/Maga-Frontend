@@ -33,6 +33,8 @@ export interface CorporateEquipment {
   minimumUtilization?: number;
   minUtilization?: number;
   businessPartner?: string;
+  primaryUnit?: string;
+  availableUnits?: string[];
 }
 
 export interface CorporateBusinessPartner {
@@ -1494,6 +1496,11 @@ export const fetchCorporateEquipment = async (): Promise<CorporateEquipment[]> =
         sourceProject: item.sourceProject || item.currentWorkingProject || 'Central Depot',
         costRate: typeof item.costRate === 'number' ? item.costRate : Number(item.dailyRate ?? item.costRate ?? 0),
         dailyRate: typeof item.dailyRate === 'number' ? item.dailyRate : Number(item.dailyRate ?? item.costRate ?? 0),
+        unit: item.unit || item.primaryUnit || 'Hrs',
+        primaryUnit: item.primaryUnit || item.unit || 'Hrs',
+        availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0 
+          ? item.availableUnits 
+          : [item.unit || item.primaryUnit || 'Hrs'],
         model: item.model || '',
         registrationNo: item.registrationNo || item.vehicleNo || '',
         searchKey: item.searchKey || item.equipmentName || item.name || '',

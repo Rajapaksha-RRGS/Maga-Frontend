@@ -2,7 +2,6 @@ import { useState, useMemo } from 'react';
 import { 
   HardHat, 
   Tractor, 
-  AlertTriangle, 
   Check, 
   ChevronDown, 
   ChevronUp, 
@@ -16,10 +15,15 @@ import {
   Filter,
   CheckCircle2,
   Lock,
+  Plus,
+  Trash2,
+  PauseCircle,
+  Sparkles
 } from 'lucide-react';
 import type { 
   OperatorEntry, 
-  EquipmentLogEntry 
+  EquipmentLogEntry,
+  OperatorEquipmentSplit 
 } from '../services/supervisorStorageService';
 
 interface OperatorEntryViewProps {
@@ -38,12 +42,22 @@ function computeHours(inTime: string, outTime: string): { shift: number; ot: num
 
   let totalMinutes = (outH * 60 + outM) - (inH * 60 + inM);
   if (totalMinutes < 0) totalMinutes += 24 * 60;
-  if (totalMinutes >= 300) totalMinutes -= 60; // Lunch deduction
+  if (totalMinutes >= 300) totalMinutes -= 60; // 1-hour lunch deduction
 
   const shiftHours = totalMinutes > 0 ? parseFloat((totalMinutes / 60).toFixed(1)) : 0;
   const otHours = shiftHours > 8.0 ? parseFloat((shiftHours - 8.0).toFixed(1)) : 0;
 
   return { shift: shiftHours, ot: otHours };
+}
+
+// Helper to get logged working hours on a machine from equipment logs
+function getEquipmentLoggedHours(eq?: EquipmentLogEntry): number {
+  if (!eq) return 0;
+  if (typeof eq.workingHours === 'number' && eq.workingHours > 0) return eq.workingHours;
+  if (typeof eq.netHours === 'number' && eq.netHours > 0) return eq.netHours;
+  if (typeof eq.hoursValue === 'number' && eq.hoursValue > 0) return eq.hoursValue;
+  if (typeof eq.daysValue === 'number' && eq.daysValue > 0) return eq.daysValue * 8.0;
+  return 0;
 }
 
 export function OperatorEntryView({
@@ -71,8 +85,9 @@ export function OperatorEntryView({
   // ── IN MODE BATCH STATE ──
   const [batchInTime, setBatchInTime] = useState('07:00');
 
-  // ── OUT MODE BATCH STATE (Equipment only, no activity codes) ──
+  // ── OUT MODE BATCH STATE ──
   const [batchOutTime, setBatchOutTime] = useState('17:00');
+  const [batchEquipmentId, setBatchEquipmentId] = useState<string>('');
 
   // Unique designations / roles
   const uniqueRoles = useMemo(() => {
@@ -91,7 +106,11 @@ export function OperatorEntryView({
   const filteredOperators = useMemo(() => {
     return operators.filter((o) => {
       const search = effectiveSearch.toLowerCase().trim();
-      const mappedEquip = equipment.find((e) => e.id === o.assignedEquipmentId);
+      const splits = o.equipmentSplits || [];
+      const hasMatchingEquip = splits.some((s) => {
+        const eq = equipment.find((e) => e.id === s.equipmentId);
+        return eq && (eq.code.toLowerCase().includes(search) || eq.name.toLowerCase().includes(search));
+      });
 
       const matchesSearch = 
         !search ||
@@ -99,8 +118,7 @@ export function OperatorEntryView({
         o.callingName.toLowerCase().includes(search) ||
         o.designation.toLowerCase().includes(search) ||
         (o.licenseNo && o.licenseNo.toLowerCase().includes(search)) ||
-        (mappedEquip && mappedEquip.code.toLowerCase().includes(search)) ||
-        (mappedEquip && mappedEquip.name.toLowerCase().includes(search));
+        hasMatchingEquip;
 
       if (!matchesSearch) return false;
 
@@ -110,7 +128,7 @@ export function OperatorEntryView({
       }
 
       // Status filter
-      const isComplete = o.inTime && o.outTime && o.assignedEquipmentId;
+      const isComplete = Boolean(o.inTime && o.outTime);
       if (effectiveStatus === 'pending') {
         return !isComplete;
       }
@@ -122,16 +140,27 @@ export function OperatorEntryView({
     });
   }, [operators, equipment, effectiveSearch, selectedRole, effectiveStatus]);
 
-  // Check if an equipment is already mapped by another operator
-  const getMappedConflict = (equipmentId: string, currentOperatorId: string): OperatorEntry | undefined => {
-    if (!equipmentId) return undefined;
-    return operators.find((o) => o.id !== currentOperatorId && o.assignedEquipmentId === equipmentId);
+  // Helper to get total operating hours and idle hours for an operator
+  const getOperatorHourBreakdown = (operator: OperatorEntry) => {
+    const shift = Number(operator.shiftHours) || 0;
+    const splits = operator.equipmentSplits || [];
+    const operatingHours = splits.reduce((sum, s) => sum + (Number(s.hours) || 0), 0);
+    const idleHours = Math.max(0, Math.round((shift - operatingHours) * 10) / 10);
+    return { shift, operatingHours, idleHours };
+  };
+
+  // Find shared operators on the same equipment (Informational, NOT an error)
+  const getSharedEquipmentOperators = (equipmentId: string, currentOperatorId: string): string[] => {
+    if (!equipmentId || equipmentId === 'ZXQOPRIDLE') return [];
+    return operators
+      .filter((o) => o.id !== currentOperatorId && (o.equipmentSplits || []).some((s) => s.equipmentId === equipmentId))
+      .map((o) => o.callingName || o.employeeNumber);
   };
 
   // Stats
   const inMarkedCount = operators.filter((o) => !!o.inTime).length;
-  const outMarkedCount = operators.filter((o) => !!o.outTime && !!o.assignedEquipmentId).length;
-  const completedCount = operators.filter((o) => o.inTime && o.outTime && o.assignedEquipmentId).length;
+  const outMarkedCount = operators.filter((o) => !!o.outTime).length;
+  const completedCount = operators.filter((o) => o.inTime && o.outTime).length;
   const pendingCount = operators.length - completedCount;
 
   // Selection handlers
@@ -162,14 +191,13 @@ export function OperatorEntryView({
       const inTime = batchInTime;
       const outTime = o.outTime;
       const { shift, ot } = computeHours(inTime, outTime);
-      const isComplete = inTime && outTime && o.assignedEquipmentId;
 
       return {
         ...o,
         inTime,
         shiftHours: shift,
         otHours: ot,
-        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+        status: (inTime && outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
         lastSavedAt: `In: ${batchInTime}`,
       };
     });
@@ -178,7 +206,7 @@ export function OperatorEntryView({
     setSelectedOperatorIds([]);
   };
 
-  // ── APPLY BATCH OUT TIME & EQUIPMENT (No activity codes) ──
+  // ── APPLY BATCH OUT TIME & INITIAL MACHINE ──
   const handleApplyBatchOut = () => {
     if (selectedOperatorIds.length === 0) return;
 
@@ -188,14 +216,22 @@ export function OperatorEntryView({
       const outTime = batchOutTime;
       const { shift, ot } = computeHours(inTime, outTime);
 
+      let splits = o.equipmentSplits && o.equipmentSplits.length > 0 ? [...o.equipmentSplits] : [];
+      if (splits.length === 0 && batchEquipmentId) {
+        splits = [{ id: `split-${Date.now()}-${o.id}`, equipmentId: batchEquipmentId, hours: shift }];
+      } else if (splits.length === 1 && splits[0].hours === 0) {
+        splits[0].hours = shift;
+      }
+
       return {
         ...o,
         inTime,
         outTime,
         shiftHours: shift,
         otHours: ot,
-        assignedEquipmentId: o.assignedEquipmentId,
-        status: o.assignedEquipmentId ? ('done' as const) : ('draft' as const),
+        assignedEquipmentId: splits[0]?.equipmentId || batchEquipmentId || '',
+        equipmentSplits: splits,
+        status: 'done' as const,
         lastSavedAt: `Out: ${batchOutTime}`,
       };
     });
@@ -204,32 +240,93 @@ export function OperatorEntryView({
     setSelectedOperatorIds([]);
   };
 
-  // ── INDIVIDUAL UPDATES ──
+  // ── INDIVIDUAL TIME CHANGES ──
   const handleIndividualTimeChange = (id: string, inTime: string, outTime: string) => {
     const { shift, ot } = computeHours(inTime, outTime);
     const updated = operators.map((o) => {
       if (o.id !== id) return o;
-      const isComplete = inTime && outTime && o.assignedEquipmentId;
       return {
         ...o,
         inTime,
         outTime,
         shiftHours: shift,
         otHours: ot,
-        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+        status: (inTime && outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
       };
     });
     onSaveOperators(updated);
   };
 
-  const handleIndividualEquipmentChange = (id: string, equipmentId: string) => {
+  // ── MULTI-VEHICLE SPLIT HANDLERS ──
+  const handleAddEquipmentSplit = (operatorId: string) => {
     const updated = operators.map((o) => {
-      if (o.id !== id) return o;
-      const isComplete = o.inTime && o.outTime && equipmentId;
+      if (o.id !== operatorId) return o;
+      const currentSplits = o.equipmentSplits || [];
+      const currentSum = currentSplits.reduce((acc, s) => acc + (Number(s.hours) || 0), 0);
+      const remainingHours = Math.max(0, Math.round(((o.shiftHours || 8.0) - currentSum) * 10) / 10);
+      
+      const defaultEq = equipment.find((eq) => !currentSplits.some((s) => s.equipmentId === eq.id)) || equipment[0];
+      const defaultEqId = defaultEq?.id || '';
+      const eqLoggedH = getEquipmentLoggedHours(defaultEq);
+
+      // Default to machine logged hours or remaining shift hours
+      const initialHours = remainingHours > 0 
+        ? remainingHours 
+        : (eqLoggedH > 0 ? eqLoggedH : 4.0);
+
+      const newSplit: OperatorEquipmentSplit = {
+        id: `split-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        equipmentId: defaultEqId,
+        hours: initialHours,
+      };
+
+      const newSplits = [...currentSplits, newSplit];
       return {
         ...o,
-        assignedEquipmentId: equipmentId,
-        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+        assignedEquipmentId: newSplits[0]?.equipmentId || '',
+        equipmentSplits: newSplits,
+      };
+    });
+    onSaveOperators(updated);
+  };
+
+  const handleUpdateEquipmentSplit = (operatorId: string, splitId: string, field: 'equipmentId' | 'hours', value: any) => {
+    const updated = operators.map((o) => {
+      if (o.id !== operatorId) return o;
+      const splits = (o.equipmentSplits || []).map((s) => {
+        if (s.id !== splitId) return s;
+        if (field === 'equipmentId') {
+          const selectedEq = equipment.find((e) => e.id === value);
+          const eqLogged = getEquipmentLoggedHours(selectedEq);
+          return {
+            ...s,
+            equipmentId: value,
+            // If split had 0 or default hours and machine has logged hours, pre-suggest it
+            hours: (s.hours === 0 || !s.hours) && eqLogged > 0 ? eqLogged : s.hours,
+          };
+        }
+        return {
+          ...s,
+          [field]: field === 'hours' ? parseFloat(value) || 0 : value,
+        };
+      });
+      return {
+        ...o,
+        assignedEquipmentId: splits[0]?.equipmentId || '',
+        equipmentSplits: splits,
+      };
+    });
+    onSaveOperators(updated);
+  };
+
+  const handleRemoveEquipmentSplit = (operatorId: string, splitId: string) => {
+    const updated = operators.map((o) => {
+      if (o.id !== operatorId) return o;
+      const splits = (o.equipmentSplits || []).filter((s) => s.id !== splitId);
+      return {
+        ...o,
+        assignedEquipmentId: splits[0]?.equipmentId || '',
+        equipmentSplits: splits,
       };
     });
     onSaveOperators(updated);
@@ -240,7 +337,7 @@ export function OperatorEntryView({
     filteredOperators.every((o) => selectedOperatorIds.includes(o.id));
 
   return (
-    <div className="space-y-3 pb-16 animate-in fade-in duration-150">
+    <div className="space-y-3 pb-16 animate-in fade-in duration-150 w-full max-w-full overflow-x-hidden">
       {/* ── 0. Locked State Banner ────────────────────────────────────────── */}
       {isDayLocked && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2.5 text-amber-800 text-xs font-medium">
@@ -249,7 +346,7 @@ export function OperatorEntryView({
         </div>
       )}
 
-      {/* ── 1. IN / OUT Dual Tabs (Compact, Matches Labor View) ─────────────────── */}
+      {/* ── 1. IN / OUT Dual Tabs ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-200/70 dark:bg-slate-900/90 rounded-2xl border border-slate-300/80 dark:border-slate-800 shadow-inner">
         <button
           type="button"
@@ -285,7 +382,7 @@ export function OperatorEntryView({
           ].join(' ')}
         >
           <LogOut size={15} />
-          <span>OUT TIME</span>
+          <span>OUT & VEHICLES</span>
           <span className={[
             'px-1.5 py-0.2 rounded-full text-[10px] font-mono',
             tabMode === 'out' ? 'bg-blue-700/80 text-blue-100' : 'bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
@@ -295,14 +392,14 @@ export function OperatorEntryView({
         </button>
       </div>
 
-      {/* ── 2. Search Bar ──────────────────────────────────────────────────────── */}
+      {/* ── 2. Search Bar ─────────────────────────────────────────────────── */}
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
         <input
           type="text"
           value={localSearch}
           onChange={(e) => setLocalSearch(e.target.value)}
-          placeholder="Search operator code, name, machine, license..."
+          placeholder="Search operator, machine code, license..."
           className="w-full pl-9 pr-9 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-blue-600 focus:outline-none shadow-2xs transition-colors"
         />
         {localSearch && (
@@ -316,7 +413,7 @@ export function OperatorEntryView({
         )}
       </div>
 
-      {/* ── 3. Role & Status Filter Chips ─────────────────────────────────────── */}
+      {/* ── 3. Role & Status Filter Chips ─────────────────────────────────── */}
       <div className="py-2 px-2.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3.5">
         <div>
           <div className="flex items-center justify-between mb-1 px-0.5">
@@ -419,7 +516,7 @@ export function OperatorEntryView({
         </div>
       </div>
 
-      {/* ── 4. Dynamic Action Bar (Minimal Text) ───────────────────────────────── */}
+      {/* ── 4. Dynamic Action Bar ─────────────────────────────────────────── */}
       {tabMode === 'in' ? (
         /* ── IN MODE ACTION BAR ── */
         <div className="p-3.5 rounded-2xl bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 shadow-2xs space-y-3">
@@ -470,16 +567,21 @@ export function OperatorEntryView({
           </div>
         </div>
       ) : (
-        /* ── OUT & MACHINE PAIRING ACTION BAR (No Activity Codes) ── */
+        /* ── OUT & VEHICLES ACTION BAR ── */
         <div className="p-3.5 rounded-2xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 shadow-2xs space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0">
                 <LogOut size={15} />
               </div>
-              <h3 className="text-xs font-bold text-blue-950 dark:text-blue-200">
-                Out-Time & Machine Pairing
-              </h3>
+              <div>
+                <h3 className="text-xs font-bold text-blue-950 dark:text-blue-200">
+                  Out-Time & Vehicle Allocation
+                </h3>
+                <p className="text-[10px] text-blue-700/80 dark:text-blue-300/80">
+                  Unallocated hours automatically balance to <span className="font-mono font-bold">ZXQOPRIDLE</span>
+                </p>
+              </div>
             </div>
 
             <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-blue-300 dark:border-blue-700 shadow-2xs">
@@ -493,8 +595,24 @@ export function OperatorEntryView({
             </div>
           </div>
 
-          
-
+          <div className="w-full">
+            <select
+              value={batchEquipmentId}
+              onChange={(e) => setBatchEquipmentId(e.target.value)}
+              className="w-full min-w-0 px-3 py-2 rounded-xl border border-blue-200 dark:border-blue-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 shadow-2xs truncate"
+            >
+              <option value="">-- No Initial Machine (100% ZXQOPRIDLE) --</option>
+              {equipment.map((eq) => {
+                const loggedH = getEquipmentLoggedHours(eq);
+                const logLabel = loggedH > 0 ? ` · [Logged: ${loggedH}h]` : '';
+                return (
+                  <option key={eq.id} value={eq.id}>
+                    {eq.code} · {eq.name} {eq.vehicleNo ? `(${eq.vehicleNo})` : ''}{logLabel}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
 
           <div className="flex items-center justify-between gap-2 pt-1 border-t border-blue-200/60 dark:border-blue-800/60">
             <button
@@ -523,8 +641,8 @@ export function OperatorEntryView({
         </div>
       )}
 
-      {/* ── 5. Operator Cards List ────────────────────────────────────────────── */}
-      <div className="space-y-2">
+      {/* ── 5. Operator Cards List ────────────────────────────────────────── */}
+      <div className="space-y-2.5">
         {filteredOperators.length === 0 ? (
           <div className="py-12 px-4 text-center bg-white dark:bg-slate-800 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700">
             <HardHat className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
@@ -536,8 +654,8 @@ export function OperatorEntryView({
           filteredOperators.map((operator) => {
             const isSelected = selectedOperatorIds.includes(operator.id);
             const isExpanded = tabMode === 'out' && expandedId === operator.id;
-            const mappedEquip = equipment.find((e) => e.id === operator.assignedEquipmentId);
-            const conflict = getMappedConflict(operator.assignedEquipmentId, operator.id);
+            const { shift, operatingHours, idleHours } = getOperatorHourBreakdown(operator);
+            const splits = operator.equipmentSplits || [];
 
             return (
               <div
@@ -568,10 +686,6 @@ export function OperatorEntryView({
                     onClick={() => setExpandedId(isExpanded ? null : operator.id)}
                     className="flex-1 min-w-0 flex items-center gap-2.5 cursor-pointer"
                   >
-                    {/* <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 font-bold flex items-center justify-center text-[10px] tracking-tight flex-shrink-0 border border-amber-300 dark:border-amber-800 font-mono">
-                      {operator.employeeNumber}
-                    </div> */}
-
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-bold text-xs text-slate-900 dark:text-slate-100 font-mono">
@@ -583,7 +697,7 @@ export function OperatorEntryView({
                       </div>
 
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        {operator.designation}
+                        {operator.designation} {operator.licenseNo ? `· Lic: ${operator.licenseNo}` : ''}
                       </p>
                     </div>
                   </div>
@@ -607,7 +721,7 @@ export function OperatorEntryView({
                       {tabMode === 'out' && (
                         <div className="text-[10px] mt-0.5 text-slate-400">
                           {operator.outTime ? (
-                            <span className="font-medium text-slate-700 dark:text-slate-300">Out: {operator.outTime}</span>
+                            <span className="font-medium text-slate-700 dark:text-slate-300">Out: {operator.outTime} ({shift}h)</span>
                           ) : (
                             <span>Pending Out</span>
                           )}
@@ -624,104 +738,242 @@ export function OperatorEntryView({
                   </div>
                 </div>
 
-                {/* Machine Assignment Badge (Shown on OUT mode or if assigned) */}
+                {/* Machine Summary Badges in Card Footer (Shown on OUT mode when collapsed) */}
                 {tabMode === 'out' && !isExpanded && (
-                  <div className="px-3.5 pb-2.5 pt-0.5 flex items-center gap-2 flex-wrap text-xs">
-                    {mappedEquip ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                        <Tractor size={12} /> {mappedEquip.code} · {mappedEquip.name}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
-                        <AlertTriangle size={11} /> Unmapped Machine
-                      </span>
-                    )}
+                  <div className="px-3.5 pb-2.5 pt-0.5 flex items-center justify-between gap-2 flex-wrap text-xs bg-slate-50/50 dark:bg-slate-900/30 border-t border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {splits.length > 0 ? (
+                        splits.map((s, idx) => {
+                          const eq = equipment.find((e) => e.id === s.equipmentId);
+                          const sharedWith = getSharedEquipmentOperators(s.equipmentId, operator.id);
+                          return (
+                            <span 
+                              key={s.id || idx}
+                              className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                            >
+                              <Tractor size={11} />
+                              <span>{eq ? `${eq.code}` : 'Machine'}: {s.hours}h</span>
+                              {sharedWith.length > 0 && (
+                                <span className="text-[9px] text-blue-500 font-normal ml-0.5" title={`Also driven by ${sharedWith.join(', ')}`}>
+                                  (Shared)
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })
+                      ) : null}
 
-                    {conflict && (
-                      <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
-                        <AlertTriangle size={11} /> Also mapped: {conflict.employeeNumber}
-                      </span>
-                    )}
+                      {/* Idle Badge (ZXQOPRIDLE) */}
+                      {idleHours > 0 && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                          <PauseCircle size={11} className="text-amber-600" />
+                          <span>Idle (ZXQOPRIDLE): {idleHours}h</span>
+                        </span>
+                      )}
+
+                      {splits.length === 0 && idleHours === 0 && (
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          No machine logged
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(operator.id)}
+                      className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                    >
+                      Edit Machines ({splits.length}) →
+                    </button>
                   </div>
                 )}
 
-                {/* ── Expanded Content: Single Operator Edit ── */}
+                {/* ── Expanded Content: Multi-Vehicle Management & Times ── */}
                 {isExpanded && (
-                  <div className="px-3.5 pb-4 pt-2 border-t border-slate-100 dark:border-slate-700/80 space-y-3 bg-slate-50/50 dark:bg-slate-900/40">
-                    {/* <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                      <div>
-                        <span className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400 block tracking-wider">
-                          Full Name
-                        </span>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                          {operator.callingName}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                          License No
-                        </span>
-                        <span className="text-[11px] font-mono font-medium text-slate-700 dark:text-slate-300">
-                          {operator.licenseNo}
-                        </span>
-                      </div>
-                    </div> */}
-
+                  <div className="px-3.5 pb-4 pt-3 border-t border-slate-100 dark:border-slate-700/80 space-y-3.5 bg-slate-50/60 dark:bg-slate-900/50">
                     {/* In / Out Pickers */}
                     <div className="grid grid-cols-2 gap-2.5">
                       <div>
-                        <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
                           In Time
                         </label>
                         <input
                           type="time"
                           value={operator.inTime}
                           onChange={(e) => handleIndividualTimeChange(operator.id, e.target.value, operator.outTime)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 shadow-2xs"
                         />
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
                           Out Time
                         </label>
                         <input
                           type="time"
                           value={operator.outTime}
                           onChange={(e) => handleIndividualTimeChange(operator.id, operator.inTime, e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 shadow-2xs"
                         />
                       </div>
                     </div>
 
-                    {/* Assigned Equipment Dropdown */}
-                    <div>
-                      <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1 flex items-center gap-1">
-                        <Tractor size={12} className="text-blue-600" />
-                        Assigned Equipment / Machine:
-                      </label>
-                      <select
-                        value={operator.assignedEquipmentId}
-                        onChange={(e) => handleIndividualEquipmentChange(operator.id, e.target.value)}
-                        className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
-                      >
-                        <option value="">-- No Equipment Assigned --</option>
-                        {equipment.map((eq) => (
-                          <option key={eq.id} value={eq.id}>
-                            {eq.code}
-                          </option>
-                        ))}
-                      </select>
+                    {/* Multi-Vehicle Allocation Section */}
+                    <div className="p-3 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 shadow-2xs space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Tractor size={14} className="text-blue-600" />
+                          <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                            Assigned Vehicles / Machines
+                          </h4>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleAddEquipmentSplit(operator.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300 text-[11px] font-bold transition-colors"
+                        >
+                          <Plus size={12} />
+                          <span>Add Vehicle</span>
+                        </button>
+                      </div>
+
+                      {/* Vehicle Splits List */}
+                      {splits.length === 0 ? (
+                        <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 text-xs space-y-1">
+                          <div className="flex items-center gap-1.5 text-amber-900 dark:text-amber-200 font-bold">
+                            <PauseCircle size={14} className="text-amber-600" />
+                            <span>100% Idle Shift ({shift}h)</span>
+                          </div>
+                          <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
+                            No vehicles currently assigned. All <span className="font-mono font-bold">{shift}h</span> shift time is automatically mapped to <span className="font-mono font-bold">ZXQOPRIDLE</span> (Exter. Equipment Operator Idle).
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5 w-full">
+                          {splits.map((split, sIdx) => {
+                            const sharedWith = getSharedEquipmentOperators(split.equipmentId, operator.id);
+                            const matchedEq = equipment.find((e) => e.id === split.equipmentId);
+                            const eqLoggedHours = getEquipmentLoggedHours(matchedEq);
+
+                            return (
+                              <div 
+                                key={split.id || sIdx}
+                                className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-700 flex flex-col gap-2 max-w-full overflow-hidden"
+                              >
+                                {/* Row 1: Equipment Select & Hours Input */}
+                                <div className="flex items-center gap-1.5 w-full min-w-0">
+                                  <select
+                                    value={split.equipmentId}
+                                    onChange={(e) => handleUpdateEquipmentSplit(operator.id, split.id, 'equipmentId', e.target.value)}
+                                    className="flex-1 min-w-0 w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 truncate"
+                                  >
+                                    <option value="">-- Choose Equipment --</option>
+                                    {equipment.map((eq) => {
+                                      const lh = getEquipmentLoggedHours(eq);
+                                      const lhStr = lh > 0 ? ` · [${lh}h logged]` : '';
+                                      return (
+                                        <option key={eq.id} value={eq.id}>
+                                          {eq.code} · {eq.name} {eq.vehicleNo ? `(${eq.vehicleNo})` : ''}{lhStr}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+
+                                  <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 shrink-0">
+                                    <input
+                                      type="number"
+                                      min="0.5"
+                                      max="24"
+                                      step="0.5"
+                                      value={split.hours || ''}
+                                      onChange={(e) => handleUpdateEquipmentSplit(operator.id, split.id, 'hours', e.target.value)}
+                                      className="w-12 text-center text-xs font-bold text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none"
+                                      placeholder="0.0"
+                                    />
+                                    <span className="text-[10px] text-slate-400 font-medium">hrs</span>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveEquipmentSplit(operator.id, split.id)}
+                                    className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors shrink-0"
+                                    title="Remove vehicle"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+
+                                {/* Row 2: Equipment Logged Hours Hint & Quick Fill Buttons */}
+                                <div className="flex items-center justify-between gap-1.5 flex-wrap text-[10px] pt-0.5">
+                                  {matchedEq && (
+                                    <div className="flex items-center gap-1 text-slate-500 dark:text-slate-400 flex-wrap">
+                                      <span>Machine Logged:</span>
+                                      <strong className="text-blue-700 dark:text-blue-300 font-mono">
+                                        {eqLoggedHours > 0 ? `${eqLoggedHours}h` : '0h (Pending)'}
+                                      </strong>
+                                      {eqLoggedHours > 0 && split.hours !== eqLoggedHours && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateEquipmentSplit(operator.id, split.id, 'hours', eqLoggedHours)}
+                                          className="text-[9px] font-bold text-blue-600 dark:text-blue-400 underline hover:text-blue-800 ml-1"
+                                        >
+                                          Set to {eqLoggedHours}h
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {sharedWith.length > 0 && (
+                                    <div className="flex items-center gap-1 text-[10px] text-blue-600 dark:text-blue-400 shrink-0">
+                                      <Sparkles size={10} />
+                                      <span>Shared with: <strong>{sharedWith.join(', ')}</strong></span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* ── Auto-Balanced Idle Calculation Summary ── */}
+                      <div className="pt-2.5 border-t border-slate-100 dark:border-slate-700/80 flex items-center justify-between text-xs flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                            Shift: <strong className="text-slate-800 dark:text-slate-200 font-mono">{shift}h</strong>
+                          </span>
+                          <span className="text-slate-300 dark:text-slate-600">•</span>
+                          <span className="text-[11px] text-blue-700 dark:text-blue-300 font-semibold">
+                            Operating: <strong className="font-mono">{operatingHours}h</strong>
+                          </span>
+                        </div>
+
+                        {idleHours > 0 ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100/70 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800">
+                            <PauseCircle size={11} className="text-amber-600" />
+                            <span>Auto-Idle (ZXQOPRIDLE): {idleHours}h</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                            <Check size={12} />
+                            <span>100% Machine Active</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                   
-
                     {/* ── Auto-save Status ── */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
+                    <div className="pt-1 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
                       <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
                         <Check size={13} className="text-emerald-500" />
-                        <span>Auto-saved</span>
+                        <span>Auto-saved to daily roster</span>
                       </span>
-                      <span className="text-[10px]">Changes save automatically</span>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(null)}
+                        className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        Done
+                      </button>
                     </div>
                   </div>
                 )}

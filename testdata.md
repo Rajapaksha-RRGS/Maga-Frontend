@@ -122,6 +122,7 @@ X51782 | WGKM03 | Warakapola AB | Mason | 721701336V | 2040.00 | | BP1020898 | K
 ## Corporate Equipment
 
 ERP New Code | Standard Equipment Number | Vehicle No | Equipment Name | Condition | Unit | Minimum Utilization | Daily Rate | Cost Rate | BP Code | BP Name
+
 ZXQOPRIDLE | ZXQOPRIDLE | | Exter. Equipment Operator Idle | DRY | hrs | 0.00 | 0.00 | 0.00 | BP1002885 | Mäga Engineering (Pvt) Ltd
 MBBE0080 | MBBE0080 | | Bar Bender | DRY | ton | 8000.00 | 500.00 | 500.00 | BP1002885 | Mäga Engineering (Pvt) Ltd
 MDCA0120 | MDCA0120 | | Cab - Crew | DRY | mth | 75000.00 | 75000.00 | 75000.00 | BP1002885 | Mäga Engineering (Pvt) Ltd

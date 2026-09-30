@@ -567,6 +567,16 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
             unitRates: true,
           },
         },
+        // Include the daily log (supervisor-entered data) if it exists
+        dailyLog: {
+          include: {
+            activities: {
+              include: {
+                activityCode: { select: { id: true, code: true, description: true } },
+              },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -587,6 +597,28 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
       primaryUnit: a.equipment.primaryUnit || 'mth',
       availableUnits: a.equipment.availableUnits || [],
       unitRates: a.equipment.unitRates || [],
+      // Include persisted daily log data so frontend can restore state from server
+      dailyLog: (a as any).dailyLog ? {
+        startMeter: (a as any).dailyLog.initialMeter || 0,
+        endMeter: (a as any).dailyLog.finalMeter || 0,
+        netHours: (a as any).dailyLog.netRunningHours || 0,
+        workingHours: (a as any).dailyLog.workingHours || 0,
+        idleHours: (a as any).dailyLog.idleHours || 0,
+        breakdownHours: (a as any).dailyLog.breakdownHours || 0,
+        fuelIssuedLiters: (a as any).dailyLog.fuelLiters || 0,
+        totalMileage: (a as any).dailyLog.totalMileage || 0,
+        startMileage: (a as any).dailyLog.startMileage || 0,
+        endMileage: (a as any).dailyLog.endMileage || 0,
+        daysValue: (a as any).dailyLog.loggedQuantity || undefined,
+        remarks: (a as any).dailyLog.remarks || null,
+        status: (a as any).dailyLog.status || 'pending',
+        activitySplits: ((a as any).dailyLog.activities || []).map((act: any) => ({
+          id: act.id,
+          activityCode: act.activityCode?.code || '',
+          unit: act.unit || 'mth',
+          utilization: act.utilization || 0,
+        })),
+      } : null,
     }));
 
     res.json(formatted);

@@ -162,7 +162,16 @@ async function main() {
       const vehicleNo = parts[2] || standardEquipmentNumber;
       const equipmentName = parts[3] || erpNewCode;
       const condition = parts[4] || 'DRY';
-      const unit = parts[5] || 'hrs';
+      const rawUnit = (parts[5] || 'hrs').trim();
+      
+      const cleanUnit = rawUnit.toLowerCase();
+      let normalizedUnit = rawUnit;
+      if (cleanUnit === 'hrs' || cleanUnit === 'hr' || cleanUnit === 'hours') normalizedUnit = 'Hrs';
+      else if (cleanUnit === 'day' || cleanUnit === 'days' || cleanUnit === 'd') normalizedUnit = 'Days';
+      else if (cleanUnit === 'mth' || cleanUnit === 'month') normalizedUnit = 'mth';
+      else if (cleanUnit === 'km') normalizedUnit = 'km';
+      else if (cleanUnit === 'ton') normalizedUnit = 'ton';
+
       const minUtil = parseFloat((parts[6] || '0').replace(/,/g, '')) || 0;
       const dailyRate = parseFloat((parts[7] || '0').replace(/,/g, '')) || 0;
       const costRate = parseFloat((parts[8] || '0').replace(/,/g, '')) || dailyRate;
@@ -176,9 +185,9 @@ async function main() {
             vehicleNo,
             equipmentName,
             condition,
-            unit,
-            primaryUnit: unit,
-            availableUnits: ['Hrs', 'Days', 'mth', 'ton'],
+            unit: normalizedUnit,
+            primaryUnit: normalizedUnit,
+            availableUnits: [normalizedUnit], // Single unit for single master data record
             minimumUtilization: minUtil,
             dailyRate,
             costRate,
@@ -251,6 +260,28 @@ async function main() {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // 7. SYNC LOCAL PROJECT EQUIPMENT UNITS FROM CORPORATE MASTER DATA
+  // ─────────────────────────────────────────────────────────────────────────
+  const allCorpEq = await prisma.corporateEquipment.findMany();
+  let updatedLocalCount = 0;
+  for (const ce of allCorpEq) {
+    const res = await prisma.equipment.updateMany({
+      where: {
+        OR: [
+          { code: ce.erpNewCode },
+          { code: ce.standardEquipmentNumber },
+          { magaNo: ce.standardEquipmentNumber },
+        ],
+      },
+      data: {
+        primaryUnit: ce.primaryUnit || ce.unit || 'Hrs',
+        availableUnits: ce.availableUnits && ce.availableUnits.length > 0 ? ce.availableUnits : [ce.unit || 'Hrs'],
+      },
+    });
+    updatedLocalCount += res.count;
+  }
+
   console.log('✅ Seeding Complete:');
   console.log(`   - Corporate Business Partners: ${bpCount}`);
   console.log(`   - Corporate Drivers & Operators: ${driverCount}`);
@@ -259,6 +290,7 @@ async function main() {
   console.log(`   - Corporate Equipment: ${eqCount}`);
   console.log(`   - Corporate Activity Codes: ${actCount}`);
   console.log(`   - Corporate Projects: ${projCount}`);
+  console.log(`   - Local Equipment Synced: ${updatedLocalCount}`);
 }
 
 main()

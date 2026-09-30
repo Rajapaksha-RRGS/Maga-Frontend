@@ -51,6 +51,13 @@ export interface LaborerEntry {
   lastSavedAt?: string;
 }
 
+export interface OperatorEquipmentSplit {
+  id: string;
+  equipmentId: string;
+  hours: number;
+  remarks?: string;
+}
+
 export interface OperatorEntry {
   id: string;
   callingName: string;
@@ -61,7 +68,8 @@ export interface OperatorEntry {
   outTime: string;
   shiftHours: number;
   otHours: number;
-  assignedEquipmentId: string; // ID of the mapped equipment
+  assignedEquipmentId: string; // Primary ID of the mapped equipment
+  equipmentSplits?: OperatorEquipmentSplit[];
   status: 'draft' | 'pending' | 'done';
   notes?: string;
   lastSavedAt?: string;
@@ -609,6 +617,9 @@ export const supervisorStorage = {
               code: asgn.equipmentCode || asgn.equipmentName,
               name: asgn.equipmentName,
               type: asgn.equipmentType || 'Equipment',
+              vehicleNo: asgn.vehicleNo || asgn.equipmentCode,
+              magaNo: asgn.magaNo || asgn.equipmentCode,
+              condition: existing?.condition ?? (asgn.condition as 'DRY' | 'WET' | undefined) ?? 'DRY',
               primaryUnit: dbPrimaryUnit,
               availableUnits: dbAvailableUnits,
               activeUnit: resolvedActiveUnit,
@@ -624,8 +635,15 @@ export const supervisorStorage = {
               idleHours: existing?.idleHours ?? 0,
               breakdownHours: existing?.breakdownHours ?? 0,
               fuelIssuedLiters: existing?.fuelIssuedLiters ?? 0,
+              totalMileage: existing?.totalMileage ?? 0,
+              startMileage: existing?.startMileage ?? 0,
+              endMileage: existing?.endMileage ?? 0,
               operatorId: existing?.operatorId,
               activityCode: existing?.activityCode,
+              // ✅ Preserve supervisor-entered activity splits from local draft
+              activitySplits: existing?.activitySplits ?? [],
+              activities: existing?.activities ?? [],
+              remarks: existing?.remarks,
               status: existing?.status || 'pending',
               lastSavedAt: existing?.lastSavedAt,
             };
@@ -831,6 +849,7 @@ export const supervisorStorage = {
             shiftHours: existing?.shiftHours || 0,
             otHours: existing?.otHours || 0,
             assignedEquipmentId: existing?.assignedEquipmentId || '',
+            equipmentSplits: existing?.equipmentSplits || (existing?.assignedEquipmentId ? [{ id: '1', equipmentId: existing.assignedEquipmentId, hours: existing.shiftHours || 0 }] : []),
             status: existing?.status || 'pending',
             notes: existing?.notes || '',
           };
@@ -948,8 +967,6 @@ export const supervisorStorage = {
           this.lockDay(date);
           localStorage.removeItem(pendingKey);
         } else if (serverStatus === 'draft') {
-          // If server status is draft and not queued offline, unlock locally
-          // (This happens when Admin rejects / returns day for corrections)
           if (!isPendingOffline) {
             localStorage.removeItem(`${STORAGE_PREFIX}locked_${date}`);
           }
@@ -1038,15 +1055,22 @@ export const supervisorStorage = {
       // Pre-fetch all real tenant activity codes once
       const allActivities = await this.getActivityCodes();
       const defaultActivityId = allActivities[0]?.id;
+      const zidleAct = allActivities.find((a) => a.code === 'ZIDLE');
+      const zidleId = zidleAct?.id || defaultActivityId;
 
-      // 1. Sync Laborers attendance and activity splits
+      // 1. Sync Laborers attendance and activity splits with ZIDLE auto-balance
       for (const lab of laborers) {
-        if (lab.activities.length > 0) {
+        const totalShift = Number(lab.shiftHours) || 0;
+        let sumAssigned = 0;
+
+        if (lab.activities && lab.activities.length > 0) {
           for (const act of lab.activities) {
             const actObj = allActivities.find((a) => a.code === act.activityCode);
             const resolvedActId = actObj?.id || defaultActivityId;
+            const actHours = Number(act.hours) || 0;
+            sumAssigned += actHours;
 
-            if (resolvedActId) {
+            if (resolvedActId && actHours > 0) {
               await apiFetch(`${API_URL}/time-entries/upsert`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1055,15 +1079,35 @@ export const supervisorStorage = {
                   supervisorId,
                   date,
                   activityId: resolvedActId,
-                  hours: act.hours,
+                  hours: actHours,
                   inTime: lab.inTime || undefined,
                   outTime: lab.outTime || undefined,
                 }),
               });
             }
           }
-        } else if (lab.inTime || lab.outTime) {
-          // If worker has in/out times but no explicit activity split, still create/upsert a time entry using default activity
+        }
+
+        // Auto-balance remaining shortage to ZIDLE
+        if (totalShift > sumAssigned && zidleId) {
+          const idleHours = Math.max(0, Math.round((totalShift - sumAssigned) * 10) / 10);
+          if (idleHours > 0) {
+            await apiFetch(`${API_URL}/time-entries/upsert`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                employeeId: lab.id,
+                supervisorId,
+                date,
+                activityId: zidleId,
+                hours: idleHours,
+                inTime: lab.inTime || undefined,
+                outTime: lab.outTime || undefined,
+                remarks: 'Unallocated shift hours (ZIDLE)',
+              }),
+            });
+          }
+        } else if (sumAssigned === 0 && (lab.inTime || lab.outTime)) {
           if (defaultActivityId) {
             await apiFetch(`${API_URL}/time-entries/upsert`, {
               method: 'POST',
@@ -1072,69 +1116,75 @@ export const supervisorStorage = {
                 employeeId: lab.id,
                 supervisorId,
                 date,
-                activityId: defaultActivityId,
+                activityId: zidleId || defaultActivityId,
                 hours: lab.shiftHours || 0,
                 inTime: lab.inTime || undefined,
                 outTime: lab.outTime || undefined,
               }),
             });
-          } else {
-            if (lab.inTime) {
-              await apiFetch(`${API_URL}/time-entries/check-in`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  employeeId: lab.id,
-                  supervisorId,
-                  date,
-                  inTime: lab.inTime,
-                }),
-              });
-            }
-            if (lab.outTime) {
-              await apiFetch(`${API_URL}/time-entries/check-out`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  employeeId: lab.id,
-                  supervisorId,
-                  date,
-                  outTime: lab.outTime,
-                }),
-              });
-            }
           }
         }
       }
 
-      // 2. Sync Operators if any
+      // 2. Sync Operators with Multi-Machine splits & ZXQOPRIDLE auto-balance
       if (operators.length > 0) {
-        const validOps = operators.filter((o) => o.inTime || o.assignedEquipmentId);
+        const validOps = operators.filter((o) => o.inTime || o.outTime || (o.equipmentSplits && o.equipmentSplits.length > 0) || o.assignedEquipmentId);
         if (validOps.length > 0) {
+          const payloadEntries = validOps.flatMap((op) => {
+            const shiftH = Number(op.shiftHours) || 0;
+            const splits = (op.equipmentSplits && op.equipmentSplits.length > 0)
+              ? op.equipmentSplits.filter((s) => s.equipmentId && Number(s.hours) > 0)
+              : (op.assignedEquipmentId ? [{ id: '1', equipmentId: op.assignedEquipmentId, hours: shiftH, remarks: '' }] : []);
+
+            const sumOperating = splits.reduce((acc, s) => acc + (Number(s.hours) || 0), 0);
+            const idleRemainder = Math.max(0, Math.round((shiftH - sumOperating) * 10) / 10);
+
+            const resultRows: any[] = splits.map((s) => ({
+              operatorId: op.id,
+              equipmentId: s.equipmentId,
+              assignedEquipmentId: s.equipmentId,
+              inTime: op.inTime || undefined,
+              outTime: op.outTime || undefined,
+              shiftHours: s.hours,
+              hours: s.hours,
+              otHours: op.otHours || 0,
+              overtimeHours: op.otHours || 0,
+              notes: s.remarks || op.notes || undefined,
+            }));
+
+            // If remaining shift hours were not operating equipment (or no equipment assigned), allocate to ZXQOPRIDLE
+            if (idleRemainder > 0 || splits.length === 0) {
+              const idleHoursToSend = splits.length === 0 ? shiftH : idleRemainder;
+              resultRows.push({
+                operatorId: op.id,
+                equipmentId: 'ZXQOPRIDLE',
+                assignedEquipmentId: 'ZXQOPRIDLE',
+                inTime: op.inTime || undefined,
+                outTime: op.outTime || undefined,
+                shiftHours: idleHoursToSend,
+                hours: idleHoursToSend,
+                otHours: 0,
+                overtimeHours: 0,
+                notes: 'Exter. Equipment Operator Idle (ZXQOPRIDLE)',
+              });
+            }
+
+            return resultRows;
+          });
+
           await apiFetch(`${API_URL}/time-entries/operators/bulk`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               supervisorId,
               date,
-              entries: validOps.map((op) => ({
-                operatorId: op.id,
-                equipmentId: op.assignedEquipmentId || undefined,
-                assignedEquipmentId: op.assignedEquipmentId || undefined,
-                inTime: op.inTime || undefined,
-                outTime: op.outTime || undefined,
-                shiftHours: op.shiftHours || 0,
-                hours: op.shiftHours || 0,
-                otHours: op.otHours || 0,
-                overtimeHours: op.otHours || 0,
-                notes: op.notes || undefined,
-              })),
+              entries: payloadEntries,
             }),
           });
         }
       }
 
-      // 3. Sync Equipment if any
+      // 3. Sync Equipment with default activity code ZOTHE
       if (equipment.length > 0) {
         const validEq = equipment.filter((e: any) => (e.netHours && e.netHours > 0) || (e.daysValue && e.daysValue > 0) || (e.hoursValue && e.hoursValue > 0) || (e.totalMileage && e.totalMileage > 0) || e.startMeter > 0);
         if (validEq.length > 0) {
@@ -1162,7 +1212,10 @@ export const supervisorStorage = {
                 totalUtilization: eq.totalUtilization,
                 remarks: eq.remarks,
                 status: eq.status,
-                activitySplits: eq.activitySplits,
+                activityCode: eq.activityCode || 'ZOTHE',
+                activitySplits: eq.activitySplits && eq.activitySplits.length > 0
+                  ? eq.activitySplits.map((s: any) => ({ ...s, activityCode: s.activityCode || 'ZOTHE' }))
+                  : [{ activityCode: eq.activityCode || 'ZOTHE', unit: eq.primaryUnit || 'Hrs', utilization: eq.workingHours || eq.netHours || eq.hoursValue || 0 }],
               })),
             }),
           });

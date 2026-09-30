@@ -42,6 +42,10 @@ export default function EquipmentPage() {
         name: item.name,
         type: item.type,
         costRate: item.costRate !== undefined && item.costRate !== null ? Number(item.costRate) : 0,
+        primaryUnit: item.primaryUnit || item.unit || 'Hrs',
+        availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0
+          ? item.availableUnits
+          : [item.unit || item.primaryUnit || 'Hrs'],
       });
     }
     setShowImport(false);
