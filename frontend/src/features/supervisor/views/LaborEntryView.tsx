@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { 
   Users, 
   Plus, 
@@ -7,7 +7,6 @@ import {
   AlertTriangle, 
   ChevronDown, 
   ChevronUp, 
-  Save, 
   Check, 
   Briefcase, 
   Search, 
@@ -21,6 +20,8 @@ import {
 } from 'lucide-react';
 import { 
   MASTER_ACTIVITIES, 
+  supervisorStorage,
+  type ActivityCodeItem,
   type LaborerEntry, 
   type ActivitySplit 
 } from '../services/supervisorStorageService';
@@ -93,8 +94,24 @@ export function LaborEntryView({
   // Expanded card state for individual inspection
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Save feedback state
-  const [individualSaveId, setIndividualSaveId] = useState<string | null>(null);
+  // Dynamic real activity codes from Backend
+  const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>(MASTER_ACTIVITIES);
+
+  // Load real tenant activity codes on mount
+  useEffect(() => {
+    supervisorStorage.getActivityCodes().then((codes) => {
+      if (Array.isArray(codes) && codes.length > 0) {
+        setActivityOptions(codes);
+        // Automatically set first real activity code for batch
+        setBatchActivities((prev) => {
+          if (prev.length === 1 && !codes.some((c) => c.code === prev[0].activityCode)) {
+            return [{ ...prev[0], activityCode: codes[0].code }];
+          }
+          return prev;
+        });
+      }
+    }).catch(() => {});
+  }, []);
 
   // ── IN MODE BATCH STATE ──
   const [batchInTime, setBatchInTime] = useState('07:00');
@@ -223,6 +240,8 @@ export function LaborEntryView({
     });
 
     onSaveLaborers(updated);
+    // Automatically clear worker selection after applying
+    setSelectedWorkerIds([]);
   };
 
   // ── SHIFT FILTER SELECTOR (DYNAMIC TARGET HOURS & AUTO-SELECT COHORT) ──
@@ -289,7 +308,7 @@ export function LaborEntryView({
       const updatedFirst = { ...batchActivities[0], hours: half };
       const newRow: BatchActivityItem = {
         id: `batch-act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-        activityCode: MASTER_ACTIVITIES[1 % MASTER_ACTIVITIES.length].code,
+        activityCode: (activityOptions[1 % activityOptions.length] || activityOptions[0]).code,
         hours: secondHalf,
       };
       setBatchActivities([updatedFirst, newRow]);
@@ -305,7 +324,7 @@ export function LaborEntryView({
       fillHours = 1.0;
     }
 
-    const nextActivity = MASTER_ACTIVITIES[batchActivities.length % MASTER_ACTIVITIES.length].code;
+    const nextActivity = (activityOptions[batchActivities.length % activityOptions.length] || activityOptions[0]).code;
     const newRow: BatchActivityItem = {
       id: `batch-act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       activityCode: nextActivity,
@@ -380,6 +399,8 @@ export function LaborEntryView({
     });
 
     onSaveLaborers(updated);
+    // Automatically clear worker selection after applying
+    setSelectedWorkerIds([]);
   };
 
   // ── INDIVIDUAL WORKER UPDATES ──
@@ -415,7 +436,7 @@ export function LaborEntryView({
 
     const newSplit: ActivitySplit = {
       id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      activityCode: MASTER_ACTIVITIES[0].code,
+      activityCode: (activityOptions[0] || MASTER_ACTIVITIES[0]).code,
       hours: remaining || 4.0,
     };
 
@@ -445,22 +466,6 @@ export function LaborEntryView({
       return { ...l, activities, status: 'draft' as const };
     });
     onSaveLaborers(updated);
-  };
-
-  const handleSaveIndividualDraft = (laborerId: string) => {
-    const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const updated = laborers.map((l) => {
-      if (l.id !== laborerId) return l;
-      const isComplete = l.inTime && l.outTime && l.activities.length > 0;
-      return {
-        ...l,
-        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
-        lastSavedAt: now,
-      };
-    });
-    onSaveLaborers(updated);
-    setIndividualSaveId(laborerId);
-    setTimeout(() => setIndividualSaveId(null), 2000);
   };
 
   const isAllFilteredSelected = 
@@ -765,20 +770,20 @@ export function LaborEntryView({
             </div>
 
             {batchActivities.map((row) => (
-              <div key={row.id} className="flex items-center gap-2">
+              <div key={row.id} className="flex items-center gap-1.5 w-full">
                 <select
                   value={row.activityCode}
                   onChange={(e) => handleUpdateBatchActivityRow(row.id, 'activityCode', e.target.value)}
-                  className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-600"
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-600 truncate"
                 >
-                  {MASTER_ACTIVITIES.map((act) => (
+                  {activityOptions.map((act) => (
                     <option key={act.code} value={act.code}>
-                      {act.code} 
+                      {act.code} - {act.name || act.code}
                     </option>
                   ))}
                 </select>
 
-                <div className="w-20">
+                <div className="w-16 flex-shrink-0">
                   <input
                     type="number"
                     step="0.5"
@@ -786,8 +791,8 @@ export function LaborEntryView({
                     max="24"
                     value={row.hours}
                     onChange={(e) => handleUpdateBatchActivityRow(row.id, 'hours', parseFloat(e.target.value) || 0)}
-                    placeholder="Hours"
-                    className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-center text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                    placeholder="Hrs"
+                    className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-center text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
 
@@ -795,7 +800,7 @@ export function LaborEntryView({
                   <button
                     type="button"
                     onClick={() => handleRemoveBatchActivityRow(row.id)}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                    className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
                   >
                     <Trash2 size={14} />
                   </button>
@@ -874,7 +879,6 @@ export function LaborEntryView({
             const isExpanded = tabMode === 'out' && expandedId === worker.id;
             const activitySum = worker.activities.reduce((acc, a) => acc + (Number(a.hours) || 0), 0);
             const hasDiscrepancy = worker.shiftHours > 0 && Math.abs(activitySum - worker.shiftHours) >= 0.1;
-            const isIndividualSaved = individualSaveId === worker.id;
 
             return (
               <div
@@ -1064,22 +1068,22 @@ export function LaborEntryView({
                         {worker.activities.map((act) => (
                           <div
                             key={act.id}
-                            className="flex items-center gap-2 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                            className="flex items-center gap-1.5 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 w-full"
                           >
                             <select
                               disabled={isDayLocked}
                               value={act.activityCode}
                               onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'activityCode', e.target.value)}
-                              className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-600"
+                              className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-600 truncate"
                             >
-                              {MASTER_ACTIVITIES.map((item) => (
+                              {activityOptions.map((item) => (
                                 <option key={item.code} value={item.code}>
-                                  {item.code}
+                                  {item.code} - {item.name || item.code}
                                 </option>
                               ))}
                             </select>
 
-                            <div className="w-20">
+                            <div className="w-16 flex-shrink-0">
                               <input
                                 type="number"
                                 step="0.5"
@@ -1088,7 +1092,7 @@ export function LaborEntryView({
                                 disabled={isDayLocked}
                                 value={act.hours}
                                 onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'hours', parseFloat(e.target.value) || 0)}
-                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600"
+                                className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600"
                               />
                             </div>
 
@@ -1096,7 +1100,7 @@ export function LaborEntryView({
                               <button
                                 type="button"
                                 onClick={() => handleRemoveIndividualActivitySplit(worker.id, act.id)}
-                                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600"
+                                className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600"
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -1122,33 +1126,14 @@ export function LaborEntryView({
                       </div>
                     </div>
 
-                    {/* Individual Save Button */}
-                    {!isDayLocked && (
-                      <div className="pt-2">
-                        <button
-                          type="button"
-                          onClick={() => handleSaveIndividualDraft(worker.id)}
-                          className={[
-                            'w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl font-semibold text-xs transition-colors shadow-xs',
-                            isIndividualSaved
-                              ? 'bg-emerald-600 text-white'
-                              : 'bg-slate-800 dark:bg-slate-700 text-white hover:bg-slate-900'
-                          ].join(' ')}
-                        >
-                          {isIndividualSaved ? (
-                            <>
-                              <Check size={14} />
-                              <span>Saved Successfully!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Save size={14} />
-                              <span>Save Worker Updates</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    )}
+                    {/* ── Auto-save Status ── */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
+                      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                        <Check size={13} className="text-emerald-500" />
+                        <span>Auto-saved</span>
+                      </span>
+                      <span className="text-[10px]">Changes save automatically</span>
+                    </div>
                   </div>
                 )}
               </div>

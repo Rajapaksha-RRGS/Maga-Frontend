@@ -7,6 +7,7 @@ import {
   upsertTimeEntry,
   getTimeEntries,
   submitDay,
+  getDayStatus,
   getApprovalOverview,
   approveTimeEntries,
   rejectTimeEntries,
@@ -14,6 +15,7 @@ import {
   getOperatorEntries,
   saveOperatorEntry,
   saveBulkOperatorEntries,
+  saveBulkEquipmentLogs,
 } from '../controllers/timeEntryController';
 import { requireAdmin } from '../middleware/authMiddleware';
 
@@ -27,6 +29,7 @@ router.post('/check-out', checkOutEmployee);
 router.post('/assign-activity', assignActivityBulk);
 router.post('/upsert', upsertTimeEntry);
 router.post('/submit', submitDay);
+router.get('/day-status', getDayStatus);
 
 // Approval & Admin Adjustment routes (protected with authorization)
 router.get('/approval-overview', requireAdmin, getApprovalOverview);
@@ -38,6 +41,9 @@ router.post('/admin-adjust', requireAdmin, adminAdjustWorkerTimeEntry);
 router.get('/operators', getOperatorEntries);
 router.post('/operators', saveOperatorEntry);
 router.post('/operators/bulk', saveBulkOperatorEntries);
+
+// Equipment log routes
+router.post('/equipment/bulk', saveBulkEquipmentLogs);
 
 export default router;
 

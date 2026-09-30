@@ -160,7 +160,7 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
       adminFullName,
       adminUsername,
       adminPassword,
-    } = req.body;
+    } = req.body || {};
 
     if (!companyName?.trim() || !subdomain?.trim() || !adminFullName?.trim() || !adminUsername?.trim()) {
       res.status(400).json({
@@ -185,7 +185,8 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
     }
 
     // Password to use
-    const passwordToUse = adminPassword?.trim() || generateTempPassword();
+    const isCustomPassword = Boolean(adminPassword && adminPassword.trim().length > 0);
+    const passwordToUse = isCustomPassword ? adminPassword!.trim() : generateTempPassword();
     const passwordHash = await bcrypt.hash(passwordToUse, 10);
 
     const result = await prisma.$transaction(async (tx) => {
@@ -210,7 +211,7 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
           passwordHash,
           role: 'admin',
           status: 'active',
-          mustChangePassword: true,
+          mustChangePassword: !isCustomPassword,
         },
       });
 
@@ -254,7 +255,7 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
 export const updateTenant = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { companyName, addressLine1, addressLine2, phone, fax, email } = req.body;
+    const { companyName, addressLine1, addressLine2, phone, fax, email } = req.body || {};
 
     if (!companyName?.trim()) {
       res.status(400).json({ error: 'Company name is required.' });
@@ -284,7 +285,7 @@ export const updateTenant = async (req: Request, res: Response): Promise<void> =
 export const updateTenantStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { status } = req.body;
+    const { status } = req.body || {};
 
     if (!status || !['active', 'suspended'].includes(status)) {
       res.status(400).json({ error: 'Status must be either "active" or "suspended".' });
@@ -338,3 +339,17 @@ export const resetTenantAdminPassword = async (req: Request, res: Response): Pro
     res.status(500).json({ error: 'Failed to reset admin password' });
   }
 };
+
+// 8. GET /api/tenants/corporate-projects — Get all corporate projects catalog for dropdown/picker
+export const getCorporateProjectsCatalog = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const list = await prisma.corporateProject.findMany({
+      orderBy: { projectCode: 'asc' },
+    });
+    res.json(list);
+  } catch (error) {
+    console.error('Error fetching corporate projects catalog:', error);
+    res.status(500).json({ error: 'Failed to fetch corporate projects catalog' });
+  }
+};
+

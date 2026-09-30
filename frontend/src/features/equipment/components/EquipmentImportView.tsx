@@ -12,7 +12,7 @@
  *   - Multi-row selection & batch import + 1-click single "+ Add"
  *   - Clean Light Footer Bar with totals, pagination, and return link
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   RotateCw,
   X,
@@ -27,21 +27,40 @@ import {
   ChevronsLeft,
   ChevronsRight,
 } from 'lucide-react';
-import type { CorporateEquipment } from '../../master-import/services/corporateMasterService';
+import { fetchCorporateEquipment, type CorporateEquipment } from '../../master-import/services/corporateMasterService';
 
 interface EquipmentImportViewProps {
   onBack: () => void;
-  catalog: CorporateEquipment[];
+  // catalog prop removed
   existingCodes: Set<string>;
   onImport: (items: CorporateEquipment[]) => Promise<void> | void;
 }
 
 export default function EquipmentImportView({
   onBack,
-  catalog,
   existingCodes,
   onImport,
 }: EquipmentImportViewProps) {
+  const [catalog, setCatalog] = useState<CorporateEquipment[]>([]);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
+
+  const loadCatalog = async () => {
+    setIsRefreshing(true);
+    setIsLoadingCatalog(true);
+    try {
+      const data = await fetchCorporateEquipment();
+      setCatalog(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingCatalog(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCatalog();
+  }, []);
   // Filters & search
   const [globalSearch, setGlobalSearch] = useState('');
   const [filterType, setFilterType] = useState('ALL');
@@ -64,16 +83,17 @@ export default function EquipmentImportView({
 
   // Distinct dropdowns
   const equipmentTypes = useMemo(() =>
-    Array.from(new Set(catalog.map((c) => c.type).filter(Boolean))).sort()
+    Array.from(new Set(catalog.map((c) => c.type || '').filter(Boolean))).sort()
   , [catalog]);
 
   const sourceProjects = useMemo(() =>
-    Array.from(new Set(catalog.map((c) => c.sourceProject).filter(Boolean))).sort()
+    Array.from(new Set(catalog.map((c) => c.sourceProject || '').filter(Boolean))).sort()
   , [catalog]);
 
   // Status per item
   const getItemStatus = (item: CorporateEquipment) => {
-    if (existingCodes.has(item.code.toUpperCase())) {
+    const itemCode = (item.code || '').toUpperCase();
+    if (itemCode && existingCodes.has(itemCode)) {
       return {
         type: 'IN_SITE' as const,
         label: 'in site',
@@ -93,29 +113,37 @@ export default function EquipmentImportView({
       const status = getItemStatus(item);
       if (filterStatus === 'AVAILABLE' && status.type !== 'AVAILABLE') return false;
       if (filterStatus === 'IN_SITE' && status.type !== 'IN_SITE') return false;
-      if (filterType !== 'ALL' && item.type !== filterType) return false;
-      if (filterSource !== 'ALL' && item.sourceProject !== filterSource) return false;
+      if (filterType !== 'ALL' && (item.type || '') !== filterType) return false;
+      if (filterSource !== 'ALL' && (item.sourceProject || '') !== filterSource) return false;
 
       if (globalSearch.trim()) {
         const q = globalSearch.toLowerCase();
+        const code = (item.code || '').toLowerCase();
+        const name = (item.name || '').toLowerCase();
+        const searchKey = (item.searchKey || '').toLowerCase();
+        const source = (item.sourceProject || '').toLowerCase();
+        const model = (item.model || '').toLowerCase();
+        const reg = (item.registrationNo || '').toLowerCase();
+        const type = (item.type || '').toLowerCase();
+
         if (
-          !item.code.toLowerCase().includes(q) &&
-          !item.name.toLowerCase().includes(q) &&
-          !(item.searchKey && item.searchKey.toLowerCase().includes(q)) &&
-          !item.sourceProject.toLowerCase().includes(q) &&
-          !item.model.toLowerCase().includes(q) &&
-          !item.registrationNo.toLowerCase().includes(q) &&
-          !item.type.toLowerCase().includes(q)
+          !code.includes(q) &&
+          !name.includes(q) &&
+          !searchKey.includes(q) &&
+          !source.includes(q) &&
+          !model.includes(q) &&
+          !reg.includes(q) &&
+          !type.includes(q)
         ) return false;
       }
       return true;
     }).sort((a, b) => {
       let comp = 0;
-      if (sortField === 'code') comp = a.code.localeCompare(b.code);
-      else if (sortField === 'name') comp = a.name.localeCompare(b.name);
-      else if (sortField === 'searchKey') comp = (a.searchKey || a.name).localeCompare(b.searchKey || b.name);
+      if (sortField === 'code') comp = (a.code || '').localeCompare(b.code || '');
+      else if (sortField === 'name') comp = (a.name || '').localeCompare(b.name || '');
+      else if (sortField === 'searchKey') comp = (a.searchKey || a.name || '').localeCompare(b.searchKey || b.name || '');
       else if (sortField === 'costRate') comp = (a.costRate ?? 0) - (b.costRate ?? 0);
-      else if (sortField === 'source') comp = a.sourceProject.localeCompare(b.sourceProject);
+      else if (sortField === 'source') comp = (a.sourceProject || '').localeCompare(b.sourceProject || '');
       return sortAsc ? comp : -comp;
     });
   }, [catalog, existingCodes, globalSearch, filterStatus, filterType, filterSource, sortField, sortAsc]);
@@ -513,7 +541,16 @@ export default function EquipmentImportView({
 
           {/* Table Body (Clean White with distinct cell borders) */}
           <tbody className="divide-y divide-slate-200 bg-white">
-            {paginatedCatalog.length === 0 ? (
+            {isLoadingCatalog ? (
+              <tr>
+                <td colSpan={8} className="py-16 text-center text-slate-400 text-xs bg-white">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <RotateCw size={18} className="animate-spin text-blue-600" />
+                    <span>Loading corporate equipment catalog…</span>
+                  </div>
+                </td>
+              </tr>
+            ) : paginatedCatalog.length === 0 ? (
               <tr>
                 <td colSpan={8} className="py-12 text-center text-slate-400 text-xs bg-white">
                   No equipment found matching &quot;{globalSearch}&quot;.
@@ -527,7 +564,7 @@ export default function EquipmentImportView({
 
                 return (
                   <tr
-                    key={item.code}
+                    key={item.code || Math.random().toString()}
                     onClick={() => {
                       if (!isExisting) toggleSelectRow(item.code);
                     }}
@@ -560,27 +597,34 @@ export default function EquipmentImportView({
                       {item.code}
                     </td>
 
-                    {/* Description (Name) */}
+                    {/* Description (Name & details) */}
                     <td className="px-3.5 py-2 border-r border-slate-200">
-                      <div className="flex flex-col">
+                      <div className="flex flex-col gap-0.5">
                         <span className="font-semibold text-slate-800 leading-tight">
-                          {item.type}
+                          {item.name || item.equipmentName || item.code}
                         </span>
-                        {/* <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-slate-500">
-                          <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded text-[10px] font-medium text-slate-700">
-                            {item.name}
-                          </span>
+                        <div className="flex items-center flex-wrap gap-1 mt-0.5 text-[11px] text-slate-500">
+                          {item.type && (
+                            <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded text-[10px] font-medium text-slate-700">
+                              {item.type}
+                            </span>
+                          )}
                           {item.model && (
                             <span className="text-[10px] text-slate-500">
                               • {item.model}
                             </span>
                           )}
                           {item.registrationNo && (
-                            <span className="text-[10px] text-slate-500">
-                              • Reg: {item.registrationNo}
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              • {item.registrationNo}
                             </span>
                           )}
-                        </div> */}
+                          {item.condition && (
+                            <span className="text-[10px] text-blue-600 bg-blue-50 px-1 rounded font-mono">
+                              {item.condition}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
 

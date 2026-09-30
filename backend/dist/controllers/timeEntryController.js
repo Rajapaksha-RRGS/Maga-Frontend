@@ -3,9 +3,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.saveBulkOperatorEntries = exports.saveOperatorEntry = exports.getOperatorEntries = exports.adminAdjustWorkerTimeEntry = exports.rejectTimeEntries = exports.approveTimeEntries = exports.getApprovalOverview = exports.submitDay = exports.getTimeEntries = exports.upsertTimeEntry = exports.assignActivityBulk = exports.checkOutEmployee = exports.checkInEmployee = exports.getAssignedEmployees = void 0;
+exports.saveBulkEquipmentLogs = exports.saveBulkOperatorEntries = exports.saveOperatorEntry = exports.getOperatorEntries = exports.adminAdjustWorkerTimeEntry = exports.rejectTimeEntries = exports.approveTimeEntries = exports.getApprovalOverview = exports.getDayStatus = exports.submitDay = exports.getTimeEntries = exports.upsertTimeEntry = exports.assignActivityBulk = exports.checkOutEmployee = exports.checkInEmployee = exports.getAssignedEmployees = void 0;
 exports.getDayTypeRulesAndId = getDayTypeRulesAndId;
 exports.computeBreakHours = computeBreakHours;
+exports.calculateShiftAndOvertime = calculateShiftAndOvertime;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
 const getParam = (param) => {
@@ -148,6 +149,28 @@ function computeBreakHours(inTime, outTime) {
     const [outH, outM] = outTime.split(':').map(Number);
     const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
     return diffMins >= 300 ? 1.0 : 0.0;
+}
+// Master Helper: calculate net shift hours and Overtime (OT) strictly from In/Out attendance times
+function calculateShiftAndOvertime(inTime, outTime, standardHoursCap = 8.0, isAllOvertime = false) {
+    if (!inTime || !outTime)
+        return { shiftHours: 0, otHours: 0, breakHours: 0 };
+    const [inH, inM] = inTime.split(':').map(Number);
+    const [outH, outM] = outTime.split(':').map(Number);
+    let diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+    if (diffMins < 0)
+        diffMins += 24 * 60; // Handles shifts crossing midnight
+    const breakHours = diffMins >= 300 ? 1.0 : 0.0;
+    if (diffMins >= 300)
+        diffMins -= 60; // 1-hour lunch break deduction
+    const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 10) / 10 : 0;
+    let otHours = 0;
+    if (isAllOvertime) {
+        otHours = shiftHours;
+    }
+    else if (shiftHours > standardHoursCap) {
+        otHours = Math.round((shiftHours - standardHoursCap) * 10) / 10;
+    }
+    return { shiftHours, otHours, breakHours };
 }
 // 1. Get assigned employees for supervisor & date
 const getAssignedEmployees = async (req, res) => {
@@ -337,16 +360,23 @@ const checkOutEmployee = async (req, res) => {
         });
         if (existingEntries.length > 0) {
             const inTime = existingEntries.find((e) => e.inTime)?.inTime;
-            const breakHours = computeBreakHours(inTime, outTime);
+            const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, entryDate);
+            const { shiftHours, otHours, breakHours } = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime);
             await prisma_1.default.timeEntry.updateMany({
                 where: {
                     tenantId,
                     employeeId,
                     date: entryDate,
                 },
-                data: { outTime, breakHours },
+                data: {
+                    outTime,
+                    breakHours,
+                    shiftHours,
+                    otHours,
+                    overtimeHours: otHours,
+                },
             });
-            res.json({ success: true, employeeId, outTime, breakHours, count: existingEntries.length });
+            res.json({ success: true, employeeId, outTime, breakHours, shiftHours, otHours, count: existingEntries.length });
             return;
         }
         // If no record exists yet, create one with outTime
@@ -611,13 +641,6 @@ const upsertTimeEntry = async (req, res) => {
         const targetDate = parseDate(date);
         const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
         const numHours = hours !== undefined ? parseFloat(hours) : 0;
-        let overtimeHours = 0;
-        if (isAllOvertime) {
-            overtimeHours = numHours;
-        }
-        else if (numHours > standardHoursCap) {
-            overtimeHours = numHours - standardHoursCap;
-        }
         const existing = await prisma_1.default.timeEntry.findFirst({
             where: {
                 tenantId,
@@ -628,7 +651,29 @@ const upsertTimeEntry = async (req, res) => {
         });
         const finalInTime = inTime ?? existing?.inTime ?? null;
         const finalOutTime = outTime ?? existing?.outTime ?? null;
-        const breakHours = computeBreakHours(finalInTime, finalOutTime);
+        let shiftHoursVal = null;
+        let overtimeHours = 0;
+        let otHoursVal = 0;
+        let breakHours = 0;
+        // Strict In/Out Overtime calculation
+        if (finalInTime && finalOutTime) {
+            const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, standardHoursCap, isAllOvertime);
+            shiftHoursVal = calc.shiftHours;
+            overtimeHours = calc.otHours;
+            otHoursVal = calc.otHours;
+            breakHours = calc.breakHours;
+        }
+        else {
+            breakHours = computeBreakHours(finalInTime, finalOutTime);
+            if (isAllOvertime) {
+                overtimeHours = numHours;
+                otHoursVal = numHours;
+            }
+            else if (numHours > standardHoursCap) {
+                overtimeHours = numHours - standardHoursCap;
+                otHoursVal = numHours - standardHoursCap;
+            }
+        }
         // Guard against modifying approved entries
         const approvedCheck = await prisma_1.default.timeEntry.findFirst({
             where: {
@@ -651,7 +696,9 @@ const upsertTimeEntry = async (req, res) => {
                 where: { id: existing.id },
                 data: {
                     hours: numHours,
+                    shiftHours: shiftHoursVal,
                     overtimeHours,
+                    otHours: otHoursVal,
                     breakHours,
                     inTime: finalInTime,
                     outTime: finalOutTime,
@@ -659,6 +706,25 @@ const upsertTimeEntry = async (req, res) => {
                     remarks: remarks ?? existing.remarks,
                 },
             });
+            // Keep attendance times in sync across any other activity splits for this employee on this date
+            if (finalInTime && finalOutTime) {
+                await prisma_1.default.timeEntry.updateMany({
+                    where: {
+                        tenantId,
+                        employeeId,
+                        date: targetDate,
+                        id: { not: existing.id },
+                    },
+                    data: {
+                        inTime: finalInTime,
+                        outTime: finalOutTime,
+                        breakHours,
+                        shiftHours: shiftHoursVal,
+                        overtimeHours,
+                        otHours: otHoursVal,
+                    },
+                });
+            }
             res.json(updated);
             return;
         }
@@ -672,7 +738,9 @@ const upsertTimeEntry = async (req, res) => {
                 effectiveDayTypeId,
                 date: targetDate,
                 hours: numHours,
+                shiftHours: shiftHoursVal,
                 overtimeHours,
+                otHours: otHoursVal,
                 breakHours,
                 inTime: finalInTime,
                 outTime: finalOutTime,
@@ -680,6 +748,25 @@ const upsertTimeEntry = async (req, res) => {
                 status: 'draft',
             },
         });
+        // Keep attendance times in sync across any other activity splits for this employee on this date
+        if (finalInTime && finalOutTime) {
+            await prisma_1.default.timeEntry.updateMany({
+                where: {
+                    tenantId,
+                    employeeId,
+                    date: targetDate,
+                    id: { not: created.id },
+                },
+                data: {
+                    inTime: finalInTime,
+                    outTime: finalOutTime,
+                    breakHours,
+                    shiftHours: shiftHoursVal,
+                    overtimeHours,
+                    otHours: otHoursVal,
+                },
+            });
+        }
         res.status(201).json(created);
     }
     catch (error) {
@@ -769,43 +856,36 @@ const submitDay = async (req, res) => {
             });
             return;
         }
-        // Auto-populate default shift hours for any entries that have inTime & outTime but hours === 0
-        const zeroHourDrafts = await prisma_1.default.timeEntry.findMany({
+        // Recalculate shiftHours, otHours, overtimeHours, and breakHours strictly from inTime & outTime
+        const attendedDrafts = await prisma_1.default.timeEntry.findMany({
             where: {
                 ...whereClause,
                 inTime: { not: null },
                 outTime: { not: null },
-                hours: 0,
             },
         });
-        if (zeroHourDrafts.length > 0) {
+        if (attendedDrafts.length > 0) {
             const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
-            for (const entry of zeroHourDrafts) {
-                if (!entry.inTime || !entry.outTime)
-                    continue;
-                const [inH, inM] = entry.inTime.split(':').map(Number);
-                const [outH, outM] = entry.outTime.split(':').map(Number);
-                const diff = (outH * 60 + outM) - (inH * 60 + inM);
-                if (diff > 0) {
-                    const gross = Math.round((diff / 60) * 100) / 100;
-                    const breakHours = computeBreakHours(entry.inTime, entry.outTime);
-                    const netHours = Math.max(0, Math.round((gross - breakHours) * 100) / 100);
-                    let otHours = 0;
-                    if (isAllOvertime) {
-                        otHours = netHours;
-                    }
-                    else if (netHours > standardHoursCap) {
-                        otHours = Math.round((netHours - standardHoursCap) * 100) / 100;
-                    }
-                    await prisma_1.default.timeEntry.update({
-                        where: { id: entry.id },
-                        data: {
-                            hours: netHours,
-                            overtimeHours: otHours,
-                            breakHours,
-                        },
-                    });
+            const updates = attendedDrafts
+                .filter((entry) => entry.inTime && entry.outTime)
+                .map((entry) => {
+                const { shiftHours, otHours, breakHours } = calculateShiftAndOvertime(entry.inTime, entry.outTime, standardHoursCap, isAllOvertime);
+                const updateData = {
+                    shiftHours,
+                    otHours,
+                    overtimeHours: otHours,
+                    breakHours,
+                };
+                if (Number(entry.hours || 0) === 0 && shiftHours > 0) {
+                    updateData.hours = shiftHours;
                 }
+                return prisma_1.default.timeEntry.update({
+                    where: { id: entry.id },
+                    data: updateData,
+                });
+            });
+            if (updates.length > 0) {
+                await prisma_1.default.$transaction(updates);
             }
         }
         const submittedAt = new Date();
@@ -816,12 +896,77 @@ const submitDay = async (req, res) => {
                 submittedAt,
             },
         });
+        // Also mark operator entries for this supervisor as submitted and recalculate shiftHours/otHours
+        const opAssignments = await prisma_1.default.dailyOperatorAssignment.findMany({
+            where: { tenantId, supervisorId, date: targetDate },
+            include: { timeEntry: true },
+        });
+        if (opAssignments.length > 0) {
+            const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
+            for (const opAssign of opAssignments) {
+                if (opAssign.timeEntry) {
+                    const inTime = opAssign.timeEntry.inTime;
+                    const outTime = opAssign.timeEntry.outTime;
+                    let shiftHours = Number(opAssign.timeEntry.shiftHours) || 0;
+                    let otHours = Number(opAssign.timeEntry.otHours) || 0;
+                    if (inTime && outTime) {
+                        const { shiftHours: calcShift, otHours: calcOt } = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime);
+                        shiftHours = calcShift > 0 ? calcShift : shiftHours;
+                        otHours = calcOt;
+                    }
+                    await prisma_1.default.operatorTimeEntry.update({
+                        where: { id: opAssign.timeEntry.id },
+                        data: {
+                            status: 'submitted',
+                            shiftHours,
+                            otHours,
+                        },
+                    });
+                }
+            }
+        }
+        // Also mark equipment logs for this supervisor as submitted
+        const eqAssignments = await prisma_1.default.dailyEquipmentAssignment.findMany({
+            where: { tenantId, supervisorId, date: targetDate },
+            select: { id: true },
+        });
+        if (eqAssignments.length > 0) {
+            await prisma_1.default.equipmentDailyLog.updateMany({
+                where: { assignmentId: { in: eqAssignments.map((a) => a.id) } },
+                data: { status: 'submitted' },
+            });
+        }
+        // Upsert DailySheet as submitted
+        await prisma_1.default.dailySheet.upsert({
+            where: {
+                tenantId_supervisorId_date: {
+                    tenantId,
+                    supervisorId,
+                    date: targetDate,
+                },
+            },
+            create: {
+                tenantId,
+                supervisorId,
+                date: targetDate,
+                status: 'submitted',
+                isLocked: true,
+                submittedAt,
+                remarks: null,
+            },
+            update: {
+                status: 'submitted',
+                isLocked: true,
+                submittedAt,
+                remarks: null,
+            },
+        });
         res.json({
             success: true,
             submittedCount: updated.count,
             submittedAt: submittedAt.toISOString(),
             supervisor: supervisor ? { id: supervisor.id, fullName: supervisor.fullName, username: supervisor.username } : null,
-            message: `Successfully submitted ${updated.count} daily time entry record(s).`,
+            message: `Successfully submitted daily roster (Labor, Operators, and Equipment).`,
         });
     }
     catch (error) {
@@ -830,7 +975,60 @@ const submitDay = async (req, res) => {
     }
 };
 exports.submitDay = submitDay;
+// 6.1 Get Day Status (Draft, Submitted, Approved) for Supervisor & Date
+const getDayStatus = async (req, res) => {
+    try {
+        const supervisorId = req.query.supervisorId;
+        const dateStr = req.query.date;
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        if (!supervisorId || !dateStr) {
+            res.status(400).json({ error: 'supervisorId and date query parameters are required' });
+            return;
+        }
+        const targetDate = parseDate(dateStr);
+        const dailySheet = await prisma_1.default.dailySheet.findUnique({
+            where: {
+                tenantId_supervisorId_date: {
+                    tenantId,
+                    supervisorId,
+                    date: targetDate,
+                },
+            },
+            select: {
+                status: true,
+                isLocked: true,
+                submittedAt: true,
+                approvedAt: true,
+                remarks: true,
+            },
+        });
+        if (!dailySheet) {
+            res.json({
+                status: 'draft',
+                isLocked: false,
+                submittedAt: null,
+                approvedAt: null,
+                remarks: null,
+            });
+            return;
+        }
+        const isLocked = dailySheet.status === 'submitted' || dailySheet.status === 'approved' || dailySheet.isLocked;
+        res.json({
+            status: dailySheet.status,
+            isLocked,
+            submittedAt: dailySheet.submittedAt,
+            approvedAt: dailySheet.approvedAt,
+            remarks: dailySheet.remarks,
+        });
+    }
+    catch (error) {
+        console.error('Error fetching day status:', error);
+        res.status(500).json({ error: 'Failed to fetch day status' });
+    }
+};
+exports.getDayStatus = getDayStatus;
 // 7. Admin: Get Approval Overview for Date (Submitted, Not Submitted, Approved)
+// Unified engine aggregating Labor, Machine Operators, and Equipment
 const getApprovalOverview = async (req, res) => {
     try {
         const dateStr = req.query.date;
@@ -840,9 +1038,9 @@ const getApprovalOverview = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(dateStr);
-        // 1. Get Day Type rules for this date
+        // 1. Day Type rules for this date
         const dayTypeRules = await getDayTypeRulesAndId(tenantId, targetDate);
-        // 2. Fetch all daily assignments for this date
+        // 2. Fetch Labor assignments & Time entries
         const assignments = await prisma_1.default.dailyAssignment.findMany({
             where: { tenantId, date: targetDate },
             include: {
@@ -860,7 +1058,6 @@ const getApprovalOverview = async (req, res) => {
             },
             orderBy: { supervisor: { fullName: 'asc' } },
         });
-        // 3. Fetch all time entries for this date
         const timeEntries = await prisma_1.default.timeEntry.findMany({
             where: { tenantId, date: targetDate },
             include: {
@@ -879,32 +1076,89 @@ const getApprovalOverview = async (req, res) => {
             },
             orderBy: { createdAt: 'desc' },
         });
-        // 4. Collect all distinct supervisors involved on this date
+        // 3. Fetch Operator assignments & Operator time entries
+        const operatorAssignments = await prisma_1.default.dailyOperatorAssignment.findMany({
+            where: { tenantId, date: targetDate },
+            include: {
+                supervisor: { select: { id: true, fullName: true, username: true } },
+                operator: {
+                    select: {
+                        id: true,
+                        employeeCode: true,
+                        callingName: true,
+                        fullName: true,
+                        tradeGroup: true,
+                    },
+                },
+                timeEntry: {
+                    include: {
+                        assignedEquipment: {
+                            select: { id: true, code: true, magaNo: true, name: true, vehicleNo: true },
+                        },
+                    },
+                },
+            },
+            orderBy: { supervisor: { fullName: 'asc' } },
+        });
+        // 4. Fetch Equipment assignments & Daily logs
+        const equipmentAssignments = await prisma_1.default.dailyEquipmentAssignment.findMany({
+            where: { tenantId, date: targetDate },
+            include: {
+                supervisor: { select: { id: true, fullName: true, username: true } },
+                equipment: {
+                    select: {
+                        id: true,
+                        code: true,
+                        name: true,
+                        vehicleNo: true,
+                        magaNo: true,
+                        condition: true,
+                        primaryUnit: true,
+                        ownerPartner: { select: { name: true } },
+                    },
+                },
+                dailyLog: {
+                    include: {
+                        activities: {
+                            include: { activityCode: { select: { id: true, code: true, description: true } } },
+                        },
+                    },
+                },
+            },
+            orderBy: { supervisor: { fullName: 'asc' } },
+        });
+        // 5. Fetch DailySheets
+        const dailySheets = await prisma_1.default.dailySheet.findMany({
+            where: { tenantId, date: targetDate },
+        });
+        // 6. Collect distinct supervisors across all 3 resource streams
         const supervisorMap = new Map();
-        assignments.forEach((a) => {
-            if (a.supervisor) {
-                supervisorMap.set(a.supervisor.id, a.supervisor);
-            }
-        });
-        timeEntries.forEach((t) => {
-            if (t.supervisor) {
-                supervisorMap.set(t.supervisor.id, t.supervisor);
-            }
-        });
+        assignments.forEach((a) => a.supervisor && supervisorMap.set(a.supervisor.id, a.supervisor));
+        timeEntries.forEach((t) => t.supervisor && supervisorMap.set(t.supervisor.id, t.supervisor));
+        operatorAssignments.forEach((o) => o.supervisor && supervisorMap.set(o.supervisor.id, o.supervisor));
+        equipmentAssignments.forEach((e) => e.supervisor && supervisorMap.set(e.supervisor.id, e.supervisor));
         const submitted = [];
         const notSubmitted = [];
         const approved = [];
-        // 5. Categorize per supervisor
+        let totalLaborAssigned = assignments.length;
+        let totalLaborAttended = 0;
+        let totalLaborNormalHours = 0;
+        let totalLaborOtHours = 0;
+        let totalOperatorsAssigned = operatorAssignments.length;
+        let totalOperatorsDeployed = 0;
+        let totalOperatorsMapped = 0;
+        let totalEquipmentAssigned = equipmentAssignments.length;
+        let totalEquipmentRunning = 0;
+        let totalEquipmentDays = 0;
+        let totalEquipmentHours = 0;
+        let totalEquipmentFuel = 0;
+        // 7. Group per supervisor
         for (const [supId, supInfo] of supervisorMap.entries()) {
+            // ── Labor ──
             const supAssignments = assignments.filter((a) => a.supervisorId === supId);
             const supEntries = timeEntries.filter((t) => t.supervisorId === supId);
             const assignedWorkerIds = new Set(supAssignments.map((a) => a.employeeId));
             const workedWorkerIds = new Set(supEntries.map((t) => t.employeeId));
-            const totalHours = supEntries.reduce((sum, t) => sum + Number(t.hours || 0), 0);
-            const totalOvertime = supEntries.reduce((sum, t) => sum + Number(t.overtimeHours || 0), 0);
-            const hasSubmitted = supEntries.some((t) => t.status === 'submitted');
-            const allApproved = supEntries.length > 0 && supEntries.every((t) => t.status === 'approved');
-            // Group workers
             const allEmpIds = Array.from(new Set([...assignedWorkerIds, ...workedWorkerIds]));
             const workerDetails = allEmpIds.map((empId) => {
                 const assignment = supAssignments.find((a) => a.employeeId === empId);
@@ -912,8 +1166,17 @@ const getApprovalOverview = async (req, res) => {
                 const emp = assignment?.employee || entries[0]?.employee;
                 const inTime = entries[0]?.inTime || '';
                 const outTime = entries[0]?.outTime || '';
-                const hours = entries.reduce((sum, e) => sum + Number(e.hours || 0), 0);
-                const otHours = entries.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0);
+                const totalActivityHours = entries.reduce((sum, e) => sum + Number(e.hours || 0), 0);
+                let workerShiftHours = totalActivityHours;
+                let workerOtHours = 0;
+                if (inTime && outTime) {
+                    const { shiftHours, otHours } = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
+                    workerShiftHours = shiftHours > 0 ? shiftHours : totalActivityHours;
+                    workerOtHours = otHours;
+                }
+                else {
+                    workerOtHours = entries.reduce((sum, e) => sum + Number(e.overtimeHours || e.otHours || 0), 0);
+                }
                 const activities = entries.map((e) => ({
                     code: e.activity?.code || 'N/A',
                     description: e.activity?.description || '',
@@ -929,28 +1192,156 @@ const getApprovalOverview = async (req, res) => {
                     businessPartner: emp?.businessPartner?.name || 'Direct',
                     inTime,
                     outTime,
-                    hours,
-                    otHours,
+                    hours: workerShiftHours,
+                    otHours: workerOtHours,
                     activities,
                     status,
                 };
             });
+            // ── Operators ──
+            const supOpAssignments = operatorAssignments.filter((a) => a.supervisorId === supId);
+            const operatorDetails = supOpAssignments.map((a) => {
+                const op = a.operator;
+                const entry = a.timeEntry;
+                const inTime = entry?.inTime || '';
+                const outTime = entry?.outTime || '';
+                let hours = Number(entry?.shiftHours) || 0;
+                let otHours = Number(entry?.otHours) || 0;
+                if (inTime && outTime) {
+                    const { shiftHours: calcShift, otHours: calcOt } = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
+                    hours = calcShift > 0 ? calcShift : hours;
+                    otHours = calcOt;
+                }
+                const eq = entry?.assignedEquipment;
+                const assignedEquipmentDisplay = eq ? (eq.magaNo || eq.code || eq.name) : '—';
+                if (inTime || hours > 0)
+                    totalOperatorsDeployed++;
+                if (entry?.assignedEquipmentId)
+                    totalOperatorsMapped++;
+                return {
+                    operatorId: a.operatorId,
+                    operatorCode: op?.employeeCode || 'N/A',
+                    callingName: op?.callingName || op?.fullName || 'Operator',
+                    fullName: op?.fullName || '',
+                    tradeGroup: op?.tradeGroup || 'Machine Operator',
+                    inTime,
+                    outTime,
+                    hours,
+                    otHours,
+                    assignedEquipmentId: entry?.assignedEquipmentId || null,
+                    assignedEquipmentDisplay,
+                    status: entry?.status || (inTime ? 'draft' : 'pending'),
+                    notes: entry?.notes || '',
+                };
+            });
+            // ── Equipment ──
+            const supEqAssignments = equipmentAssignments.filter((a) => a.supervisorId === supId);
+            const equipmentDetails = supEqAssignments.map((a) => {
+                const eq = a.equipment;
+                const log = a.dailyLog;
+                const primaryUnit = (eq?.primaryUnit || 'hrs').toLowerCase();
+                const condition = log?.condition || eq?.condition || 'DRY';
+                const initialMeter = Number(log?.initialMeter) || 0;
+                const finalMeter = Number(log?.finalMeter) || 0;
+                const netHours = Number(log?.netRunningHours) || 0;
+                const workingHours = Number(log?.workingHours) || 0;
+                const idleHours = Number(log?.idleHours) || 0;
+                const fuelLiters = Number(log?.fuelLiters) || 0;
+                const totalMileage = Number(log?.totalMileage) || 0;
+                const loggedQuantity = Number(log?.loggedQuantity) || 0;
+                if (netHours > 0 || loggedQuantity > 0) {
+                    totalEquipmentRunning++;
+                    totalEquipmentFuel += fuelLiters;
+                    totalEquipmentHours += netHours;
+                    if (primaryUnit === 'mth' || primaryUnit === 'day' || primaryUnit === 'days') {
+                        totalEquipmentDays += loggedQuantity > 0 ? loggedQuantity : 1;
+                    }
+                }
+                const splits = (log?.activities || []).map((act) => ({
+                    activityCode: act.activityCode?.code || 'N/A',
+                    activityDesc: act.activityCode?.description || '',
+                    unit: act.unit,
+                    utilization: Number(act.utilization) || 0,
+                }));
+                return {
+                    equipmentId: a.equipmentId,
+                    equipmentCode: eq?.code || eq?.vehicleNo || '—',
+                    equipmentName: eq?.name || '',
+                    vehicleNo: eq?.vehicleNo || '—',
+                    magaNo: eq?.magaNo || '—',
+                    condition,
+                    primaryUnit,
+                    loggedQuantity,
+                    initialMeter,
+                    finalMeter,
+                    netHours,
+                    workingHours,
+                    idleHours,
+                    fuelLiters,
+                    totalMileage,
+                    remarks: log?.remarks || '',
+                    status: log?.status || (netHours > 0 || loggedQuantity > 0 ? 'draft' : 'pending'),
+                    splits,
+                };
+            });
+            const laborHours = workerDetails.reduce((sum, w) => sum + Number(w.hours || 0), 0);
+            const laborOvertime = workerDetails.reduce((sum, w) => sum + Number(w.otHours || 0), 0);
+            const laborAttendedCount = workerDetails.filter((w) => w.inTime || w.hours > 0).length;
+            totalLaborAttended += laborAttendedCount;
+            totalLaborNormalHours += laborHours;
+            totalLaborOtHours += laborOvertime;
+            const equipmentFuel = equipmentDetails.reduce((sum, e) => sum + e.fuelLiters, 0);
+            const equipmentDays = equipmentDetails.reduce((sum, e) => sum + (e.primaryUnit === 'mth' ? e.loggedQuantity : (e.loggedQuantity > 0 ? e.loggedQuantity : 0)), 0);
+            const sheet = dailySheets.find((s) => s.supervisorId === supId);
+            // Status resolution
+            const isSheetApproved = sheet?.status === 'approved';
+            const allLaborApproved = supEntries.length > 0 && supEntries.every((t) => t.status === 'approved');
+            const allOpApproved = operatorDetails.length > 0 && operatorDetails.every((o) => o.status === 'approved');
+            const allEqApproved = equipmentDetails.length > 0 && equipmentDetails.every((e) => e.status === 'approved' || e.status === 'done');
+            const isApproved = isSheetApproved || (allLaborApproved && (operatorDetails.length === 0 || allOpApproved) && (equipmentDetails.length === 0 || allEqApproved));
+            const isSheetSubmitted = sheet?.status === 'submitted';
+            const hasLaborSubmitted = supEntries.some((t) => t.status === 'submitted' || t.status === 'approved');
+            const hasOpSubmitted = operatorDetails.some((o) => o.status === 'submitted' || o.status === 'approved');
+            const hasEqSubmitted = equipmentDetails.some((e) => e.status === 'submitted' || e.status === 'approved' || e.status === 'done');
+            const isSubmitted = isSheetSubmitted || hasLaborSubmitted || hasOpSubmitted || hasEqSubmitted;
+            const hasAnyDraft = workerDetails.some((w) => w.status === 'draft') || operatorDetails.some((o) => o.status === 'draft') || equipmentDetails.some((e) => e.status === 'draft');
+            const supervisorStatus = isApproved
+                ? 'approved'
+                : (isSubmitted ? 'submitted' : (hasAnyDraft ? 'draft' : 'not_started'));
             const groupData = {
                 supervisorId: supId,
                 supervisorName: supInfo.fullName,
                 username: supInfo.username,
+                status: supervisorStatus,
+                submittedAt: sheet?.submittedAt || supEntries[0]?.submittedAt || null,
+                approvedAt: sheet?.approvedAt || null,
+                counts: {
+                    laborAssigned: supAssignments.length,
+                    laborWorked: laborAttendedCount,
+                    operatorsAssigned: supOpAssignments.length,
+                    operatorsWorked: operatorDetails.filter((o) => o.inTime || o.hours > 0).length,
+                    equipmentAssigned: supEqAssignments.length,
+                    equipmentRunning: equipmentDetails.filter((e) => e.netHours > 0 || e.loggedQuantity > 0).length,
+                },
+                totals: {
+                    laborHours,
+                    laborOvertime,
+                    equipmentFuel,
+                    equipmentDays,
+                },
+                // Backward-compat keys
                 assignedCount: supAssignments.length,
-                workedCount: workerDetails.filter((w) => w.inTime || w.hours > 0).length,
-                totalHours,
-                totalOvertime,
-                submittedAt: supEntries[0]?.submittedAt || null,
-                status: allApproved ? 'approved' : (hasSubmitted ? 'submitted' : (supEntries.length > 0 ? 'draft' : 'not_started')),
+                workedCount: laborAttendedCount,
+                totalHours: laborHours,
+                totalOvertime: laborOvertime,
                 workers: workerDetails,
+                operators: operatorDetails,
+                equipment: equipmentDetails,
             };
-            if (allApproved) {
+            if (isApproved) {
                 approved.push(groupData);
             }
-            else if (hasSubmitted) {
+            else if (isSubmitted) {
                 submitted.push(groupData);
             }
             else {
@@ -972,7 +1363,25 @@ const getApprovalOverview = async (req, res) => {
                 submittedCount: submitted.length,
                 notSubmittedCount: notSubmitted.length,
                 approvedCount: approved.length,
-                totalWorkers: assignments.length,
+                totalWorkers: totalLaborAssigned,
+                labor: {
+                    totalAssigned: totalLaborAssigned,
+                    attendedCount: totalLaborAttended,
+                    totalNormalHours: Math.round(totalLaborNormalHours * 10) / 10,
+                    totalOtHours: Math.round(totalLaborOtHours * 10) / 10,
+                },
+                operators: {
+                    totalAssigned: totalOperatorsAssigned,
+                    deployedCount: totalOperatorsDeployed,
+                    mappedCount: totalOperatorsMapped,
+                },
+                equipment: {
+                    totalAssigned: totalEquipmentAssigned,
+                    runningCount: totalEquipmentRunning,
+                    totalDays: Math.round(totalEquipmentDays * 100) / 100,
+                    totalHours: Math.round(totalEquipmentHours * 10) / 10,
+                    totalFuelLiters: Math.round(totalEquipmentFuel * 10) / 10,
+                },
             },
         });
     }
@@ -982,7 +1391,7 @@ const getApprovalOverview = async (req, res) => {
     }
 };
 exports.getApprovalOverview = getApprovalOverview;
-// 7.1 Admin: Approve supervisor day / records
+// 7.1 Admin: Approve supervisor day / records (Unified Labor + Operators + Equipment)
 const approveTimeEntries = async (req, res) => {
     try {
         const { supervisorId, date } = req.body;
@@ -992,6 +1401,7 @@ const approveTimeEntries = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
+        // ── 1. Approve Labor ──
         const where = {
             tenantId,
             date: targetDate,
@@ -1000,25 +1410,150 @@ const approveTimeEntries = async (req, res) => {
         if (supervisorId) {
             where.supervisorId = supervisorId;
         }
-        const result = await prisma_1.default.timeEntry.updateMany({
+        const attended = await prisma_1.default.timeEntry.findMany({
+            where: {
+                ...where,
+                inTime: { not: null },
+                outTime: { not: null },
+            },
+        });
+        if (attended.length > 0) {
+            const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
+            const updates = attended
+                .filter((entry) => entry.inTime && entry.outTime)
+                .map((entry) => {
+                const { shiftHours, otHours, breakHours } = calculateShiftAndOvertime(entry.inTime, entry.outTime, standardHoursCap, isAllOvertime);
+                return prisma_1.default.timeEntry.update({
+                    where: { id: entry.id },
+                    data: {
+                        shiftHours,
+                        otHours,
+                        overtimeHours: otHours,
+                        breakHours,
+                    },
+                });
+            });
+            if (updates.length > 0) {
+                await prisma_1.default.$transaction(updates);
+            }
+        }
+        const laborResult = await prisma_1.default.timeEntry.updateMany({
             where,
             data: {
                 status: 'approved',
             },
         });
+        // ── 2. Approve Operators ──
+        const opWhere = {
+            tenantId,
+            date: targetDate,
+        };
+        if (supervisorId) {
+            opWhere.supervisorId = supervisorId;
+        }
+        const opAssignments = await prisma_1.default.dailyOperatorAssignment.findMany({
+            where: opWhere,
+            include: { timeEntry: true },
+        });
+        let opApprovedCount = 0;
+        if (opAssignments.length > 0) {
+            const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
+            for (const opAssign of opAssignments) {
+                if (opAssign.timeEntry) {
+                    const inTime = opAssign.timeEntry.inTime;
+                    const outTime = opAssign.timeEntry.outTime;
+                    let shiftHours = Number(opAssign.timeEntry.shiftHours) || 0;
+                    let otHours = Number(opAssign.timeEntry.otHours) || 0;
+                    if (inTime && outTime) {
+                        const { shiftHours: calcShift, otHours: calcOt } = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime);
+                        shiftHours = calcShift > 0 ? calcShift : shiftHours;
+                        otHours = calcOt;
+                    }
+                    await prisma_1.default.operatorTimeEntry.update({
+                        where: { id: opAssign.timeEntry.id },
+                        data: {
+                            status: 'approved',
+                            shiftHours,
+                            otHours,
+                        },
+                    });
+                    opApprovedCount++;
+                }
+            }
+        }
+        // ── 3. Approve Equipment ──
+        const eqWhere = {
+            tenantId,
+            date: targetDate,
+        };
+        if (supervisorId) {
+            eqWhere.supervisorId = supervisorId;
+        }
+        const eqAssignments = await prisma_1.default.dailyEquipmentAssignment.findMany({
+            where: eqWhere,
+            select: { id: true },
+        });
+        let eqApprovedCount = 0;
+        if (eqAssignments.length > 0) {
+            const eqResult = await prisma_1.default.equipmentDailyLog.updateMany({
+                where: {
+                    assignmentId: { in: eqAssignments.map((a) => a.id) },
+                },
+                data: { status: 'done' },
+            });
+            eqApprovedCount = eqResult.count;
+        }
+        // ── 4. Approve DailySheet ──
+        if (supervisorId) {
+            await prisma_1.default.dailySheet.upsert({
+                where: {
+                    tenantId_supervisorId_date: {
+                        tenantId,
+                        supervisorId,
+                        date: targetDate,
+                    },
+                },
+                create: {
+                    tenantId,
+                    supervisorId,
+                    date: targetDate,
+                    status: 'approved',
+                    isLocked: true,
+                    approvedAt: new Date(),
+                },
+                update: {
+                    status: 'approved',
+                    isLocked: true,
+                    approvedAt: new Date(),
+                },
+            });
+        }
+        else {
+            await prisma_1.default.dailySheet.updateMany({
+                where: { tenantId, date: targetDate },
+                data: {
+                    status: 'approved',
+                    isLocked: true,
+                    approvedAt: new Date(),
+                },
+            });
+        }
         res.json({
             success: true,
-            approvedCount: result.count,
-            message: `Successfully approved ${result.count} time entry record(s).`,
+            approvedCount: laborResult.count,
+            laborApprovedCount: laborResult.count,
+            operatorApprovedCount: opApprovedCount,
+            equipmentApprovedCount: eqApprovedCount,
+            message: `Successfully approved daily records (${laborResult.count} labor, ${opApprovedCount} operators, ${eqApprovedCount} equipment).`,
         });
     }
     catch (error) {
-        console.error('Error approving time entries:', error);
-        res.status(500).json({ error: 'Failed to approve time entries' });
+        console.error('Error approving daily entries:', error);
+        res.status(500).json({ error: 'Failed to approve daily entries' });
     }
 };
 exports.approveTimeEntries = approveTimeEntries;
-// 7.2 Admin: Reject supervisor day / return to draft
+// 7.2 Admin: Reject supervisor day / return to draft (Unified Labor + Operators + Equipment)
 const rejectTimeEntries = async (req, res) => {
     try {
         const { supervisorId, date, reason } = req.body;
@@ -1028,7 +1563,8 @@ const rejectTimeEntries = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
-        const result = await prisma_1.default.timeEntry.updateMany({
+        // 1. Return Labor to draft
+        const laborResult = await prisma_1.default.timeEntry.updateMany({
             where: {
                 tenantId,
                 supervisorId,
@@ -1039,15 +1575,60 @@ const rejectTimeEntries = async (req, res) => {
                 remarks: reason ? `Returned by Admin: ${reason}` : undefined,
             },
         });
+        // 2. Return Operators to draft
+        const opAssignments = await prisma_1.default.dailyOperatorAssignment.findMany({
+            where: { tenantId, supervisorId, date: targetDate },
+            select: { id: true },
+        });
+        if (opAssignments.length > 0) {
+            await prisma_1.default.operatorTimeEntry.updateMany({
+                where: { assignmentId: { in: opAssignments.map((a) => a.id) } },
+                data: { status: 'draft' },
+            });
+        }
+        // 3. Return Equipment to draft
+        const eqAssignments = await prisma_1.default.dailyEquipmentAssignment.findMany({
+            where: { tenantId, supervisorId, date: targetDate },
+            select: { id: true },
+        });
+        if (eqAssignments.length > 0) {
+            await prisma_1.default.equipmentDailyLog.updateMany({
+                where: { assignmentId: { in: eqAssignments.map((a) => a.id) } },
+                data: { status: 'draft' },
+            });
+        }
+        // 4. Return DailySheet to draft
+        await prisma_1.default.dailySheet.upsert({
+            where: {
+                tenantId_supervisorId_date: {
+                    tenantId,
+                    supervisorId,
+                    date: targetDate,
+                },
+            },
+            create: {
+                tenantId,
+                supervisorId,
+                date: targetDate,
+                status: 'draft',
+                isLocked: false,
+                remarks: reason ? `Returned by Admin: ${reason}` : null,
+            },
+            update: {
+                status: 'draft',
+                isLocked: false,
+                remarks: reason ? `Returned by Admin: ${reason}` : null,
+            },
+        });
         res.json({
             success: true,
-            rejectedCount: result.count,
-            message: `Returned ${result.count} record(s) to draft for supervisor to edit.`,
+            rejectedCount: laborResult.count,
+            message: `Returned all daily records (labor, operators, equipment) to draft for supervisor to edit.`,
         });
     }
     catch (error) {
-        console.error('Error rejecting time entries:', error);
-        res.status(500).json({ error: 'Failed to return entries to draft' });
+        console.error('Error rejecting daily entries:', error);
+        res.status(500).json({ error: 'Failed to return daily entries to draft' });
     }
 };
 exports.rejectTimeEntries = rejectTimeEntries;
@@ -1110,7 +1691,7 @@ const adminAdjustWorkerTimeEntry = async (req, res) => {
                 });
             }
             else {
-                // Multiple activity splits: update attendance times for all
+                // Multiple activity splits: update attendance times, breakHours, and OT for all
                 await prisma_1.default.timeEntry.updateMany({
                     where: {
                         tenantId,
@@ -1121,6 +1702,9 @@ const adminAdjustWorkerTimeEntry = async (req, res) => {
                         inTime,
                         outTime,
                         breakHours,
+                        shiftHours: calculatedHours,
+                        overtimeHours: calculatedOt,
+                        otHours: calculatedOt,
                     },
                 });
             }
@@ -1331,6 +1915,7 @@ const saveBulkOperatorEntries = async (req, res) => {
         }
         const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
+        const dayTypeRules = await getDayTypeRulesAndId(tenantId, targetDate);
         let effectiveSupervisorId = supervisorId;
         if (!effectiveSupervisorId) {
             const defaultSupervisor = await prisma_1.default.user.findFirst({
@@ -1363,6 +1948,18 @@ const saveBulkOperatorEntries = async (req, res) => {
                 });
             }
             if (assignment) {
+                const inTime = item.inTime || null;
+                const outTime = item.outTime || null;
+                const assignedEquipmentId = item.assignedEquipmentId !== undefined
+                    ? (item.assignedEquipmentId || null)
+                    : (item.equipmentId !== undefined ? (item.equipmentId || null) : undefined);
+                let shiftHours = item.shiftHours !== undefined ? Number(item.shiftHours) : (item.hours !== undefined ? Number(item.hours) : 0);
+                let otHours = item.otHours !== undefined ? Number(item.otHours) : (item.overtimeHours !== undefined ? Number(item.overtimeHours) : 0);
+                if (inTime && outTime) {
+                    const { shiftHours: calcShift, otHours: calcOt } = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
+                    shiftHours = calcShift > 0 ? calcShift : shiftHours;
+                    otHours = calcOt;
+                }
                 const timeEntry = await prisma_1.default.operatorTimeEntry.upsert({
                     where: {
                         assignmentId: assignment.id,
@@ -1370,20 +1967,20 @@ const saveBulkOperatorEntries = async (req, res) => {
                     create: {
                         tenantId,
                         assignmentId: assignment.id,
-                        inTime: item.inTime || null,
-                        outTime: item.outTime || null,
-                        shiftHours: item.shiftHours !== undefined ? item.shiftHours : 0,
-                        otHours: item.otHours !== undefined ? item.otHours : 0,
-                        assignedEquipmentId: item.assignedEquipmentId || null,
+                        inTime,
+                        outTime,
+                        shiftHours,
+                        otHours,
+                        assignedEquipmentId: assignedEquipmentId ?? null,
                         notes: item.notes || null,
                         status: item.status || 'draft',
                     },
                     update: {
-                        inTime: item.inTime !== undefined ? item.inTime : undefined,
-                        outTime: item.outTime !== undefined ? item.outTime : undefined,
-                        shiftHours: item.shiftHours !== undefined ? item.shiftHours : undefined,
-                        otHours: item.otHours !== undefined ? item.otHours : undefined,
-                        assignedEquipmentId: item.assignedEquipmentId !== undefined ? (item.assignedEquipmentId || null) : undefined,
+                        inTime: item.inTime !== undefined ? inTime : undefined,
+                        outTime: item.outTime !== undefined ? outTime : undefined,
+                        shiftHours: (item.shiftHours !== undefined || item.hours !== undefined || (inTime && outTime)) ? shiftHours : undefined,
+                        otHours: (item.otHours !== undefined || item.overtimeHours !== undefined || (inTime && outTime)) ? otHours : undefined,
+                        assignedEquipmentId: assignedEquipmentId !== undefined ? assignedEquipmentId : undefined,
                         notes: item.notes !== undefined ? item.notes : undefined,
                         status: item.status || undefined,
                     },
@@ -1403,3 +2000,129 @@ const saveBulkOperatorEntries = async (req, res) => {
     }
 };
 exports.saveBulkOperatorEntries = saveBulkOperatorEntries;
+// 11. Save / Upsert bulk equipment daily logs (Dynamic Units & Meter Engine)
+const saveBulkEquipmentLogs = async (req, res) => {
+    try {
+        const { entries, date, supervisorId } = req.body;
+        if (!Array.isArray(entries) || !date) {
+            res.status(400).json({ error: 'entries array and date are required' });
+            return;
+        }
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const targetDate = parseDate(date);
+        let effectiveSupervisorId = supervisorId;
+        if (!effectiveSupervisorId) {
+            const defaultSupervisor = await prisma_1.default.user.findFirst({
+                where: { tenantId, role: { in: ['supervisor', 'admin'] } },
+            });
+            effectiveSupervisorId = defaultSupervisor?.id;
+        }
+        const savedResults = [];
+        for (const item of entries) {
+            const eqId = item.id || item.equipmentId;
+            if (!eqId)
+                continue;
+            let assignment = await prisma_1.default.dailyEquipmentAssignment.findUnique({
+                where: {
+                    tenantId_date_equipmentId: {
+                        tenantId,
+                        date: targetDate,
+                        equipmentId: eqId,
+                    },
+                },
+            });
+            if (!assignment && effectiveSupervisorId) {
+                assignment = await prisma_1.default.dailyEquipmentAssignment.create({
+                    data: {
+                        tenantId,
+                        date: targetDate,
+                        supervisorId: effectiveSupervisorId,
+                        equipmentId: eqId,
+                    },
+                });
+            }
+            if (assignment) {
+                const loggedQty = item.daysValue !== undefined && item.daysValue > 0
+                    ? item.daysValue
+                    : (item.netHours || item.totalUtilization || 0);
+                const dailyLog = await prisma_1.default.equipmentDailyLog.upsert({
+                    where: {
+                        assignmentId: assignment.id,
+                    },
+                    create: {
+                        tenantId,
+                        assignmentId: assignment.id,
+                        condition: item.condition || 'DRY',
+                        initialMeter: item.startMeter || 0,
+                        finalMeter: item.endMeter || 0,
+                        netRunningHours: item.netHours || 0,
+                        workingHours: item.workingHours || 0,
+                        idleHours: item.idleHours || 0,
+                        breakdownHours: item.breakdownHours || 0,
+                        fuelLiters: item.fuelIssuedLiters || item.fuelLiters || 0,
+                        totalMileage: item.totalMileage || 0,
+                        startMileage: item.startMileage || 0,
+                        endMileage: item.endMileage || 0,
+                        loggedQuantity: loggedQty,
+                        totalUtilization: item.totalUtilization || loggedQty,
+                        remarks: item.remarks || null,
+                        status: item.status || 'draft',
+                    },
+                    update: {
+                        condition: item.condition !== undefined ? item.condition : undefined,
+                        initialMeter: item.startMeter !== undefined ? item.startMeter : undefined,
+                        finalMeter: item.endMeter !== undefined ? item.endMeter : undefined,
+                        netRunningHours: item.netHours !== undefined ? item.netHours : undefined,
+                        workingHours: item.workingHours !== undefined ? item.workingHours : undefined,
+                        idleHours: item.idleHours !== undefined ? item.idleHours : undefined,
+                        breakdownHours: item.breakdownHours !== undefined ? item.breakdownHours : undefined,
+                        fuelLiters: item.fuelIssuedLiters !== undefined ? item.fuelIssuedLiters : (item.fuelLiters !== undefined ? item.fuelLiters : undefined),
+                        totalMileage: item.totalMileage !== undefined ? item.totalMileage : undefined,
+                        startMileage: item.startMileage !== undefined ? item.startMileage : undefined,
+                        endMileage: item.endMileage !== undefined ? item.endMileage : undefined,
+                        loggedQuantity: loggedQty,
+                        totalUtilization: item.totalUtilization || loggedQty,
+                        remarks: item.remarks !== undefined ? item.remarks : undefined,
+                        status: item.status || undefined,
+                    },
+                });
+                // Save activity splits if present
+                if (Array.isArray(item.activitySplits) && item.activitySplits.length > 0) {
+                    await prisma_1.default.equipmentDailyLogActivity.deleteMany({
+                        where: { dailyLogId: dailyLog.id },
+                    });
+                    for (const split of item.activitySplits) {
+                        let actCodeId = split.activityCodeId;
+                        if (!actCodeId && split.activityCode) {
+                            const act = await prisma_1.default.activityCode.findFirst({
+                                where: { tenantId, code: split.activityCode },
+                            });
+                            actCodeId = act?.id;
+                        }
+                        if (actCodeId) {
+                            await prisma_1.default.equipmentDailyLogActivity.create({
+                                data: {
+                                    dailyLogId: dailyLog.id,
+                                    activityCodeId: actCodeId,
+                                    unit: split.unit || 'day',
+                                    utilization: split.utilization || 0,
+                                },
+                            });
+                        }
+                    }
+                }
+                savedResults.push(dailyLog);
+            }
+        }
+        res.json({
+            success: true,
+            count: savedResults.length,
+            savedResults,
+        });
+    }
+    catch (error) {
+        console.error('Error in bulk saving equipment logs:', error);
+        res.status(500).json({ error: 'Failed to bulk save equipment logs' });
+    }
+};
+exports.saveBulkEquipmentLogs = saveBulkEquipmentLogs;

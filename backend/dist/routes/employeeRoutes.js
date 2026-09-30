@@ -5,6 +5,7 @@ const employeeController_1 = require("../controllers/employeeController");
 const authMiddleware_1 = require("../middleware/authMiddleware");
 const router = (0, express_1.Router)();
 // Cross-tenant & Transfer routes (protected with authorization)
+router.get('/corporate-master', employeeController_1.getCorporateEmployeesCatalog);
 router.post('/cross-tenant-status', authMiddleware_1.requireAdmin, employeeController_1.getCrossTenantEmployeeStatus);
 router.post('/transfer', authMiddleware_1.requireAdmin, employeeController_1.transferEmployee);
 // Standard routes matching frontend expectations

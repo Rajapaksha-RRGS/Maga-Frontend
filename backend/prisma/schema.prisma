@@ -178,13 +178,16 @@ model Employee {
 model Equipment {
   id             String   @id @default(uuid())
   tenantId       String   @map("tenant_id")
-  code           String?  // Preserved as `code` for query compatibility (e.g. "EX-04")
+  code           String?  // Preserved as `code` for query compatibility (e.g. "EX-04" or Vehicle No)
+  vehicleNo      String?  @map("vehicle_no") // e.g. "PC-3450"
+  magaNo         String?  @map("maga_no")    // Base Maga No e.g. "XQ0002932"
   name           String   // e.g. "CAT 320D Excavator"
   type           String?  // e.g. "Heavy Earthmover"
+  condition      String   @default("DRY")    // "DRY" | "WET"
   costRate       Decimal? @default(0.00) @map("cost_rate") @db.Decimal(10, 2)
   // Rating Units
-  primaryUnit    String   @default("mth") @map("primary_unit")      // 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2'
-  availableUnits String[] @default([]) @map("available_units")      // e.g. ["mth", "Days", "Hrs"] — empty = all 5 units
+  primaryUnit    String   @default("mth") @map("primary_unit")      // 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2' | 'km'
+  availableUnits String[] @default([]) @map("available_units")      // e.g. ["mth", "km", "Days", "Hrs"]
   status         String   @default("active")
   meterUnitId    String?  @map("meter_unit_id")
   ownerPartnerId String?  @map("owner_partner_id")
@@ -196,10 +199,30 @@ model Equipment {
   timeEntries         TimeEntry[]
   dailyAssignments    DailyEquipmentAssignment[]
   operatorTimeEntries OperatorTimeEntry[]
+  unitRates           EquipmentUnitRate[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
   @@map("equipment")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7.1 EQUIPMENT UNIT RATES (Multi-Unit Tariff & ERP Codes e.g. XQ0002932A / B)
+// ─────────────────────────────────────────────────────────────────────────────
+model EquipmentUnitRate {
+  id             String   @id @default(uuid())
+  equipmentId    String   @map("equipment_id")
+  unit           String   // "mth", "km", "hrs", "day", etc.
+  erpBillingCode String?  @map("erp_billing_code") // e.g. "XQ0002932A", "XQ0002932B"
+  rate           Decimal  @default(0.00) @db.Decimal(10, 2)
+  minUtilization Decimal? @map("min_utilization") @db.Decimal(8, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  equipment      Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@unique([equipmentId, unit])
+  @@index([equipmentId])
+  @@map("equipment_unit_rates")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +231,7 @@ model Equipment {
 model ActivityCode {
   id          String   @id @default(uuid())
   tenantId    String   @map("tenant_id")
+  projectCode String?  @map("project_code")
   code        String   // e.g. "00-00-11-11-M", "ACT-101"
   description String?  // e.g. "Concrete Pouring (Slab & Columns)"
   trade       String?  // e.g. "Masonry"
@@ -217,10 +241,12 @@ model ActivityCode {
   tenant             Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   timeEntries        TimeEntry[]
   activitySplits     LaborActivitySplit[]
-  equipmentDailyLogs EquipmentDailyLog[]
+  equipmentDailyLogs          EquipmentDailyLog[]
+  equipmentDailyLogActivities EquipmentDailyLogActivity[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([projectCode])
   @@map("activity_codes")
 }
 
@@ -437,45 +463,72 @@ model DailyEquipmentAssignment {
 }
 
 model EquipmentDailyLog {
-  id              String   @id @default(uuid())
-  tenantId        String   @map("tenant_id")
-  assignmentId    String   @unique @map("assignment_id")
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  assignmentId     String   @unique @map("assignment_id")
   
-  // Dynamic Units (Days, Hrs, EX.hrs, mth, m2)
-  activeUnitId    String?  @map("active_unit_id")
-  loggedQuantity  Decimal  @default(0.00) @map("logged_quantity") @db.Decimal(10, 2)
+  // Dynamic Units (Days, Hrs, EX.hrs, mth, m2, km)
+  activeUnitId     String?  @map("active_unit_id")
+  loggedQuantity   Decimal  @default(0.00) @map("logged_quantity") @db.Decimal(10, 2)
+  totalUtilization Decimal? @default(0.00) @map("total_utilization") @db.Decimal(8, 2)
+  condition        String?  @default("DRY")
   
-  // Meter & Running Hours
-  initialMeter    Decimal  @default(0.00) @map("initial_meter") @db.Decimal(10, 2)
-  finalMeter      Decimal  @default(0.00) @map("final_meter") @db.Decimal(10, 2)
-  netRunningHours Decimal  @default(0.00) @map("net_running_hours") @db.Decimal(6, 2)
+  // Meter & Running Hours (Kept in DB as specified)
+  initialMeter     Decimal  @default(0.00) @map("initial_meter") @db.Decimal(10, 2)
+  finalMeter       Decimal  @default(0.00) @map("final_meter") @db.Decimal(10, 2)
+  netRunningHours  Decimal  @default(0.00) @map("net_running_hours") @db.Decimal(6, 2)
+  
+  // Mileage Running (KM)
+  startMileage     Decimal? @default(0.00) @map("start_mileage") @db.Decimal(10, 2)
+  endMileage       Decimal? @default(0.00) @map("end_mileage") @db.Decimal(10, 2)
+  totalMileage     Decimal? @default(0.00) @map("total_mileage") @db.Decimal(10, 2)
   
   // Operational Time Distribution
-  workingHours    Decimal  @default(0.00) @map("working_hours") @db.Decimal(6, 2)
-  idleHours       Decimal  @default(0.00) @map("idle_hours") @db.Decimal(6, 2)
-  breakdownHours  Decimal  @default(0.00) @map("breakdown_hours") @db.Decimal(6, 2)
+  workingHours     Decimal  @default(0.00) @map("working_hours") @db.Decimal(6, 2)
+  idleHours        Decimal  @default(0.00) @map("idle_hours") @db.Decimal(6, 2)
+  breakdownHours   Decimal  @default(0.00) @map("breakdown_hours") @db.Decimal(6, 2)
   
   // Fuel Consumed
-  fuelLiters      Decimal  @default(0.00) @map("fuel_liters") @db.Decimal(8, 2)
+  fuelLiters       Decimal  @default(0.00) @map("fuel_liters") @db.Decimal(8, 2)
   
   // Mappings
-  operatorId      String?  @map("operator_id")
-  activityCodeId  String?  @map("activity_code_id")
-  recordedById    String?  @map("recorded_by_id") // Audit link to supervisor
-  remarks         String?
-  status          String   @default("draft") // "draft" | "pending" | "done"
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  operatorId       String?  @map("operator_id")
+  activityCodeId   String?  @map("activity_code_id")
+  recordedById     String?  @map("recorded_by_id") // Audit link to supervisor
+  remarks          String?
+  status           String   @default("draft") // "draft" | "pending" | "done"
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  tenant       Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  assignment   DailyEquipmentAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  activeUnit   UnitMaster?              @relation(fields: [activeUnitId], references: [id])
-  operator     Employee?                @relation(fields: [operatorId], references: [id])
-  activityCode ActivityCode?            @relation(fields: [activityCodeId], references: [id])
-  recordedBy   User?                    @relation("EquipmentRecordedBy", fields: [recordedById], references: [id])
+  tenant       Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignment   DailyEquipmentAssignment    @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  activeUnit   UnitMaster?                 @relation(fields: [activeUnitId], references: [id])
+  operator     Employee?                   @relation(fields: [operatorId], references: [id])
+  activityCode ActivityCode?               @relation(fields: [activityCodeId], references: [id])
+  recordedBy   User?                       @relation("EquipmentRecordedBy", fields: [recordedById], references: [id])
+  activities   EquipmentDailyLogActivity[]
 
   @@index([tenantId])
   @@map("equipment_daily_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 15.1 EQUIPMENT DAILY LOG ACTIVITY SPLITS
+// ─────────────────────────────────────────────────────────────────────────────
+model EquipmentDailyLogActivity {
+  id             String   @id @default(uuid())
+  dailyLogId     String   @map("daily_log_id")
+  activityCodeId String   @map("activity_code_id")
+  unit           String   @default("hrs") // "mth", "hrs", "km", "day"
+  utilization    Decimal  @default(0.00) @map("utilization") @db.Decimal(8, 2)
+  remarks        String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  dailyLog     EquipmentDailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  activityCode ActivityCode      @relation(fields: [activityCodeId], references: [id])
+
+  @@index([dailyLogId])
+  @@map("equipment_daily_log_activities")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -483,23 +536,36 @@ model EquipmentDailyLog {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model CorporateEquipment {
-  id                    String   @id @default(uuid())
-  code                  String   @unique
-  description           String
-  searchKey             String   @map("search_key")
-  costRate              Decimal  @default(0.00) @map("cost_rate") @db.Decimal(12, 2)
-  currency              String   @default("LKR")
-  type                  String?
-  model                 String?
-  registrationNo        String?  @map("registration_no")
-  capacity              String?
-  // Rating Units (Corporate-level defaults; project equipment may override)
-  primaryUnit           String   @default("mth") @map("primary_unit")    // 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2'
-  availableUnits        String[] @default([]) @map("available_units")    // [] = all 5 units available
-  currentWorkingProject String?  @map("current_working_project")
-  status                String   @default("active")
-  createdAt             DateTime @default(now()) @map("created_at")
+  id                      String   @id @default(uuid())
+  standardEquipmentNumber String   @map("standard_equipment_number")       // e.g. "MGEN0140", "MGEN0160" (can repeat for multiple tariffs/units)
+  equipmentName           String   @map("equipment_name")                 // e.g. "Generator Denyo DCA45SPI 14KV", "EX-demo"
+  condition               String   @default("DRY")                        // "DRY" | "WET"
+  unit                    String   @default("hrs")                        // "hrs", "Mth", "km", "day"
+  minimumUtilization      Decimal? @map("minimum_utilization") @db.Decimal(10, 2) // e.g. 125, 178
+  dailyRate               Decimal  @default(0.00) @map("daily_rate") @db.Decimal(12, 2) // e.g. 1200, 220000
+  businessPartner         String?  @map("business_partner")               // e.g. "BP 1000561", "BP 1000562"
+  erpNewCode              String   @unique @map("erp_new_code")           // e.g. "MGEN0140", "MGEN0140A" (Unique ERP Line Code)
 
+  // Optional Vehicle & Corporate metadata fields
+  vehicleNo               String?  @map("vehicle_no")                     // e.g. "PC-3450" (for vehicles with license plates)
+  code                    String?  @map("code")                           // legacy/fallback code
+  description             String?                                         // legacy description
+  searchKey               String?  @map("search_key")
+  costRate                Decimal  @default(0.00) @map("cost_rate") @db.Decimal(12, 2)
+  currency                String   @default("LKR")
+  type                    String?
+  model                   String?
+  registrationNo          String?  @map("registration_no")
+  capacity                String?
+  primaryUnit             String   @default("hrs") @map("primary_unit")
+  availableUnits          String[] @default([]) @map("available_units")
+  currentWorkingProject   String?  @map("current_working_project")
+  status                  String   @default("active")
+  
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  @@index([standardEquipmentNumber])
+  @@index([vehicleNo])
   @@map("corporate_equipment")
 }
 
@@ -540,7 +606,8 @@ model CorporateBusinessPartner {
 
 model CorporateActivityCode {
   id                    String   @id @default(uuid())
-  code                  String   @unique
+  projectCode           String?  @map("project_code")
+  code                  String
   description           String
   searchKey             String?  @map("search_key")
   activityType          String?  @map("activity_type")
@@ -549,6 +616,9 @@ model CorporateActivityCode {
   currentWorkingProject String?  @map("current_working_project")
   createdAt             DateTime @default(now()) @map("created_at")
 
+  @@unique([projectCode, code])
+  @@index([projectCode])
+  @@index([code])
   @@map("corporate_activity_codes")
 }
 

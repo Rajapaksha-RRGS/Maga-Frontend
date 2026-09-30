@@ -13,7 +13,6 @@ import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
 import Breadcrumb from '../components/Breadcrumb';
-import { CORPORATE_EQUIPMENT_CATALOG } from '../features/master-import/services/corporateMasterService';
 import type { CorporateEquipment } from '../features/master-import/services/corporateMasterService';
 import type { Equipment, EquipmentFormData } from '../features/equipment/services/equipmentService';
 
@@ -54,7 +53,6 @@ export default function EquipmentPage() {
       <div className="h-full max-h-full flex-1 flex flex-col min-h-0 overflow-hidden box-border overscroll-none">
         <EquipmentImportView
           onBack={() => setShowImport(false)}
-          catalog={CORPORATE_EQUIPMENT_CATALOG}
           existingCodes={existingCodes}
           onImport={handleBatchImport}
         />

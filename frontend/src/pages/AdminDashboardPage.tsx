@@ -80,6 +80,7 @@ export default function AdminDashboardPage() {
           inProgressCount={stats.inProgressSupervisors}
           supervisorStatuses={stats.supervisorStatuses}
           todayEntries={stats.todayEntries}
+          activityCodes={stats.activityCodes}
         />
         <NeedsAttentionPanel items={stats.attentionItems} />
       </div>

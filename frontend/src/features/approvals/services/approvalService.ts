@@ -38,6 +38,48 @@ export interface ApprovalWorkerItem {
   status: string;
 }
 
+export interface ApprovalOperatorItem {
+  operatorId: string;
+  operatorCode: string;
+  callingName: string;
+  fullName: string;
+  tradeGroup: string;
+  inTime: string;
+  outTime: string;
+  hours: number;
+  otHours: number;
+  assignedEquipmentId: string | null;
+  assignedEquipmentDisplay: string;
+  status: string;
+  notes?: string;
+}
+
+export interface ApprovalEquipmentItem {
+  equipmentId: string;
+  equipmentCode: string;
+  equipmentName: string;
+  vehicleNo: string;
+  magaNo: string;
+  condition: string;
+  primaryUnit: string;
+  loggedQuantity: number;
+  initialMeter: number;
+  finalMeter: number;
+  netHours: number;
+  workingHours: number;
+  idleHours: number;
+  fuelLiters: number;
+  totalMileage: number;
+  remarks?: string;
+  status: string;
+  splits: Array<{
+    activityCode: string;
+    activityDesc: string;
+    unit: string;
+    utilization: number;
+  }>;
+}
+
 export interface SupervisorApprovalGroup {
   supervisorId: string;
   supervisorName: string;
@@ -47,8 +89,25 @@ export interface SupervisorApprovalGroup {
   totalHours: number;
   totalOvertime: number;
   submittedAt: string | null;
+  approvedAt?: string | null;
   status: 'submitted' | 'approved' | 'draft' | 'not_started';
+  counts?: {
+    laborAssigned: number;
+    laborWorked: number;
+    operatorsAssigned: number;
+    operatorsWorked: number;
+    equipmentAssigned: number;
+    equipmentRunning: number;
+  };
+  totals?: {
+    laborHours: number;
+    laborOvertime: number;
+    equipmentFuel: number;
+    equipmentDays: number;
+  };
   workers: ApprovalWorkerItem[];
+  operators?: ApprovalOperatorItem[];
+  equipment?: ApprovalEquipmentItem[];
 }
 
 export interface ApprovalStats {
@@ -57,6 +116,24 @@ export interface ApprovalStats {
   notSubmittedCount: number;
   approvedCount: number;
   totalWorkers: number;
+  labor?: {
+    totalAssigned: number;
+    attendedCount: number;
+    totalNormalHours: number;
+    totalOtHours: number;
+  };
+  operators?: {
+    totalAssigned: number;
+    deployedCount: number;
+    mappedCount: number;
+  };
+  equipment?: {
+    totalAssigned: number;
+    runningCount: number;
+    totalDays: number;
+    totalHours: number;
+    totalFuelLiters: number;
+  };
 }
 
 export interface ApprovalOverviewResponse {

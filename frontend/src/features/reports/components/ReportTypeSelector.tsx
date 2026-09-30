@@ -7,54 +7,70 @@
  *   - Inactive tab: text-slate-600 hover:text-slate-900
  *   - min-h-[44px], focus-visible:ring-2 ring-blue-600
  */
-import type { ReportType } from '../services/reportService';
-import { BarChart3, CalendarRange, Receipt, FileUp, Clock3 } from 'lucide-react';
+import type { ReportType, ReportCategory } from '../services/reportService';
+import { BarChart3, CalendarRange, Receipt, FileUp, Clock3, FileText, Truck } from 'lucide-react';
 
 interface Props {
   activeTab: ReportType;
   onTabChange: (tab: ReportType) => void;
+  category?: ReportCategory | null;
 }
 
 interface TabOption {
   id: ReportType;
   label: string;
   icon: React.ReactNode;
+  categories?: ReportCategory[];
 }
 
-const TABS: TabOption[] = [
-  { id: 'summary',        label: 'Summary',            icon: <BarChart3 size={16} /> },
-  { id: 'day-ot-summary', label: 'Day & OT Summary',   icon: <CalendarRange size={16} /> },
-  { id: 'bp-bill',        label: 'BP Bill',            icon: <Receipt size={16} /> },
-  { id: 'erp-upload',     label: 'ERP Upload Export',  icon: <FileUp size={16} /> },
-  { id: 'running-chart',  label: 'Running Chart',      icon: <Clock3 size={16} /> },
+const ALL_TABS: TabOption[] = [
+  // Labor Category
+  { id: 'time-card',               label: 'Time Card (Official)',      icon: <FileText size={16} />,     categories: ['labor'] },
+  { id: 'summary',                 label: 'Attendance Summary',       icon: <BarChart3 size={16} />,     categories: ['labor'] },
+  { id: 'day-ot-summary',          label: 'Day & OT Matrix',          icon: <CalendarRange size={16} />, categories: ['labor'] },
+  { id: 'bp-bill',                 label: 'BP Subcontractor Bill',    icon: <Receipt size={16} />,       categories: ['labor'] },
+  { id: 'erp-upload',              label: 'ERP Upload File',          icon: <FileUp size={16} />,        categories: ['labor'] },
+  // Operator Category
+  { id: 'running-chart',           label: 'Operator Running Chart',   icon: <Clock3 size={16} />,        categories: ['operator'] },
+  { id: 'time-card',               label: 'Operator Time Card',       icon: <FileText size={16} />,     categories: ['operator'] },
+  { id: 'bp-bill',                 label: 'BP Subcontractor Bill',    icon: <Receipt size={16} />,       categories: ['operator'] },
+  { id: 'summary',                 label: 'Attendance Summary',       icon: <BarChart3 size={16} />,     categories: ['operator'] },
+  // Equipment Category
+  { id: 'equipment-summary',       label: 'Equipment Entry Sheet',    icon: <FileText size={16} />,     categories: ['equipment'] },
+  { id: 'equipment-erp-upload',    label: 'ERP Upload Matrix',        icon: <FileUp size={16} />,        categories: ['equipment'] },
+  { id: 'equipment-running-chart', label: 'Equipment Running Chart',  icon: <Truck size={16} />,         categories: ['equipment'] },
 ];
 
-export default function ReportTypeSelector({ activeTab, onTabChange }: Props) {
+export default function ReportTypeSelector({ activeTab, onTabChange, category }: Props) {
+  const visibleTabs = category 
+    ? ALL_TABS.filter((t) => t.categories && t.categories.includes(category))
+    : ALL_TABS;
+
   return (
     <div
       role="tablist"
       aria-label="Report type selection"
-      className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100/90 border border-slate-200/90 rounded-xl"
+      className="flex flex-wrap items-center gap-1.5 p-1.5 bg-white border border-slate-300 rounded-xl shadow-2xs"
     >
-      {TABS.map((tab) => {
+      {visibleTabs.map((tab) => {
         const isActive = activeTab === tab.id;
         return (
           <button
-            key={tab.id}
+            key={`${category}-${tab.id}`}
             id={`tab-${tab.id}`}
             role="tab"
             aria-selected={isActive}
             aria-controls={`report-panel-${tab.id}`}
             onClick={() => onTabChange(tab.id)}
             className={[
-              'flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all min-h-[44px]',
+              'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all min-h-[38px]',
               'focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none select-none',
               isActive
-                ? 'bg-white text-blue-700 shadow-xs border border-slate-200/80 font-medium'
-                : 'text-slate-600 hover:text-slate-800 hover:bg-slate-200/60 font-normal',
+                ? 'bg-slate-100 text-slate-900 border border-slate-400 shadow-2xs'
+                : 'bg-white text-slate-600 border border-transparent hover:border-slate-300 hover:text-slate-900',
             ].join(' ')}
           >
-            <span className={isActive ? 'text-blue-700' : 'text-slate-500'}>
+            <span className={isActive ? 'text-slate-900' : 'text-slate-400'}>
               {tab.icon}
             </span>
             <span>{tab.label}</span>

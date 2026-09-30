@@ -8,12 +8,14 @@ import {
   deleteEmployee,
   getCrossTenantEmployeeStatus,
   transferEmployee,
+  getCorporateEmployeesCatalog,
 } from '../controllers/employeeController';
 import { requireAdmin } from '../middleware/authMiddleware';
 
 const router = Router();
 
 // Cross-tenant & Transfer routes (protected with authorization)
+router.get('/corporate-master', getCorporateEmployeesCatalog);
 router.post('/cross-tenant-status', requireAdmin, getCrossTenantEmployeeStatus);
 router.post('/transfer', requireAdmin, transferEmployee);
 

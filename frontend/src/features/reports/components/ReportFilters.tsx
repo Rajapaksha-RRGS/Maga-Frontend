@@ -23,10 +23,10 @@ interface Props {
 }
 
 const INPUT_CLASS =
-  'w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-800 min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-colors placeholder:text-slate-400';
+  'w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs text-slate-800 min-h-[40px] focus:ring-2 focus:ring-blue-600 focus:border-slate-400 outline-none transition-colors placeholder:text-slate-400';
 
 const LABEL_CLASS =
-  'text-xs font-medium text-slate-500 uppercase tracking-wide';
+  'text-[11px] font-semibold text-slate-600 uppercase tracking-wide';
 
 export default function ReportFiltersBar({
   activeTab,
@@ -38,8 +38,8 @@ export default function ReportFiltersBar({
   businessPartners,
   activityCodes,
 }: Props) {
-  const showBusinessPartner = activeTab !== 'erp-upload';
-  const showActivityCode = activeTab === 'erp-upload';
+  const showBusinessPartner = activeTab !== 'erp-upload' && activeTab !== 'equipment-erp-upload';
+  const showActivityCode = activeTab === 'erp-upload' || activeTab === 'equipment-erp-upload';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +49,7 @@ export default function ReportFiltersBar({
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-white rounded-lg border border-slate-200 p-4 shadow-2xs"
+      className="bg-white rounded-xl border border-slate-300 p-4 shadow-2xs"
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5 items-end">
         {/* Date From */}
@@ -150,17 +150,17 @@ export default function ReportFiltersBar({
           <button
             type="submit"
             disabled={isLoading}
-            className="flex-1 flex items-center justify-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-5 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+            className="flex-1 flex items-center justify-center gap-2 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-800 border border-slate-300 font-semibold text-xs rounded-lg px-4 min-h-[40px] transition-colors shadow-2xs disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
           >
             {isLoading ? (
               <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>Running…</span>
+                <div className="w-3.5 h-3.5 border-2 border-slate-600 border-t-transparent rounded-full animate-spin" />
+                <span>Loading…</span>
               </>
             ) : (
               <>
-                <Play size={16} className="fill-current" />
-                <span>Run report</span>
+                <Play size={13} className="text-slate-700 fill-current" />
+                <span>Run / Filter</span>
               </>
             )}
           </button>
@@ -171,9 +171,9 @@ export default function ReportFiltersBar({
               onClick={onResetFilters}
               title="Reset filters"
               aria-label="Reset filters"
-              className="w-11 h-11 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 active:bg-slate-100 transition-colors focus-visible:ring-2 focus-visible:ring-blue-600"
+              className="w-10 h-10 flex items-center justify-center rounded-lg border border-slate-300 text-slate-600 hover:text-slate-900 hover:bg-slate-50 active:bg-slate-100 transition-colors shadow-2xs"
             >
-              <RotateCcw size={16} />
+              <RotateCcw size={14} />
             </button>
           )}
         </div>

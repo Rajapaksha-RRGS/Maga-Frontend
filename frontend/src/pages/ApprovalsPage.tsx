@@ -123,7 +123,27 @@ export default function ApprovalsPage() {
       (s) =>
         s.supervisorName.toLowerCase().includes(q) ||
         s.username.toLowerCase().includes(q) ||
-        s.workers.some((w) => w.callingName.toLowerCase().includes(q) || w.employeeCode.toLowerCase().includes(q))
+        s.workers.some(
+          (w) =>
+            w.callingName.toLowerCase().includes(q) ||
+            w.employeeCode.toLowerCase().includes(q) ||
+            w.tradeGroup.toLowerCase().includes(q)
+        ) ||
+        (s.operators &&
+          s.operators.some(
+            (o) =>
+              (o.callingName && o.callingName.toLowerCase().includes(q)) ||
+              (o.fullName && o.fullName.toLowerCase().includes(q)) ||
+              o.operatorCode.toLowerCase().includes(q) ||
+              (o.assignedEquipmentDisplay && o.assignedEquipmentDisplay.toLowerCase().includes(q))
+          )) ||
+        (s.equipment &&
+          s.equipment.some(
+            (e) =>
+              e.equipmentCode.toLowerCase().includes(q) ||
+              (e.magaNo && e.magaNo.toLowerCase().includes(q)) ||
+              e.equipmentName.toLowerCase().includes(q)
+          ))
     );
   };
 
@@ -138,7 +158,7 @@ export default function ApprovalsPage() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Daily Attendance & Labour Approvals
+              Daily Site Operations & Approvals
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
               Admin Portal
@@ -217,7 +237,7 @@ export default function ApprovalsPage() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search supervisor, worker, or trade..."
+            placeholder="Search supervisor, worker, operator, equipment..."
             className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800"
           />
         </div>

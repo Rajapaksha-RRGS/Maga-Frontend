@@ -3,8 +3,7 @@
  *
  * Pastel Theme Analytics Panel: "Hours by Activity Code"
  * Harmonized with the dashboard's light pastel aesthetic.
- * Provides dual visualization modes (Treemap / Bar Chart) to analyze
- * labor man-hours and overtime distribution across site construction tasks.
+ * Strictly scoped to the current tenant/project's actual activity codes and logged time entries.
  */
 import { useState, useMemo } from 'react';
 import { 
@@ -14,10 +13,11 @@ import {
   Zap, 
   Users, 
   Activity,
-  ArrowUpRight
+  ArrowUpRight,
+  Plus
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { BackendTimeEntry } from '../../time-entries/services/timeEntryService';
+import type { BackendTimeEntry, ActivityCode } from '../../time-entries/services/timeEntryService';
 
 interface SupervisorStatus {
   id: string;
@@ -31,6 +31,7 @@ interface Props {
   inProgressCount?: number;
   supervisorStatuses?: SupervisorStatus[];
   todayEntries?: BackendTimeEntry[];
+  activityCodes?: ActivityCode[];
 }
 
 // ── Harmonious Soft Pastel Palettes for Construction Activities ──
@@ -85,70 +86,27 @@ const COLOR_PALETTES = [
   },
 ];
 
-const BENCHMARK_ACTIVITIES = [
-  {
-    code: 'ACT-101',
-    name: 'Concrete Pouring (Slab & Columns)',
-    trade: 'Masonry',
-    category: 'Civil',
-    hours: 56.0,
-    regularHours: 48.0,
-    otHours: 8.0,
-    workers: 7,
-    ...COLOR_PALETTES[0],
-  },
-  {
-    code: 'ACT-102',
-    name: 'Reinforcement & Bar-bending',
-    trade: 'Steel Fixer',
-    category: 'Structural',
-    hours: 42.5,
-    regularHours: 36.0,
-    otHours: 6.5,
-    workers: 5,
-    ...COLOR_PALETTES[1],
-  },
-  {
-    code: 'ACT-104',
-    name: 'Formwork & Shuttering Assembly',
-    trade: 'Carpenter',
-    category: 'Civil',
-    hours: 32.0,
-    regularHours: 28.0,
-    otHours: 4.0,
-    workers: 4,
-    ...COLOR_PALETTES[2],
-  },
-  {
-    code: 'ACT-103',
-    name: 'Bricklaying & Masonry Finishing',
-    trade: 'Mason',
-    category: 'Civil',
-    hours: 24.0,
-    regularHours: 24.0,
-    otHours: 0.0,
-    workers: 3,
-    ...COLOR_PALETTES[3],
-  },
-  {
-    code: 'ACT-108',
-    name: 'Excavation & Earthmoving Works',
-    trade: 'Plant Operator',
-    category: 'Plant',
-    hours: 18.0,
-    regularHours: 16.0,
-    otHours: 2.0,
-    workers: 2,
-    ...COLOR_PALETTES[4],
-  },
-];
-
 export default function TodayActivityPanel({
   todayEntries = [],
+  activityCodes = [],
 }: Props) {
   const [viewMode, setViewMode] = useState<'bar' | 'treemap'>('bar');
 
-  // Aggregate live todayEntries by Activity Code
+  // Map project activity codes for easy title/description lookup
+  const activityCodeMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (activityCodes || []).forEach((ac) => {
+      if (ac.code) {
+        map.set(ac.code.toLowerCase(), ac.description || ac.code);
+      }
+      if (ac.id) {
+        map.set(ac.id, ac.description || ac.code);
+      }
+    });
+    return map;
+  }, [activityCodes]);
+
+  // Aggregate live todayEntries by Activity Code strictly for the project/tenant
   const { isLive, items, totalHours, totalOtHours, totalWorkers } = useMemo(() => {
     const map = new Map<string, {
       code: string;
@@ -162,8 +120,15 @@ export default function TodayActivityPanel({
     }>();
 
     (todayEntries || []).forEach((entry) => {
-      const code = entry.activity?.code || (entry.activityId ? `ACT-${entry.activityId.slice(0, 4)}` : 'GEN-01');
-      const name = entry.activity?.description || entry.activity?.code || 'General Site Work';
+      const rawCode = entry.activity?.code || (entry.activityId ? `ACT-${entry.activityId.slice(0, 4)}` : '');
+      const code = rawCode || 'GENERAL';
+      const name =
+        entry.activity?.description ||
+        activityCodeMap.get(code.toLowerCase()) ||
+        activityCodeMap.get(entry.activityId) ||
+        entry.activity?.code ||
+        'General Construction Activity';
+
       const reg = Number(entry.hours) || 0;
       const ot = Number(entry.overtimeHours) || 0;
       const total = reg + ot;
@@ -172,7 +137,7 @@ export default function TodayActivityPanel({
         map.set(code, {
           code,
           name,
-          trade: 'General Civil',
+          trade: 'Site Works',
           category: 'Civil',
           regularHours: 0,
           otHours: 0,
@@ -202,21 +167,44 @@ export default function TodayActivityPanel({
       })
       .sort((a, b) => b.hours - a.hours);
 
-    const dataset = activeList.length > 0 ? activeList : BENCHMARK_ACTIVITIES;
-    const isRealLive = activeList.length > 0;
+    if (activeList.length > 0) {
+      const totH = activeList.reduce((sum, i) => sum + i.hours, 0);
+      const totOt = activeList.reduce((sum, i) => sum + i.otHours, 0);
+      const totW = activeList.reduce((sum, i) => sum + i.workers, 0);
 
-    const totH = dataset.reduce((sum, i) => sum + i.hours, 0);
-    const totOt = dataset.reduce((sum, i) => sum + i.otHours, 0);
-    const totW = dataset.reduce((sum, i) => sum + i.workers, 0);
+      return {
+        isLive: true,
+        items: activeList,
+        totalHours: totH,
+        totalOtHours: totOt,
+        totalWorkers: totW,
+      };
+    }
+
+    // If no live logged hours today, show the project's configured activity codes with 0h
+    const projectCodesList = (activityCodes || []).slice(0, 6).map((ac, idx) => {
+      const theme = COLOR_PALETTES[idx % COLOR_PALETTES.length];
+      return {
+        code: ac.code,
+        name: ac.description || ac.code,
+        trade: 'Site Task',
+        category: 'Project Code',
+        regularHours: 0,
+        otHours: 0,
+        hours: 0,
+        workers: 0,
+        ...theme,
+      };
+    });
 
     return {
-      isLive: isRealLive,
-      items: dataset,
-      totalHours: totH,
-      totalOtHours: totOt,
-      totalWorkers: totW,
+      isLive: false,
+      items: projectCodesList,
+      totalHours: 0,
+      totalOtHours: 0,
+      totalWorkers: 0,
     };
-  }, [todayEntries]);
+  }, [todayEntries, activityCodes, activityCodeMap]);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col gap-4 transition-colors">
@@ -231,9 +219,9 @@ export default function TodayActivityPanel({
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
               isLive
                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80'
-                : 'bg-blue-50 text-blue-700 border border-blue-200/80'
+                : 'bg-slate-100 text-slate-600 border border-slate-200/80'
             }`}>
-              {isLive ? '● Live Entries' : 'Sample Benchmark'}
+              {isLive ? '● Live Entries' : 'Project Codes (0h Today)'}
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
@@ -242,36 +230,38 @@ export default function TodayActivityPanel({
         </div>
 
         {/* View Switcher (Bar Chart vs Treemap) */}
-        <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200/80">
-          <button
-            type="button"
-            onClick={() => setViewMode('bar')}
-            className={[
-              'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all',
-              viewMode === 'bar'
-                ? 'bg-white text-slate-800 shadow-2xs'
-                : 'text-slate-500 hover:text-slate-800'
-            ].join(' ')}
-            title="Horizontal Bar Chart View"
-          >
-            <BarChart3 size={13} />
-            <span className="hidden sm:inline">Bars</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('treemap')}
-            className={[
-              'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all',
-              viewMode === 'treemap'
-                ? 'bg-white text-slate-800 shadow-2xs'
-                : 'text-slate-500 hover:text-slate-800'
-            ].join(' ')}
-            title="Proportional Treemap View"
-          >
-            <LayoutGrid size={13} />
-            <span className="hidden sm:inline">Treemap</span>
-          </button>
-        </div>
+        {items.length > 0 && (
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => setViewMode('bar')}
+              className={[
+                'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all',
+                viewMode === 'bar'
+                  ? 'bg-white text-slate-800 shadow-2xs'
+                  : 'text-slate-500 hover:text-slate-800'
+              ].join(' ')}
+              title="Horizontal Bar Chart View"
+            >
+              <BarChart3 size={13} />
+              <span className="hidden sm:inline">Bars</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('treemap')}
+              className={[
+                'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all',
+                viewMode === 'treemap'
+                  ? 'bg-white text-slate-800 shadow-2xs'
+                  : 'text-slate-500 hover:text-slate-800'
+              ].join(' ')}
+              title="Proportional Treemap View"
+            >
+              <LayoutGrid size={13} />
+              <span className="hidden sm:inline">Treemap</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── KPI Summary Bar in Soft Pastel Tones ────────────────────────── */}
@@ -313,110 +303,143 @@ export default function TodayActivityPanel({
         </div>
       </div>
 
-      {/* ── Visualization: Bar Chart View (Soft Pastel) ─────────────────── */}
-      {viewMode === 'bar' && (
-        <div className="space-y-3 pt-1">
-          {items.map((act, index) => {
-            const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
-            return (
-              <div key={act.code} className="space-y-1.5 group">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 min-w-0 pr-2">
-                    <span className="w-4 text-[10px] font-bold text-slate-400">#{index + 1}</span>
-                    <span className="font-mono font-bold text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/60">
-                      {act.code}
-                    </span>
-                    <span className="font-semibold text-slate-700 truncate text-[11px]" title={act.name}>
-                      {act.name}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0 font-mono text-right">
-                    <span className="font-bold text-slate-800 text-xs">
-                      {act.hours.toFixed(1)}h
-                    </span>
-                    {act.otHours > 0 && (
-                      <span className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200/60 px-1.5 py-0.2 rounded-full font-semibold hidden sm:inline">
-                        +{act.otHours.toFixed(1)}h OT
-                      </span>
-                    )}
-                    <span className="text-[10px] text-slate-400 w-8 text-right font-semibold">
-                      {pct}%
-                    </span>
-                  </div>
-                </div>
+      {/* ── Empty State if no project activity codes configured & no entries ── */}
+      {items.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 px-4 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+          <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center mb-2.5 shadow-2xs">
+            <Activity size={18} className="text-slate-400" />
+          </div>
+          <p className="text-xs font-bold text-slate-700">No Activity Codes in This Project</p>
+          <p className="text-[11px] text-slate-400 mt-1 max-w-xs">
+            Configure or import activity codes for this project so supervisors can record daily hours.
+          </p>
+          <Link
+            to="/admin/activity-codes"
+            className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors shadow-2xs"
+          >
+            <Plus size={13} />
+            <span>Manage Activity Codes</span>
+          </Link>
+        </div>
+      ) : (
+        <>
+          {/* ── Visualization: Bar Chart View (Soft Pastel) ─────────────────── */}
+          {viewMode === 'bar' && (
+            <div className="space-y-3 pt-1">
+              {items.map((act, index) => {
+                const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
+                return (
+                  <div key={act.code} className="space-y-1.5 group">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2 min-w-0 pr-2">
+                        <span className="w-4 text-[10px] font-bold text-slate-400">#{index + 1}</span>
+                        <span className="font-mono font-bold text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/60">
+                          {act.code}
+                        </span>
+                        <span className="font-semibold text-slate-700 truncate text-[11px]" title={act.name}>
+                          {act.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0 font-mono text-right">
+                        <span className="font-bold text-slate-800 text-xs">
+                          {act.hours.toFixed(1)}h
+                        </span>
+                        {act.otHours > 0 && (
+                          <span className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200/60 px-1.5 py-0.2 rounded-full font-semibold hidden sm:inline">
+                            +{act.otHours.toFixed(1)}h OT
+                          </span>
+                        )}
+                        <span className="text-[10px] text-slate-400 w-8 text-right font-semibold">
+                          {pct}%
+                        </span>
+                      </div>
+                    </div>
 
-                {/* Progress Bar with soft pastel gradient */}
-                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden flex">
+                    {/* Progress Bar with soft pastel gradient */}
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden flex">
+                      <div
+                        className={`h-full bg-gradient-to-r ${act.gradient} rounded-full transition-all duration-500`}
+                        style={{ width: `${totalHours > 0 ? Math.max(3, pct) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Visualization: Treemap View (Soft Pastel Cards) ─────────────── */}
+          {viewMode === 'treemap' && (
+            <div className="flex flex-wrap gap-2.5 pt-1 min-h-[160px]">
+              {items.map((act) => {
+                const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
+                const flexBasis = totalHours > 0 ? Math.max(120, Math.min(260, pct * 4)) : 140;
+
+                return (
                   <div
-                    className={`h-full bg-gradient-to-r ${act.gradient} rounded-full transition-all duration-500`}
-                    style={{ width: `${Math.max(3, pct)}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                    key={act.code}
+                    style={{ flex: totalHours > 0 ? `${pct} 1 ${flexBasis}px` : '1 1 140px' }}
+                    className={`p-3 rounded-xl border ${act.border} ${act.bgLight} flex flex-col justify-between transition-all duration-200 hover:scale-[1.01] hover:shadow-xs relative overflow-hidden group min-h-[96px]`}
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-white/90 text-slate-700 shadow-2xs border border-slate-200/50">
+                        {act.code}
+                      </span>
+                      <span className={`text-[11px] font-extrabold ${act.textColor} font-mono`}>
+                        {totalHours > 0 ? `${pct}%` : '0%'}
+                      </span>
+                    </div>
 
-      {/* ── Visualization: Treemap View (Soft Pastel Cards) ─────────────── */}
-      {viewMode === 'treemap' && (
-        <div className="flex flex-wrap gap-2.5 pt-1 min-h-[220px]">
-          {items.map((act) => {
-            const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
-            const flexBasis = Math.max(120, Math.min(260, pct * 4));
+                    <div className="my-1.5">
+                      <p className="text-xs font-bold text-slate-800 line-clamp-1 group-hover:line-clamp-none transition-all">
+                        {act.name}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        {act.trade} {act.workers > 0 ? `· ${act.workers} workers` : ''}
+                      </p>
+                    </div>
 
-            return (
-              <div
-                key={act.code}
-                style={{ flex: `${pct} 1 ${flexBasis}px` }}
-                className={`p-3 rounded-xl border ${act.border} ${act.bgLight} flex flex-col justify-between transition-all duration-200 hover:scale-[1.01] hover:shadow-xs relative overflow-hidden group min-h-[96px]`}
-              >
-                <div className="flex items-start justify-between gap-1">
-                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-white/90 text-slate-700 shadow-2xs border border-slate-200/50">
-                    {act.code}
-                  </span>
-                  <span className={`text-[11px] font-extrabold ${act.textColor} font-mono`}>
-                    {pct}%
-                  </span>
-                </div>
-
-                <div className="my-1.5">
-                  <p className="text-xs font-bold text-slate-800 line-clamp-1 group-hover:line-clamp-none transition-all">
-                    {act.name}
-                  </p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    {act.trade} · {act.workers} workers
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-xs">
-                  <span className="font-extrabold text-slate-800 font-mono">
-                    {act.hours.toFixed(1)} hrs
-                  </span>
-                  {act.otHours > 0 && (
-                    <span className="text-[9px] font-bold text-amber-700 bg-amber-100/70 border border-amber-200/60 px-1.5 py-0.2 rounded-md">
-                      +{act.otHours.toFixed(1)}h OT
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-xs">
+                      <span className="font-extrabold text-slate-800 font-mono">
+                        {act.hours.toFixed(1)} hrs
+                      </span>
+                      {act.otHours > 0 && (
+                        <span className="text-[9px] font-bold text-amber-700 bg-amber-100/70 border border-amber-200/60 px-1.5 py-0.2 rounded-md">
+                          +{act.otHours.toFixed(1)}h OT
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Footer Link ─────────────────────────────────────────────────── */}
       <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
         <span className="text-[11px] text-slate-400">
-          Showing {items.length} active construction trades
+          {isLive
+            ? `Showing ${items.length} active project tasks today`
+            : `${items.length} project activity codes configured`}
         </span>
-        <Link
-          to="/admin/reports"
-          className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 transition-colors"
-        >
-          <span>Full Labor Report</span>
-          <ArrowUpRight size={13} />
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            to="/admin/activity-codes"
+            className="text-xs font-semibold text-slate-600 hover:text-slate-800 hover:underline flex items-center gap-1 transition-colors"
+          >
+            <span>Activity Codes</span>
+          </Link>
+          <span className="text-slate-200">•</span>
+          <Link
+            to="/admin/reports"
+            className="text-xs font-semibold text-emerald-600 hover:text-emerald-800 hover:underline flex items-center gap-1 transition-colors"
+          >
+            <span>Full Labor Report</span>
+            <ArrowUpRight size={13} />
+          </Link>
+        </div>
       </div>
     </div>
   );

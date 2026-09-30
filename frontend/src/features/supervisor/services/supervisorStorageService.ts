@@ -17,6 +17,15 @@ export interface ActivityCodeItem {
   name: string;
   trade: string;
   category: string;
+  projectCode?: string;
+}
+
+export interface SupervisorDayStatus {
+  status: 'draft' | 'pending_submit' | 'submitted' | 'approved';
+  isLocked: boolean;
+  submittedAt?: string | null;
+  approvedAt?: string | null;
+  remarks?: string | null;
 }
 
 export interface ActivitySplit {
@@ -58,13 +67,24 @@ export interface OperatorEntry {
   lastSavedAt?: string;
 }
 
-export type EquipmentRatingUnit = 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2';
+export type EquipmentRatingUnit = 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2' | 'km';
+
+export interface EquipmentActivitySplit {
+  id: string;
+  activityCode: string;
+  unit: EquipmentRatingUnit;
+  utilization: number;
+  remarks?: string;
+}
 
 export interface EquipmentLogEntry {
   id: string;
   code: string;
+  vehicleNo?: string;
+  magaNo?: string;
   name: string;
   type: string;
+  condition?: 'DRY' | 'WET';
   
   // Rating Units (from Master Data)
   primaryUnit?: EquipmentRatingUnit;
@@ -80,6 +100,10 @@ export interface EquipmentLogEntry {
   hoursValue?: number; // for 'Hrs'
   extraHoursValue?: number; // for 'EX.hrs'
   areaValue?: number; // for 'm2'
+  startMileage?: number; // for 'km'
+  endMileage?: number;
+  totalMileage?: number;
+  totalUtilization?: number;
   
   workingHours: number;
   idleHours: number;
@@ -87,6 +111,14 @@ export interface EquipmentLogEntry {
   fuelIssuedLiters: number;
   operatorId?: string;
   activityCode?: string;
+  activitySplits?: EquipmentActivitySplit[];
+  activities?: Array<{
+    id?: string;
+    activityCode: string;
+    unit?: string;
+    utilization: number;
+    remarks?: string;
+  }>;
   status: 'draft' | 'pending' | 'done';
   remarks?: string;
   lastSavedAt?: string;
@@ -123,6 +155,13 @@ export const MASTER_SITES: SiteProject[] = [
     code: 'CEP-PKG-04',
     location: 'Meerigama Interchange',
     projectManager: 'Eng. S. Alwis',
+  },
+  {
+    id: 'site-iroad-531',
+    name: '531M - iRoad Package / Central Expressway',
+    code: 'M00000531',
+    location: 'Central Province / Expressway',
+    projectManager: 'Eng. K. Perera',
   },
 ];
 
@@ -451,23 +490,65 @@ export const supervisorStorage = {
     localStorage.setItem(ACTIVE_SITE_KEY, JSON.stringify(site));
   },
 
-  // ── 1. Master Activity Codes (Backend with Tenant Isolation + Offline Cache) 
+  // ── 1. Master Activity Codes (Backend with Tenant Isolation + Project Code Validation + Offline Cache) 
   async getActivityCodes(): Promise<ActivityCodeItem[]> {
-    const key = `${STORAGE_PREFIX}activities_cache`;
+    const activeSite = this.getActiveSite();
+    const siteCode = activeSite?.code;
+    const key = siteCode ? `${STORAGE_PREFIX}activities_cache_${siteCode}` : `${STORAGE_PREFIX}activities_cache`;
+
     try {
-      const res = await apiFetch(`${API_URL}/activity-codes`);
+      // 1. Fetch tenant/project activity codes from backend
+      const queryParam = siteCode ? `?projectCode=${encodeURIComponent(siteCode)}` : '';
+      const res = await apiFetch(`${API_URL}/activity-codes${queryParam}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          const mapped: ActivityCodeItem[] = data.map((d: any) => ({
-            id: d.id,
-            code: d.code,
-            name: d.description || d.code,
-            trade: d.trade || '',
-            category: d.category || '',
-          }));
-          localStorage.setItem(key, JSON.stringify(mapped));
-          return mapped;
+          // Validate: only accept activity codes belonging to our own project (or unassigned/global)
+          const validCodes = data.filter((d: any) => {
+            if (!d.projectCode || !siteCode) return true;
+            return d.projectCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
+          });
+
+          if (validCodes.length > 0) {
+            const mapped: ActivityCodeItem[] = validCodes.map((d: any) => ({
+              id: d.id,
+              code: d.code,
+              name: d.description || d.code,
+              trade: d.trade || '',
+              category: d.category || '',
+              projectCode: d.projectCode || siteCode,
+            }));
+            localStorage.setItem(key, JSON.stringify(mapped));
+            return mapped;
+          }
+        }
+      }
+
+      // 2. If tenant doesn't have codes for this project yet, query Corporate ERP Catalog by projectCode
+      if (siteCode) {
+        const corpRes = await apiFetch(`${API_URL}/activity-codes/corporate-master?projectCode=${encodeURIComponent(siteCode)}`);
+        if (corpRes.ok) {
+          const corpData = await corpRes.json();
+          if (Array.isArray(corpData) && corpData.length > 0) {
+            // Validate: strictly ensure each code belongs to our project
+            const validCorp = corpData.filter((d: any) => {
+              const pCode = d.projectCode || d.currentWorkingProject;
+              return !pCode || pCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
+            });
+
+            if (validCorp.length > 0) {
+              const mapped: ActivityCodeItem[] = validCorp.map((d: any) => ({
+                id: d.id,
+                code: d.code,
+                name: d.description || d.code,
+                trade: d.tradeGroup || '',
+                category: d.activityType || 'Civil',
+                projectCode: d.projectCode || siteCode,
+              }));
+              localStorage.setItem(key, JSON.stringify(mapped));
+              return mapped;
+            }
+          }
         }
       }
     } catch (err) {
@@ -477,7 +558,15 @@ export const supervisorStorage = {
     const cached = localStorage.getItem(key);
     if (cached) {
       try {
-        return JSON.parse(cached);
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Validate cached items against current site code
+          const validated = parsed.filter((item: ActivityCodeItem) => {
+            if (!item.projectCode || !siteCode) return true;
+            return item.projectCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
+          });
+          if (validated.length > 0) return validated;
+        }
       } catch {}
     }
     return MASTER_ACTIVITIES;
@@ -500,7 +589,7 @@ export const supervisorStorage = {
         if (res.ok) {
           const assignedData = await res.json();
           const existingLocal = this.getEquipment(date);
-          const localMap = new Map(existingLocal.map((e) => [e.id, e]));
+          const localMap = new Map<string, EquipmentLogEntry>(existingLocal.map((e) => [e.id, e]));
 
           const mapped: EquipmentLogEntry[] = (assignedData || []).map((asgn: any) => {
             const existing = localMap.get(asgn.equipmentId) || localMap.get(asgn.id);
@@ -610,35 +699,59 @@ export const supervisorStorage = {
         const assignedList = await resAssigned.json();
         const timeEntryList = resEntries.ok ? await resEntries.json() : [];
 
-        // Check if entries for this day are already submitted and locked
-        const isSubmitted = timeEntryList.some((t: any) => t.status === 'submitted');
-        if (isSubmitted) {
-          this.lockDay(date);
-        }
+        // Check if entries for this day are already submitted or approved
+        const isSubmitted = timeEntryList.some((t: any) => t.status === 'submitted' || t.status === 'approved');
+
+        // Existing local drafts map for smart reconciliation
+        const existingLocal = this.getLaborers(date);
+        const localMap = new Map<string, LaborerEntry>(existingLocal.map((l) => [l.id, l]));
 
         // Map assigned workers with attendance, hours, and activity splits
         const laborList: LaborerEntry[] = (assignedList || []).map((emp: any) => {
           const myEntries = timeEntryList.filter((e: any) => e.employeeId === emp.id);
+          const localDraft = localMap.get(emp.id);
 
-          const inTime = myEntries.length > 0 ? (myEntries[0].inTime || '') : '';
-          const outTime = myEntries.length > 0 ? (myEntries[0].outTime || '') : '';
+          const hasBackendEntries = myEntries.length > 0 && (myEntries[0].inTime || myEntries[0].outTime || myEntries[0].hours > 0);
 
-          const shiftHours = myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0);
-          const otHours = myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0);
+          // Priority rule:
+          // If backend has submitted/approved records OR recorded time entries, prioritize backend.
+          // If backend has no recorded entries for this worker, preserve the supervisor's local draft.
+          const inTime = (isSubmitted || hasBackendEntries)
+            ? (myEntries[0]?.inTime || '')
+            : (localDraft?.inTime || '');
 
-          const activities: ActivitySplit[] = myEntries
-            .filter((e: any) => e.activity?.code || e.activityId)
-            .map((e: any, idx: number) => ({
-              id: e.id || `act-${idx}`,
-              activityCode: e.activity?.code || '',
-              hours: Number(e.hours) || 0,
-            }));
+          const outTime = (isSubmitted || hasBackendEntries)
+            ? (myEntries[0]?.outTime || '')
+            : (localDraft?.outTime || '');
+
+          const shiftHours = (isSubmitted || hasBackendEntries)
+            ? myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0)
+            : (localDraft?.shiftHours || 0);
+
+          const otHours = (isSubmitted || hasBackendEntries)
+            ? myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0)
+            : (localDraft?.otHours || 0);
+
+          let activities: ActivitySplit[] = [];
+          if (isSubmitted || hasBackendEntries) {
+            activities = myEntries
+              .filter((e: any) => e.activity?.code || e.activityId)
+              .map((e: any, idx: number) => ({
+                id: e.id || `act-${idx}`,
+                activityCode: e.activity?.code || '',
+                hours: Number(e.hours) || 0,
+              }));
+          } else {
+            activities = localDraft?.activities || [];
+          }
 
           let status: 'draft' | 'pending' | 'done' = 'pending';
           if (isSubmitted) {
             status = 'done';
           } else if (inTime && outTime) {
-            status = myEntries.some((e: any) => e.status === 'draft') ? 'draft' : 'done';
+            status = myEntries.some((e: any) => e.status === 'draft') ? 'draft' : (localDraft?.status || 'done');
+          } else if (inTime || outTime) {
+            status = 'draft';
           }
 
           return {
@@ -654,10 +767,11 @@ export const supervisorStorage = {
             otHours,
             activities,
             status,
+            lastSavedAt: localDraft?.lastSavedAt,
           };
         });
 
-        // Cache real data in localStorage for offline accessibility
+        // Cache safe reconciled data in localStorage
         localStorage.setItem(key, JSON.stringify(laborList));
         return laborList;
       }
@@ -701,7 +815,7 @@ export const supervisorStorage = {
       if (res.ok) {
         const assignedData = await res.json();
         const existingLocal = this.getOperators(date);
-        const localMap = new Map(existingLocal.map((o) => [o.id, o]));
+        const localMap = new Map<string, OperatorEntry>(existingLocal.map((o) => [o.id, o]));
 
         const mapped: OperatorEntry[] = (assignedData || []).map((asgn: any) => {
           const opId = asgn.operatorId || asgn.id;
@@ -759,10 +873,11 @@ export const supervisorStorage = {
     this.incrementPendingSync();
   },
 
-  // ── 6. Day Lock Status ────────────────────────────────────────────────────
+  // ── 6. Day Lock Status & Server Lifecycle ────────────────────────────────
   isDayLocked(date: string): boolean {
     const key = `${STORAGE_PREFIX}locked_${date}`;
-    return localStorage.getItem(key) === 'true';
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    return localStorage.getItem(key) === 'true' || localStorage.getItem(pendingKey) === 'true';
   },
 
   lockDay(date: string) {
@@ -772,7 +887,127 @@ export const supervisorStorage = {
 
   unlockDay(date: string) {
     const key = `${STORAGE_PREFIX}locked_${date}`;
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
     localStorage.removeItem(key);
+    localStorage.removeItem(pendingKey);
+    localStorage.removeItem(`${STORAGE_PREFIX}status_${date}`);
+  },
+
+  getDayStatus(date: string): SupervisorDayStatus {
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    if (localStorage.getItem(pendingKey) === 'true') {
+      return {
+        status: 'pending_submit',
+        isLocked: true,
+        submittedAt: null,
+        approvedAt: null,
+        remarks: null,
+      };
+    }
+
+    const serverStatus = localStorage.getItem(`${STORAGE_PREFIX}status_${date}`) as any;
+    const isLocked = this.isDayLocked(date);
+    const remarks = localStorage.getItem(`${STORAGE_PREFIX}remarks_${date}`);
+
+    return {
+      status: serverStatus || (isLocked ? 'submitted' : 'draft'),
+      isLocked,
+      submittedAt: localStorage.getItem(`${STORAGE_PREFIX}submitted_at_${date}`),
+      approvedAt: localStorage.getItem(`${STORAGE_PREFIX}approved_at_${date}`),
+      remarks: remarks || null,
+    };
+  },
+
+  async fetchDayStatus(supervisorId: string, date: string): Promise<SupervisorDayStatus> {
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    const isPendingOffline = localStorage.getItem(pendingKey) === 'true';
+
+    try {
+      const res = await apiFetch(
+        `${API_URL}/time-entries/day-status?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(date)}`
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        const serverStatus = data.status || 'draft';
+
+        localStorage.setItem(`${STORAGE_PREFIX}status_${date}`, serverStatus);
+        if (data.remarks) {
+          localStorage.setItem(`${STORAGE_PREFIX}remarks_${date}`, data.remarks);
+        } else {
+          localStorage.removeItem(`${STORAGE_PREFIX}remarks_${date}`);
+        }
+        if (data.submittedAt) {
+          localStorage.setItem(`${STORAGE_PREFIX}submitted_at_${date}`, data.submittedAt);
+        }
+        if (data.approvedAt) {
+          localStorage.setItem(`${STORAGE_PREFIX}approved_at_${date}`, data.approvedAt);
+        }
+
+        if (serverStatus === 'submitted' || serverStatus === 'approved') {
+          this.lockDay(date);
+          localStorage.removeItem(pendingKey);
+        } else if (serverStatus === 'draft') {
+          // If server status is draft and not queued offline, unlock locally
+          // (This happens when Admin rejects / returns day for corrections)
+          if (!isPendingOffline) {
+            localStorage.removeItem(`${STORAGE_PREFIX}locked_${date}`);
+          }
+        }
+
+        return {
+          status: isPendingOffline ? 'pending_submit' : serverStatus,
+          isLocked: isPendingOffline || serverStatus === 'submitted' || serverStatus === 'approved',
+          submittedAt: data.submittedAt || null,
+          approvedAt: data.approvedAt || null,
+          remarks: data.remarks || null,
+        };
+      }
+    } catch (err) {
+      console.warn('Could not fetch server day status, using cached status:', err);
+    }
+
+    return this.getDayStatus(date);
+  },
+
+  queueOfflineSubmission(date: string) {
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    localStorage.setItem(pendingKey, 'true');
+    this.lockDay(date);
+
+    try {
+      const queueKey = `${STORAGE_PREFIX}offline_submits_queue`;
+      const currentQueue: string[] = JSON.parse(localStorage.getItem(queueKey) || '[]');
+      if (!currentQueue.includes(date)) {
+        currentQueue.push(date);
+        localStorage.setItem(queueKey, JSON.stringify(currentQueue));
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  clearOfflineSubmission(date: string) {
+    const pendingKey = `${STORAGE_PREFIX}pending_submit_${date}`;
+    localStorage.removeItem(pendingKey);
+
+    try {
+      const queueKey = `${STORAGE_PREFIX}offline_submits_queue`;
+      let currentQueue: string[] = JSON.parse(localStorage.getItem(queueKey) || '[]');
+      currentQueue = currentQueue.filter((d) => d !== date);
+      localStorage.setItem(queueKey, JSON.stringify(currentQueue));
+    } catch {
+      // ignore
+    }
+  },
+
+  getQueuedSubmissions(): string[] {
+    try {
+      const queueKey = `${STORAGE_PREFIX}offline_submits_queue`;
+      return JSON.parse(localStorage.getItem(queueKey) || '[]');
+    } catch {
+      return [];
+    }
   },
 
   // ── 7. Offline Sync Queue ─────────────────────────────────────────────────
@@ -797,14 +1032,21 @@ export const supervisorStorage = {
   async syncToBackend(supervisorId: string, date: string): Promise<boolean> {
     const laborers = this.getLaborers(date);
     const operators = this.getOperators(date);
+    const equipment = this.getEquipment(date);
 
     try {
+      // Pre-fetch all real tenant activity codes once
+      const allActivities = await this.getActivityCodes();
+      const defaultActivityId = allActivities[0]?.id;
+
       // 1. Sync Laborers attendance and activity splits
       for (const lab of laborers) {
         if (lab.activities.length > 0) {
           for (const act of lab.activities) {
-            const actObj = await this.resolveActivityByCode(act.activityCode);
-            if (actObj?.id) {
+            const actObj = allActivities.find((a) => a.code === act.activityCode);
+            const resolvedActId = actObj?.id || defaultActivityId;
+
+            if (resolvedActId) {
               await apiFetch(`${API_URL}/time-entries/upsert`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -812,7 +1054,7 @@ export const supervisorStorage = {
                   employeeId: lab.id,
                   supervisorId,
                   date,
-                  activityId: actObj.id,
+                  activityId: resolvedActId,
                   hours: act.hours,
                   inTime: lab.inTime || undefined,
                   outTime: lab.outTime || undefined,
@@ -821,29 +1063,46 @@ export const supervisorStorage = {
             }
           }
         } else if (lab.inTime || lab.outTime) {
-          if (lab.inTime) {
-            await apiFetch(`${API_URL}/time-entries/check-in`, {
+          // If worker has in/out times but no explicit activity split, still create/upsert a time entry using default activity
+          if (defaultActivityId) {
+            await apiFetch(`${API_URL}/time-entries/upsert`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 employeeId: lab.id,
                 supervisorId,
                 date,
-                inTime: lab.inTime,
+                activityId: defaultActivityId,
+                hours: lab.shiftHours || 0,
+                inTime: lab.inTime || undefined,
+                outTime: lab.outTime || undefined,
               }),
             });
-          }
-          if (lab.outTime) {
-            await apiFetch(`${API_URL}/time-entries/check-out`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                employeeId: lab.id,
-                supervisorId,
-                date,
-                outTime: lab.outTime,
-              }),
-            });
+          } else {
+            if (lab.inTime) {
+              await apiFetch(`${API_URL}/time-entries/check-in`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  employeeId: lab.id,
+                  supervisorId,
+                  date,
+                  inTime: lab.inTime,
+                }),
+              });
+            }
+            if (lab.outTime) {
+              await apiFetch(`${API_URL}/time-entries/check-out`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  employeeId: lab.id,
+                  supervisorId,
+                  date,
+                  outTime: lab.outTime,
+                }),
+              });
+            }
           }
         }
       }
@@ -861,11 +1120,49 @@ export const supervisorStorage = {
               entries: validOps.map((op) => ({
                 operatorId: op.id,
                 equipmentId: op.assignedEquipmentId || undefined,
+                assignedEquipmentId: op.assignedEquipmentId || undefined,
                 inTime: op.inTime || undefined,
                 outTime: op.outTime || undefined,
+                shiftHours: op.shiftHours || 0,
                 hours: op.shiftHours || 0,
+                otHours: op.otHours || 0,
                 overtimeHours: op.otHours || 0,
                 notes: op.notes || undefined,
+              })),
+            }),
+          });
+        }
+      }
+
+      // 3. Sync Equipment if any
+      if (equipment.length > 0) {
+        const validEq = equipment.filter((e: any) => (e.netHours && e.netHours > 0) || (e.daysValue && e.daysValue > 0) || (e.hoursValue && e.hoursValue > 0) || (e.totalMileage && e.totalMileage > 0) || e.startMeter > 0);
+        if (validEq.length > 0) {
+          await apiFetch(`${API_URL}/time-entries/equipment/bulk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              supervisorId,
+              date,
+              entries: validEq.map((eq: any) => ({
+                id: eq.id,
+                condition: eq.condition || 'DRY',
+                startMeter: eq.startMeter || 0,
+                endMeter: eq.endMeter || 0,
+                netHours: eq.netHours || 0,
+                daysValue: eq.daysValue,
+                hoursValue: eq.hoursValue,
+                workingHours: eq.workingHours || 0,
+                idleHours: eq.idleHours || 0,
+                breakdownHours: eq.breakdownHours || 0,
+                fuelLiters: eq.fuelIssuedLiters || 0,
+                totalMileage: eq.totalMileage || 0,
+                startMileage: eq.startMileage || 0,
+                endMileage: eq.endMileage || 0,
+                totalUtilization: eq.totalUtilization,
+                remarks: eq.remarks,
+                status: eq.status,
+                activitySplits: eq.activitySplits,
               })),
             }),
           });
@@ -880,28 +1177,84 @@ export const supervisorStorage = {
     }
   },
 
-  // ── 9. Submit & Lock Day on Backend ───────────────────────────────────────
-  async submitDayToBackend(supervisorId: string, date: string): Promise<boolean> {
-    // Sync all pending drafts first
-    await this.syncToBackend(supervisorId, date);
+  // ── 9. Submit & Lock Day on Backend (Offline-First Resilient) ─────────────
+  async submitDayToBackend(
+    supervisorId: string,
+    date: string
+  ): Promise<{ success: boolean; offline: boolean; message?: string }> {
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-    // Call submit endpoint to validate complete check-in/out and lock
-    const res = await apiFetch(`${API_URL}/time-entries/submit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        supervisorId,
-        date,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      throw new Error(err?.error || 'Failed to submit and lock day on backend');
+    if (!isOnline) {
+      this.queueOfflineSubmission(date);
+      return {
+        success: true,
+        offline: true,
+        message: 'Network offline: Shift roster locked locally and queued. It will automatically submit once internet is connected.',
+      };
     }
 
-    this.lockDay(date);
-    this.resetPendingSync();
-    return true;
+    try {
+      // 1. Sync all pending drafts first
+      await this.syncToBackend(supervisorId, date);
+
+      // 2. Call submit endpoint on backend
+      const res = await apiFetch(`${API_URL}/time-entries/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supervisorId, date }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || 'Failed to submit and lock day on backend');
+      }
+
+      // 3. Mark submitted permanently
+      this.clearOfflineSubmission(date);
+      this.lockDay(date);
+      localStorage.setItem(`${STORAGE_PREFIX}status_${date}`, 'submitted');
+      localStorage.removeItem(`${STORAGE_PREFIX}remarks_${date}`);
+      this.resetPendingSync();
+
+      return { success: true, offline: false };
+    } catch (err: any) {
+      const msg = err?.message || '';
+      const isNetworkError =
+        err?.name === 'TypeError' ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('Network') ||
+        msg.includes('aborted') ||
+        !navigator.onLine;
+
+      if (isNetworkError) {
+        this.queueOfflineSubmission(date);
+        return {
+          success: true,
+          offline: true,
+          message: 'Connection dropped during submission. Roster saved safely and queued to auto-submit when reconnected.',
+        };
+      }
+
+      // Validation or server error (e.g. incomplete check in/out) - throw so user sees and fixes it
+      throw err;
+    }
+  },
+
+  async flushQueuedSubmissions(supervisorId: string): Promise<string[]> {
+    const queuedDates = this.getQueuedSubmissions();
+    const successful: string[] = [];
+
+    for (const date of queuedDates) {
+      try {
+        const result = await this.submitDayToBackend(supervisorId, date);
+        if (!result.offline) {
+          successful.push(date);
+        }
+      } catch (err) {
+        console.warn(`Could not flush queued submit for ${date}:`, err);
+      }
+    }
+
+    return successful;
   },
 };

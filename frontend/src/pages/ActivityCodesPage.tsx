@@ -1,7 +1,7 @@
 /**
  * ActivityCodesPage.tsx — Admin activity code CRUD page.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Database } from 'lucide-react';
 import { useActivityCodes } from '../features/activity-codes/hooks/useActivityCodes';
 import ActivityCodeTable from '../features/activity-codes/components/ActivityCodeTable';
@@ -12,8 +12,7 @@ import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
 import MasterImportModal from '../features/master-import/components/MasterImportModal';
 import Breadcrumb from '../components/Breadcrumb';
-import { CORPORATE_ACTIVITY_CATALOG } from '../features/master-import/services/corporateMasterService';
-import type { CorporateActivityCode } from '../features/master-import/services/corporateMasterService';
+import { fetchCorporateActivityCodes, type CorporateActivityCode } from '../features/master-import/services/corporateMasterService';
 import type { ActivityCode } from '../features/activity-codes/services/activityCodeService';
 
 export default function ActivityCodesPage() {
@@ -35,16 +34,40 @@ export default function ActivityCodesPage() {
     return new Set(filtered.map((c) => c.code.toUpperCase()));
   }, [filtered]);
 
+  const [catalogItems, setCatalogItems] = useState<CorporateActivityCode[]>([]);
+
+  useEffect(() => {
+    if (importModalOpen) {
+      fetchCorporateActivityCodes()
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setCatalogItems(data);
+          }
+        })
+        .catch((e) => console.error(e));
+    }
+  }, [importModalOpen]);
+
   const handleBatchImport = async (items: CorporateActivityCode[]) => {
     for (const item of items) {
       await add({
         code: item.code,
         description: item.description,
+        projectCode: item.projectCode || item.currentWorkingProject,
       });
     }
   };
 
   const activityColumns = [
+    {
+      key: 'projectCode',
+      header: 'Project Code',
+      render: (item: CorporateActivityCode) => (
+        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+          {item.projectCode || item.currentWorkingProject || 'Global'}
+        </span>
+      ),
+    },
     {
       key: 'searchKey',
       header: 'Search Key',
@@ -115,12 +138,12 @@ export default function ActivityCodesPage() {
         title="Corporate ERP Master Catalog — Activity & BOQ Codes"
         subtitle="Search standard CIDA/ICTAD & SSCM construction activity codes and import into this project."
         entityName="Activity Code"
-        catalog={CORPORATE_ACTIVITY_CATALOG}
+        catalog={catalogItems}
         existingCodes={existingCodes}
         getItemCode={(item) => item.code}
         getItemName={(item) => item.description}
         getItemCategory={(item) => item.activityType || item.tradeGroup || 'Work Package'}
-        getItemSourceProject={(item) => item.currentWorkingProject || item.sourceProject || 'Maga - CWS'}
+        getItemSourceProject={(item) => item.projectCode || item.currentWorkingProject || item.sourceProject || 'Maga - CWS'}
         columns={activityColumns}
         onImport={handleBatchImport}
       />

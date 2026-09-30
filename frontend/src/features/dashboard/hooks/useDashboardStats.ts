@@ -37,6 +37,7 @@ export interface DashboardStats {
   supervisorStatuses: SupervisorStatus[];
   attentionItems: AttentionItem[];
   todayEntries: BackendTimeEntry[];
+  activityCodes: timeEntrySvc.ActivityCode[];
   isLoading: boolean;
 }
 
@@ -54,6 +55,7 @@ const INITIAL: DashboardStats = {
   supervisorStatuses: [],
   attentionItems: [],
   todayEntries: [],
+  activityCodes: [],
   isLoading: true,
 };
 
@@ -67,11 +69,12 @@ export function useDashboardStats(): DashboardStats {
     }
     try {
       const today = formatDate(new Date());
-      const [employees, supervisors, assignments, todayEntries] = await Promise.all([
+      const [employees, supervisors, assignments, todayEntries, activityCodes] = await Promise.all([
         empSvc.getAll(undefined, forceRefresh),
         supSvc.getAll(forceRefresh),
         asgnSvc.getForDate(today, forceRefresh),
         timeEntrySvc.getTimeEntries(undefined, today),
+        timeEntrySvc.getActivityCodes(),
       ]);
 
       const activeEmps = employees.filter((e) => e.status === 'active');
@@ -149,6 +152,7 @@ export function useDashboardStats(): DashboardStats {
         supervisorStatuses,
         attentionItems,
         todayEntries,
+        activityCodes: activityCodes || [],
         isLoading: false,
       };
 

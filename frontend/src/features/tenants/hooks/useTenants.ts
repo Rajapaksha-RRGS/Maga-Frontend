@@ -70,7 +70,7 @@ export function useTenants() {
     return { total, active, suspended, totalAdmins };
   }, [tenants]);
 
-  const register = async (input: TenantRegisterInput) => {
+  const register = async (input: TenantRegisterInput): Promise<{ success: boolean; error?: string }> => {
     setIsSubmitting(true);
     setError(null);
     try {
@@ -83,25 +83,27 @@ export function useTenants() {
         });
       }
       await load();
-      return true;
+      return { success: true };
     } catch (err: any) {
-      setError(err.message || 'Failed to register tenant');
-      return false;
+      const msg = err.message || 'Failed to register tenant';
+      setError(msg);
+      return { success: false, error: msg };
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const update = async (id: string, input: TenantUpdateInput) => {
+  const update = async (id: string, input: TenantUpdateInput): Promise<{ success: boolean; error?: string }> => {
     setIsSubmitting(true);
     setError(null);
     try {
       await svc.updateTenant(id, input);
       await load();
-      return true;
+      return { success: true };
     } catch (err: any) {
-      setError(err.message || 'Failed to update tenant');
-      return false;
+      const msg = err.message || 'Failed to update tenant';
+      setError(msg);
+      return { success: false, error: msg };
     } finally {
       setIsSubmitting(false);
     }

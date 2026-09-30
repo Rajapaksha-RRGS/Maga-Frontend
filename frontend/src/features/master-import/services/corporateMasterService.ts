@@ -19,6 +19,20 @@ export interface CorporateEquipment {
   capacity: string;
   sourceProject: string;
   status: 'active';
+  
+  // Real Project & ERP Suffix Fields
+  standardEquipmentNumber?: string;
+  equipmentName?: string;
+  vehicleNo?: string;
+  magaNo?: string;
+  condition?: 'DRY' | 'WET';
+  unit?: string;
+  erpSuffixCode?: string;
+  erpNewCode?: string;
+  dailyRate?: number;
+  minimumUtilization?: number;
+  minUtilization?: number;
+  businessPartner?: string;
 }
 
 export interface CorporateBusinessPartner {
@@ -52,6 +66,8 @@ export interface CorporateEmployee {
 }
 
 export interface CorporateActivityCode {
+  id?: string;
+  projectCode?: string;
   code: string;
   description: string;
   searchKey?: string;
@@ -78,6 +94,95 @@ export interface CorporateProject {
 
 // ── 1. Central Corporate Equipment Master ─────────────────────────────────────
 export const CORPORATE_EQUIPMENT_CATALOG: CorporateEquipment[] = [
+  // ── Multi-Tariff ERP Master Examples from User Specification ──
+  {
+    code: 'MGEN0140',
+    standardEquipmentNumber: 'MGEN0140',
+    name: 'EX-demo',
+    equipmentName: 'EX-demo',
+    searchKey: 'EX-DEMO',
+    costRate: 1000.0,
+    dailyRate: 1000.0,
+    unit: 'hrs',
+    minimumUtilization: 178,
+    minUtilization: 178,
+    businessPartner: 'BP 1000562',
+    condition: 'DRY',
+    erpNewCode: 'MGEN0140',
+    currency: 'LKR',
+    type: 'Heavy Machinery',
+    model: 'EX-DEMO',
+    registrationNo: '',
+    capacity: 'Heavy Machinery',
+    sourceProject: 'Central Depot',
+    status: 'active',
+  },
+  {
+    code: 'MGEN0140A',
+    standardEquipmentNumber: 'MGEN0140',
+    name: 'EX-demo',
+    equipmentName: 'EX-demo',
+    searchKey: 'EX-DEMO',
+    costRate: 220000.0,
+    dailyRate: 220000.0,
+    unit: 'Mth',
+    minimumUtilization: 178,
+    minUtilization: 178,
+    businessPartner: 'BP 1000562',
+    condition: 'DRY',
+    erpNewCode: 'MGEN0140A',
+    currency: 'LKR',
+    type: 'Heavy Machinery',
+    model: 'EX-DEMO',
+    registrationNo: '',
+    capacity: 'Heavy Machinery',
+    sourceProject: 'Central Depot',
+    status: 'active',
+  },
+  {
+    code: 'MGEN0160',
+    standardEquipmentNumber: 'MGEN0160',
+    name: 'Generator Denyo DCA45SPI 14KV',
+    equipmentName: 'Generator Denyo DCA45SPI 14KV',
+    searchKey: 'DENYO DCA45SPI',
+    costRate: 1200.0,
+    dailyRate: 1200.0,
+    unit: 'hrs',
+    minimumUtilization: 125,
+    minUtilization: 125,
+    businessPartner: 'BP 1000561',
+    condition: 'DRY',
+    erpNewCode: 'MGEN0160',
+    currency: 'LKR',
+    type: 'Generator',
+    model: 'DCA45SPI 14KV',
+    registrationNo: '',
+    capacity: '14 kVA',
+    sourceProject: 'Central Depot',
+    status: 'active',
+  },
+  {
+    code: 'MGEN0127',
+    standardEquipmentNumber: 'MGEN0127',
+    name: 'Ex',
+    equipmentName: 'Ex',
+    searchKey: 'EX',
+    costRate: 1560.0,
+    dailyRate: 1560.0,
+    unit: 'hrs',
+    minimumUtilization: 156,
+    minUtilization: 156,
+    businessPartner: 'BP 1000560',
+    condition: 'DRY',
+    erpNewCode: 'MGEN0127',
+    currency: 'LKR',
+    type: 'Heavy Machinery',
+    model: 'Ex',
+    registrationNo: '',
+    capacity: 'Heavy',
+    sourceProject: 'Central Depot',
+    status: 'active',
+  },
   // ── Maga ERP Live Central Master Records ──
   {
     code: 'MCBW0005',
@@ -1353,4 +1458,84 @@ export function getUniqueCategories(items: { type?: string; tradeGroup?: string;
     new Set(items.map((i) => i.type || i.tradeGroup || i.activityType || '').filter(Boolean))
   ).sort();
 }
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const getHeaders = (): Record<string, string> => {
+  const token = localStorage.getItem('token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
+export const fetchCorporateBusinessPartners = async (): Promise<CorporateBusinessPartner[]> => {
+  try {
+    const res = await fetch(`${API_URL}/business-partners/corporate-master`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch');
+    return res.json();
+  } catch (error) {
+    console.error('Error fetching corporate partners:', error);
+    return CORPORATE_PARTNERS_CATALOG; // fallback
+  }
+};
+
+export const fetchCorporateEquipment = async (): Promise<CorporateEquipment[]> => {
+  try {
+    const res = await fetch(`${API_URL}/equipment/corporate-master`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch');
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map((item: any) => ({
+        ...item,
+        code: item.erpNewCode || item.code || item.standardEquipmentNumber || '',
+        name: item.equipmentName || item.name || item.description || item.standardEquipmentNumber || 'Equipment',
+        type: item.type || 'Equipment',
+        sourceProject: item.sourceProject || item.currentWorkingProject || 'Central Depot',
+        costRate: typeof item.costRate === 'number' ? item.costRate : Number(item.dailyRate ?? item.costRate ?? 0),
+        dailyRate: typeof item.dailyRate === 'number' ? item.dailyRate : Number(item.dailyRate ?? item.costRate ?? 0),
+        model: item.model || '',
+        registrationNo: item.registrationNo || item.vehicleNo || '',
+        searchKey: item.searchKey || item.equipmentName || item.name || '',
+      }));
+    }
+    return CORPORATE_EQUIPMENT_CATALOG;
+  } catch (error) {
+    console.error('Error fetching corporate equipment:', error);
+    return CORPORATE_EQUIPMENT_CATALOG; // fallback
+  }
+};
+
+export const fetchCorporateEmployees = async (): Promise<CorporateEmployee[]> => {
+  try {
+    const res = await fetch(`${API_URL}/employees/corporate-master`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch');
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map((item: any) => ({
+        ...item,
+        isOperator: Boolean(
+          item.isOperator ||
+          item.is_operator ||
+          (item.tradeGroup && ['operator', 'driver', 'heavy operator'].some((t: string) => item.tradeGroup.toLowerCase().includes(t)))
+        ),
+      }));
+    }
+    return CORPORATE_EMPLOYEES_CATALOG;
+  } catch (error) {
+    console.error('Error fetching corporate employees:', error);
+    return CORPORATE_EMPLOYEES_CATALOG; // fallback
+  }
+};
+
+export const fetchCorporateActivityCodes = async (): Promise<CorporateActivityCode[]> => {
+  try {
+    const res = await fetch(`${API_URL}/activity-codes/corporate-master`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch');
+    return res.json();
+  } catch (error) {
+    console.error('Error fetching corporate activity codes:', error);
+    return CORPORATE_ACTIVITY_CATALOG; // fallback
+  }
+};
 

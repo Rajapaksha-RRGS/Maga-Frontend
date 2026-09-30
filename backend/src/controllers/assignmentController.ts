@@ -555,12 +555,16 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
           select: {
             id: true,
             code: true,
+            vehicleNo: true,
+            magaNo: true,
             name: true,
             type: true,
+            condition: true,
             costRate: true,
             primaryUnit: true,
             availableUnits: true,
             status: true,
+            unitRates: true,
           },
         },
       },
@@ -575,10 +579,14 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
       supervisorName: a.supervisor.fullName,
       equipmentName: a.equipment.name,
       equipmentCode: a.equipment.code || '',
+      vehicleNo: a.equipment.vehicleNo || a.equipment.code || '',
+      magaNo: a.equipment.magaNo || '',
+      condition: a.equipment.condition || 'DRY',
       equipmentType: a.equipment.type || '',
       costRate: a.equipment.costRate !== null && a.equipment.costRate !== undefined ? Number(a.equipment.costRate) : 0,
       primaryUnit: a.equipment.primaryUnit || 'mth',
       availableUnits: a.equipment.availableUnits || [],
+      unitRates: a.equipment.unitRates || [],
     }));
 
     res.json(formatted);
