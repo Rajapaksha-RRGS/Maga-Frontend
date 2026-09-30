@@ -27,6 +27,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
           { subdomain: { equals: cleanTenant, mode: 'insensitive' } },
           { subdomain: { equals: `${cleanTenant}M`, mode: 'insensitive' } },
           { subdomain: { equals: cleanTenant.replace(/M$/i, ''), mode: 'insensitive' } },
+          { subdomain: { contains: cleanTenant, mode: 'insensitive' } },
+          { companyName: { contains: cleanTenant, mode: 'insensitive' } },
         ]
       }
     });

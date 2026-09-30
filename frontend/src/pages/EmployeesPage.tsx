@@ -56,74 +56,35 @@ export default function EmployeesPage() {
   const [loadingPartners, setLoadingPartners] = useState(true);
   const [importModalOpen, setImportModalOpen] = useState(false);
 
-  // Cross-tenant ground-truth status state
-  const [crossTenantStatusMap, setCrossTenantStatusMap] = useState<Record<string, CrossTenantStatus>>({});
-
-  // Fetch cross-tenant status whenever the modal is opened
-  useEffect(() => {
-    if (!importModalOpen) return;
-    let isMounted = true;
-    employeeService
-      .getCrossTenantEmployeeStatus(
-        CORPORATE_EMPLOYEES_CATALOG.map((c) => ({
-          code: c.employeeCode,
-          nicNo: c.nicNo,
-        }))
-      )
-      .then((map) => {
-        if (isMounted) setCrossTenantStatusMap(map);
-      })
-      .catch((err) => {
-        console.error('Failed to load cross-tenant status:', err);
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, [importModalOpen]);
+  // Cross-tenant ground-truth status state removed from here
 
   const existingCodes = useMemo(() => {
     return new Set(employees.map((e) => (e.employeeCode || e.id).toUpperCase()));
   }, [employees]);
 
   const handleBatchImport = async (items: CorporateEmployee[]) => {
-    let defaultPartnerId = registeredPartners[0]?.id;
-    if (!defaultPartnerId) {
-      const p = await businessPartnerService.create({
-        code: 'BP-MAGA',
-        name: 'Mäga Engineering (Direct)',
-      });
-      defaultPartnerId = p.id;
-      await fetchPartners();
-    }
-
     for (const item of items) {
-      const partnerName = item.businessPartner || item.businessPartnerName || '';
+      const partnerCodeOrName = item.businessPartnerCode || item.businessPartnerName || item.businessPartner || 'BP1002885';
       const matchedPartner = registeredPartners.find(
-        (p) => (partnerName && p.name.toLowerCase() === partnerName.toLowerCase()) ||
-               (item.businessPartnerCode && p.code.toLowerCase() === item.businessPartnerCode.toLowerCase())
+        (p) => p.code.toLowerCase() === partnerCodeOrName.toLowerCase() ||
+               p.name.toLowerCase() === partnerCodeOrName.toLowerCase()
       );
-      const partnerIdToUse = matchedPartner ? matchedPartner.id : defaultPartnerId;
 
       await addEmployee({
         employeeCode: item.employeeCode,
         callingName: item.callingName,
         fullName: item.fullName,
-        businessPartnerId: partnerIdToUse,
+        businessPartnerId: matchedPartner?.id || '',
+        businessPartner: partnerCodeOrName,
         tradeGroup: item.tradeGroup,
         nicNo: item.nicNo,
         dailyRate: item.dailyRate ?? 0,
         epfNo: item.epfNo,
+        isOperator: item.isOperator,
+        licenseNo: item.licenseNo,
       });
     }
-
-    // Refresh cross-tenant status map after import
-    const updatedMap = await employeeService.getCrossTenantEmployeeStatus(
-      CORPORATE_EMPLOYEES_CATALOG.map((c) => ({
-        code: c.employeeCode,
-        nicNo: c.nicNo,
-      }))
-    );
-    setCrossTenantStatusMap(updatedMap);
+    await fetchPartners();
   };
 
   const handleTransferEmployee = async (item: CorporateEmployee) => {
@@ -141,14 +102,7 @@ export default function EmployeesPage() {
     // Refresh active employees in project view
     await refresh();
 
-    // Mark as in_current_site in the modal
-    setCrossTenantStatusMap((prev) => ({
-      ...prev,
-      [item.employeeCode]: {
-        status: 'in_current_site',
-        currentSiteName: 'Current Project Site',
-      },
-    }));
+    // The crossTenantStatusMap in EmployeeImportView will handle the update via its own loadCatalog
   };
 
   const fetchPartners = async () => {
@@ -215,9 +169,7 @@ export default function EmployeesPage() {
         <div className="flex-1 min-h-0 h-full flex flex-col animate-in fade-in duration-150">
           <EmployeeImportView
             onBack={() => setImportModalOpen(false)}
-            catalog={CORPORATE_EMPLOYEES_CATALOG}
             existingCodes={existingCodes}
-            crossTenantStatusMap={crossTenantStatusMap}
             onImport={handleBatchImport}
             onTransfer={handleTransferEmployee}
           />

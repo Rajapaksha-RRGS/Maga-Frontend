@@ -130,6 +130,7 @@ export async function bulkAssign(
 
   const matching = allEmps.filter((e) => {
     if (e.status !== 'active') return false;
+    if (Boolean(e.isOperator || ['operator', 'driver'].includes((e.tradeGroup || '').toLowerCase()))) return false;
     if (assignedIds.has(e.id)) return false;
     if (filter.tradeGroup && e.tradeGroup !== filter.tradeGroup) return false;
     if (filter.businessPartner && e.businessPartner !== filter.businessPartner) return false;
@@ -149,8 +150,9 @@ export async function getAssignmentContext(forceRefresh: boolean = false): Promi
 }> {
   return cacheManager.fetchWithCache('assignments:context', async () => {
     const [employees, supervisors] = await Promise.all([empSvc.getAll(undefined, forceRefresh), supSvc.getAll(forceRefresh)]);
+    const nonOperators = employees.filter((e) => e.status === 'active' && !e.isOperator && !['operator', 'driver'].includes((e.tradeGroup || '').toLowerCase()));
     return {
-      employees: employees.filter((e) => e.status === 'active'),
+      employees: nonOperators,
       supervisors: supervisors.filter((s) => s.status === 'active'),
     };
   }, null, forceRefresh);
@@ -243,7 +245,7 @@ export async function getOperatorAssignmentContext(forceRefresh: boolean = false
       empSvc.getAll(undefined, forceRefresh),
       supSvc.getAll(forceRefresh),
     ]);
-    const operators = employees.filter((e) => e.status === 'active' && Boolean(e.isOperator || e.tradeGroup?.toLowerCase() === 'operator'));
+    const operators = employees.filter((e) => e.status === 'active' && Boolean(e.isOperator || ['operator', 'driver'].includes((e.tradeGroup || '').toLowerCase())));
     return {
       operators,
       supervisors: supervisors.filter((s) => s.status === 'active'),

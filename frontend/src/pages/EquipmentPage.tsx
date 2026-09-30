@@ -54,7 +54,6 @@ export default function EquipmentPage() {
       <div className="h-full max-h-full flex-1 flex flex-col min-h-0 overflow-hidden box-border overscroll-none">
         <EquipmentImportView
           onBack={() => setShowImport(false)}
-          catalog={CORPORATE_EQUIPMENT_CATALOG}
           existingCodes={existingCodes}
           onImport={handleBatchImport}
         />

@@ -231,6 +231,7 @@ model EquipmentUnitRate {
 model ActivityCode {
   id          String   @id @default(uuid())
   tenantId    String   @map("tenant_id")
+  projectCode String?  @map("project_code")
   code        String   // e.g. "00-00-11-11-M", "ACT-101"
   description String?  // e.g. "Concrete Pouring (Slab & Columns)"
   trade       String?  // e.g. "Masonry"
@@ -245,6 +246,7 @@ model ActivityCode {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([projectCode])
   @@map("activity_codes")
 }
 
@@ -604,7 +606,8 @@ model CorporateBusinessPartner {
 
 model CorporateActivityCode {
   id                    String   @id @default(uuid())
-  code                  String   @unique
+  projectCode           String?  @map("project_code")
+  code                  String
   description           String
   searchKey             String?  @map("search_key")
   activityType          String?  @map("activity_type")
@@ -613,6 +616,9 @@ model CorporateActivityCode {
   currentWorkingProject String?  @map("current_working_project")
   createdAt             DateTime @default(now()) @map("created_at")
 
+  @@unique([projectCode, code])
+  @@index([projectCode])
+  @@index([code])
   @@map("corporate_activity_codes")
 }
 

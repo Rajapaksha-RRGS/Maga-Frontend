@@ -13,7 +13,7 @@
  *   - Preserves 1-Click Cross-Tenant Transfer Confirmation Modal
  *   - Clean Light Footer Bar with totals, pagination, and return link
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   RotateCw,
   X,
@@ -32,14 +32,12 @@ import {
   ChevronsLeft,
   ChevronsRight,
 } from 'lucide-react';
-import type { CorporateEmployee } from '../../master-import/services/corporateMasterService';
+import { fetchCorporateEmployees, type CorporateEmployee } from '../../master-import/services/corporateMasterService';
 import type { CrossTenantStatus } from '../services/employeeService';
 
 interface EmployeeImportViewProps {
   onBack: () => void;
-  catalog: CorporateEmployee[];
   existingCodes: Set<string>;
-  crossTenantStatusMap: Record<string, CrossTenantStatus>;
   onImport: (items: CorporateEmployee[]) => Promise<void> | void;
   onTransfer: (item: CorporateEmployee, targetSiteName?: string) => Promise<void> | void;
 }
@@ -65,12 +63,38 @@ function getBPCode(item: CorporateEmployee): string {
 
 export default function EmployeeImportView({
   onBack,
-  catalog,
   existingCodes,
-  crossTenantStatusMap,
   onImport,
   onTransfer,
 }: EmployeeImportViewProps) {
+  const [crossTenantStatusMap, setCrossTenantStatusMap] = useState<Record<string, CrossTenantStatus>>({});
+  const [catalog, setCatalog] = useState<CorporateEmployee[]>([]);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
+
+  const loadCatalog = async () => {
+    setIsRefreshing(true);
+    setIsLoadingCatalog(true);
+    try {
+      const data = await fetchCorporateEmployees();
+      setCatalog(data);
+      
+      // Fetch cross-tenant status
+      const { getCrossTenantEmployeeStatus } = await import('../services/employeeService');
+      const map = await getCrossTenantEmployeeStatus(
+        data.map((c) => ({ code: c.employeeCode, nicNo: c.nicNo }))
+      );
+      setCrossTenantStatusMap(map);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingCatalog(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCatalog();
+  }, []);
   // Global search & filters
   const [globalSearch, setGlobalSearch] = useState('');
   const [filterTrade, setFilterTrade] = useState('ALL');
@@ -103,7 +127,13 @@ export default function EmployeeImportView({
   }, [catalog]);
 
   const businessPartners = useMemo(() => {
-    return Array.from(new Set(catalog.map((c) => c.businessPartner).filter(Boolean))).sort();
+    return Array.from(
+      new Set(
+        catalog
+          .map((c) => c.businessPartner || c.businessPartnerName || c.businessPartnerCode)
+          .filter(Boolean)
+      )
+    ).sort() as string[];
   }, [catalog]);
 
   // Determine status for each employee
@@ -140,8 +170,15 @@ export default function EmployeeImportView({
       if (filterStatus === 'AVAILABLE' && status.type !== 'AVAILABLE') return false;
       if (filterStatus === 'AT_OTHER_SITE' && status.type !== 'AT_OTHER_SITE') return false;
       if (filterStatus === 'IN_SITE' && status.type !== 'IN_SITE') return false;
-      if (filterTrade !== 'ALL' && item.tradeGroup !== filterTrade) return false;
-      if (filterBP !== 'ALL' && item.businessPartner !== filterBP) return false;
+      if (filterTrade === 'OPERATORS_ALL') {
+        const isOp = item.isOperator || ['operator', 'driver'].includes((item.tradeGroup || '').toLowerCase());
+        if (!isOp) return false;
+      } else if (filterTrade !== 'ALL' && item.tradeGroup !== filterTrade) {
+        return false;
+      }
+      
+      const partnerDisplay = item.businessPartner || item.businessPartnerName || item.businessPartnerCode || '';
+      if (filterBP !== 'ALL' && partnerDisplay !== filterBP) return false;
 
       if (globalSearch.trim()) {
         const q = globalSearch.toLowerCase();
@@ -151,7 +188,7 @@ export default function EmployeeImportView({
           !item.fullName.toLowerCase().includes(q) &&
           !item.tradeGroup.toLowerCase().includes(q) &&
           !item.nicNo.toLowerCase().includes(q) &&
-          !(item.businessPartner && item.businessPartner.toLowerCase().includes(q))
+          !partnerDisplay.toLowerCase().includes(q)
         ) return false;
       }
       return true;
@@ -206,10 +243,7 @@ export default function EmployeeImportView({
   };
 
   const handleRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 400);
+    loadCatalog();
   };
 
   // Bulk import
@@ -341,6 +375,22 @@ export default function EmployeeImportView({
             <RotateCw size={13} className={isRefreshing ? 'animate-spin text-blue-600' : ''} />
           </button>
 
+          {/* Quick Operators Only Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              setFilterTrade(filterTrade === 'OPERATORS_ALL' ? 'ALL' : 'OPERATORS_ALL');
+              setCurrentPage(1);
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium transition-colors cursor-pointer shadow-xs ${
+              filterTrade === 'OPERATORS_ALL'
+                ? 'bg-amber-50 border-amber-300 text-amber-900 ring-1 ring-amber-400 font-semibold'
+                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <span>🚜 Operators ({catalog.filter(c => c.isOperator || ['operator', 'driver'].includes((c.tradeGroup || '').toLowerCase())).length})</span>
+          </button>
+
           {/* Filters Pill & Popover */}
           <div className="relative">
             <button
@@ -408,6 +458,7 @@ export default function EmployeeImportView({
                     className="w-full text-xs rounded border border-slate-300 bg-white px-2 py-1 text-slate-700 outline-none focus:border-blue-500"
                   >
                     <option value="ALL">All Trades ({tradeGroups.length})</option>
+                    <option value="OPERATORS_ALL">🚜 All Operators & Drivers (14)</option>
                     {tradeGroups.map((trade) => (
                       <option key={trade} value={trade}>{trade}</option>
                     ))}
@@ -528,7 +579,7 @@ export default function EmployeeImportView({
                 className="px-3.5 py-2.5 border-r border-slate-300 font-semibold whitespace-nowrap min-w-[110px] bg-slate-50 cursor-pointer hover:bg-slate-100/80 transition-colors"
               >
                 <div className="flex items-center gap-1.5">
-                  <span className="text-slate-800 font-semibold">Code</span>
+                  <span className="text-slate-800 font-semibold">Employee Code</span>
                   <ArrowUpDown size={11} className={sortField === 'employeeCode' ? 'text-blue-600' : 'text-slate-400'} />
                   <span className="text-slate-400 font-mono text-[11px] font-normal">A</span>
                 </div>
@@ -540,7 +591,7 @@ export default function EmployeeImportView({
                 className="px-3.5 py-2.5 border-r border-slate-300 font-semibold whitespace-nowrap min-w-[220px] bg-slate-50 cursor-pointer hover:bg-slate-100/80 transition-colors"
               >
                 <div className="flex items-center gap-1.5">
-                  <span className="text-slate-800 font-semibold">Employee Name</span>
+                  <span className="text-slate-800 font-semibold">Calling Name</span>
                   <ArrowUpDown size={11} className={sortField === 'callingName' ? 'text-blue-600' : 'text-slate-400'} />
                   <span className="text-slate-400 font-mono text-[11px] font-normal">A</span>
                 </div>
@@ -662,9 +713,16 @@ export default function EmployeeImportView({
 
                     {/* Trade Group */}
                     <td className="px-3.5 py-2 border-r border-slate-200 whitespace-nowrap">
-                      <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded text-[11px] font-medium text-slate-700">
-                        {item.tradeGroup}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded text-[11px] font-medium text-slate-700">
+                          {item.tradeGroup}
+                        </span>
+                        {(item.isOperator || ['operator', 'driver'].includes((item.tradeGroup || '').toLowerCase())) && (
+                          <span className="bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-semibold px-1.5 py-0.2 rounded">
+                            Operator
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* NIC & EPF */}
@@ -680,8 +738,11 @@ export default function EmployeeImportView({
 
                     {/* Business Partner */}
                     <td className="px-3.5 py-2 text-slate-700 border-r border-slate-200 whitespace-nowrap">
-                      <span className="truncate max-w-[190px] block" title={item.businessPartner}>
-                        {item.businessPartner}
+                      <span
+                        className="truncate max-w-[190px] block"
+                        title={item.businessPartner || item.businessPartnerName || item.businessPartnerCode || 'Mäga Engineering (Pvt) Ltd'}
+                      >
+                        {item.businessPartner || item.businessPartnerName || item.businessPartnerCode || 'Mäga Engineering (Pvt) Ltd'}
                       </span>
                     </td>
 

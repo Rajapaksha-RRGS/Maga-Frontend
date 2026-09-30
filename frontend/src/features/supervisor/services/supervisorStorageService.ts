@@ -17,6 +17,7 @@ export interface ActivityCodeItem {
   name: string;
   trade: string;
   category: string;
+  projectCode?: string;
 }
 
 export interface SupervisorDayStatus {
@@ -154,6 +155,13 @@ export const MASTER_SITES: SiteProject[] = [
     code: 'CEP-PKG-04',
     location: 'Meerigama Interchange',
     projectManager: 'Eng. S. Alwis',
+  },
+  {
+    id: 'site-iroad-531',
+    name: '531M - iRoad Package / Central Expressway',
+    code: 'M00000531',
+    location: 'Central Province / Expressway',
+    projectManager: 'Eng. K. Perera',
   },
 ];
 
@@ -482,23 +490,65 @@ export const supervisorStorage = {
     localStorage.setItem(ACTIVE_SITE_KEY, JSON.stringify(site));
   },
 
-  // ── 1. Master Activity Codes (Backend with Tenant Isolation + Offline Cache) 
+  // ── 1. Master Activity Codes (Backend with Tenant Isolation + Project Code Validation + Offline Cache) 
   async getActivityCodes(): Promise<ActivityCodeItem[]> {
-    const key = `${STORAGE_PREFIX}activities_cache`;
+    const activeSite = this.getActiveSite();
+    const siteCode = activeSite?.code;
+    const key = siteCode ? `${STORAGE_PREFIX}activities_cache_${siteCode}` : `${STORAGE_PREFIX}activities_cache`;
+
     try {
-      const res = await apiFetch(`${API_URL}/activity-codes`);
+      // 1. Fetch tenant/project activity codes from backend
+      const queryParam = siteCode ? `?projectCode=${encodeURIComponent(siteCode)}` : '';
+      const res = await apiFetch(`${API_URL}/activity-codes${queryParam}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          const mapped: ActivityCodeItem[] = data.map((d: any) => ({
-            id: d.id,
-            code: d.code,
-            name: d.description || d.code,
-            trade: d.trade || '',
-            category: d.category || '',
-          }));
-          localStorage.setItem(key, JSON.stringify(mapped));
-          return mapped;
+          // Validate: only accept activity codes belonging to our own project (or unassigned/global)
+          const validCodes = data.filter((d: any) => {
+            if (!d.projectCode || !siteCode) return true;
+            return d.projectCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
+          });
+
+          if (validCodes.length > 0) {
+            const mapped: ActivityCodeItem[] = validCodes.map((d: any) => ({
+              id: d.id,
+              code: d.code,
+              name: d.description || d.code,
+              trade: d.trade || '',
+              category: d.category || '',
+              projectCode: d.projectCode || siteCode,
+            }));
+            localStorage.setItem(key, JSON.stringify(mapped));
+            return mapped;
+          }
+        }
+      }
+
+      // 2. If tenant doesn't have codes for this project yet, query Corporate ERP Catalog by projectCode
+      if (siteCode) {
+        const corpRes = await apiFetch(`${API_URL}/activity-codes/corporate-master?projectCode=${encodeURIComponent(siteCode)}`);
+        if (corpRes.ok) {
+          const corpData = await corpRes.json();
+          if (Array.isArray(corpData) && corpData.length > 0) {
+            // Validate: strictly ensure each code belongs to our project
+            const validCorp = corpData.filter((d: any) => {
+              const pCode = d.projectCode || d.currentWorkingProject;
+              return !pCode || pCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
+            });
+
+            if (validCorp.length > 0) {
+              const mapped: ActivityCodeItem[] = validCorp.map((d: any) => ({
+                id: d.id,
+                code: d.code,
+                name: d.description || d.code,
+                trade: d.tradeGroup || '',
+                category: d.activityType || 'Civil',
+                projectCode: d.projectCode || siteCode,
+              }));
+              localStorage.setItem(key, JSON.stringify(mapped));
+              return mapped;
+            }
+          }
         }
       }
     } catch (err) {
@@ -508,7 +558,15 @@ export const supervisorStorage = {
     const cached = localStorage.getItem(key);
     if (cached) {
       try {
-        return JSON.parse(cached);
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Validate cached items against current site code
+          const validated = parsed.filter((item: ActivityCodeItem) => {
+            if (!item.projectCode || !siteCode) return true;
+            return item.projectCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
+          });
+          if (validated.length > 0) return validated;
+        }
       } catch {}
     }
     return MASTER_ACTIVITIES;

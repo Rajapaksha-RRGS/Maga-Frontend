@@ -30,7 +30,7 @@ export function getCurrentTenantId(): string {
 }
 
 /**
- * Builds HTTP headers including 'x-tenant-id' for tenant-scoped requests.
+ * Builds HTTP headers including 'x-tenant-id' and 'Authorization' for scoped requests.
  */
 export function getTenantHeaders(customHeaders: HeadersInit = {}): Headers {
   const headers = new Headers(customHeaders);
@@ -38,14 +38,21 @@ export function getTenantHeaders(customHeaders: HeadersInit = {}): Headers {
   if (tenantId && !headers.has('x-tenant-id')) {
     headers.set('x-tenant-id', tenantId);
   }
+  const token = localStorage.getItem('token');
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
   return headers;
 }
 
 /**
- * Enhanced fetch that automatically injects the tenant header (x-tenant-id).
+ * Enhanced fetch that automatically injects tenant header, auth token, and Content-Type.
  */
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const headers = getTenantHeaders(init?.headers);
+  if (init?.body && typeof init.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   return fetch(input, {
     ...init,
     headers,

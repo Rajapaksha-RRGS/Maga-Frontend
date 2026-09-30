@@ -66,6 +66,8 @@ export interface CorporateEmployee {
 }
 
 export interface CorporateActivityCode {
+  id?: string;
+  projectCode?: string;
   code: string;
   description: string;
   searchKey?: string;
@@ -1456,4 +1458,81 @@ export function getUniqueCategories(items: { type?: string; tradeGroup?: string;
     new Set(items.map((i) => i.type || i.tradeGroup || i.activityType || '').filter(Boolean))
   ).sort();
 }
+
+// ── API Fetch Functions for Real Database Integration ──────────────────────────────
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const getHeaders = () => {
+  const token = localStorage.getItem('token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+export const fetchCorporateBusinessPartners = async (): Promise<CorporateBusinessPartner[]> => {
+  try {
+    const res = await fetch(`${API_URL}/business-partners/corporate-master`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch');
+    return res.json();
+  } catch (error) {
+    console.error('Error fetching corporate partners:', error);
+    return CORPORATE_PARTNERS_CATALOG; // fallback
+  }
+};
+
+export const fetchCorporateEquipment = async (): Promise<CorporateEquipment[]> => {
+  try {
+    const res = await fetch(`${API_URL}/equipment/corporate-master`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch');
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map((item: any) => ({
+        ...item,
+        code: item.erpNewCode || item.code || item.standardEquipmentNumber || '',
+        name: item.equipmentName || item.name || item.description || item.standardEquipmentNumber || 'Equipment',
+        type: item.type || 'Equipment',
+        sourceProject: item.sourceProject || item.currentWorkingProject || 'Central Depot',
+        costRate: typeof item.costRate === 'number' ? item.costRate : Number(item.dailyRate ?? item.costRate ?? 0),
+        dailyRate: typeof item.dailyRate === 'number' ? item.dailyRate : Number(item.dailyRate ?? item.costRate ?? 0),
+        model: item.model || '',
+        registrationNo: item.registrationNo || item.vehicleNo || '',
+        searchKey: item.searchKey || item.equipmentName || item.name || '',
+      }));
+    }
+    return CORPORATE_EQUIPMENT_CATALOG;
+  } catch (error) {
+    console.error('Error fetching corporate equipment:', error);
+    return CORPORATE_EQUIPMENT_CATALOG; // fallback
+  }
+};
+
+export const fetchCorporateEmployees = async (): Promise<CorporateEmployee[]> => {
+  try {
+    const res = await fetch(`${API_URL}/employees/corporate-master`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch');
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map((item: any) => ({
+        ...item,
+        isOperator: Boolean(
+          item.isOperator ||
+          item.is_operator ||
+          (item.tradeGroup && ['operator', 'driver', 'heavy operator'].some((t: string) => item.tradeGroup.toLowerCase().includes(t)))
+        ),
+      }));
+    }
+    return CORPORATE_EMPLOYEES_CATALOG;
+  } catch (error) {
+    console.error('Error fetching corporate employees:', error);
+    return CORPORATE_EMPLOYEES_CATALOG; // fallback
+  }
+};
+
+export const fetchCorporateActivityCodes = async (): Promise<CorporateActivityCode[]> => {
+  try {
+    const res = await fetch(`${API_URL}/activity-codes/corporate-master`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch');
+    return res.json();
+  } catch (error) {
+    console.error('Error fetching corporate activity codes:', error);
+    return CORPORATE_ACTIVITY_CATALOG; // fallback
+  }
+};
 

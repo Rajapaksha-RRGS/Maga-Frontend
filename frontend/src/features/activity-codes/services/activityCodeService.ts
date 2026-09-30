@@ -15,6 +15,7 @@ export interface ActivityCode {
   id: string;
   code: string;
   description: string;
+  projectCode?: string;
 }
 
 export type ActivityCodeFormData = Omit<ActivityCode, 'id'>;
@@ -22,9 +23,11 @@ export type ActivityCodeFormData = Omit<ActivityCode, 'id'>;
 import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
-export async function getAll(): Promise<ActivityCode[]> {
-  return cacheManager.fetchWithCache('activity-codes:list', async () => {
-    const res = await apiFetch(`${API_URL}/activity-codes`);
+export async function getAll(projectCode?: string): Promise<ActivityCode[]> {
+  const cacheKey = projectCode ? `activity-codes:list:${projectCode}` : 'activity-codes:list';
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    const url = projectCode ? `${API_URL}/activity-codes?projectCode=${encodeURIComponent(projectCode)}` : `${API_URL}/activity-codes`;
+    const res = await apiFetch(url);
     if (!res.ok) {
       const err = await res.json().catch(() => null);
       throw new Error(err?.error || `Failed to fetch activity codes (${res.status})`);
@@ -35,6 +38,7 @@ export async function getAll(): Promise<ActivityCode[]> {
         id: item.id,
         code: item.code,
         description: item.description || item.code,
+        projectCode: item.projectCode || undefined,
       }));
     }
     return [];
@@ -59,7 +63,26 @@ export async function create(data: ActivityCodeFormData): Promise<ActivityCode> 
   const item = await res.json();
   cacheManager.invalidate('activity-codes');
   cacheManager.invalidate('reports');
-  return { id: item.id, code: item.code, description: item.description || item.code };
+  return { id: item.id, code: item.code, description: item.description || item.code, projectCode: item.projectCode };
+}
+
+export async function importFromCorporate(
+  items: Array<{ code: string; description: string; projectCode?: string; activityType?: string }>,
+  targetProjectCode?: string
+): Promise<{ success: boolean; importedCount: number; skippedCount: number }> {
+  const res = await apiFetch(`${API_URL}/activity-codes/import-from-corporate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items, projectCode: targetProjectCode }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to import activity codes from corporate master');
+  }
+  const data = await res.json();
+  cacheManager.invalidate('activity-codes');
+  cacheManager.invalidate('reports');
+  return data;
 }
 
 export async function update(id: string, data: Partial<ActivityCodeFormData>): Promise<ActivityCode> {

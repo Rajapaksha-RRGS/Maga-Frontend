@@ -7,11 +7,13 @@ import {
   updateBusinessPartner,
   deleteBusinessPartner,
   toggleBusinessPartnerStatus,
+  getCorporateBusinessPartnersCatalog,
 } from '../controllers/businessPartnerController';
 
 const router = Router();
 
 // Routes
+router.get('/corporate-master', getCorporateBusinessPartnersCatalog);
 router.get('/next-code', getNextBusinessPartnerCode);
 router.get('/', getAllBusinessPartners);
 router.get('/:id', getBusinessPartnerById);

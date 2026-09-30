@@ -15,7 +15,7 @@
  *   - Grid lines with subtle cell borders and monospace data
  *   - Multi-row selection & batch import to current project
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { 
   RotateCw, 
   X, 
@@ -25,7 +25,7 @@ import {
   SlidersHorizontal,
   Table as TableIcon
 } from 'lucide-react';
-import { CORPORATE_PARTNERS_CATALOG, type CorporateBusinessPartner } from '../../master-import/services/corporateMasterService';
+import { CORPORATE_PARTNERS_CATALOG, type CorporateBusinessPartner, fetchCorporateBusinessPartners } from '../../master-import/services/corporateMasterService';
 
 interface BusinessPartnerErpMasterViewProps {
   existingCodes: Set<string>;
@@ -44,16 +44,36 @@ export default function BusinessPartnerErpMasterView({
   const [isImporting, setIsImporting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [catalog, setCatalog] = useState<CorporateBusinessPartner[]>([]);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
+
+  const loadCatalog = async () => {
+    setIsRefreshing(true);
+    setIsLoadingCatalog(true);
+    try {
+      const data = await fetchCorporateBusinessPartners();
+      setCatalog(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingCatalog(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCatalog();
+  }, []);
 
   // Available partner types for filter
   const partnerTypes = useMemo(() => {
-    const types = new Set(CORPORATE_PARTNERS_CATALOG.map((p) => p.type));
+    const types = new Set(catalog.map((p) => p.type));
     return ['all', ...Array.from(types)];
-  }, []);
+  }, [catalog]);
 
   // Filtered catalog
   const filteredCatalog = useMemo(() => {
-    return CORPORATE_PARTNERS_CATALOG.filter((item) => {
+    return catalog.filter((item) => {
       const q = search.trim().toLowerCase();
       const matchesSearch =
         !q ||
@@ -67,7 +87,7 @@ export default function BusinessPartnerErpMasterView({
 
       return matchesSearch && matchesType;
     });
-  }, [search, selectedType]);
+  }, [catalog, search, selectedType]);
 
   // Selectable items (excluding already existing codes in the project)
   const selectableItems = useMemo(() => {
@@ -104,17 +124,14 @@ export default function BusinessPartnerErpMasterView({
   };
 
   const handleRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 400);
+    loadCatalog();
   };
 
   const handleImportSelected = async () => {
     if (selectedCodes.size === 0 || isImporting) return;
     setIsImporting(true);
     try {
-      const itemsToImport = CORPORATE_PARTNERS_CATALOG.filter((item) =>
+      const itemsToImport = catalog.filter((item) =>
         selectedCodes.has(item.code)
       );
       await onImport(itemsToImport);
@@ -261,7 +278,7 @@ export default function BusinessPartnerErpMasterView({
           <div className="flex items-center gap-1 px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-700 font-medium shadow-xs">
             <span>Showing</span>
             <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded text-[11px] font-normal tabular-nums border border-slate-200">
-              {filteredCatalog.length} of {CORPORATE_PARTNERS_CATALOG.length}
+              {filteredCatalog.length} of {catalog.length}
             </span>
           </div>
         </div>
@@ -381,7 +398,13 @@ export default function BusinessPartnerErpMasterView({
 
           {/* Table Body (Clean White with distinct cell borders) */}
           <tbody className="divide-y divide-slate-200 bg-white">
-            {filteredCatalog.length === 0 ? (
+            {isLoadingCatalog ? (
+              <tr>
+                <td colSpan={7} className="py-12 text-center text-slate-400 text-xs bg-white">
+                  Loading ERP master directory...
+                </td>
+              </tr>
+            ) : filteredCatalog.length === 0 ? (
               <tr>
                 <td colSpan={7} className="py-12 text-center text-slate-400 text-xs bg-white">
                   No ERP business partners found matching &quot;{search}&quot;.
@@ -493,7 +516,7 @@ export default function BusinessPartnerErpMasterView({
       {/* ── 4. Clean Light Footer Bar ─────────────────────────────────────────── */}
       <div className="bg-slate-50 border-t border-slate-300 px-3 py-2 flex items-center justify-between text-xs text-slate-600">
         <div className="flex items-center gap-2">
-          <span>Total records: <strong className="text-slate-800 font-mono">{CORPORATE_PARTNERS_CATALOG.length}</strong></span>
+          <span>Total records: <strong className="text-slate-800 font-mono">{catalog.length}</strong></span>
           <span>•</span>
           <span>Already in Project: <strong className="text-slate-800 font-mono">{existingCodes.size}</strong></span>
         </div>

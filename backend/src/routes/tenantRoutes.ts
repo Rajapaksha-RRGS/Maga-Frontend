@@ -7,17 +7,19 @@ import {
   updateTenant,
   updateTenantStatus,
   resetTenantAdminPassword,
+  getCorporateProjectsCatalog,
 } from '../controllers/tenantController';
-import { requireSuperAdmin } from '../middleware/authMiddleware';
+import { requireAdmin } from '../middleware/authMiddleware';
 
 const router = Router();
 
+router.get('/corporate-projects', getCorporateProjectsCatalog);
 router.get('/', getAllTenants);
-router.post('/register', requireSuperAdmin,registerTenant);
+router.post('/register', requireAdmin, registerTenant);
 router.get('/:id', getTenantById);
 router.put('/:id', updateTenant);
-router.patch('/:id/status',requireSuperAdmin, updateTenantStatus);
-router.post('/:id/reset-admin-password',requireSuperAdmin, resetTenantAdminPassword);
+router.patch('/:id/status', requireAdmin, updateTenantStatus);
+router.post('/:id/reset-admin-password', requireAdmin, resetTenantAdminPassword);
 router.get('/by-subdomain/:subdomain', getTenantBySubdomain);
 
 export default router;

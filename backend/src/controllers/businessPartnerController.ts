@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { getDefaultTenantId } from './employeeController';
+import { promises } from 'node:dns';
 
 // Helper to extract string param
 const getParam = (param: string | string[] | undefined): string => {
@@ -72,6 +73,10 @@ export const getBusinessPartnerById = async (req: Request, res: Response): Promi
   }
 };
 
+
+  
+
+
 // Get next available BP code (BP1xxxxxx)
 export const getNextBusinessPartnerCode = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -114,11 +119,11 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
       return;
     }
 
-    // Validate standard BP1xxxxxx format (BP1 + 6 digits)
-    const bpRegex = /^BP1\d{6}$/;
-    if (!bpRegex.test(code)) {
+    // Validate code format (Alphanumeric with hyphens/underscores)
+    const bpRegex = /^[A-Za-z0-9-_ ]{2,50}$/;
+    if (!bpRegex.test(code.trim())) {
       res.status(400).json({
-        error: 'Invalid BP Code format. Must start with BP1 followed by 6 digits (e.g. BP1004093)',
+        error: 'Invalid BP Code format. Code must be between 2 and 50 characters (e.g. BP1002885, BP-MAGA, BP1020469)',
       });
       return;
     }
@@ -236,3 +241,19 @@ export const toggleBusinessPartnerStatus = async (req: Request, res: Response): 
     res.status(500).json({ error: 'Failed to update status' });
   }
 };
+
+// ── CENTRAL CORPORATE ERP CATALOG CONTROLLERS ──────────────────────────────
+
+// Get all corporate business partners
+export const getCorporateBusinessPartnersCatalog = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const list = await prisma.corporateBusinessPartner.findMany({
+      orderBy: { code: 'asc' },
+    });
+    res.json(list);
+  } catch (error) {
+    console.error('Error fetching corporate business partners catalog:', error);
+    res.status(500).json({ error: 'Failed to fetch corporate business partners catalog' });
+  }
+};
+

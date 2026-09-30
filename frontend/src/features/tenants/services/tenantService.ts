@@ -166,3 +166,30 @@ export async function resetTenantAdminPassword(
   const err = await res.json().catch(() => ({}));
   throw new Error(err.error || 'Failed to reset admin password');
 }
+
+export interface CorporateProjectOption {
+  id: string;
+  projectCode: string;
+  description: string;
+  searchKey: string;
+  projectManager?: string;
+  addressCode?: string;
+  projectName?: string;
+  enterpriseUnit?: string;
+  currency?: string;
+  status: string;
+}
+
+export async function fetchCorporateProjects(): Promise<CorporateProjectOption[]> {
+  try {
+    const res = await apiFetch(`${API_URL}/tenants/corporate-projects`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    }
+  } catch (err) {
+    console.error('Failed to fetch corporate projects:', err);
+  }
+  return [];
+}
+
