@@ -1,12 +1,19 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import magaLogo from '../../../assets/maga-logo-47321F1221-seeklogo.com.png';
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user) {
+      const isAdmin = user.role === 'admin' || user.role === 'super_admin';
+      navigate(isAdmin ? '/admin' : '/supervisor', { replace: true });
+    }
+  }, [user, navigate]);
 
   const [tenant, setTenant] = useState('');
   const [username, setUsername] = useState('');
