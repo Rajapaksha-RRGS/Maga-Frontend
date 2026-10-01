@@ -48,6 +48,7 @@ import CalendarPage from './pages/CalendarPage';
 import AssignmentsPage from './pages/AssignmentsPage';
 import OperatorAssignmentsPage from './pages/OperatorAssignmentsPage';
 import EquipmentAssignmentsPage from './pages/EquipmentAssignmentsPage';
+import AssignmentsHubPage from './pages/AssignmentsHubPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import ReportsPage from './pages/ReportsPage';
 
@@ -115,9 +116,9 @@ export default function App() {
             <Route path="supervisors"   element={<SupervisorsPage />} />
             <Route path="calendar"      element={<CalendarPage />} />
             <Route path="assignments" element={<Navigate to="/admin/assignments/labour" replace />} />
-            <Route path="assignments/labour"    element={<AssignmentsPage />} />
-            <Route path="assignments/operator"   element={<OperatorAssignmentsPage />} />
-            <Route path="assignments/equipment"  element={<EquipmentAssignmentsPage />} />
+            <Route path="assignments/labour"    element={<AssignmentsHubPage defaultTab="labour" />} />
+            <Route path="assignments/operator"   element={<AssignmentsHubPage defaultTab="operator" />} />
+            <Route path="assignments/equipment"  element={<AssignmentsHubPage defaultTab="equipment" />} />
             <Route path="approvals"     element={<ApprovalsPage />} />
             <Route path="reports"       element={<ReportsPage />} />
           </Route>

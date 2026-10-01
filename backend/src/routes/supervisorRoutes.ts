@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getAllSupervisors,
+  getSupervisorActiveSite,
   createSupervisor,
   resetSupervisorPassword,
   updateSupervisorStatus,
@@ -9,6 +10,7 @@ import {
 
 const router: Router = Router();
 
+router.get('/active-site', getSupervisorActiveSite);
 router.get('/', getAllSupervisors);
 router.post('/', createSupervisor);
 

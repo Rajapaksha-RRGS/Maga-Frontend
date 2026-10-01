@@ -14,7 +14,6 @@ import {
   Lock,
 } from 'lucide-react';
 import { 
-  MASTER_ACTIVITIES, 
   supervisorStorage,
   type ActivityCodeItem,
   type EquipmentLogEntry, 
@@ -112,7 +111,7 @@ export function EquipmentLogsView({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>(MASTER_ACTIVITIES);
+  const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
   const [showMeterMap, setShowMeterMap] = useState<Record<string, boolean>>({});
 
   useEffect(() => {

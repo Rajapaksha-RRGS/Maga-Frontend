@@ -55,8 +55,12 @@ export function DailySummaryView({
   const totalLaborHours = laborers.reduce((acc, l) => acc + (l.shiftHours || 0), 0);
 
   const totalOperators = operators.length;
-  const completedOperators = operators.filter((o) => o.inTime && o.assignedEquipmentId).length;
-  const unmappedOperators = operators.filter((o) => !o.assignedEquipmentId).length;
+  // An operator is "complete" when inTime & outTime are set.
+  // Machine assignment is optional — unassigned operators auto-balance to ZXQOPRIDLE.
+  const completedOperators = operators.filter((o) => o.inTime && o.outTime).length;
+  const operatorsMissingTime = operators.filter((o) => !o.inTime || !o.outTime).length;
+  // Operators that have times but no machine assignment → will be ZXQOPRIDLE (valid)
+  const zxqopridleOperators = operators.filter((o) => o.inTime && o.outTime && !o.assignedEquipmentId && (!o.equipmentSplits || o.equipmentSplits.length === 0)).length;
 
   // Activity breakdown aggregation
   const activityHoursMap: Record<string, number> = {};
@@ -68,9 +72,11 @@ export function DailySummaryView({
     });
   });
 
-  const hasPendingItems = 
-    completedLaborers < totalLaborers || 
-    unmappedOperators > 0;
+  // Only flag as pending if laborers/operators are missing in/out times.
+  // Operators without a machine are valid (auto-mapped to ZXQOPRIDLE).
+  const hasPendingItems =
+    completedLaborers < totalLaborers ||
+    operatorsMissingTime > 0;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -320,20 +326,32 @@ export function DailySummaryView({
 
           <div className="space-y-1.5 text-xs">
             {operators.map((op) => {
-              const mapped = equipment.find((e) => e.id === op.assignedEquipmentId);
+              // Check for primary machine or any split machine assignments
+              const primaryMachine = equipment.find((e) => e.id === op.assignedEquipmentId);
+              const hasSplits = op.equipmentSplits && op.equipmentSplits.length > 0;
+              const isIdle = !op.assignedEquipmentId && !hasSplits;
+              const missingTime = !op.inTime || !op.outTime;
               return (
                 <div key={op.id} className="flex items-center justify-between py-1 border-b border-slate-100 dark:border-slate-750 last:border-none">
                   <span className="font-medium text-slate-800 dark:text-slate-200">
                     {op.employeeNumber ? `${op.employeeNumber} · ` : ''}{op.callingName}
                   </span>
                   <div className="flex items-center gap-2">
-                    {mapped ? (
-                      <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
-                        {mapped.code}
+                    {missingTime ? (
+                      <span className="text-[10px] font-bold text-red-500">No Time</span>
+                    ) : hasSplits ? (
+                      <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
+                        Multi-Machine
                       </span>
-                    ) : (
-                      <span className="text-[10px] font-bold text-red-500">Unmapped</span>
-                    )}
+                    ) : primaryMachine ? (
+                      <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                        {primaryMachine.code}
+                      </span>
+                    ) : isIdle ? (
+                      <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                        ZXQOPRIDLE
+                      </span>
+                    ) : null}
                     <span className="font-bold text-slate-700 dark:text-slate-300">{op.shiftHours}h</span>
                   </div>
                 </div>
@@ -362,9 +380,31 @@ export function DailySummaryView({
       {!isDayLocked && (
         <div className="pt-2">
           {hasPendingItems && (
-            <div className="mb-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center gap-2 text-xs text-amber-800 dark:text-amber-300">
-              <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
-              <span>Some records are still pending in and out times or machine mappings.</span>
+            <div className="mb-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
+              <AlertTriangle size={15} className="text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">Some records are missing In/Out times.</p>
+                {completedLaborers < totalLaborers && (
+                  <p className="mt-0.5">• {totalLaborers - completedLaborers} laborer(s) incomplete</p>
+                )}
+                {operatorsMissingTime > 0 && (
+                  <p className="mt-0.5">• {operatorsMissingTime} operator(s) missing in/out time</p>
+                )}
+                {zxqopridleOperators > 0 && (
+                  <p className="mt-0.5 text-amber-600">
+                    ⓘ {zxqopridleOperators} operator(s) without machine → auto-mapped to ZXQOPRIDLE
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+          {!hasPendingItems && zxqopridleOperators > 0 && (
+            <div className="mb-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
+              <AlertTriangle size={15} className="text-amber-500 flex-shrink-0 mt-0.5" />
+              <p>
+                ⓘ {zxqopridleOperators} operator(s) have no machine assigned — their shift will be recorded as{' '}
+                <span className="font-mono font-bold">ZXQOPRIDLE</span> (Operator Idle). You can still submit.
+              </p>
             </div>
           )}
 

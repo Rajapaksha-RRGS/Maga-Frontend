@@ -19,7 +19,6 @@ import {
   Lock
 } from 'lucide-react';
 import { 
-  MASTER_ACTIVITIES, 
   supervisorStorage,
   type ActivityCodeItem,
   type LaborerEntry, 
@@ -95,7 +94,7 @@ export function LaborEntryView({
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Dynamic real activity codes from Backend
-  const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>(MASTER_ACTIVITIES);
+  const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
 
   // Load real tenant activity codes on mount
   useEffect(() => {
@@ -104,8 +103,8 @@ export function LaborEntryView({
         setActivityOptions(codes);
         // Automatically set first real activity code for batch
         setBatchActivities((prev) => {
-          if (prev.length === 1 && !codes.some((c) => c.code === prev[0].activityCode)) {
-            return [{ ...prev[0], activityCode: codes[0].code }];
+          if (prev.length === 0 || !prev[0].activityCode || !codes.some((c) => c.code === prev[0].activityCode)) {
+            return [{ id: 'batch-act-1', activityCode: codes[0].code, hours: 8.0 }];
           }
           return prev;
         });
@@ -119,7 +118,7 @@ export function LaborEntryView({
   // ── OUT MODE BATCH STATE ──
   const [batchOutTime, setBatchOutTime] = useState('17:00');
   const [batchActivities, setBatchActivities] = useState<BatchActivityItem[]>([
-    { id: 'batch-act-1', activityCode: MASTER_ACTIVITIES[0].code, hours: 8.0 }
+    { id: 'batch-act-1', activityCode: '', hours: 8.0 }
   ]);
 
   // Derived unique shift hours for Shift Hours filter chips
@@ -271,7 +270,7 @@ export function LaborEntryView({
           if (prev.length <= 1) {
             return [{
               id: 'batch-act-1',
-              activityCode: prev[0]?.activityCode || MASTER_ACTIVITIES[0].code,
+              activityCode: prev[0]?.activityCode || activityOptions[0]?.code || '',
               hours,
             }];
           } else {
@@ -436,7 +435,7 @@ export function LaborEntryView({
 
     const newSplit: ActivitySplit = {
       id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      activityCode: (activityOptions[0] || MASTER_ACTIVITIES[0]).code,
+      activityCode: activityOptions[0]?.code || '',
       hours: remaining || 4.0,
     };
 
@@ -823,9 +822,13 @@ export function LaborEntryView({
                     <span className="text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1 text-[10px]">
                       <CheckCircle2 size={12} /> Balanced
                     </span>
-                  ) : (
+                  ) : diff < 0 ? (
                     <span className="text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 text-[10px]">
-                      <AlertTriangle size={12} /> {diff > 0 ? `+${diff}h excess` : `${Math.abs(diff)}h remaining`}
+                      <PauseCircle size={12} className="text-amber-600" /> Auto-Idle (ZIDLE): {Math.abs(diff).toFixed(1)}h
+                    </span>
+                  ) : (
+                    <span className="text-red-600 dark:text-red-400 font-semibold flex items-center gap-1 text-[10px]">
+                      <AlertTriangle size={12} /> +{diff.toFixed(1)}h Excess
                     </span>
                   )}
                 </div>
@@ -1109,14 +1112,19 @@ export function LaborEntryView({
                         ))}
                       </div>
 
-                      {/* Discrepancy Notice */}
+                      {/* Discrepancy Notice & ZIDLE Auto-Balance */}
                       <div className="mt-2 flex items-center justify-between text-xs px-1">
                         <span className="text-slate-500 dark:text-slate-400">
                           Total: <strong className="text-slate-800 dark:text-slate-200">{activitySum.toFixed(1)}h</strong> / {worker.shiftHours.toFixed(1)}h
                         </span>
-                        {hasDiscrepancy ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                            <AlertTriangle size={13} /> Hours Discrepancy
+                        {worker.shiftHours > activitySum ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                            <PauseCircle size={12} className="text-amber-600" />
+                            <span>Auto-Idle (ZIDLE): {(worker.shiftHours - activitySum).toFixed(1)}h</span>
+                          </span>
+                        ) : activitySum > worker.shiftHours ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400">
+                            <AlertTriangle size={13} /> +{(activitySum - worker.shiftHours).toFixed(1)}h Excess
                           </span>
                         ) : worker.shiftHours > 0 ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">

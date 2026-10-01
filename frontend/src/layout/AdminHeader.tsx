@@ -25,6 +25,7 @@ import {
   Sun,
   Sunset,
   Moon,
+  HardHat,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications, type NotificationItem } from '../context/NotificationContext';
@@ -181,6 +182,17 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
           <Calendar size={13} className="text-slate-400" />
           <span>{todayFormatted}</span>
         </div>
+
+        {/* Supervisor Portal Switcher */}
+        <button
+          type="button"
+          onClick={() => navigate('/supervisor')}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50/80 hover:bg-blue-100 text-blue-700 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+          title="Open Supervisor Mobile Portal"
+        >
+          <HardHat size={14} className="text-amber-600" />
+          <span className="hidden sm:inline">Supervisor App</span>
+        </button>
 
         {/* ── Notification Bell Center ─────────────────────────────────── */}
         <div className="relative" ref={notifRef}>
@@ -364,6 +376,17 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
                     Tenant & Admin Management
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate('/supervisor');
+                    setUserMenuOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-xs text-blue-700 hover:bg-blue-50 transition-colors cursor-pointer flex items-center gap-2 font-medium"
+                >
+                  <HardHat size={14} className="text-amber-600" />
+                  <span>Supervisor Mobile App</span>
+                </button>
               </div>
 
               <div className="border-t border-slate-100 pt-1">

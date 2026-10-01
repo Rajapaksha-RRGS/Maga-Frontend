@@ -13,9 +13,13 @@ import {
   assignEquipment,
   unassignEquipment,
   copyEquipmentGangsFromDate,
+  getStandbyPoolForDate,
 } from '../controllers/assignmentController';
 
 const router = Router();
+
+// ── Standby Pool ──────────────────────────────────────────────────────
+router.get('/standby-pool', getStandbyPoolForDate);
 
 // ── Operator Assignments ─────────────────────────────────────────────
 router.get('/operator', getOperatorAssignmentsForDate);
@@ -37,3 +41,4 @@ router.post('/copy', copyGangsFromDate);
 router.delete('/:id', unassignEmployee);
 
 export default router;
+

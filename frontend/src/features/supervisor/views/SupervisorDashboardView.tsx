@@ -46,22 +46,44 @@ export function SupervisorDashboardView({
   const mappedOperators = operators.filter((o) => o.assignedEquipmentId && o.inTime).length;
 
   const totalEquipment = equipment.length;
-  const runningEquipment = equipment.filter((e) => e.netHours > 0 || e.status === 'done').length;
+  const isEquipmentLogged = (e: EquipmentLogEntry): boolean => {
+    if (e.status === 'done') return true;
+    if ((e.daysValue ?? 0) > 0) return true;
+    if ((e.hoursValue ?? 0) > 0) return true;
+    if ((e.extraHoursValue ?? 0) > 0) return true;
+    if ((e.areaValue ?? 0) > 0) return true;
+    if ((e.totalMileage ?? 0) > 0) return true;
+    if ((e.netHours ?? 0) > 0) return true;
+    if ((e.workingHours ?? 0) > 0) return true;
+    if (e.endMeter > 0 && e.endMeter > e.startMeter) return true;
+    if (e.activitySplits && e.activitySplits.some((s) => Number(s.utilization) > 0)) return true;
+    return false;
+  };
+  const runningEquipment = equipment.filter(isEquipmentLogged).length;
 
   // Total daily hours
   const totalLaborHours = laborers.reduce((acc, l) => acc + (l.shiftHours || 0), 0);
   const totalOtHours = laborers.reduce((acc, l) => acc + (l.otHours || 0), 0);
-  const totalMachineHours = equipment.reduce((acc, e) => acc + (e.netHours || 0), 0);
+  const totalMachineHours = equipment.reduce((acc, e) => {
+    const hrs = (e.hoursValue ?? 0) > 0 
+      ? e.hoursValue! 
+      : ((e.netHours ?? 0) > 0 ? e.netHours! : (e.workingHours ?? 0));
+    const exHrs = e.extraHoursValue ?? 0;
+    return acc + hrs + exHrs;
+  }, 0);
 
   // Completion Progress calculation
   const totalItems = totalLaborers + totalOperators + totalEquipment;
   const completedItems = doneLaborers + mappedOperators + runningEquipment;
   const completionPct = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
 
-  // Recent Drafts for Quick Resumption
-  const recentLaborDrafts = laborers.filter((l) => l.status === 'draft' || (l.inTime && !l.outTime));
-  const recentOperatorDrafts = operators.filter((o) => o.status === 'draft' || (o.inTime && !o.assignedEquipmentId));
-  const recentEquipmentDrafts = equipment.filter((e) => e.status === 'draft' || (e.startMeter > 0 && e.endMeter === e.startMeter));
+  // Recent In-Progress / Unfinished Drafts for Quick Resumption
+  const recentLaborDrafts = laborers.filter((l) => l.inTime && !l.outTime);
+  const recentOperatorDrafts = operators.filter((o) => o.inTime && !o.assignedEquipmentId);
+  const recentEquipmentDrafts = equipment.filter((e) => 
+    (e.startMeter > 0 && e.endMeter === 0) || 
+    (e.startMileage && e.startMileage > 0 && (!e.endMileage || e.endMileage === 0))
+  );
 
   return (
     <div className="space-y-4 pb-20 animate-in fade-in duration-200">

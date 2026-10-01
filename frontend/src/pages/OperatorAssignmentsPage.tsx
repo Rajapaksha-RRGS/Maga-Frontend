@@ -55,7 +55,17 @@ const AVATAR_COLORS = [
   { bg: 'bg-rose-100', text: 'text-rose-700', border: 'border-rose-200' },
 ];
 
-export default function OperatorAssignmentsPage() {
+interface OperatorAssignmentsPageProps {
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
+  hideHeader?: boolean;
+}
+
+export default function OperatorAssignmentsPage({
+  selectedDate: propDate,
+  onDateChange: propOnDateChange,
+  hideHeader = false,
+}: OperatorAssignmentsPageProps = {}) {
   const {
     selectedDate,
     setSelectedDate,
@@ -79,47 +89,49 @@ export default function OperatorAssignmentsPage() {
     unassignOperator,
     copyPreviousDay,
     refresh,
-  } = useOperatorAssignments();
+  } = useOperatorAssignments(propDate, propOnDateChange);
 
   const isToday = selectedDate === getTodayStr();
 
   return (
-    <div className="px-4 md:px-6 py-5">
+    <div className={hideHeader ? "" : "px-4 md:px-6 py-5"}>
       {/* ── Page Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
-            <Cog size={18} className="text-blue-700" />
+      {!hideHeader && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
+              <Cog size={18} className="text-blue-700" />
+            </div>
+            <div>
+              <h1 className="text-base font-semibold text-slate-800">Operator assign</h1>
+              <Breadcrumb items={[{ label: 'Assignments', to: '/admin/assignments/labour' }, { label: 'Operator assign' }]} className="mt-1" />
+            </div>
           </div>
-          <div>
-            <h1 className="text-base font-semibold text-slate-800">Operator assign</h1>
-            <Breadcrumb items={[{ label: 'Assignments', to: '/admin/assignments/labour' }, { label: 'Operator assign' }]} className="mt-1" />
-          </div>
-        </div>
 
-        {/* Header Actions */}
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={isSaving || isLoading}
-            onClick={copyPreviousDay}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
-            title="Copy previous day's assignments to today"
-          >
-            <Copy size={13} className="text-slate-500" />
-            <span>Copy yesterday</span>
-          </button>
-          <button
-            type="button"
-            disabled={isSaving || isLoading}
-            onClick={refresh}
-            className="p-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
-            title="Refresh assignments"
-          >
-            <RotateCw size={14} className={isLoading ? 'animate-spin text-blue-600' : ''} />
-          </button>
+          {/* Header Actions */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={isSaving || isLoading}
+              onClick={copyPreviousDay}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+              title="Copy previous day's assignments to today"
+            >
+              <Copy size={13} className="text-slate-500" />
+              <span>Copy yesterday</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSaving || isLoading}
+              onClick={refresh}
+              className="p-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+              title="Refresh assignments"
+            >
+              <RotateCw size={14} className={isLoading ? 'animate-spin text-blue-600' : ''} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Stat Cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -179,55 +191,57 @@ export default function OperatorAssignmentsPage() {
       {/* ── Toolbar ── */}
       <div className="flex flex-wrap items-center gap-3 mb-5">
         {/* Date Selector with Previous / Next Day controls */}
-        <div className="flex items-center gap-1.5 bg-white border border-slate-200 p-1.5 rounded-2xl shadow-xs">
-          <button
-            type="button"
-            onClick={() => setSelectedDate(shiftDate(selectedDate, -1))}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
-            title="Previous Day"
-          >
-            <ChevronLeft size={18} />
-          </button>
-
-          <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-50 rounded-xl border border-slate-100">
-            <Calendar size={16} className="text-blue-600 flex-shrink-0" />
-            <input
-              id="op-assign-date"
-              type="date"
-              value={selectedDate}
-              onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
-              className="text-xs font-semibold text-slate-800 bg-transparent border-none focus:outline-none cursor-pointer font-mono"
-            />
-            <span className="text-[11px] font-medium text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md hidden sm:inline-block">
-              {getDayName(selectedDate)}
-            </span>
-            {isToday && (
-              <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                Today
-              </span>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setSelectedDate(shiftDate(selectedDate, 1))}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
-            title="Next Day"
-          >
-            <ChevronRight size={18} />
-          </button>
-
-          {!isToday && (
+        {!hideHeader && (
+          <div className="flex items-center gap-1.5 bg-white border border-slate-200 p-1.5 rounded-2xl shadow-xs">
             <button
               type="button"
-              onClick={() => setSelectedDate(getTodayStr())}
-              className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
-              title="Jump to Today"
+              onClick={() => setSelectedDate(shiftDate(selectedDate, -1))}
+              className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+              title="Previous Day"
             >
-              Today
+              <ChevronLeft size={18} />
             </button>
-          )}
-        </div>
+
+            <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-50 rounded-xl border border-slate-100">
+              <Calendar size={16} className="text-blue-600 flex-shrink-0" />
+              <input
+                id="op-assign-date"
+                type="date"
+                value={selectedDate}
+                onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+                className="text-xs font-semibold text-slate-800 bg-transparent border-none focus:outline-none cursor-pointer font-mono"
+              />
+              <span className="text-[11px] font-medium text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md hidden sm:inline-block">
+                {getDayName(selectedDate)}
+              </span>
+              {isToday && (
+                <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                  Today
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSelectedDate(shiftDate(selectedDate, 1))}
+              className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+              title="Next Day"
+            >
+              <ChevronRight size={18} />
+            </button>
+
+            {!isToday && (
+              <button
+                type="button"
+                onClick={() => setSelectedDate(getTodayStr())}
+                className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                title="Jump to Today"
+              >
+                Today
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Search */}
         <div className="relative flex-1 min-w-[200px] max-w-sm">

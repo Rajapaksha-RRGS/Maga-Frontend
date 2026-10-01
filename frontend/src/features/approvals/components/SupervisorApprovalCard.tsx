@@ -129,6 +129,10 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const workerOt = (group.totals?.laborOvertime ?? group.totalOvertime).toFixed(1);
   const equipmentFuel = group.totals?.equipmentFuel ?? 0;
 
+  console.log("Current op data:", group.operators);
+  console.log(group.counts);
+  
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden transition-all hover:border-slate-300">
       {/* Header bar */}
@@ -510,12 +514,28 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             </td>
                             <td className="py-2.5 px-3">
                               {op.assignedEquipmentDisplay && op.assignedEquipmentDisplay !== '—' ? (
-                                <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200 text-[11px] font-semibold">
-                                  <Truck size={12} className="text-amber-600" />
+                                <div
+                                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold border ${
+                                    op.assignedEquipmentDisplay.includes('ZXQOPRIDLE')
+                                      ? 'bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                                      : 'bg-blue-50 text-blue-900 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+                                  }`}
+                                >
+                                  <Truck
+                                    size={12}
+                                    className={
+                                      op.assignedEquipmentDisplay.includes('ZXQOPRIDLE')
+                                        ? 'text-amber-600'
+                                        : 'text-blue-600'
+                                    }
+                                  />
                                   <span>{op.assignedEquipmentDisplay}</span>
                                 </div>
                               ) : (
-                                <span className="text-slate-400 text-[11px]">Unassigned Machine</span>
+                                <span className="inline-flex items-center gap-1 text-slate-400 text-[11px]">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                                  Unassigned Machine
+                                </span>
                               )}
                             </td>
                             <td className="py-2.5 px-3 font-mono">

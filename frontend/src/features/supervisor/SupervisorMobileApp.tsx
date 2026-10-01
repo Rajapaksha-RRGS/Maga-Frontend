@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { UserPlus } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   supervisorStorage, 
@@ -15,7 +14,6 @@ import { SupervisorTopBar } from './components/SupervisorTopBar';
 import { SupervisorDrawer } from './components/SupervisorDrawer';
 import { SupervisorSubHeader } from './components/SupervisorSubHeader';
 import { SupervisorBottomNav, type SupervisorTabKey } from './components/SupervisorBottomNav';
-import { QuickAssignModal } from './components/QuickAssignModal';
 
 // 5 Dedicated Tab Views
 import { SupervisorDashboardView } from './views/SupervisorDashboardView';
@@ -30,8 +28,8 @@ export default function SupervisorMobileApp() {
   // State
   const [activeTab, setActiveTab] = useState<SupervisorTabKey>('dashboard');
   const [currentSite, setCurrentSite] = useState<SiteProject>(() => supervisorStorage.getActiveSite());
+  const [availableSites, setAvailableSites] = useState<SiteProject[]>(() => supervisorStorage.getAvailableSites());
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
-  const [quickAssignOpen, setQuickAssignOpen] = useState(false);
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -52,6 +50,18 @@ export default function SupervisorMobileApp() {
     approvedAt: null,
     remarks: null,
   });
+
+  // Load supervisor active site on mount or when user changes
+  useEffect(() => {
+    supervisorStorage.fetchActiveSite(user?.id, (user as any)?.tenantId)
+      .then((site) => {
+        if (site) {
+          setCurrentSite(site);
+          setAvailableSites(supervisorStorage.getAvailableSites());
+        }
+      })
+      .catch((err) => console.warn('Could not fetch active site for supervisor:', err));
+  }, [user?.id, (user as any)?.tenantId]);
 
   // Load data whenever selectedDate changes (Offline-First: cached first, then fresh backend)
   useEffect(() => {
@@ -175,10 +185,26 @@ export default function SupervisorMobileApp() {
   };
 
 
-  // Compute badge counts for Bottom Nav
+  // Compute badge counts for Bottom Nav (checks all unit modalities)
+  const isEquipmentLogged = (e: EquipmentLogEntry): boolean => {
+    if (e.status === 'done') return true;
+    if ((e.daysValue ?? 0) > 0) return true;
+    if ((e.hoursValue ?? 0) > 0) return true;
+    if ((e.extraHoursValue ?? 0) > 0) return true;
+    if ((e.areaValue ?? 0) > 0) return true;
+    if ((e.totalMileage ?? 0) > 0) return true;
+    if ((e.netHours ?? 0) > 0) return true;
+    if ((e.workingHours ?? 0) > 0) return true;
+    if (e.endMeter > 0 && e.endMeter > e.startMeter) return true;
+    if (e.activitySplits && e.activitySplits.some((s) => Number(s.utilization) > 0)) return true;
+    return false;
+  };
+
   const laborPendingCount = laborers.filter((l) => !l.inTime || !l.outTime).length;
-  const operatorPendingCount = operators.filter((o) => !o.assignedEquipmentId || !o.inTime).length;
-  const equipmentPendingCount = equipment.filter((e) => e.netHours === 0).length;
+  // Operator is incomplete only if inTime or outTime is missing.
+  // No machine assignment is valid — auto-balanced to ZXQOPRIDLE on sync.
+  const operatorPendingCount = operators.filter((o) => !o.inTime || !o.outTime).length;
+  const equipmentPendingCount = equipment.filter((e) => !isEquipmentLogged(e)).length;
 
   const supervisorDisplayName = user?.fullName || 'Supervisor';
 
@@ -202,24 +228,15 @@ export default function SupervisorMobileApp() {
         pendingSyncCount={pendingSyncCount}
         onSync={handleSync}
         isSyncing={isSyncing}
+        currentSite={currentSite}
+        availableSites={availableSites}
+        onSelectSite={handleSelectSite}
       />
 
       {/* ── Sub-Header (Date Stepper & Contextual Action) ──────────────────── */}
       <SupervisorSubHeader
         selectedDate={selectedDate}
         onDateChange={setSelectedDate}
-        rightAction={
-          activeTab === 'labor' && !isDayLocked ? (
-            <button
-              type="button"
-              onClick={() => setQuickAssignOpen(true)}
-              className="flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs transition-colors shadow-xs active:scale-[0.98] flex-shrink-0"
-            >
-              <UserPlus size={14} />
-              <span>+ Quick</span>
-            </button>
-          ) : null
-        }
       />
 
       {/* ── Main Viewport Content ────────────────────────────────────────────── */}
@@ -296,16 +313,6 @@ export default function SupervisorMobileApp() {
           operatorPending: operatorPendingCount,
           equipmentPending: equipmentPendingCount,
         }}
-      />
-
-      {/* ── Standby Laborer Quick Assign Modal ─────────────────────────────── */}
-      <QuickAssignModal
-        open={quickAssignOpen}
-        onClose={() => setQuickAssignOpen(false)}
-        onAssignWorker={(newWorker) => {
-          handleSaveLaborers([...laborers, { ...newWorker, status: 'draft' }]);
-        }}
-        alreadyAssignedIds={laborers.map((l) => l.id)}
       />
     </div>
   );

@@ -52,3 +52,11 @@ Activity A (දින 7.8) $\rightarrow$ 0.30 mth
 Activity B (දින 5.2) $\rightarrow$ 0.20 mth
 එකතුව = 0.50 mth
 Zero Utilization Filter: කිසිදු දිනයක වැඩ නොකළ (Days = 0) වාහන ස්වයංක්‍රීයව අයින් වේ.
+
+ප්‍රශ්නය පැහැදිලියි. DailySummaryView.tsx line 58-59 හා 71-73 හි ඇති logic හරිහැටි නෑ:
+
+Line 58: completedOperators — o.assignedEquipmentId නොමැති Operator ව "incomplete" ලෙස සලකයි. නමුත් ZXQOPRIDLE (machine-less idle operator) ද valid submission!
+Line 59: unmappedOperators — machine නෑ කිවාට Operator ගේ inTime/outTime ඇත් නම් ගැටළු නෑ.
+Line 71-73: hasPendingItems — unmappedOperators > 0 ඇත්නම් warning දෙයි, ඒ නිසා "Unassigned Machine" warning approve screen ලදි.
+Line 323-335: Operator row ලා machine නොමැතිනම් Unmapped (red) ලෙස දකී — but should show ZXQOPRIDLE.
+සියල්ල fix කරමු:

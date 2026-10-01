@@ -150,11 +150,19 @@ export interface ApprovalOverviewResponse {
  */
 export async function getApprovalOverview(date: string): Promise<ApprovalOverviewResponse> {
   const res = await apiFetch(`${API_URL}/time-entries/approval-overview?date=${encodeURIComponent(date)}`);
+  
   if (!res.ok) {
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || 'Failed to fetch approval overview');
   }
-  return res.json();
+
+  // මෙන්න මෙතැනදී JSON data ටික Variable එකකට ගන්න
+  const data = await res.json();
+  
+  // දැන් මේක Print කළොත් Backend එකෙන් එන දත්ත (Approval overview object එක) බලාගන්න පුළුවන්
+  console.log('Approval overview data:', data); 
+  
+  return data;
 }
 
 /**

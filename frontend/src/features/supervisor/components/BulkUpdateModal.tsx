@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Users, CheckSquare, Square, CheckCircle2 } from 'lucide-react';
-import { MASTER_ACTIVITIES, type LaborerEntry } from '../services/supervisorStorageService';
+import { supervisorStorage, type ActivityCodeItem, type LaborerEntry } from '../services/supervisorStorageService';
 
 interface BulkUpdateModalProps {
   open: boolean;
   onClose: () => void;
   laborers: LaborerEntry[];
   onApplyBulk: (selectedIds: string[], inTime: string, outTime: string, activityCode: string, hours: number) => void;
+  activityOptions?: ActivityCodeItem[];
 }
 
 export function BulkUpdateModal({
@@ -14,12 +15,28 @@ export function BulkUpdateModal({
   onClose,
   laborers,
   onApplyBulk,
+  activityOptions: propActivities,
 }: BulkUpdateModalProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>(() => laborers.map((l) => l.id));
   const [bulkIn, setBulkIn] = useState('08:00');
   const [bulkOut, setBulkOut] = useState('17:00');
-  const [bulkActivity, setBulkActivity] = useState(MASTER_ACTIVITIES[0].code);
+  const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>(propActivities || []);
+  const [bulkActivity, setBulkActivity] = useState('');
   const [bulkHours, setBulkHours] = useState(8.0);
+
+  useEffect(() => {
+    if (propActivities && propActivities.length > 0) {
+      setActivityOptions(propActivities);
+      setBulkActivity(propActivities[0].code);
+    } else {
+      supervisorStorage.getActivityCodes().then((codes) => {
+        if (Array.isArray(codes) && codes.length > 0) {
+          setActivityOptions(codes);
+          setBulkActivity((prev) => prev || codes[0].code);
+        }
+      }).catch(() => {});
+    }
+  }, [propActivities]);
 
   if (!open) return null;
 
@@ -109,7 +126,7 @@ export function BulkUpdateModal({
               onChange={(e) => setBulkActivity(e.target.value)}
               className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 font-medium"
             >
-              {MASTER_ACTIVITIES.map((act) => (
+              {activityOptions.map((act) => (
                 <option key={act.code} value={act.code}>
                   {act.code} — {act.name}
                 </option>

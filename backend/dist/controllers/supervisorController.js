@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteSupervisor = exports.updateSupervisorStatus = exports.resetSupervisorPassword = exports.createSupervisor = exports.getAllSupervisors = void 0;
+exports.deleteSupervisor = exports.updateSupervisorStatus = exports.resetSupervisorPassword = exports.createSupervisor = exports.getAllSupervisors = exports.getSupervisorActiveSite = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
@@ -15,6 +15,74 @@ function generateTempPassword() {
     }
     return pw;
 }
+const getSupervisorActiveSite = async (req, res) => {
+    try {
+        const supervisorId = req.query.supervisorId || req.query.userId;
+        let tenantId = req.query.tenantId;
+        if (!tenantId && supervisorId) {
+            const user = await prisma_1.default.user.findUnique({
+                where: { id: supervisorId },
+                select: { tenantId: true },
+            });
+            if (user) {
+                tenantId = user.tenantId;
+            }
+        }
+        if (!tenantId) {
+            tenantId = req.resolvedTenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        }
+        const tenant = await prisma_1.default.tenant.findUnique({
+            where: { id: tenantId },
+        });
+        if (!tenant) {
+            res.status(404).json({ error: "Tenant/Site not found" });
+            return;
+        }
+        const corporateProjects = await prisma_1.default.corporateProject.findMany({
+            where: { status: 'Active' },
+            orderBy: { projectCode: 'asc' },
+        });
+        const cleanSubdomain = tenant.subdomain.trim().toLowerCase();
+        const cleanSubdomainNum = cleanSubdomain.replace(/[^0-9]/g, '');
+        let matchedCorp = corporateProjects.find((cp) => {
+            const pCodeLower = cp.projectCode.toLowerCase();
+            return (pCodeLower === cleanSubdomain ||
+                pCodeLower.includes(cleanSubdomain) ||
+                cleanSubdomain.includes(pCodeLower) ||
+                (cleanSubdomainNum && cleanSubdomainNum.length > 0 && pCodeLower.includes(cleanSubdomainNum)));
+        });
+        if (!matchedCorp) {
+            matchedCorp = corporateProjects.find((cp) => {
+                const pNameLower = (cp.projectName || cp.description).toLowerCase();
+                const cNameLower = tenant.companyName.toLowerCase();
+                return pNameLower.includes(cNameLower) || cNameLower.includes(pNameLower);
+            });
+        }
+        const activeSite = {
+            id: tenant.id,
+            name: matchedCorp?.projectName || matchedCorp?.description || tenant.companyName,
+            code: matchedCorp?.projectCode || (tenant.subdomain.toUpperCase().startsWith('M') ? tenant.subdomain.toUpperCase() : `M00000${tenant.subdomain.toUpperCase()}`),
+            location: matchedCorp?.addressCode || tenant.addressLine1 || tenant.addressLine2 || 'Site Base Office',
+            projectManager: matchedCorp?.projectManager ? `Eng. ${matchedCorp.projectManager}` : 'Eng. Project Lead',
+        };
+        const availableSites = corporateProjects.map((cp) => ({
+            id: cp.id,
+            name: cp.projectName || cp.description,
+            code: cp.projectCode,
+            location: cp.addressCode || 'Sri Lanka',
+            projectManager: cp.projectManager ? `Eng. ${cp.projectManager}` : 'Eng. Project Lead',
+        }));
+        res.json({
+            activeSite,
+            availableSites: availableSites.length > 0 ? availableSites : [activeSite],
+        });
+    }
+    catch (error) {
+        console.error("Error fetching supervisor active site:", error);
+        res.status(500).json({ error: "Failed to fetch supervisor active site" });
+    }
+};
+exports.getSupervisorActiveSite = getSupervisorActiveSite;
 const getAllSupervisors = async (req, res) => {
     try {
         const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());

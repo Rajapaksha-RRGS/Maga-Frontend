@@ -331,6 +331,13 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
             businessPartner: { select: { id: true, name: true, code: true } },
           },
         },
+        timeEntry: {
+          include: {
+            assignedEquipment: {
+              select: { id: true, code: true, magaNo: true, name: true },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -346,6 +353,21 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
       operatorTrade: a.operator.tradeGroup,
       licenseNo: a.operator.licenseNo || null,
       businessPartner: a.operator.businessPartner?.name || 'Direct',
+      timeEntry: a.timeEntry
+        ? {
+            id: a.timeEntry.id,
+            inTime: a.timeEntry.inTime,
+            outTime: a.timeEntry.outTime,
+            shiftHours: Number(a.timeEntry.shiftHours || 0),
+            otHours: Number(a.timeEntry.otHours || 0),
+            assignedEquipmentId: a.timeEntry.assignedEquipmentId,
+            equipmentCode: a.timeEntry.assignedEquipment?.code,
+            equipmentMagaNo: a.timeEntry.assignedEquipment?.magaNo,
+            equipmentName: a.timeEntry.assignedEquipment?.name,
+            notes: a.timeEntry.notes,
+            status: a.timeEntry.status,
+          }
+        : null,
     }));
 
     res.json(formatted);
@@ -792,5 +814,55 @@ export const copyEquipmentGangsFromDate = async (req: Request, res: Response): P
     res.status(500).json({ error: 'Failed to copy equipment gangs from date' });
   }
 };
+
+// 12. Get standby / available workers pool for a specific date
+export const getStandbyPoolForDate = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const dateStr = req.query.date as string;
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+
+    const allEmployees = await prisma.employee.findMany({
+      where: {
+        tenantId,
+        status: 'active',
+      },
+      include: {
+        businessPartner: {
+          select: { name: true, code: true },
+        },
+      },
+      orderBy: { employeeCode: 'asc' },
+    });
+
+    let assignedIds = new Set<string>();
+    if (dateStr) {
+      const targetDate = parseDate(dateStr);
+      const assignments = await prisma.dailyAssignment.findMany({
+        where: { tenantId, date: targetDate },
+        select: { employeeId: true },
+      });
+      assignments.forEach((a) => assignedIds.add(a.employeeId));
+    }
+
+    const available = allEmployees.filter((e) => !assignedIds.has(e.id));
+    const poolList = available.length > 0 ? available : allEmployees;
+
+    const formatted = poolList.map((e) => ({
+      id: e.id,
+      employeeCode: e.employeeCode || `EMP-${e.id.slice(-3)}`,
+      callingName: e.callingName || e.fullName || 'Worker',
+      fullName: e.fullName || e.callingName || 'Worker',
+      tradeGroup: e.tradeGroup || 'General Helper',
+      businessPartner: e.businessPartner?.name || 'Mäga Direct',
+      nic: e.nicNo || '',
+    }));
+
+    res.json(formatted);
+  } catch (error) {
+    console.error('Error fetching standby pool:', error);
+    res.status(500).json({ error: 'Failed to fetch standby pool' });
+  }
+};
+
 
 

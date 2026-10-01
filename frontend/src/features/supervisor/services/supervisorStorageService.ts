@@ -140,350 +140,62 @@ export interface SiteProject {
   projectManager: string;
 }
 
-// ─── Master Data ─────────────────────────────────────────────────────────────
+// ─── Default Fallback Site ───────────────────────────────────────────────────
 
-export const MASTER_SITES: SiteProject[] = [
-  {
-    id: 'site-port-city',
-    name: 'Mäga — Colombo Port City (Marine Drive)',
-    code: 'CPC-PKG-02',
-    location: 'Galle Face, Colombo 01',
-    projectManager: 'Eng. R. Senanayake',
-  },
-  {
-    id: 'site-kelani-bridge',
-    name: 'Kelani Bridge Flyover Phase 2',
-    code: 'KBF-SEC-B',
-    location: 'Peliyagoda / Colombo North',
-    projectManager: 'Eng. M. Wickramasinghe',
-  },
-  {
-    id: 'site-highway-ext',
-    name: 'Central Expressway Section II (Meerigama)',
-    code: 'CEP-PKG-04',
-    location: 'Meerigama Interchange',
-    projectManager: 'Eng. S. Alwis',
-  },
-  {
-    id: 'site-iroad-531',
-    name: '531M - iRoad Package / Central Expressway',
-    code: 'M00000531',
-    location: 'Central Province / Expressway',
-    projectManager: 'Eng. K. Perera',
-  },
-];
-
-export const MASTER_ACTIVITIES: ActivityCodeItem[] = [
-  { code: 'ACT-101', name: 'Concrete Pouring (Slab & Columns)', trade: 'Masonry', category: 'Civil' },
-  { code: 'ACT-102', name: 'Reinforcement & Bar-bending', trade: 'Steel Fixer', category: 'Civil' },
-  { code: 'ACT-103', name: 'Bricklaying & Masonry Finishing', trade: 'Mason', category: 'Civil' },
-  { code: 'ACT-104', name: 'Excavation, Trenching & Earthwork', trade: 'Earthwork', category: 'Civil' },
-  { code: 'ACT-105', name: 'Plastering, Screeding & Skim Coat', trade: 'Plasterer', category: 'Finishing' },
-  { code: 'ACT-106', name: 'Formwork & Scaffolding Erection', trade: 'Carpenter', category: 'Structural' },
-  { code: 'ACT-107', name: 'Drainage & Pipe Laying', trade: 'Plumber', category: 'Services' },
-  { code: 'ACT-108', name: 'Site Cleaning & Material Handling', trade: 'General Helper', category: 'General' },
-];
-
-export const STANDBY_WORKERS_POOL = [
-  { id: 'ST-501', employeeCode: 'EMP-501', callingName: 'Jagath Kumara', tradeGroup: 'Carpenter', businessPartner: 'Mäga Direct', nic: '881290345V' },
-  { id: 'ST-502', employeeCode: 'EMP-502', callingName: 'Saman Jayasuriya', tradeGroup: 'Mason', businessPartner: 'Alpha Subcontractors', nic: '912389441V' },
-  { id: 'ST-503', employeeCode: 'EMP-503', callingName: 'Bandula Premalal', tradeGroup: 'Steel Fixer', businessPartner: 'Beta Engineering', nic: '853401923V' },
-  { id: 'ST-504', employeeCode: 'EMP-504', callingName: 'Priyantha Dias', tradeGroup: 'General Helper', businessPartner: 'Mäga Direct', nic: '941209312V' },
-  { id: 'ST-505', employeeCode: 'EMP-505', callingName: 'Gamini Dissanayake', tradeGroup: 'Plumber', businessPartner: 'Delta Services', nic: '821940129V' },
-];
-
-// ─── Initial Seed Records ───────────────────────────────────────────────────
-
-export const INITIAL_LABORERS: LaborerEntry[] = [
-  {
-    id: 'L-101',
-    employeeCode: 'EMP-101',
-    callingName: 'Kamal Perera',
-    tradeGroup: 'Mason',
-    businessPartner: 'Mäga Direct',
-    nic: '841029341V',
-    inTime: '07:30',
-    outTime: '17:00',
-    shiftHours: 8.5,
-    otHours: 1.0,
-    activities: [
-      { id: 'a1', activityCode: 'ACT-101', hours: 5.5 },
-      { id: 'a2', activityCode: 'ACT-103', hours: 3.0 },
-    ],
-    status: 'done',
-    lastSavedAt: '08:15 AM',
-  },
-  {
-    id: 'L-102',
-    employeeCode: 'EMP-102',
-    callingName: 'Nimal Silva',
-    tradeGroup: 'Steel Fixer',
-    businessPartner: 'Alpha Contractors',
-    nic: '891023942V',
-    inTime: '08:00',
-    outTime: '17:00',
-    shiftHours: 8.0,
-    otHours: 0.5,
-    activities: [
-      { id: 'a3', activityCode: 'ACT-102', hours: 8.0 },
-    ],
-    status: 'draft',
-    lastSavedAt: '08:30 AM',
-  },
-  {
-    id: 'L-103',
-    employeeCode: 'EMP-103',
-    callingName: 'Sunil Shantha',
-    tradeGroup: 'Carpenter',
-    businessPartner: 'Mäga Direct',
-    nic: '792019482V',
-    inTime: '08:00',
-    outTime: '16:30',
-    shiftHours: 7.5,
-    otHours: 0,
-    activities: [
-      { id: 'a4', activityCode: 'ACT-106', hours: 7.5 },
-    ],
-    status: 'done',
-    lastSavedAt: '09:00 AM',
-  },
-  {
-    id: 'L-104',
-    employeeCode: 'EMP-104',
-    callingName: 'Ruwan Kumara',
-    tradeGroup: 'General Helper',
-    businessPartner: 'Beta Manpower',
-    nic: '931029481V',
-    inTime: '07:30',
-    outTime: '',
-    shiftHours: 0,
-    otHours: 0,
-    activities: [
-      { id: 'a5', activityCode: 'ACT-108', hours: 0 },
-    ],
-    status: 'pending',
-  },
-  {
-    id: 'L-105',
-    employeeCode: 'EMP-105',
-    callingName: 'Ajith Bandara',
-    tradeGroup: 'Mason',
-    businessPartner: 'Mäga Direct',
-    nic: '883019283V',
-    inTime: '',
-    outTime: '',
-    shiftHours: 0,
-    otHours: 0,
-    activities: [
-      { id: 'a6', activityCode: 'ACT-101', hours: 0 },
-    ],
-    status: 'pending',
-  },
-  {
-    id: 'L-106',
-    employeeCode: 'EMP-106',
-    callingName: 'Nuwan Pradeep',
-    tradeGroup: 'Steel Fixer',
-    businessPartner: 'Alpha Contractors',
-    nic: '951029411V',
-    inTime: '08:00',
-    outTime: '17:00',
-    shiftHours: 8.0,
-    otHours: 0.5,
-    activities: [
-      { id: 'a7', activityCode: 'ACT-102', hours: 8.0 },
-    ],
-    status: 'draft',
-    lastSavedAt: '08:45 AM',
-  },
-];
-
-export const INITIAL_OPERATORS: OperatorEntry[] = [
-  {
-    id: 'OP-201',
-    callingName: 'Anura Gunasekara',
-    employeeNumber: 'R0456',
-    licenseNo: 'OP-HV-9921',
-    designation: 'Heavy Excavator Operator',
-    inTime: '07:00',
-    outTime: '17:30',
-    shiftHours: 9.5,
-    otHours: 1.5,
-    assignedEquipmentId: 'EQ-01',
-    status: 'done',
-    notes: 'Hydraulic pre-inspection passed. Ready for deep trenching.',
-    lastSavedAt: '07:15 AM',
-  },
-  {
-    id: 'OP-202',
-    callingName: 'Mahesh Fernando',
-    employeeNumber: 'R0457',
-    licenseNo: 'OP-CR-4412',
-    designation: 'Tower Crane Operator',
-    inTime: '07:30',
-    outTime: '17:00',
-    shiftHours: 8.5,
-    otHours: 0.5,
-    assignedEquipmentId: 'EQ-02',
-    status: 'done',
-    notes: 'Anemometer wind check clear under 30 knots.',
-    lastSavedAt: '07:45 AM',
-  },
-  {
-    id: 'OP-203',
-    callingName: 'Chathura Rajapaksha',
-    employeeNumber: 'R0458',
-    licenseNo: 'OP-RL-3129',
-    designation: 'Roller & Compactor Operator',
-    inTime: '08:00',
-    outTime: '16:30',
-    shiftHours: 7.5,
-    otHours: 0,
-    assignedEquipmentId: 'EQ-03',
-    status: 'draft',
-    notes: 'Subgrade rolling at Access Ramp sector.',
-    lastSavedAt: '08:10 AM',
-  },
-  {
-    id: 'OP-204',
-    callingName: 'Duminda Karunaratne',
-    employeeNumber: 'R0459',
-    licenseNo: 'OP-BK-7718',
-    designation: 'Backhoe Loader Operator',
-    inTime: '',
-    outTime: '',
-    shiftHours: 0,
-    otHours: 0,
-    assignedEquipmentId: '', // intentionally unmapped to demonstrate validation!
-    status: 'pending',
-  },
-];
-
-export const INITIAL_EQUIPMENT: EquipmentLogEntry[] = [
-  {
-    id: 'EQ-01',
-    code: 'EX-04',
-    name: 'CAT 320D Excavator',
-    type: 'Heavy Earthmover',
-    availableUnits: ['mth', 'Hrs', 'EX.hrs', 'Days'],
-    activeUnit: 'mth',
-    startMeter: 4820.5,
-    endMeter: 4828.5,
-    netHours: 8.0,
-    daysValue: 1.0,
-    hoursValue: 8.0,
-    extraHoursValue: 1.5,
-    workingHours: 7.0,
-    idleHours: 1.0,
-    breakdownHours: 0,
-    fuelIssuedLiters: 110,
-    operatorId: 'OP-201',
-    activityCode: 'ACT-104',
-    status: 'done',
-    remarks: 'Foundation pit excavation sector B. Operating smoothly.',
-    lastSavedAt: '09:20 AM',
-  },
-  {
-    id: 'EQ-02',
-    code: 'TC-01',
-    name: 'Zoomlion 50T Tower Crane',
-    type: 'Lifting & Hoisting',
-    availableUnits: ['Days', 'Hrs', 'EX.hrs'],
-    activeUnit: 'Days',
-    startMeter: 1240.0,
-    endMeter: 1247.5,
-    netHours: 7.5,
-    daysValue: 1.0,
-    hoursValue: 7.5,
-    extraHoursValue: 0.5,
-    workingHours: 6.5,
-    idleHours: 1.0,
-    breakdownHours: 0,
-    fuelIssuedLiters: 0, // Electric powered
-    operatorId: 'OP-202',
-    activityCode: 'ACT-102',
-    status: 'done',
-    remarks: 'Rebar bundle lifting to Level 4 casting deck.',
-    lastSavedAt: '09:35 AM',
-  },
-  {
-    id: 'EQ-03',
-    code: 'RL-02',
-    name: 'Dynapac CA2500D Vibratory Roller',
-    type: 'Compaction Equipment',
-    availableUnits: ['mth', 'm2', 'Hrs', 'Days'],
-    activeUnit: 'mth',
-    startMeter: 3105.0,
-    endMeter: 3111.0,
-    netHours: 6.0,
-    daysValue: 1.0,
-    hoursValue: 6.0,
-    areaValue: 480,
-    workingHours: 5.0,
-    idleHours: 1.0,
-    breakdownHours: 0,
-    fuelIssuedLiters: 65,
-    operatorId: 'OP-203',
-    activityCode: 'ACT-104',
-    status: 'draft',
-    remarks: 'Sub-base layer 98% density achieved on road shoulder.',
-    lastSavedAt: '10:00 AM',
-  },
-  {
-    id: 'EQ-04',
-    code: 'CP-01',
-    name: 'Schwing Stetter Concrete Pump',
-    type: 'Concrete Machinery',
-    availableUnits: ['Days', 'm2', 'Hrs'],
-    activeUnit: 'Days',
-    startMeter: 2150.0,
-    endMeter: 2150.0,
-    netHours: 0,
-    daysValue: 0,
-    hoursValue: 0,
-    areaValue: 0,
-    workingHours: 0,
-    idleHours: 0,
-    breakdownHours: 0,
-    fuelIssuedLiters: 0,
-    operatorId: '',
-    activityCode: 'ACT-101',
-    status: 'pending',
-    remarks: 'Scheduled for afternoon slab concrete pour at 14:00.',
-  },
-  {
-    id: 'EQ-05',
-    code: 'TP-02',
-    name: 'Isuzu Giga 10-Wheeler Tipper',
-    type: 'Material Haulage Truck',
-    availableUnits: ['Days', 'Hrs', 'EX.hrs', 'm2'],
-    activeUnit: 'Days',
-    startMeter: 54100.0,
-    endMeter: 54220.0,
-    netHours: 8.0,
-    daysValue: 1.0,
-    hoursValue: 8.0,
-    extraHoursValue: 2.0,
-    workingHours: 8.0,
-    idleHours: 0,
-    breakdownHours: 0,
-    fuelIssuedLiters: 85,
-    operatorId: 'OP-204',
-    activityCode: 'ACT-108',
-    status: 'done',
-    remarks: 'Aggregate transport from batching plant to sector 3.',
-    lastSavedAt: '10:30 AM',
-  },
-];
+export const DEFAULT_SITE: SiteProject = {
+  id: '',
+  name: 'Mäga Engineering',
+  code: 'MAGA',
+  location: 'Site Operations Base',
+  projectManager: 'Eng. Project Lead',
+};
 
 // ─── Storage Keys & Helper Functions ─────────────────────────────────────────
 
 const STORAGE_PREFIX = 'maga_supervisor_data_';
 const SYNC_QUEUE_KEY = 'maga_supervisor_sync_queue';
 const ACTIVE_SITE_KEY = 'maga_supervisor_active_site';
+const AVAILABLE_SITES_KEY = 'maga_supervisor_available_sites';
 
 export const supervisorStorage = {
-  // ── Site Management ───────────────────────────────────────────────────────
+  getAvailableSites(): SiteProject[] {
+    try {
+      const saved = localStorage.getItem(AVAILABLE_SITES_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    const active = this.getActiveSite();
+    return active.id ? [active] : [DEFAULT_SITE];
+  },
+
+  async fetchActiveSite(userId?: string, tenantId?: string): Promise<SiteProject> {
+    try {
+      const params = new URLSearchParams();
+      if (userId) params.append('supervisorId', userId);
+      if (tenantId) params.append('tenantId', tenantId);
+      const query = params.toString() ? ('?' + params.toString()) : '';
+
+      const res = await apiFetch(`${API_URL}/supervisors/active-site${query}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.activeSite) {
+          this.setActiveSite(data.activeSite);
+          if (Array.isArray(data.availableSites) && data.availableSites.length > 0) {
+            localStorage.setItem(AVAILABLE_SITES_KEY, JSON.stringify(data.availableSites));
+          }
+          return data.activeSite;
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch active site from backend:', err);
+    }
+    return this.getActiveSite();
+  },
+
   getActiveSite(): SiteProject {
     try {
       const saved = localStorage.getItem(ACTIVE_SITE_KEY);
@@ -491,14 +203,22 @@ export const supervisorStorage = {
     } catch {
       // ignore
     }
-    return MASTER_SITES[0];
+    return DEFAULT_SITE;
   },
 
   setActiveSite(site: SiteProject) {
     localStorage.setItem(ACTIVE_SITE_KEY, JSON.stringify(site));
   },
 
-  // ── 1. Master Activity Codes (Backend with Tenant Isolation + Project Code Validation + Offline Cache) 
+  async getStandbyWorkers(_userId?: string, _tenantId?: string) {
+    return [];
+  },
+
+  async fetchStandbyWorkers(_date?: string) {
+    return [];
+  },
+
+  // ── 1. Master Activity Codes (Backend with Tenant Isolation + Project Code Validation + Offline Cache)
   async getActivityCodes(): Promise<ActivityCodeItem[]> {
     const activeSite = this.getActiveSite();
     const siteCode = activeSite?.code;
@@ -577,7 +297,7 @@ export const supervisorStorage = {
         }
       } catch {}
     }
-    return MASTER_ACTIVITIES;
+    return [];
   },
 
   async resolveActivityByCode(code: string): Promise<ActivityCodeItem | undefined> {
@@ -612,6 +332,8 @@ export const supervisorStorage = {
                 : ALL_UNITS; // empty = all units shown
             // Prefer supervisor's already-chosen unit (local draft) over DB default
             const resolvedActiveUnit: EquipmentRatingUnit = existing?.activeUnit ?? dbPrimaryUnit;
+            // Backend dailyLog (returned after previous sync) used as fallback when there is no local draft
+            const log = asgn.dailyLog;
             return {
               id: asgn.equipmentId,
               code: asgn.equipmentCode || asgn.equipmentName,
@@ -624,27 +346,30 @@ export const supervisorStorage = {
               availableUnits: dbAvailableUnits,
               activeUnit: resolvedActiveUnit,
               additionalUnit: existing?.additionalUnit ?? null,
-              daysValue: existing?.daysValue,
-              hoursValue: existing?.hoursValue,
+              // Local draft takes priority; fallback to backend dailyLog if no local draft
+              daysValue: existing?.daysValue ?? log?.daysValue,
+              hoursValue: existing?.hoursValue ?? log?.hoursValue,
               extraHoursValue: existing?.extraHoursValue,
               areaValue: existing?.areaValue,
-              startMeter: existing?.startMeter ?? 0,
-              endMeter: existing?.endMeter ?? 0,
-              netHours: existing?.netHours ?? 0,
-              workingHours: existing?.workingHours ?? 0,
-              idleHours: existing?.idleHours ?? 0,
-              breakdownHours: existing?.breakdownHours ?? 0,
-              fuelIssuedLiters: existing?.fuelIssuedLiters ?? 0,
-              totalMileage: existing?.totalMileage ?? 0,
-              startMileage: existing?.startMileage ?? 0,
-              endMileage: existing?.endMileage ?? 0,
+              startMeter: existing?.startMeter ?? log?.startMeter ?? 0,
+              endMeter: existing?.endMeter ?? log?.endMeter ?? 0,
+              netHours: existing?.netHours ?? log?.netHours ?? 0,
+              workingHours: existing?.workingHours ?? log?.workingHours ?? 0,
+              idleHours: existing?.idleHours ?? log?.idleHours ?? 0,
+              breakdownHours: existing?.breakdownHours ?? log?.breakdownHours ?? 0,
+              fuelIssuedLiters: existing?.fuelIssuedLiters ?? log?.fuelIssuedLiters ?? 0,
+              totalMileage: existing?.totalMileage ?? log?.totalMileage ?? 0,
+              startMileage: existing?.startMileage ?? log?.startMileage ?? 0,
+              endMileage: existing?.endMileage ?? log?.endMileage ?? 0,
               operatorId: existing?.operatorId,
               activityCode: existing?.activityCode,
-              // ✅ Preserve supervisor-entered activity splits from local draft
-              activitySplits: existing?.activitySplits ?? [],
+              // ✅ Local draft splits first, then backend saved splits, then empty
+              activitySplits: (existing?.activitySplits && existing.activitySplits.length > 0)
+                ? existing.activitySplits
+                : (log?.activitySplits ?? []),
               activities: existing?.activities ?? [],
-              remarks: existing?.remarks,
-              status: existing?.status || 'pending',
+              remarks: existing?.remarks ?? log?.remarks,
+              status: existing?.status ?? log?.status ?? 'pending',
               lastSavedAt: existing?.lastSavedAt,
             };
           });
@@ -714,9 +439,10 @@ export const supervisorStorage = {
       ]);
 
       if (resAssigned.ok) {
+        console.log("Assigned workers:", resAssigned);
         const assignedList = await resAssigned.json();
         const timeEntryList = resEntries.ok ? await resEntries.json() : [];
-
+        console.log("Time entry list:", timeEntryList);
         // Check if entries for this day are already submitted or approved
         const isSubmitted = timeEntryList.some((t: any) => t.status === 'submitted' || t.status === 'approved');
 
@@ -838,20 +564,21 @@ export const supervisorStorage = {
         const mapped: OperatorEntry[] = (assignedData || []).map((asgn: any) => {
           const opId = asgn.operatorId || asgn.id;
           const existing = localMap.get(opId);
+          const te = asgn.timeEntry;
           return {
             id: opId,
             callingName: asgn.operatorName || asgn.callingName || 'Operator',
             employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
             licenseNo: asgn.licenseNo || '',
             designation: asgn.operatorTrade || 'Machine Operator',
-            inTime: existing?.inTime || '',
-            outTime: existing?.outTime || '',
-            shiftHours: existing?.shiftHours || 0,
-            otHours: existing?.otHours || 0,
-            assignedEquipmentId: existing?.assignedEquipmentId || '',
-            equipmentSplits: existing?.equipmentSplits || (existing?.assignedEquipmentId ? [{ id: '1', equipmentId: existing.assignedEquipmentId, hours: existing.shiftHours || 0 }] : []),
-            status: existing?.status || 'pending',
-            notes: existing?.notes || '',
+            inTime: existing?.inTime || te?.inTime || '',
+            outTime: existing?.outTime || te?.outTime || '',
+            shiftHours: existing?.shiftHours !== undefined && existing?.shiftHours > 0 ? existing.shiftHours : (te?.shiftHours || 0),
+            otHours: existing?.otHours !== undefined && existing?.otHours > 0 ? existing.otHours : (te?.otHours || 0),
+            assignedEquipmentId: existing?.assignedEquipmentId || te?.assignedEquipmentId || '',
+            equipmentSplits: existing?.equipmentSplits || (existing?.assignedEquipmentId ? [{ id: '1', equipmentId: existing.assignedEquipmentId, hours: existing.shiftHours || 0 }] : (te?.assignedEquipmentId ? [{ id: '1', equipmentId: te.assignedEquipmentId, hours: te.shiftHours || 0 }] : [])),
+            status: existing?.status || te?.status || 'pending',
+            notes: existing?.notes || te?.notes || '',
           };
         });
         localStorage.setItem(key, JSON.stringify(mapped));
@@ -1130,46 +857,44 @@ export const supervisorStorage = {
       if (operators.length > 0) {
         const validOps = operators.filter((o) => o.inTime || o.outTime || (o.equipmentSplits && o.equipmentSplits.length > 0) || o.assignedEquipmentId);
         if (validOps.length > 0) {
-          const payloadEntries = validOps.flatMap((op) => {
+          const payloadEntries = validOps.map((op) => {
             const shiftH = Number(op.shiftHours) || 0;
             const splits = (op.equipmentSplits && op.equipmentSplits.length > 0)
               ? op.equipmentSplits.filter((s) => s.equipmentId && Number(s.hours) > 0)
-              : (op.assignedEquipmentId ? [{ id: '1', equipmentId: op.assignedEquipmentId, hours: shiftH, remarks: '' }] : []);
+              : (op.assignedEquipmentId && op.assignedEquipmentId !== 'ZXQOPRIDLE'
+                  ? [{ id: '1', equipmentId: op.assignedEquipmentId, hours: shiftH, remarks: '' }]
+                  : []);
 
             const sumOperating = splits.reduce((acc, s) => acc + (Number(s.hours) || 0), 0);
             const idleRemainder = Math.max(0, Math.round((shiftH - sumOperating) * 10) / 10);
 
-            const resultRows: any[] = splits.map((s) => ({
-              operatorId: op.id,
-              equipmentId: s.equipmentId,
-              assignedEquipmentId: s.equipmentId,
-              inTime: op.inTime || undefined,
-              outTime: op.outTime || undefined,
-              shiftHours: s.hours,
-              hours: s.hours,
-              otHours: op.otHours || 0,
-              overtimeHours: op.otHours || 0,
-              notes: s.remarks || op.notes || undefined,
-            }));
+            // Primary machine is the first real equipment split, or op.assignedEquipmentId, or 'ZXQOPRIDLE'
+            const primaryMachineId = splits.length > 0 ? splits[0].equipmentId : (op.assignedEquipmentId || 'ZXQOPRIDLE');
 
-            // If remaining shift hours were not operating equipment (or no equipment assigned), allocate to ZXQOPRIDLE
+            // Build detailed remarks/notes
+            const noteParts: string[] = [];
+            if (op.notes) noteParts.push(op.notes);
+            if (splits.length > 1) {
+              noteParts.push(`Splits: ${splits.map((s) => `${s.equipmentId}: ${s.hours}h`).join(', ')}`);
+            }
             if (idleRemainder > 0 || splits.length === 0) {
-              const idleHoursToSend = splits.length === 0 ? shiftH : idleRemainder;
-              resultRows.push({
-                operatorId: op.id,
-                equipmentId: 'ZXQOPRIDLE',
-                assignedEquipmentId: 'ZXQOPRIDLE',
-                inTime: op.inTime || undefined,
-                outTime: op.outTime || undefined,
-                shiftHours: idleHoursToSend,
-                hours: idleHoursToSend,
-                otHours: 0,
-                overtimeHours: 0,
-                notes: 'Exter. Equipment Operator Idle (ZXQOPRIDLE)',
-              });
+              const idleH = splits.length === 0 ? shiftH : idleRemainder;
+              noteParts.push(`Exter. Equipment Operator Idle (ZXQOPRIDLE: ${idleH}h)`);
             }
 
-            return resultRows;
+            return {
+              operatorId: op.id,
+              equipmentId: primaryMachineId,
+              assignedEquipmentId: primaryMachineId,
+              inTime: op.inTime || undefined,
+              outTime: op.outTime || undefined,
+              shiftHours: shiftH,
+              hours: shiftH,
+              otHours: op.otHours || 0,
+              overtimeHours: op.otHours || 0,
+              notes: noteParts.length > 0 ? noteParts.join(' | ') : undefined,
+              status: op.status || 'draft',
+            };
           });
 
           await apiFetch(`${API_URL}/time-entries/operators/bulk`, {

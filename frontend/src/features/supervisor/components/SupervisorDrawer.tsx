@@ -5,11 +5,12 @@ import {
   Moon, 
   LogOut, 
   HardHat, 
-  ShieldCheck
+  ShieldCheck,
+  Building2
 } from 'lucide-react';
 import { useTheme } from '../../../context/ThemeContext';
 import { useAuth } from '../../../context/AuthContext';
-
+import { type SiteProject } from '../services/supervisorStorageService';
 
 interface SupervisorDrawerProps {
   open: boolean;
@@ -17,6 +18,9 @@ interface SupervisorDrawerProps {
   pendingSyncCount: number;
   onSync: () => Promise<void>;
   isSyncing: boolean;
+  currentSite?: SiteProject;
+  availableSites?: SiteProject[];
+  onSelectSite?: (site: SiteProject) => void;
 }
 
 export function SupervisorDrawer({
@@ -25,11 +29,18 @@ export function SupervisorDrawer({
   pendingSyncCount,
   onSync,
   isSyncing,
+  currentSite,
+  availableSites,
+  onSelectSite,
 }: SupervisorDrawerProps) {
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
 
   if (!open) return null;
+
+  const sitesToShow = (availableSites && availableSites.length > 0)
+    ? availableSites
+    : (currentSite ? [currentSite] : []);
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -78,7 +89,7 @@ export function SupervisorDrawer({
                 {user?.fullName || 'Field Supervisor'}
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                EPF No: SUP-8829 · {user?.username || 'supervisor'}
+                {user?.companyName ? `${user.companyName} · ` : ''}{user?.username || 'supervisor'}
               </p>
               <div className="mt-1 flex items-center gap-1.5">
                 <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
@@ -88,38 +99,58 @@ export function SupervisorDrawer({
             </div>
           </div>
 
-          {/* Current Project / Site Switcher
-          <div>
-            <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-2">
-              Assigned Project Site
-            </label>
-            <div className="space-y-1.5">
-              {MASTER_SITES.map((site) => {
-                const isSelected = site.id === currentSite.id;
-                return (
-                  <button
-                    key={site.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectSite(site);
-                    }}
-                    className={[
-                      'w-full text-left p-2.5 rounded-lg border text-xs transition-all flex items-start gap-2.5',
-                      isSelected
-                        ? 'border-blue-600 dark:border-blue-500 bg-blue-50/70 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 shadow-xs'
-                        : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
-                    ].join(' ')}
-                  >
-                    <Building2 size={16} className={isSelected ? 'text-blue-600 dark:text-blue-400 mt-0.5' : 'text-slate-400 mt-0.5'} />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{site.name}</p>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">{site.code} · {site.location}</p>
-                    </div>
-                  </button>
-                );
-              })}
+          {/* Admin Switcher if role is admin */}
+          {user && (user.role === 'admin' || user.role === 'super_admin') && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                window.location.href = '/admin';
+              }}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold text-xs hover:bg-blue-100 transition-colors shadow-2xs"
+            >
+              <Building2 size={15} />
+              <span>Switch to Admin Portal</span>
+            </button>
+          )}
+
+          {/* Current Project / Site */}
+          {currentSite && (
+            <div>
+              <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-2">
+                Assigned Project Site
+              </label>
+              <div className="space-y-1.5">
+                {sitesToShow.map((site) => {
+                  const isSelected = site.code === currentSite?.code || site.id === currentSite?.id;
+                  return (
+                    <button
+                      key={site.id || site.code}
+                      type="button"
+                      onClick={() => {
+                        if (onSelectSite) onSelectSite(site);
+                      }}
+                      className={[
+                        'w-full text-left p-2.5 rounded-lg border text-xs transition-all flex items-start gap-2.5',
+                        isSelected
+                          ? 'border-blue-600 dark:border-blue-500 bg-blue-50/70 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                      ].join(' ')}
+                    >
+                      <Building2 size={16} className={isSelected ? 'text-blue-600 dark:text-blue-400 mt-0.5' : 'text-slate-400 mt-0.5'} />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{site.name}</p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">{site.code} · {site.location}</p>
+                        {site.projectManager && (
+                          <p className="text-[9px] text-slate-400 dark:text-slate-500 truncate mt-0.5">{site.projectManager}</p>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div> */}
+          )}
 
           {/* Offline Sync & Storage Tools */}
           <div>

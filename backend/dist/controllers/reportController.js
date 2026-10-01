@@ -1633,7 +1633,7 @@ const getEquipmentErpUploadReport = async (req, res) => {
         const dateTo = qStr(req.query.dateTo);
         const month = qStr(req.query.month);
         const condition = qStr(req.query.condition);
-        const activityCode = qStr(req.query.activityCode) || '00-00-10-00';
+        const activityCode = qStr(req.query.activityCode) || 'ZOTHE';
         let from = dateFrom;
         let to = dateTo;
         let uploadDateFormatted = '31-10-2026';

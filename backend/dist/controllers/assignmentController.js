@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.copyEquipmentGangsFromDate = exports.unassignEquipment = exports.assignEquipment = exports.getEquipmentAssignmentsForDate = exports.copyOperatorGangsFromDate = exports.unassignOperator = exports.assignOperators = exports.getOperatorAssignmentsForDate = exports.copyGangsFromDate = exports.unassignEmployee = exports.assignEmployees = exports.getRecentGangSummaries = exports.getAssignmentsForDate = void 0;
+exports.getStandbyPoolForDate = exports.copyEquipmentGangsFromDate = exports.unassignEquipment = exports.assignEquipment = exports.getEquipmentAssignmentsForDate = exports.copyOperatorGangsFromDate = exports.unassignOperator = exports.assignOperators = exports.getOperatorAssignmentsForDate = exports.copyGangsFromDate = exports.unassignEmployee = exports.assignEmployees = exports.getRecentGangSummaries = exports.getAssignmentsForDate = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
 // Helper: parse date to UTC midnight for date column
@@ -307,6 +307,13 @@ const getOperatorAssignmentsForDate = async (req, res) => {
                         businessPartner: { select: { id: true, name: true, code: true } },
                     },
                 },
+                timeEntry: {
+                    include: {
+                        assignedEquipment: {
+                            select: { id: true, code: true, magaNo: true, name: true },
+                        },
+                    },
+                },
             },
             orderBy: { createdAt: 'asc' },
         });
@@ -321,6 +328,21 @@ const getOperatorAssignmentsForDate = async (req, res) => {
             operatorTrade: a.operator.tradeGroup,
             licenseNo: a.operator.licenseNo || null,
             businessPartner: a.operator.businessPartner?.name || 'Direct',
+            timeEntry: a.timeEntry
+                ? {
+                    id: a.timeEntry.id,
+                    inTime: a.timeEntry.inTime,
+                    outTime: a.timeEntry.outTime,
+                    shiftHours: Number(a.timeEntry.shiftHours || 0),
+                    otHours: Number(a.timeEntry.otHours || 0),
+                    assignedEquipmentId: a.timeEntry.assignedEquipmentId,
+                    equipmentCode: a.timeEntry.assignedEquipment?.code,
+                    equipmentMagaNo: a.timeEntry.assignedEquipment?.magaNo,
+                    equipmentName: a.timeEntry.assignedEquipment?.name,
+                    notes: a.timeEntry.notes,
+                    status: a.timeEntry.status,
+                }
+                : null,
         }));
         res.json(formatted);
     }
@@ -525,6 +547,16 @@ const getEquipmentAssignmentsForDate = async (req, res) => {
                         unitRates: true,
                     },
                 },
+                // Include the daily log (supervisor-entered data) if it exists
+                dailyLog: {
+                    include: {
+                        activities: {
+                            include: {
+                                activityCode: { select: { id: true, code: true, description: true } },
+                            },
+                        },
+                    },
+                },
             },
             orderBy: { createdAt: 'asc' },
         });
@@ -544,6 +576,28 @@ const getEquipmentAssignmentsForDate = async (req, res) => {
             primaryUnit: a.equipment.primaryUnit || 'mth',
             availableUnits: a.equipment.availableUnits || [],
             unitRates: a.equipment.unitRates || [],
+            // Include persisted daily log data so frontend can restore state from server
+            dailyLog: a.dailyLog ? {
+                startMeter: a.dailyLog.initialMeter || 0,
+                endMeter: a.dailyLog.finalMeter || 0,
+                netHours: a.dailyLog.netRunningHours || 0,
+                workingHours: a.dailyLog.workingHours || 0,
+                idleHours: a.dailyLog.idleHours || 0,
+                breakdownHours: a.dailyLog.breakdownHours || 0,
+                fuelIssuedLiters: a.dailyLog.fuelLiters || 0,
+                totalMileage: a.dailyLog.totalMileage || 0,
+                startMileage: a.dailyLog.startMileage || 0,
+                endMileage: a.dailyLog.endMileage || 0,
+                daysValue: a.dailyLog.loggedQuantity || undefined,
+                remarks: a.dailyLog.remarks || null,
+                status: a.dailyLog.status || 'pending',
+                activitySplits: (a.dailyLog.activities || []).map((act) => ({
+                    id: act.id,
+                    activityCode: act.activityCode?.code || '',
+                    unit: act.unit || 'mth',
+                    utilization: act.utilization || 0,
+                })),
+            } : null,
         }));
         res.json(formatted);
     }
@@ -705,3 +759,48 @@ const copyEquipmentGangsFromDate = async (req, res) => {
     }
 };
 exports.copyEquipmentGangsFromDate = copyEquipmentGangsFromDate;
+// 12. Get standby / available workers pool for a specific date
+const getStandbyPoolForDate = async (req, res) => {
+    try {
+        const dateStr = req.query.date;
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const allEmployees = await prisma_1.default.employee.findMany({
+            where: {
+                tenantId,
+                status: 'active',
+            },
+            include: {
+                businessPartner: {
+                    select: { name: true, code: true },
+                },
+            },
+            orderBy: { employeeCode: 'asc' },
+        });
+        let assignedIds = new Set();
+        if (dateStr) {
+            const targetDate = parseDate(dateStr);
+            const assignments = await prisma_1.default.dailyAssignment.findMany({
+                where: { tenantId, date: targetDate },
+                select: { employeeId: true },
+            });
+            assignments.forEach((a) => assignedIds.add(a.employeeId));
+        }
+        const available = allEmployees.filter((e) => !assignedIds.has(e.id));
+        const poolList = available.length > 0 ? available : allEmployees;
+        const formatted = poolList.map((e) => ({
+            id: e.id,
+            employeeCode: e.employeeCode || `EMP-${e.id.slice(-3)}`,
+            callingName: e.callingName || e.fullName || 'Worker',
+            fullName: e.fullName || e.callingName || 'Worker',
+            tradeGroup: e.tradeGroup || 'General Helper',
+            businessPartner: e.businessPartner?.name || 'Mäga Direct',
+            nic: e.nicNo || '',
+        }));
+        res.json(formatted);
+    }
+    catch (error) {
+        console.error('Error fetching standby pool:', error);
+        res.status(500).json({ error: 'Failed to fetch standby pool' });
+    }
+};
+exports.getStandbyPoolForDate = getStandbyPoolForDate;

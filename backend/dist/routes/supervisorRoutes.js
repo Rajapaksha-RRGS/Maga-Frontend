@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const supervisorController_1 = require("../controllers/supervisorController");
 const router = (0, express_1.Router)();
+router.get('/active-site', supervisorController_1.getSupervisorActiveSite);
 router.get('/', supervisorController_1.getAllSupervisors);
 router.post('/', supervisorController_1.createSupervisor);
 // Password reset endpoints (support both conventions)

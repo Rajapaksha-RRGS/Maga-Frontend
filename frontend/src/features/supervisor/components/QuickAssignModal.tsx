@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Search, UserPlus, CheckCircle2 } from 'lucide-react';
-import { STANDBY_WORKERS_POOL, type LaborerEntry } from '../services/supervisorStorageService';
+import { supervisorStorage, type LaborerEntry } from '../services/supervisorStorageService';
 
 interface QuickAssignModalProps {
   open: boolean;
   onClose: () => void;
   onAssignWorker: (worker: Omit<LaborerEntry, 'status'>) => void;
   alreadyAssignedIds: string[];
+  date?: string;
 }
 
 export function QuickAssignModal({
@@ -14,24 +15,37 @@ export function QuickAssignModal({
   onClose,
   onAssignWorker,
   alreadyAssignedIds,
+  date,
 }: QuickAssignModalProps) {
   const [search, setSearch] = useState('');
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
+  const [standbyWorkers, setStandbyWorkers] = useState<Array<{ id: string; employeeCode: string; callingName: string; tradeGroup: string; businessPartner: string; nic: string }>>(() => supervisorStorage.getStandbyWorkers());
+
+  useEffect(() => {
+    if (open) {
+      supervisorStorage.fetchStandbyWorkers(date).then((workers) => {
+        if (workers && workers.length > 0) {
+          setStandbyWorkers(workers);
+        }
+      });
+    }
+  }, [open, date]);
 
   if (!open) return null;
 
-  const availableWorkers = STANDBY_WORKERS_POOL.filter((w) => {
+  const availableWorkers = standbyWorkers.filter((w) => {
     const isAlreadyIn = alreadyAssignedIds.includes(w.id);
     const matchesSearch = 
       w.callingName.toLowerCase().includes(search.toLowerCase()) ||
       w.tradeGroup.toLowerCase().includes(search.toLowerCase()) ||
-      w.businessPartner.toLowerCase().includes(search.toLowerCase());
+      w.businessPartner.toLowerCase().includes(search.toLowerCase()) ||
+      w.employeeCode.toLowerCase().includes(search.toLowerCase());
     return !isAlreadyIn && matchesSearch;
   });
 
   const handleConfirm = () => {
     if (!selectedWorkerId) return;
-    const found = STANDBY_WORKERS_POOL.find((w) => w.id === selectedWorkerId);
+    const found = standbyWorkers.find((w) => w.id === selectedWorkerId);
     if (!found) return;
 
     onAssignWorker({

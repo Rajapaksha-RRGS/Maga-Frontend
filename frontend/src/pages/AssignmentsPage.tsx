@@ -14,8 +14,18 @@ import SupervisorPanel from '../features/assignments/components/SupervisorPanel'
 import AssignmentToolbar from '../features/assignments/components/AssignmentToolbar';
 import Breadcrumb from '../components/Breadcrumb';
 
-export default function AssignmentsPage() {
-  const hook = useAssignments();
+interface AssignmentsPageProps {
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
+  hideHeader?: boolean;
+}
+
+export default function AssignmentsPage({
+  selectedDate: propDate,
+  onDateChange: propOnDateChange,
+  hideHeader = false,
+}: AssignmentsPageProps = {}) {
+  const hook = useAssignments(propDate, propOnDateChange);
 
   const totalEmployees = hook.employees.length;
   const assignedCount = totalEmployees - hook.unassignedCount;
@@ -23,18 +33,20 @@ export default function AssignmentsPage() {
   const supervisorCount = hook.supervisors.length;
 
   return (
-    <div className="px-4 md:px-6 py-5">
+    <div className={hideHeader ? "" : "px-4 md:px-6 py-5"}>
 
       {/* ── Page header ── */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center flex-shrink-0">
-          <HardHat size={18} className="text-emerald-700" />
+      {!hideHeader && (
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center flex-shrink-0">
+            <HardHat size={18} className="text-emerald-700" />
+          </div>
+          <div>
+            <h1 className="text-base font-medium text-slate-800">Labour assign</h1>
+            <Breadcrumb items={[{ label: 'Assignments', to: '/admin/assignments/labour' }, { label: 'Labour assign' }]} className="mt-1" />
+          </div>
         </div>
-        <div>
-          <h1 className="text-base font-medium text-slate-800">Labour assign</h1>
-          <Breadcrumb items={[{ label: 'Assignments', to: '/admin/assignments/labour' }, { label: 'Labour assign' }]} className="mt-1" />
-        </div>
-      </div>
+      )}
 
       {/* ── Stat cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -148,6 +160,7 @@ export default function AssignmentsPage() {
           getRecentGangSummaries={hook.getRecentGangSummaries}
           onRefresh={() => hook.refresh(true)}
           isLoading={hook.isLoading}
+          hideDateSelector={hideHeader}
         />
       </div>
 

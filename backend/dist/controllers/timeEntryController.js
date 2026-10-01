@@ -1213,10 +1213,15 @@ const getApprovalOverview = async (req, res) => {
                     otHours = calcOt;
                 }
                 const eq = entry?.assignedEquipment;
-                const assignedEquipmentDisplay = eq ? (eq.magaNo || eq.code || eq.name) : '—';
+                let assignedEquipmentDisplay = eq ? (eq.magaNo || eq.code || eq.name) : '—';
+                if (assignedEquipmentDisplay === '—') {
+                    if (entry?.notes?.includes('ZXQOPRIDLE') || entry?.assignedEquipmentId === 'ZXQOPRIDLE' || (inTime && !entry?.assignedEquipmentId)) {
+                        assignedEquipmentDisplay = 'ZXQOPRIDLE (Operator Idle)';
+                    }
+                }
                 if (inTime || hours > 0)
                     totalOperatorsDeployed++;
-                if (entry?.assignedEquipmentId)
+                if (entry?.assignedEquipmentId || assignedEquipmentDisplay.includes('ZXQOPRIDLE'))
                     totalOperatorsMapped++;
                 return {
                     operatorId: a.operatorId,
@@ -1950,9 +1955,48 @@ const saveBulkOperatorEntries = async (req, res) => {
             if (assignment) {
                 const inTime = item.inTime || null;
                 const outTime = item.outTime || null;
-                const assignedEquipmentId = item.assignedEquipmentId !== undefined
+                // Safely resolve assignedEquipmentId against Equipment table to avoid Foreign Key errors
+                const rawEqId = item.assignedEquipmentId !== undefined
                     ? (item.assignedEquipmentId || null)
-                    : (item.equipmentId !== undefined ? (item.equipmentId || null) : undefined);
+                    : (item.equipmentId !== undefined ? (item.equipmentId || null) : null);
+                let safeEquipmentId = null;
+                let isIdle = false;
+                if (rawEqId) {
+                    if (rawEqId === 'ZXQOPRIDLE') {
+                        isIdle = true;
+                        // Check if there is an equipment entry with code 'ZXQOPRIDLE'
+                        const idleEq = await prisma_1.default.equipment.findFirst({
+                            where: { tenantId, code: 'ZXQOPRIDLE' },
+                            select: { id: true },
+                        });
+                        safeEquipmentId = idleEq ? idleEq.id : null;
+                    }
+                    else {
+                        // Check by ID or Code or magaNo
+                        const matchedEq = await prisma_1.default.equipment.findFirst({
+                            where: {
+                                tenantId,
+                                OR: [
+                                    { id: rawEqId },
+                                    { code: rawEqId },
+                                    { magaNo: rawEqId },
+                                ],
+                            },
+                            select: { id: true },
+                        });
+                        safeEquipmentId = matchedEq ? matchedEq.id : null;
+                    }
+                }
+                // Auto-note for idle operators
+                let notes = item.notes || null;
+                if (isIdle || (!safeEquipmentId && !rawEqId && inTime)) {
+                    if (!notes) {
+                        notes = 'Exter. Equipment Operator Idle (ZXQOPRIDLE)';
+                    }
+                    else if (!notes.includes('ZXQOPRIDLE')) {
+                        notes = `${notes} | Exter. Equipment Operator Idle (ZXQOPRIDLE)`;
+                    }
+                }
                 let shiftHours = item.shiftHours !== undefined ? Number(item.shiftHours) : (item.hours !== undefined ? Number(item.hours) : 0);
                 let otHours = item.otHours !== undefined ? Number(item.otHours) : (item.overtimeHours !== undefined ? Number(item.overtimeHours) : 0);
                 if (inTime && outTime) {
@@ -1971,8 +2015,8 @@ const saveBulkOperatorEntries = async (req, res) => {
                         outTime,
                         shiftHours,
                         otHours,
-                        assignedEquipmentId: assignedEquipmentId ?? null,
-                        notes: item.notes || null,
+                        assignedEquipmentId: safeEquipmentId,
+                        notes,
                         status: item.status || 'draft',
                     },
                     update: {
@@ -1980,8 +2024,8 @@ const saveBulkOperatorEntries = async (req, res) => {
                         outTime: item.outTime !== undefined ? outTime : undefined,
                         shiftHours: (item.shiftHours !== undefined || item.hours !== undefined || (inTime && outTime)) ? shiftHours : undefined,
                         otHours: (item.otHours !== undefined || item.overtimeHours !== undefined || (inTime && outTime)) ? otHours : undefined,
-                        assignedEquipmentId: assignedEquipmentId !== undefined ? assignedEquipmentId : undefined,
-                        notes: item.notes !== undefined ? item.notes : undefined,
+                        assignedEquipmentId: rawEqId !== undefined ? safeEquipmentId : undefined,
+                        notes: notes !== undefined ? notes : undefined,
                         status: item.status || undefined,
                     },
                 });

@@ -21,9 +21,12 @@ function prevDateStr(dateStr: string): string {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
 }
 
-export function useEquipmentAssignments() {
-  const initialDate = formatDate(new Date());
-  const [selectedDate, setSelectedDate] = useState(initialDate);
+export function useEquipmentAssignments(controlledDate?: string, onDateChange?: (date: string) => void) {
+  const initialDate = controlledDate || formatDate(new Date());
+  const [internalDate, setInternalDate] = useState(initialDate);
+
+  const selectedDate = controlledDate !== undefined ? controlledDate : internalDate;
+  const setSelectedDate = onDateChange || setInternalDate;
 
   const [assignments, setAssignments] = useState<EquipmentAssignment[]>([]);
   const [equipmentList, setEquipmentList] = useState<Equipment[]>([]);

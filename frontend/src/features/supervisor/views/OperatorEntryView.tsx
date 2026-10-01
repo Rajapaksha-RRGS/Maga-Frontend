@@ -595,7 +595,7 @@ export function OperatorEntryView({
             </div>
           </div>
 
-          <div className="w-full">
+          <div className="w-full space-y-2">
             <select
               value={batchEquipmentId}
               onChange={(e) => setBatchEquipmentId(e.target.value)}
@@ -612,6 +612,38 @@ export function OperatorEntryView({
                 );
               })}
             </select>
+
+            {/* Read-Only Auto-Calculated Idle (ZXQOPRIDLE) Preview Box */}
+            {(() => {
+              const selectedEq = equipment.find((e) => e.id === batchEquipmentId);
+              const eqLoggedH = selectedEq ? getEquipmentLoggedHours(selectedEq) : 0;
+              const hasMachine = Boolean(batchEquipmentId);
+
+              return (
+                <div className="p-2.5 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-blue-200/80 dark:border-blue-800/60 flex items-center justify-between text-xs gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <PauseCircle size={15} className="text-amber-600 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate">
+                        Idle Machine Allocation: <span className="font-mono text-amber-700 dark:text-amber-400">ZXQOPRIDLE</span>
+                      </p>
+                      <p className="text-[10px] text-slate-400 truncate">
+                        Auto-calculated • Read-only • Directly exported to daily reports
+                      </p>
+                    </div>
+                  </div>
+
+                  <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300 font-mono flex-shrink-0 bg-amber-100 dark:bg-amber-950/70 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                    {!hasMachine 
+                      ? '100% Shift Idle' 
+                      : (eqLoggedH > 0 && eqLoggedH < 8.0 
+                          ? `${(8.0 - eqLoggedH).toFixed(1)}h Auto-Idle` 
+                          : '0.0h Idle (Active)')
+                    }
+                  </span>
+                </div>
+              );
+            })()}
           </div>
 
           <div className="flex items-center justify-between gap-2 pt-1 border-t border-blue-200/60 dark:border-blue-800/60">

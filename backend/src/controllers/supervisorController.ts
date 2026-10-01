@@ -12,6 +12,86 @@ function generateTempPassword(): string {
   return pw;
 }
 
+export const getSupervisorActiveSite = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const supervisorId = (req.query.supervisorId as string) || (req.query.userId as string);
+    let tenantId = (req.query.tenantId as string);
+
+    if (!tenantId && supervisorId) {
+      const user = await prisma.user.findUnique({
+        where: { id: supervisorId },
+        select: { tenantId: true },
+      });
+      if (user) {
+        tenantId = user.tenantId;
+      }
+    }
+
+    if (!tenantId) {
+      tenantId = req.resolvedTenantId || (await getDefaultTenantId());
+    }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
+      res.status(404).json({ error: "Tenant/Site not found" });
+      return;
+    }
+
+    const corporateProjects = await prisma.corporateProject.findMany({
+      where: { status: 'Active' },
+      orderBy: { projectCode: 'asc' },
+    });
+
+    const cleanSubdomain = tenant.subdomain.trim().toLowerCase();
+    const cleanSubdomainNum = cleanSubdomain.replace(/[^0-9]/g, '');
+
+    let matchedCorp = corporateProjects.find((cp) => {
+      const pCodeLower = cp.projectCode.toLowerCase();
+      return (
+        pCodeLower === cleanSubdomain ||
+        pCodeLower.includes(cleanSubdomain) ||
+        cleanSubdomain.includes(pCodeLower) ||
+        (cleanSubdomainNum && cleanSubdomainNum.length > 0 && pCodeLower.includes(cleanSubdomainNum))
+      );
+    });
+
+    if (!matchedCorp) {
+      matchedCorp = corporateProjects.find((cp) => {
+        const pNameLower = (cp.projectName || cp.description).toLowerCase();
+        const cNameLower = tenant.companyName.toLowerCase();
+        return pNameLower.includes(cNameLower) || cNameLower.includes(pNameLower);
+      });
+    }
+
+    const activeSite = {
+      id: tenant.id,
+      name: matchedCorp?.projectName || matchedCorp?.description || tenant.companyName,
+      code: matchedCorp?.projectCode || (tenant.subdomain.toUpperCase().startsWith('M') ? tenant.subdomain.toUpperCase() : `M00000${tenant.subdomain.toUpperCase()}`),
+      location: matchedCorp?.addressCode || tenant.addressLine1 || tenant.addressLine2 || 'Site Base Office',
+      projectManager: matchedCorp?.projectManager ? `Eng. ${matchedCorp.projectManager}` : 'Eng. Project Lead',
+    };
+
+    const availableSites = corporateProjects.map((cp) => ({
+      id: cp.id,
+      name: cp.projectName || cp.description,
+      code: cp.projectCode,
+      location: cp.addressCode || 'Sri Lanka',
+      projectManager: cp.projectManager ? `Eng. ${cp.projectManager}` : 'Eng. Project Lead',
+    }));
+
+    res.json({
+      activeSite,
+      availableSites: availableSites.length > 0 ? availableSites : [activeSite],
+    });
+  } catch (error) {
+    console.error("Error fetching supervisor active site:", error);
+    res.status(500).json({ error: "Failed to fetch supervisor active site" });
+  }
+};
+
 export const getAllSupervisors = async (req: Request, res: Response): Promise<void> => {
   try {
     const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());

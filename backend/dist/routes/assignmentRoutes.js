@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const assignmentController_1 = require("../controllers/assignmentController");
 const router = (0, express_1.Router)();
+// ── Standby Pool ──────────────────────────────────────────────────────
+router.get('/standby-pool', assignmentController_1.getStandbyPoolForDate);
 // ── Operator Assignments ─────────────────────────────────────────────
 router.get('/operator', assignmentController_1.getOperatorAssignmentsForDate);
 router.post('/operator', assignmentController_1.assignOperators);
