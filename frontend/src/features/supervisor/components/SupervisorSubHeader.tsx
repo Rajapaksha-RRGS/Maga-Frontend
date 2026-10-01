@@ -7,6 +7,12 @@ import {
   CalendarDays
 } from 'lucide-react';
 
+import { 
+  getTodayLocalDateString, 
+  formatLocalDateString, 
+  parseLocalDate 
+} from '../../../utils/dateUtils';
+
 interface SupervisorSubHeaderProps {
   selectedDate: string;
   onDateChange: (date: string) => void;
@@ -20,8 +26,8 @@ export function SupervisorSubHeader({
 }: SupervisorSubHeaderProps) {
   const [showDatePickerModal, setShowDatePickerModal] = useState(false);
 
-  // Format date display
-  const dateObj = new Date(selectedDate);
+  // Format date display using local time
+  const dateObj = parseLocalDate(selectedDate);
 
   const formattedDisplayDate = dateObj.toLocaleDateString('en-GB', {
     weekday: 'short',
@@ -30,13 +36,13 @@ export function SupervisorSubHeader({
     year: 'numeric',
   });
 
-  const isToday = new Date().toISOString().split('T')[0] === selectedDate;
+  const isToday = getTodayLocalDateString() === selectedDate;
 
   // Date shifting
   const shiftDate = (days: number) => {
-    const d = new Date(selectedDate);
+    const d = parseLocalDate(selectedDate);
     d.setDate(d.getDate() + days);
-    onDateChange(d.toISOString().split('T')[0]);
+    onDateChange(formatLocalDateString(d));
   };
 
   return (
@@ -120,8 +126,7 @@ export function SupervisorSubHeader({
               <button
                 type="button"
                 onClick={() => {
-                  const now = new Date().toISOString().split('T')[0];
-                  onDateChange(now);
+                  onDateChange(getTodayLocalDateString());
                   setShowDatePickerModal(false);
                 }}
                 className="py-2 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/60 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100"
@@ -133,7 +138,7 @@ export function SupervisorSubHeader({
                 onClick={() => {
                   const y = new Date();
                   y.setDate(y.getDate() - 1);
-                  onDateChange(y.toISOString().split('T')[0]);
+                  onDateChange(formatLocalDateString(y));
                   setShowDatePickerModal(false);
                 }}
                 className="py-2 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/60 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100"

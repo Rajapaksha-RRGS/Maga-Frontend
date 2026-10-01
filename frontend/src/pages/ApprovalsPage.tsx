@@ -20,10 +20,15 @@ import { ApprovalStatsBar } from '../features/approvals/components/ApprovalStats
 import { SupervisorApprovalCard } from '../features/approvals/components/SupervisorApprovalCard';
 import { NotSubmittedCard } from '../features/approvals/components/NotSubmittedCard';
 import Breadcrumb from '../components/Breadcrumb';
+import { 
+  getTodayLocalDateString, 
+  formatLocalDateString, 
+  parseLocalDate 
+} from '../utils/dateUtils';
 
 export default function ApprovalsPage() {
   const [selectedDate, setSelectedDate] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
+    return getTodayLocalDateString();
   });
 
   const [activeTab, setActiveTab] = useState<'submitted' | 'notSubmitted' | 'approved'>('submitted');
@@ -57,19 +62,19 @@ export default function ApprovalsPage() {
 
   // Date step helpers
   const handlePrevDay = () => {
-    const d = new Date(selectedDate);
+    const d = parseLocalDate(selectedDate);
     d.setDate(d.getDate() - 1);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    setSelectedDate(formatLocalDateString(d));
   };
 
   const handleNextDay = () => {
-    const d = new Date(selectedDate);
+    const d = parseLocalDate(selectedDate);
     d.setDate(d.getDate() + 1);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    setSelectedDate(formatLocalDateString(d));
   };
 
   const handleToday = () => {
-    setSelectedDate(new Date().toISOString().split('T')[0]);
+    setSelectedDate(getTodayLocalDateString());
   };
 
   // Approval actions
