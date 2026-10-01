@@ -30,8 +30,8 @@ export function SupervisorDrawer({
   onSync,
   isSyncing,
   currentSite,
-  availableSites,
-  onSelectSite,
+  availableSites: _availableSites,
+  onSelectSite: _onSelectSite,
 }: SupervisorDrawerProps) {
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
@@ -85,7 +85,7 @@ export function SupervisorDrawer({
                 {user?.fullName || 'Field Supervisor'}
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                {user?.companyName ? `${user.companyName} · ` : ''}{user?.username || 'supervisor'}
+                {user?.tenantName ? `${user.tenantName} · ` : ''}{user?.username || 'supervisor'}
               </p>
               <div className="mt-1 flex items-center gap-1.5">
                 <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">

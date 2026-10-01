@@ -19,7 +19,7 @@ export function QuickAssignModal({
 }: QuickAssignModalProps) {
   const [search, setSearch] = useState('');
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
-  const [standbyWorkers, setStandbyWorkers] = useState<Array<{ id: string; employeeCode: string; callingName: string; tradeGroup: string; businessPartner: string; nic: string }>>(() => supervisorStorage.getStandbyWorkers());
+  const [standbyWorkers, setStandbyWorkers] = useState<Array<{ id: string; employeeCode: string; callingName: string; tradeGroup: string; businessPartner: string; nic: string }>>([]);
 
   useEffect(() => {
     if (open) {

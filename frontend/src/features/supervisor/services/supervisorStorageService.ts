@@ -374,7 +374,7 @@ export const supervisorStorage = {
               remarks: existing?.remarks ?? log?.remarks,
               status: (log?.status === 'submitted' || log?.status === 'approved')
                 ? log.status
-                : (existing?.status === 'submitted' ? 'draft' : (existing?.status ?? log?.status ?? 'pending')),
+                : ((existing as any)?.status === 'submitted' ? 'draft' : (existing?.status ?? log?.status ?? 'pending')),
               lastSavedAt: existing?.lastSavedAt,
             };
           });
@@ -584,7 +584,7 @@ export const supervisorStorage = {
             equipmentSplits: existing?.equipmentSplits || (existing?.assignedEquipmentId ? [{ id: '1', equipmentId: existing.assignedEquipmentId, hours: existing.shiftHours || 0 }] : (te?.assignedEquipmentId ? [{ id: '1', equipmentId: te.assignedEquipmentId, hours: te.shiftHours || 0 }] : [])),
             status: (te?.status === 'submitted' || te?.status === 'approved')
               ? te.status
-              : (existing?.status === 'submitted' ? 'draft' : (existing?.status || te?.status || 'pending')),
+              : ((existing as any)?.status === 'submitted' ? 'draft' : (existing?.status || te?.status || 'pending')),
             notes: existing?.notes || te?.notes || '',
           };
         });
@@ -792,7 +792,16 @@ export const supervisorStorage = {
       const zidleAct = allActivities.find((a) => a.code === 'ZIDLE');
       const zidleId = zidleAct?.id || defaultActivityId;
 
-      // 1. Sync Laborers attendance and activity splits with ZIDLE auto-balance
+      // 1. Prepare Bulk Laborers attendance and activity splits with ZIDLE auto-balance
+      const bulkLaborEntries: Array<{
+        employeeId: string;
+        activityId: string;
+        hours: number;
+        inTime?: string;
+        outTime?: string;
+        remarks?: string;
+      }> = [];
+
       for (const lab of laborers) {
         const totalShift = Number(lab.shiftHours) || 0;
         let sumAssigned = 0;
@@ -805,18 +814,12 @@ export const supervisorStorage = {
             sumAssigned += actHours;
 
             if (resolvedActId && actHours > 0) {
-              await apiFetch(`${API_URL}/time-entries/upsert`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  employeeId: lab.id,
-                  supervisorId,
-                  date,
-                  activityId: resolvedActId,
-                  hours: actHours,
-                  inTime: lab.inTime || undefined,
-                  outTime: lab.outTime || undefined,
-                }),
+              bulkLaborEntries.push({
+                employeeId: lab.id,
+                activityId: resolvedActId,
+                hours: actHours,
+                inTime: lab.inTime || undefined,
+                outTime: lab.outTime || undefined,
               });
             }
           }
@@ -826,45 +829,34 @@ export const supervisorStorage = {
         if (totalShift > sumAssigned && zidleId) {
           const idleHours = Math.max(0, Math.round((totalShift - sumAssigned) * 10) / 10);
           if (idleHours > 0) {
-            await apiFetch(`${API_URL}/time-entries/upsert`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                employeeId: lab.id,
-                supervisorId,
-                date,
-                activityId: zidleId,
-                hours: idleHours,
-                inTime: lab.inTime || undefined,
-                outTime: lab.outTime || undefined,
-                remarks: 'Unallocated shift hours (ZIDLE)',
-              }),
+            bulkLaborEntries.push({
+              employeeId: lab.id,
+              activityId: zidleId,
+              hours: idleHours,
+              inTime: lab.inTime || undefined,
+              outTime: lab.outTime || undefined,
+              remarks: 'Unallocated shift hours (ZIDLE)',
             });
           }
         } else if (sumAssigned === 0 && (lab.inTime || lab.outTime)) {
           if (defaultActivityId) {
-            await apiFetch(`${API_URL}/time-entries/upsert`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                employeeId: lab.id,
-                supervisorId,
-                date,
-                activityId: zidleId || defaultActivityId,
-                hours: lab.shiftHours || 0,
-                inTime: lab.inTime || undefined,
-                outTime: lab.outTime || undefined,
-              }),
+            bulkLaborEntries.push({
+              employeeId: lab.id,
+              activityId: zidleId || defaultActivityId,
+              hours: lab.shiftHours || 0,
+              inTime: lab.inTime || undefined,
+              outTime: lab.outTime || undefined,
             });
           }
         }
       }
 
-      // 2. Sync Operators with Multi-Machine splits & ZXQOPRIDLE auto-balance
+      // 2. Prepare Operators with Multi-Machine splits & ZXQOPRIDLE auto-balance
+      const payloadOps: any[] = [];
       if (operators.length > 0) {
         const validOps = operators.filter((o) => o.inTime || o.outTime || (o.equipmentSplits && o.equipmentSplits.length > 0) || o.assignedEquipmentId);
         if (validOps.length > 0) {
-          const payloadEntries = validOps.map((op) => {
+          validOps.forEach((op) => {
             const shiftH = Number(op.shiftHours) || 0;
             const splits = (op.equipmentSplits && op.equipmentSplits.length > 0)
               ? op.equipmentSplits.filter((s) => s.equipmentId && Number(s.hours) > 0)
@@ -874,11 +866,8 @@ export const supervisorStorage = {
 
             const sumOperating = splits.reduce((acc, s) => acc + (Number(s.hours) || 0), 0);
             const idleRemainder = Math.max(0, Math.round((shiftH - sumOperating) * 10) / 10);
-
-            // Primary machine is the first real equipment split, or op.assignedEquipmentId, or 'ZXQOPRIDLE'
             const primaryMachineId = splits.length > 0 ? splits[0].equipmentId : (op.assignedEquipmentId || 'ZXQOPRIDLE');
 
-            // Build detailed remarks/notes
             const noteParts: string[] = [];
             if (op.notes) noteParts.push(op.notes);
             if (splits.length > 1) {
@@ -889,7 +878,7 @@ export const supervisorStorage = {
               noteParts.push(`Exter. Equipment Operator Idle (ZXQOPRIDLE: ${idleH}h)`);
             }
 
-            return {
+            payloadOps.push({
               operatorId: op.id,
               equipmentId: primaryMachineId,
               assignedEquipmentId: primaryMachineId,
@@ -901,58 +890,88 @@ export const supervisorStorage = {
               overtimeHours: op.otHours || 0,
               notes: noteParts.length > 0 ? noteParts.join(' | ') : undefined,
               status: op.status || 'draft',
-            };
-          });
-
-          await apiFetch(`${API_URL}/time-entries/operators/bulk`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              supervisorId,
-              date,
-              entries: payloadEntries,
-            }),
+            });
           });
         }
       }
 
-      // 3. Sync Equipment with default activity code ZOTHE
+      // 3. Prepare Equipment with default activity code ZOTHE
+      let payloadEq: any[] = [];
       if (equipment.length > 0) {
         const validEq = equipment.filter((e: any) => (e.netHours && e.netHours > 0) || (e.daysValue && e.daysValue > 0) || (e.hoursValue && e.hoursValue > 0) || (e.totalMileage && e.totalMileage > 0) || e.startMeter > 0);
         if (validEq.length > 0) {
-          await apiFetch(`${API_URL}/time-entries/equipment/bulk`, {
+          payloadEq = validEq.map((eq: any) => ({
+            id: eq.id,
+            condition: eq.condition || 'DRY',
+            startMeter: eq.startMeter || 0,
+            endMeter: eq.endMeter || 0,
+            netHours: eq.netHours || 0,
+            daysValue: eq.daysValue,
+            hoursValue: eq.hoursValue,
+            workingHours: eq.workingHours || 0,
+            idleHours: eq.idleHours || 0,
+            breakdownHours: eq.breakdownHours || 0,
+            fuelLiters: eq.fuelIssuedLiters || 0,
+            totalMileage: eq.totalMileage || 0,
+            startMileage: eq.startMileage || 0,
+            endMileage: eq.endMileage || 0,
+            totalUtilization: eq.totalUtilization,
+            remarks: eq.remarks,
+            status: eq.status,
+            activityCode: eq.activityCode || 'ZOTHE',
+            activitySplits: eq.activitySplits && eq.activitySplits.length > 0
+              ? eq.activitySplits.map((s: any) => ({ ...s, activityCode: s.activityCode || 'ZOTHE' }))
+              : [{ activityCode: eq.activityCode || 'ZOTHE', unit: eq.primaryUnit || 'Hrs', utilization: eq.workingHours || eq.netHours || eq.hoursValue || 0 }],
+          }));
+        }
+      }
+
+      // Execute all 3 sync pipelines in parallel (Fast 1-roundtrip batching)
+      const syncTasks: Promise<any>[] = [];
+
+      if (bulkLaborEntries.length > 0) {
+        syncTasks.push(
+          apiFetch(`${API_URL}/time-entries/labor/bulk`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               supervisorId,
               date,
-              entries: validEq.map((eq: any) => ({
-                id: eq.id,
-                condition: eq.condition || 'DRY',
-                startMeter: eq.startMeter || 0,
-                endMeter: eq.endMeter || 0,
-                netHours: eq.netHours || 0,
-                daysValue: eq.daysValue,
-                hoursValue: eq.hoursValue,
-                workingHours: eq.workingHours || 0,
-                idleHours: eq.idleHours || 0,
-                breakdownHours: eq.breakdownHours || 0,
-                fuelLiters: eq.fuelIssuedLiters || 0,
-                totalMileage: eq.totalMileage || 0,
-                startMileage: eq.startMileage || 0,
-                endMileage: eq.endMileage || 0,
-                totalUtilization: eq.totalUtilization,
-                remarks: eq.remarks,
-                status: eq.status,
-                activityCode: eq.activityCode || 'ZOTHE',
-                activitySplits: eq.activitySplits && eq.activitySplits.length > 0
-                  ? eq.activitySplits.map((s: any) => ({ ...s, activityCode: s.activityCode || 'ZOTHE' }))
-                  : [{ activityCode: eq.activityCode || 'ZOTHE', unit: eq.primaryUnit || 'Hrs', utilization: eq.workingHours || eq.netHours || eq.hoursValue || 0 }],
-              })),
+              entries: bulkLaborEntries,
             }),
-          });
-        }
+          })
+        );
       }
+
+      if (payloadOps.length > 0) {
+        syncTasks.push(
+          apiFetch(`${API_URL}/time-entries/operators/bulk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              supervisorId,
+              date,
+              entries: payloadOps,
+            }),
+          })
+        );
+      }
+
+      if (payloadEq.length > 0) {
+        syncTasks.push(
+          apiFetch(`${API_URL}/time-entries/equipment/bulk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              supervisorId,
+              date,
+              entries: payloadEq,
+            }),
+          })
+        );
+      }
+
+      await Promise.all(syncTasks);
 
       this.resetPendingSync();
       return true;

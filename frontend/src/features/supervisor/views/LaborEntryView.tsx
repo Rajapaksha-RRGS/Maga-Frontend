@@ -16,7 +16,8 @@ import {
   LogIn, 
   LogOut, 
   Clock,
-  Lock
+  Lock,
+  PauseCircle
 } from 'lucide-react';
 import { 
   supervisorStorage,
@@ -881,7 +882,7 @@ export function LaborEntryView({
             const isSelected = selectedWorkerIds.includes(worker.id);
             const isExpanded = tabMode === 'out' && expandedId === worker.id;
             const activitySum = worker.activities.reduce((acc, a) => acc + (Number(a.hours) || 0), 0);
-            const hasDiscrepancy = worker.shiftHours > 0 && Math.abs(activitySum - worker.shiftHours) >= 0.1;
+            void activitySum; // consumed if needed
 
             return (
               <div

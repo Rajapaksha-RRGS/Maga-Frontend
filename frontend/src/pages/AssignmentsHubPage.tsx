@@ -71,7 +71,7 @@ const TABS: Array<{
   },
 ];
 
-export default function AssignmentsHubPage({ defaultTab = 'labour' }: AssignmentsHubPageProps) {
+export default function AssignmentsHubPage({ defaultTab: _defaultTab = 'labour' }: AssignmentsHubPageProps) {
   const location = useLocation();
   const navigate = useNavigate();
 

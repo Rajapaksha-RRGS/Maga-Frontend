@@ -45,9 +45,6 @@ import EquipmentPage from './pages/EquipmentPage';
 import ActivityCodesPage from './pages/ActivityCodesPage';
 import SupervisorsPage from './pages/SupervisorsPage';
 import CalendarPage from './pages/CalendarPage';
-import AssignmentsPage from './pages/AssignmentsPage';
-import OperatorAssignmentsPage from './pages/OperatorAssignmentsPage';
-import EquipmentAssignmentsPage from './pages/EquipmentAssignmentsPage';
 import AssignmentsHubPage from './pages/AssignmentsHubPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import ReportsPage from './pages/ReportsPage';
@@ -92,6 +89,7 @@ export default function App() {
         <ErrorBoundary>
           <Routes>
             {/* ── Public ─────────────────────────────────────────────────────── */}
+            <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/splash" element={<SplashShowcasePage />} />
             <Route path="/users" element={<UseTable />} />

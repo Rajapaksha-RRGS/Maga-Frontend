@@ -2407,3 +2407,126 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
   }
 };
 
+// 12. Save / Upsert bulk labor time entries (high performance single-trip)
+export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { entries, date, supervisorId } = req.body;
+    if (!Array.isArray(entries) || !date) {
+      res.status(400).json({ error: 'entries array and date are required' });
+      return;
+    }
+
+    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
+    const targetDate = parseDate(date);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
+
+    let effectiveSupervisorId = supervisorId;
+    if (!effectiveSupervisorId) {
+      const defaultSupervisor = await prisma.user.findFirst({
+        where: { tenantId, role: { in: ['supervisor', 'admin'] } },
+      });
+      effectiveSupervisorId = defaultSupervisor?.id;
+    }
+
+    // Guard against modifying approved entries
+    const approvedCheck = await prisma.timeEntry.findFirst({
+      where: {
+        tenantId,
+        date: targetDate,
+        status: 'approved',
+      },
+    });
+    if (approvedCheck) {
+      res.status(403).json({ error: 'Cannot edit time entries: Daily attendance has already been Approved by Admin.' });
+      return;
+    }
+
+    for (const item of entries) {
+      const { employeeId, activityId, hours, inTime, outTime, remarks, equipmentId } = item;
+      if (!employeeId || !activityId) continue;
+
+      const numHours = hours !== undefined ? parseFloat(hours) : 0;
+      const finalInTime = inTime ?? null;
+      const finalOutTime = outTime ?? null;
+
+      let shiftHoursVal: number | null = null;
+      let overtimeHours = 0;
+      let otHoursVal = 0;
+      let breakHours = 0;
+
+      if (finalInTime && finalOutTime) {
+        const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, standardHoursCap, isAllOvertime);
+        shiftHoursVal = calc.shiftHours;
+        overtimeHours = calc.otHours;
+        otHoursVal = calc.otHours;
+        breakHours = calc.breakHours;
+      } else {
+        breakHours = computeBreakHours(finalInTime, finalOutTime);
+        if (isAllOvertime) {
+          overtimeHours = numHours;
+          otHoursVal = numHours;
+        } else if (numHours > standardHoursCap) {
+          overtimeHours = numHours - standardHoursCap;
+          otHoursVal = numHours - standardHoursCap;
+        }
+      }
+
+      const existing = await prisma.timeEntry.findFirst({
+        where: {
+          tenantId,
+          employeeId,
+          activityId,
+          date: targetDate,
+        },
+      });
+
+      if (existing) {
+        if (existing.status !== 'submitted') {
+          await prisma.timeEntry.update({
+            where: { id: existing.id },
+            data: {
+              hours: numHours,
+              shiftHours: shiftHoursVal,
+              overtimeHours,
+              otHours: otHoursVal,
+              breakHours,
+              inTime: finalInTime,
+              outTime: finalOutTime,
+              equipmentId: equipmentId ?? existing.equipmentId,
+              remarks: remarks ?? existing.remarks,
+              supervisorId: effectiveSupervisorId || existing.supervisorId,
+            },
+          });
+        }
+      } else {
+        await prisma.timeEntry.create({
+          data: {
+            tenantId,
+            employeeId,
+            supervisorId: effectiveSupervisorId,
+            date: targetDate,
+            activityId,
+            equipmentId: equipmentId ?? null,
+            effectiveDayTypeId,
+            inTime: finalInTime,
+            outTime: finalOutTime,
+            hours: numHours,
+            shiftHours: shiftHoursVal,
+            overtimeHours,
+            otHours: otHoursVal,
+            breakHours,
+            remarks: remarks || null,
+            status: 'draft',
+          },
+        });
+      }
+    }
+
+    res.json({ success: true, count: entries.length });
+  } catch (error) {
+    console.error('Error in saveBulkLaborTimeEntries:', error);
+    res.status(500).json({ error: 'Failed to bulk save labor time entries' });
+  }
+};
+
+
