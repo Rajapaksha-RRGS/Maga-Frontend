@@ -184,9 +184,7 @@ export const supervisorStorage = {
         const data = await res.json();
         if (data.activeSite) {
           this.setActiveSite(data.activeSite);
-          if (Array.isArray(data.availableSites) && data.availableSites.length > 0) {
-            localStorage.setItem(AVAILABLE_SITES_KEY, JSON.stringify(data.availableSites));
-          }
+          localStorage.setItem(AVAILABLE_SITES_KEY, JSON.stringify([data.activeSite]));
           return data.activeSite;
         }
       }
@@ -199,7 +197,12 @@ export const supervisorStorage = {
   getActiveSite(): SiteProject {
     try {
       const saved = localStorage.getItem(ACTIVE_SITE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && parsed.name) {
+          return parsed;
+        }
+      }
     } catch {
       // ignore
     }
@@ -369,7 +372,9 @@ export const supervisorStorage = {
                 : (log?.activitySplits ?? []),
               activities: existing?.activities ?? [],
               remarks: existing?.remarks ?? log?.remarks,
-              status: existing?.status ?? log?.status ?? 'pending',
+              status: (log?.status === 'submitted' || log?.status === 'approved')
+                ? log.status
+                : (existing?.status === 'submitted' ? 'draft' : (existing?.status ?? log?.status ?? 'pending')),
               lastSavedAt: existing?.lastSavedAt,
             };
           });
@@ -577,7 +582,9 @@ export const supervisorStorage = {
             otHours: existing?.otHours !== undefined && existing?.otHours > 0 ? existing.otHours : (te?.otHours || 0),
             assignedEquipmentId: existing?.assignedEquipmentId || te?.assignedEquipmentId || '',
             equipmentSplits: existing?.equipmentSplits || (existing?.assignedEquipmentId ? [{ id: '1', equipmentId: existing.assignedEquipmentId, hours: existing.shiftHours || 0 }] : (te?.assignedEquipmentId ? [{ id: '1', equipmentId: te.assignedEquipmentId, hours: te.shiftHours || 0 }] : [])),
-            status: existing?.status || te?.status || 'pending',
+            status: (te?.status === 'submitted' || te?.status === 'approved')
+              ? te.status
+              : (existing?.status === 'submitted' ? 'draft' : (existing?.status || te?.status || 'pending')),
             notes: existing?.notes || te?.notes || '',
           };
         });

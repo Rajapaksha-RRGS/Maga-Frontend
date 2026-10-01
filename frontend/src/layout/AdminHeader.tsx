@@ -183,17 +183,6 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
           <span>{todayFormatted}</span>
         </div>
 
-        {/* Supervisor Portal Switcher */}
-        <button
-          type="button"
-          onClick={() => navigate('/supervisor')}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50/80 hover:bg-blue-100 text-blue-700 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-          title="Open Supervisor Mobile Portal"
-        >
-          <HardHat size={14} className="text-amber-600" />
-          <span className="hidden sm:inline">Supervisor App</span>
-        </button>
-
         {/* ── Notification Bell Center ─────────────────────────────────── */}
         <div className="relative" ref={notifRef}>
           <button

@@ -18,11 +18,14 @@
  *   - bg-slate-50 content area
  */
 import { Outlet } from 'react-router-dom';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 
 export default function SupervisorLayout() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 transition-colors">
-      <Outlet />
+      <ErrorBoundary fallbackTitle="Supervisor Mobile View Error">
+        <Outlet />
+      </ErrorBoundary>
     </div>
   );
 }

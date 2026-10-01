@@ -1,6 +1,8 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+dotenv.config();
+
 import employeeRoutes from './routes/employeeRoutes';
 import businessPartnerRoutes from './routes/businessPartnerRoutes';
 import activityCodeRoutes from './routes/activityCodeRoutes';
@@ -12,8 +14,6 @@ import reportRoutes from './routes/reportRoutes';
 import equipmentRoutes from './routes/equipmentRoutes';
 import calendarRoutes from './routes/calendarRoutes';
 import tenantRoutes from './routes/tenantRoutes';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;

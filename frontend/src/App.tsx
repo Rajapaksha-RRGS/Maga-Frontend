@@ -26,7 +26,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Analytics } from "@vercel/analytics/react";
 
 // Auth
-
+import ProtectedRoute from './features/auth/components/ProtectedRoute';
 import LoginPage from './features/auth/pages/LoginPage';
 
 // Layouts
@@ -62,6 +62,7 @@ import SupervisorMobileApp from './features/supervisor/SupervisorMobileApp';
 // Splash Screen & Showcase
 import SplashScreen from './components/SplashScreen';
 import SplashShowcasePage from './pages/SplashShowcasePage';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   const [showInitialSplash, setShowInitialSplash] = useState(true);
@@ -88,54 +89,56 @@ export default function App() {
     <ThemeProvider>
       <BrowserRouter>
         <Analytics />
-        <Routes>
-          {/* ── Public ─────────────────────────────────────────────────────── */}
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/splash" element={<SplashShowcasePage />} />
-          <Route path="/users" element={<UseTable />} />
-          {/* ── Public direct supervisor mobile preview ─────────────────────── */}
-          <Route path="/labour" element={<SupervisorMobileApp />} />
-          <Route path="/supervisor-preview" element={<SupervisorMobileApp />} />
-        
+        <ErrorBoundary>
+          <Routes>
+            {/* ── Public ─────────────────────────────────────────────────────── */}
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/splash" element={<SplashShowcasePage />} />
+            <Route path="/users" element={<UseTable />} />
+            {/* ── Public direct supervisor mobile preview ─────────────────────── */}
+            <Route path="/labour" element={<SupervisorMobileApp />} />
+            <Route path="/supervisor-preview" element={<SupervisorMobileApp />} />
+          
 
 
-        {/* ── Admin (protected, role=admin or super_admin) ───────────────── */}
-        
-          <Route path="/admin" element={<AdminLayout />}>
-            <Route index element={<AdminDashboardPage />} />
 
-            {/* Only super_admin can access the Tenants / Projects & Admins page */}
-            
-              <Route path="tenants" element={<TenantsPage />} />
-            
+          {/* ── Admin (protected, role=admin or super_admin) ───────────────── */}
+          <Route element={<ProtectedRoute allowedRoles={['admin', 'super_admin']} />}>
+            <Route path="/admin" element={<AdminLayout />}>
+              <Route index element={<AdminDashboardPage />} />
 
-            <Route path="employees"         element={<EmployeesPage />} />
-            <Route path="business-partners" element={<BusinessPartnersPage />} />
-            <Route path="equipment"         element={<EquipmentPage />} />
-            <Route path="activity-codes" element={<ActivityCodesPage />} />
-            <Route path="supervisors"   element={<SupervisorsPage />} />
-            <Route path="calendar"      element={<CalendarPage />} />
-            <Route path="assignments" element={<Navigate to="/admin/assignments/labour" replace />} />
-            <Route path="assignments/labour"    element={<AssignmentsHubPage defaultTab="labour" />} />
-            <Route path="assignments/operator"   element={<AssignmentsHubPage defaultTab="operator" />} />
-            <Route path="assignments/equipment"  element={<AssignmentsHubPage defaultTab="equipment" />} />
-            <Route path="approvals"     element={<ApprovalsPage />} />
-            <Route path="reports"       element={<ReportsPage />} />
+              {/* Only super_admin can access the Tenants / Projects & Admins page */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
+                <Route path="tenants" element={<TenantsPage />} />
+              </Route>
+
+              <Route path="employees"         element={<EmployeesPage />} />
+              <Route path="business-partners" element={<BusinessPartnersPage />} />
+              <Route path="equipment"         element={<EquipmentPage />} />
+              <Route path="activity-codes" element={<ActivityCodesPage />} />
+              <Route path="supervisors"   element={<SupervisorsPage />} />
+              <Route path="calendar"      element={<CalendarPage />} />
+              <Route path="assignments" element={<Navigate to="/admin/assignments/labour" replace />} />
+              <Route path="assignments/labour"    element={<AssignmentsHubPage defaultTab="labour" />} />
+              <Route path="assignments/operator"   element={<AssignmentsHubPage defaultTab="operator" />} />
+              <Route path="assignments/equipment"  element={<AssignmentsHubPage defaultTab="equipment" />} />
+              <Route path="approvals"     element={<ApprovalsPage />} />
+              <Route path="reports"       element={<ReportsPage />} />
+            </Route>
           </Route>
-        
 
-        {/* ── Supervisor (protected, role=supervisor) ─────────────────────── */}
-       
-          <Route path="/supervisor" element={<SupervisorLayout />}>
-            <Route index element={<SupervisorMobileApp />} />
+          {/* ── Supervisor (protected, role=supervisor, admin, super_admin) ──── */}
+          <Route element={<ProtectedRoute allowedRoles={['supervisor', 'admin', 'super_admin']} />}>
+            <Route path="/supervisor" element={<SupervisorLayout />}>
+              <Route index element={<SupervisorMobileApp />} />
+            </Route>
           </Route>
-       
-        
 
 
-        {/* ── Fallback: everything else → /login ─────────────────────────── */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+          {/* ── Fallback: everything else → /login ─────────────────────────── */}
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   </ThemeProvider>
   );

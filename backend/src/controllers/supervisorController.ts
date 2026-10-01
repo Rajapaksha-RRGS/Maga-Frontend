@@ -74,17 +74,11 @@ export const getSupervisorActiveSite = async (req: Request, res: Response): Prom
       projectManager: matchedCorp?.projectManager ? `Eng. ${matchedCorp.projectManager}` : 'Eng. Project Lead',
     };
 
-    const availableSites = corporateProjects.map((cp) => ({
-      id: cp.id,
-      name: cp.projectName || cp.description,
-      code: cp.projectCode,
-      location: cp.addressCode || 'Sri Lanka',
-      projectManager: cp.projectManager ? `Eng. ${cp.projectManager}` : 'Eng. Project Lead',
-    }));
+    const availableSites = [activeSite];
 
     res.json({
       activeSite,
-      availableSites: availableSites.length > 0 ? availableSites : [activeSite],
+      availableSites,
     });
   } catch (error) {
     console.error("Error fetching supervisor active site:", error);

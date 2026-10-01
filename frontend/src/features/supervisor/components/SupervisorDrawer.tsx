@@ -38,10 +38,6 @@ export function SupervisorDrawer({
 
   if (!open) return null;
 
-  const sitesToShow = (availableSites && availableSites.length > 0)
-    ? availableSites
-    : (currentSite ? [currentSite] : []);
-
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
       {/* Backdrop */}
@@ -120,34 +116,18 @@ export function SupervisorDrawer({
               <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-2">
                 Assigned Project Site
               </label>
-              <div className="space-y-1.5">
-                {sitesToShow.map((site) => {
-                  const isSelected = site.code === currentSite?.code || site.id === currentSite?.id;
-                  return (
-                    <button
-                      key={site.id || site.code}
-                      type="button"
-                      onClick={() => {
-                        if (onSelectSite) onSelectSite(site);
-                      }}
-                      className={[
-                        'w-full text-left p-2.5 rounded-lg border text-xs transition-all flex items-start gap-2.5',
-                        isSelected
-                          ? 'border-blue-600 dark:border-blue-500 bg-blue-50/70 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 shadow-xs'
-                          : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
-                      ].join(' ')}
-                    >
-                      <Building2 size={16} className={isSelected ? 'text-blue-600 dark:text-blue-400 mt-0.5' : 'text-slate-400 mt-0.5'} />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{site.name}</p>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">{site.code} · {site.location}</p>
-                        {site.projectManager && (
-                          <p className="text-[9px] text-slate-400 dark:text-slate-500 truncate mt-0.5">{site.projectManager}</p>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
+              <div className="w-full text-left p-3 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/70 dark:bg-blue-950/40 text-xs flex items-start gap-2.5 shadow-2xs">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 flex items-center justify-center shrink-0">
+                  <Building2 size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-slate-900 dark:text-slate-100 truncate">{currentSite.name}</p>
+                  <p className="text-[11px] font-mono font-semibold text-blue-700 dark:text-blue-300 mt-0.5">{currentSite.code}</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">{currentSite.location}</p>
+                  {currentSite.projectManager && (
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">Lead: {currentSite.projectManager}</p>
+                  )}
+                </div>
               </div>
             </div>
           )}

@@ -22,6 +22,8 @@ import { OperatorEntryView } from './views/OperatorEntryView';
 import { EquipmentLogsView } from './views/EquipmentLogsView';
 import { DailySummaryView } from './views/DailySummaryView';
 
+import { getTodayLocalDateString } from '../../utils/dateUtils';
+
 export default function SupervisorMobileApp() {
   const { user } = useAuth();
 
@@ -29,7 +31,7 @@ export default function SupervisorMobileApp() {
   const [activeTab, setActiveTab] = useState<SupervisorTabKey>('dashboard');
   const [currentSite, setCurrentSite] = useState<SiteProject>(() => supervisorStorage.getActiveSite());
   const [availableSites, setAvailableSites] = useState<SiteProject[]>(() => supervisorStorage.getAvailableSites());
-  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState<string>(() => getTodayLocalDateString());
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -188,23 +190,23 @@ export default function SupervisorMobileApp() {
   // Compute badge counts for Bottom Nav (checks all unit modalities)
   const isEquipmentLogged = (e: EquipmentLogEntry): boolean => {
     if (e.status === 'done') return true;
-    if ((e.daysValue ?? 0) > 0) return true;
-    if ((e.hoursValue ?? 0) > 0) return true;
-    if ((e.extraHoursValue ?? 0) > 0) return true;
-    if ((e.areaValue ?? 0) > 0) return true;
-    if ((e.totalMileage ?? 0) > 0) return true;
-    if ((e.netHours ?? 0) > 0) return true;
-    if ((e.workingHours ?? 0) > 0) return true;
-    if (e.endMeter > 0 && e.endMeter > e.startMeter) return true;
+    if ((Number(e.daysValue) || 0) > 0) return true;
+    if ((Number(e.hoursValue) || 0) > 0) return true;
+    if ((Number(e.extraHoursValue) || 0) > 0) return true;
+    if ((Number(e.areaValue) || 0) > 0) return true;
+    if ((Number(e.totalMileage) || 0) > 0) return true;
+    if ((Number(e.netHours) || 0) > 0) return true;
+    if ((Number(e.workingHours) || 0) > 0) return true;
+    if (Number(e.endMeter) > 0 && Number(e.endMeter) > Number(e.startMeter)) return true;
     if (e.activitySplits && e.activitySplits.some((s) => Number(s.utilization) > 0)) return true;
     return false;
   };
 
-  const laborPendingCount = laborers.filter((l) => !l.inTime || !l.outTime).length;
+  const laborPendingCount = (laborers || []).filter((l) => !l.inTime || !l.outTime).length;
   // Operator is incomplete only if inTime or outTime is missing.
   // No machine assignment is valid — auto-balanced to ZXQOPRIDLE on sync.
-  const operatorPendingCount = operators.filter((o) => !o.inTime || !o.outTime).length;
-  const equipmentPendingCount = equipment.filter((e) => !isEquipmentLogged(e)).length;
+  const operatorPendingCount = (operators || []).filter((o) => !o.inTime || !o.outTime).length;
+  const equipmentPendingCount = (equipment || []).filter((e) => !isEquipmentLogged(e)).length;
 
   const supervisorDisplayName = user?.fullName || 'Supervisor';
 

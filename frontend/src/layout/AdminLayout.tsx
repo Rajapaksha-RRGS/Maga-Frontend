@@ -78,7 +78,6 @@ const NAV_ITEMS: NavItem[] = [
   },
   { label: 'Approvals',         to: '/admin/approvals',         icon: <CheckCircle2 size={18} /> },
   { label: 'Reports',           to: '/admin/reports',           icon: <BarChart3 size={18} /> },
-  { label: 'Supervisor View',   to: '/supervisor',              icon: <HardHat size={18} /> },
 ];
 
 // ── Sidebar content ────────────────────────────────────────────────────────────

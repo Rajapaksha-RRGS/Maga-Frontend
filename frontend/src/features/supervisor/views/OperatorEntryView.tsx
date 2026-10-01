@@ -87,7 +87,6 @@ export function OperatorEntryView({
 
   // ── OUT MODE BATCH STATE ──
   const [batchOutTime, setBatchOutTime] = useState('17:00');
-  const [batchEquipmentId, setBatchEquipmentId] = useState<string>('');
 
   // Unique designations / roles
   const uniqueRoles = useMemo(() => {
@@ -192,11 +191,16 @@ export function OperatorEntryView({
       const outTime = o.outTime;
       const { shift, ot } = computeHours(inTime, outTime);
 
+      const splits = (o.equipmentSplits && o.equipmentSplits.length === 1)
+        ? [{ ...o.equipmentSplits[0], hours: shift || 8.0 }]
+        : (o.equipmentSplits ? [...o.equipmentSplits] : []);
+
       return {
         ...o,
         inTime,
         shiftHours: shift,
         otHours: ot,
+        equipmentSplits: splits,
         status: (inTime && outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
         lastSavedAt: `In: ${batchInTime}`,
       };
@@ -206,7 +210,7 @@ export function OperatorEntryView({
     setSelectedOperatorIds([]);
   };
 
-  // ── APPLY BATCH OUT TIME & INITIAL MACHINE ──
+  // ── APPLY BATCH OUT TIME ──
   const handleApplyBatchOut = () => {
     if (selectedOperatorIds.length === 0) return;
 
@@ -216,12 +220,9 @@ export function OperatorEntryView({
       const outTime = batchOutTime;
       const { shift, ot } = computeHours(inTime, outTime);
 
-      let splits = o.equipmentSplits && o.equipmentSplits.length > 0 ? [...o.equipmentSplits] : [];
-      if (splits.length === 0 && batchEquipmentId) {
-        splits = [{ id: `split-${Date.now()}-${o.id}`, equipmentId: batchEquipmentId, hours: shift }];
-      } else if (splits.length === 1 && splits[0].hours === 0) {
-        splits[0].hours = shift;
-      }
+      const splits = (o.equipmentSplits && o.equipmentSplits.length === 1)
+        ? [{ ...o.equipmentSplits[0], hours: shift || 8.0 }]
+        : (o.equipmentSplits ? [...o.equipmentSplits] : []);
 
       return {
         ...o,
@@ -229,9 +230,9 @@ export function OperatorEntryView({
         outTime,
         shiftHours: shift,
         otHours: ot,
-        assignedEquipmentId: splits[0]?.equipmentId || batchEquipmentId || '',
+        assignedEquipmentId: splits[0]?.equipmentId || o.assignedEquipmentId || '',
         equipmentSplits: splits,
-        status: 'done' as const,
+        status: (inTime && outTime ? 'done' : 'draft') as 'done' | 'draft',
         lastSavedAt: `Out: ${batchOutTime}`,
       };
     });
@@ -245,12 +246,17 @@ export function OperatorEntryView({
     const { shift, ot } = computeHours(inTime, outTime);
     const updated = operators.map((o) => {
       if (o.id !== id) return o;
+      let splits = o.equipmentSplits;
+      if (splits && splits.length === 1) {
+        splits = [{ ...splits[0], hours: shift || 8.0 }];
+      }
       return {
         ...o,
         inTime,
         outTime,
         shiftHours: shift,
         otHours: ot,
+        equipmentSplits: splits,
         status: (inTime && outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
       };
     });
@@ -261,26 +267,49 @@ export function OperatorEntryView({
   const handleAddEquipmentSplit = (operatorId: string) => {
     const updated = operators.map((o) => {
       if (o.id !== operatorId) return o;
+      const targetShift = Number(o.shiftHours) || 8.0;
       const currentSplits = o.equipmentSplits || [];
-      const currentSum = currentSplits.reduce((acc, s) => acc + (Number(s.hours) || 0), 0);
-      const remainingHours = Math.max(0, Math.round(((o.shiftHours || 8.0) - currentSum) * 10) / 10);
       
       const defaultEq = equipment.find((eq) => !currentSplits.some((s) => s.equipmentId === eq.id)) || equipment[0];
       const defaultEqId = defaultEq?.id || '';
-      const eqLoggedH = getEquipmentLoggedHours(defaultEq);
 
-      // Default to machine logged hours or remaining shift hours
-      const initialHours = remainingHours > 0 
-        ? remainingHours 
-        : (eqLoggedH > 0 ? eqLoggedH : 4.0);
+      let newSplits: OperatorEquipmentSplit[] = [];
 
-      const newSplit: OperatorEquipmentSplit = {
-        id: `split-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        equipmentId: defaultEqId,
-        hours: initialHours,
-      };
+      if (currentSplits.length === 0) {
+        // Palaweni equipment ekata full shift ekama watenna
+        const newSplit: OperatorEquipmentSplit = {
+          id: `split-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          equipmentId: defaultEqId,
+          hours: targetShift,
+        };
+        newSplits = [newSplit];
+      } else if (currentSplits.length === 1) {
+        // Thawa wahanayak add kaloth dekata bedenna (50/50 split)
+        const half1 = parseFloat((targetShift / 2).toFixed(1));
+        const half2 = parseFloat((targetShift - half1).toFixed(1));
 
-      const newSplits = [...currentSplits, newSplit];
+        const updatedFirst: OperatorEquipmentSplit = {
+          ...currentSplits[0],
+          hours: half1,
+        };
+        const newSplit: OperatorEquipmentSplit = {
+          id: `split-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          equipmentId: defaultEqId,
+          hours: half2,
+        };
+        newSplits = [updatedFirst, newSplit];
+      } else {
+        // 3rd or more vehicle: assign remaining hours if any
+        const currentSum = currentSplits.reduce((acc, s) => acc + (Number(s.hours) || 0), 0);
+        const remainingHours = Math.max(0, parseFloat((targetShift - currentSum).toFixed(1)));
+        const newSplit: OperatorEquipmentSplit = {
+          id: `split-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          equipmentId: defaultEqId,
+          hours: remainingHours,
+        };
+        newSplits = [...currentSplits, newSplit];
+      }
+
       return {
         ...o,
         assignedEquipmentId: newSplits[0]?.equipmentId || '',
@@ -293,23 +322,46 @@ export function OperatorEntryView({
   const handleUpdateEquipmentSplit = (operatorId: string, splitId: string, field: 'equipmentId' | 'hours', value: any) => {
     const updated = operators.map((o) => {
       if (o.id !== operatorId) return o;
-      const splits = (o.equipmentSplits || []).map((s) => {
-        if (s.id !== splitId) return s;
-        if (field === 'equipmentId') {
-          const selectedEq = equipment.find((e) => e.id === value);
-          const eqLogged = getEquipmentLoggedHours(selectedEq);
+      const targetShift = Number(o.shiftHours) || 8.0;
+      const currentSplits = o.equipmentSplits || [];
+
+      if (field === 'equipmentId') {
+        const splits = currentSplits.map((s) => {
+          if (s.id !== splitId) return s;
           return {
             ...s,
             equipmentId: value,
-            // If split had 0 or default hours and machine has logged hours, pre-suggest it
-            hours: (s.hours === 0 || !s.hours) && eqLogged > 0 ? eqLogged : s.hours,
           };
-        }
+        });
         return {
-          ...s,
-          [field]: field === 'hours' ? parseFloat(value) || 0 : value,
+          ...o,
+          assignedEquipmentId: splits[0]?.equipmentId || '',
+          equipmentSplits: splits,
         };
-      });
+      }
+
+      // field === 'hours'
+      const valNum = value === '' ? 0 : parseFloat(value);
+      const newHours = isNaN(valNum) ? 0 : Math.max(0, valNum);
+
+      let splits: OperatorEquipmentSplit[];
+      if (currentSplits.length === 2) {
+        // Auto-balance the other vehicle to take remaining shift hours
+        const balancedHours = Math.max(0, parseFloat((targetShift - newHours).toFixed(1)));
+        splits = currentSplits.map((s) => {
+          if (s.id === splitId) {
+            return { ...s, hours: newHours };
+          } else {
+            return { ...s, hours: balancedHours };
+          }
+        });
+      } else {
+        splits = currentSplits.map((s) => {
+          if (s.id !== splitId) return s;
+          return { ...s, hours: newHours };
+        });
+      }
+
       return {
         ...o,
         assignedEquipmentId: splits[0]?.equipmentId || '',
@@ -322,7 +374,14 @@ export function OperatorEntryView({
   const handleRemoveEquipmentSplit = (operatorId: string, splitId: string) => {
     const updated = operators.map((o) => {
       if (o.id !== operatorId) return o;
-      const splits = (o.equipmentSplits || []).filter((s) => s.id !== splitId);
+      const targetShift = Number(o.shiftHours) || 8.0;
+      let splits = (o.equipmentSplits || []).filter((s) => s.id !== splitId);
+
+      // If only 1 equipment remains, assign full shift hours
+      if (splits.length === 1) {
+        splits = [{ ...splits[0], hours: targetShift }];
+      }
+
       return {
         ...o,
         assignedEquipmentId: splits[0]?.equipmentId || '',
@@ -567,7 +626,7 @@ export function OperatorEntryView({
           </div>
         </div>
       ) : (
-        /* ── OUT & VEHICLES ACTION BAR ── */
+        /* ── OUT ACTION BAR ── */
         <div className="p-3.5 rounded-2xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 shadow-2xs space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -576,10 +635,10 @@ export function OperatorEntryView({
               </div>
               <div>
                 <h3 className="text-xs font-bold text-blue-950 dark:text-blue-200">
-                  Out-Time & Vehicle Allocation
+                  Bulk Out-Time Quick Apply
                 </h3>
                 <p className="text-[10px] text-blue-700/80 dark:text-blue-300/80">
-                  Unallocated hours automatically balance to <span className="font-mono font-bold">ZXQOPRIDLE</span>
+                  Set shift out-time for selected operators. Assign machines individually in each card below.
                 </p>
               </div>
             </div>
@@ -593,57 +652,6 @@ export function OperatorEntryView({
                 className="text-xs font-bold text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none"
               />
             </div>
-          </div>
-
-          <div className="w-full space-y-2">
-            <select
-              value={batchEquipmentId}
-              onChange={(e) => setBatchEquipmentId(e.target.value)}
-              className="w-full min-w-0 px-3 py-2 rounded-xl border border-blue-200 dark:border-blue-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 shadow-2xs truncate"
-            >
-              <option value="">-- No Initial Machine (100% ZXQOPRIDLE) --</option>
-              {equipment.map((eq) => {
-                const loggedH = getEquipmentLoggedHours(eq);
-                const logLabel = loggedH > 0 ? ` · [Logged: ${loggedH}h]` : '';
-                return (
-                  <option key={eq.id} value={eq.id}>
-                    {eq.code} · {eq.name} {eq.vehicleNo ? `(${eq.vehicleNo})` : ''}{logLabel}
-                  </option>
-                );
-              })}
-            </select>
-
-            {/* Read-Only Auto-Calculated Idle (ZXQOPRIDLE) Preview Box */}
-            {(() => {
-              const selectedEq = equipment.find((e) => e.id === batchEquipmentId);
-              const eqLoggedH = selectedEq ? getEquipmentLoggedHours(selectedEq) : 0;
-              const hasMachine = Boolean(batchEquipmentId);
-
-              return (
-                <div className="p-2.5 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-blue-200/80 dark:border-blue-800/60 flex items-center justify-between text-xs gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <PauseCircle size={15} className="text-amber-600 flex-shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate">
-                        Idle Machine Allocation: <span className="font-mono text-amber-700 dark:text-amber-400">ZXQOPRIDLE</span>
-                      </p>
-                      <p className="text-[10px] text-slate-400 truncate">
-                        Auto-calculated • Read-only • Directly exported to daily reports
-                      </p>
-                    </div>
-                  </div>
-
-                  <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300 font-mono flex-shrink-0 bg-amber-100 dark:bg-amber-950/70 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
-                    {!hasMachine 
-                      ? '100% Shift Idle' 
-                      : (eqLoggedH > 0 && eqLoggedH < 8.0 
-                          ? `${(8.0 - eqLoggedH).toFixed(1)}h Auto-Idle` 
-                          : '0.0h Idle (Active)')
-                    }
-                  </span>
-                </div>
-              );
-            })()}
           </div>
 
           <div className="flex items-center justify-between gap-2 pt-1 border-t border-blue-200/60 dark:border-blue-800/60">
@@ -667,7 +675,7 @@ export function OperatorEntryView({
               className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98]"
             >
               <Check size={14} />
-              <span>Apply to {selectedOperatorIds.length} Operators</span>
+              <span>Apply Out-Time ({selectedOperatorIds.length})</span>
             </button>
           </div>
         </div>
@@ -913,10 +921,10 @@ export function OperatorEntryView({
                                   <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 shrink-0">
                                     <input
                                       type="number"
-                                      min="0.5"
+                                      min="0"
                                       max="24"
                                       step="0.5"
-                                      value={split.hours || ''}
+                                      value={split.hours === 0 ? '0' : (split.hours || '')}
                                       onChange={(e) => handleUpdateEquipmentSplit(operator.id, split.id, 'hours', e.target.value)}
                                       className="w-12 text-center text-xs font-bold text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none"
                                       placeholder="0.0"

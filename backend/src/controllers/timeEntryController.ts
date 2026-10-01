@@ -1453,22 +1453,27 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
       const isSheetApproved = sheet?.status === 'approved';
       const allLaborApproved = supEntries.length > 0 && supEntries.every((t) => t.status === 'approved');
       const allOpApproved = operatorDetails.length > 0 && operatorDetails.every((o) => o.status === 'approved');
-      const allEqApproved = equipmentDetails.length > 0 && equipmentDetails.every((e) => e.status === 'approved' || e.status === 'done');
+      const allEqApproved = equipmentDetails.length > 0 && equipmentDetails.every((e) => e.status === 'approved');
 
       const isApproved = isSheetApproved || (allLaborApproved && (operatorDetails.length === 0 || allOpApproved) && (equipmentDetails.length === 0 || allEqApproved));
 
       const isSheetSubmitted = sheet?.status === 'submitted';
       const hasLaborSubmitted = supEntries.some((t) => t.status === 'submitted' || t.status === 'approved');
       const hasOpSubmitted = operatorDetails.some((o) => o.status === 'submitted' || o.status === 'approved');
-      const hasEqSubmitted = equipmentDetails.some((e) => e.status === 'submitted' || e.status === 'approved' || e.status === 'done');
+      const hasEqSubmitted = equipmentDetails.some((e) => e.status === 'submitted' || e.status === 'approved');
 
-      const isSubmitted = isSheetSubmitted || hasLaborSubmitted || hasOpSubmitted || hasEqSubmitted;
+      const isSubmitted = isSheetSubmitted || (!sheet && (hasLaborSubmitted || hasOpSubmitted || hasEqSubmitted));
 
       const hasAnyDraft = workerDetails.some((w) => w.status === 'draft') || operatorDetails.some((o) => o.status === 'draft') || equipmentDetails.some((e) => e.status === 'draft');
 
-      const supervisorStatus = isApproved 
-        ? 'approved' 
-        : (isSubmitted ? 'submitted' : (hasAnyDraft ? 'draft' : 'not_started'));
+      let supervisorStatus = 'not_started';
+      if (isApproved) {
+        supervisorStatus = 'approved';
+      } else if (isSubmitted) {
+        supervisorStatus = 'submitted';
+      } else if (sheet?.status === 'draft' || hasAnyDraft) {
+        supervisorStatus = 'draft';
+      }
 
       const groupData = {
         supervisorId: supId,
@@ -1678,7 +1683,7 @@ export const approveTimeEntries = async (req: Request, res: Response): Promise<v
         where: {
           assignmentId: { in: eqAssignments.map((a) => a.id) },
         },
-        data: { status: 'done' },
+        data: { status: 'approved' },
       });
       eqApprovedCount = eqResult.count;
     }
@@ -2065,12 +2070,12 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
       });
     }
 
-    // Guard: Prevent edits to approved/done operator time entries
+    // Guard: Prevent edits to approved or submitted operator time entries
     const existingEntry = await prisma.operatorTimeEntry.findUnique({
       where: { assignmentId: assignment.id },
     });
-    if (existingEntry && (existingEntry.status === 'approved' || existingEntry.status === 'done')) {
-      res.status(403).json({ error: 'Cannot edit operator time entry: Record has already been Approved or Completed.' });
+    if (existingEntry && (existingEntry.status === 'approved' || existingEntry.status === 'submitted')) {
+      res.status(403).json({ error: 'Cannot edit operator time entry: Record has already been Submitted or Approved.' });
       return;
     }
 

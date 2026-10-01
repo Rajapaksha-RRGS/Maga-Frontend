@@ -48,27 +48,28 @@ export function SupervisorDashboardView({
   const totalEquipment = equipment.length;
   const isEquipmentLogged = (e: EquipmentLogEntry): boolean => {
     if (e.status === 'done') return true;
-    if ((e.daysValue ?? 0) > 0) return true;
-    if ((e.hoursValue ?? 0) > 0) return true;
-    if ((e.extraHoursValue ?? 0) > 0) return true;
-    if ((e.areaValue ?? 0) > 0) return true;
-    if ((e.totalMileage ?? 0) > 0) return true;
-    if ((e.netHours ?? 0) > 0) return true;
-    if ((e.workingHours ?? 0) > 0) return true;
-    if (e.endMeter > 0 && e.endMeter > e.startMeter) return true;
+    if ((Number(e.daysValue) || 0) > 0) return true;
+    if ((Number(e.hoursValue) || 0) > 0) return true;
+    if ((Number(e.extraHoursValue) || 0) > 0) return true;
+    if ((Number(e.areaValue) || 0) > 0) return true;
+    if ((Number(e.totalMileage) || 0) > 0) return true;
+    if ((Number(e.netHours) || 0) > 0) return true;
+    if ((Number(e.workingHours) || 0) > 0) return true;
+    if (Number(e.endMeter) > 0 && Number(e.endMeter) > Number(e.startMeter)) return true;
     if (e.activitySplits && e.activitySplits.some((s) => Number(s.utilization) > 0)) return true;
     return false;
   };
   const runningEquipment = equipment.filter(isEquipmentLogged).length;
 
-  // Total daily hours
-  const totalLaborHours = laborers.reduce((acc, l) => acc + (l.shiftHours || 0), 0);
-  const totalOtHours = laborers.reduce((acc, l) => acc + (l.otHours || 0), 0);
-  const totalMachineHours = equipment.reduce((acc, e) => {
-    const hrs = (e.hoursValue ?? 0) > 0 
-      ? e.hoursValue! 
-      : ((e.netHours ?? 0) > 0 ? e.netHours! : (e.workingHours ?? 0));
-    const exHrs = e.extraHoursValue ?? 0;
+  // Total daily hours (safely cast to Number to prevent string concatenation and .toFixed crash)
+  const totalLaborHours = (laborers || []).reduce((acc, l) => acc + (Number(l.shiftHours) || 0), 0);
+  const totalOtHours = (laborers || []).reduce((acc, l) => acc + (Number(l.otHours) || 0), 0);
+  const totalMachineHours = (equipment || []).reduce((acc, e) => {
+    const hoursVal = Number(e.hoursValue) || 0;
+    const netHrs = Number(e.netHours) || 0;
+    const workHrs = Number(e.workingHours) || 0;
+    const hrs = hoursVal > 0 ? hoursVal : (netHrs > 0 ? netHrs : workHrs);
+    const exHrs = Number(e.extraHoursValue) || 0;
     return acc + hrs + exHrs;
   }, 0);
 
@@ -121,7 +122,7 @@ export function SupervisorDashboardView({
               Ayubowan, {supervisorName}
             </h1>
             <p className="text-xs text-blue-100/90 mt-0.5 max-w-[240px] truncate">
-              {currentSite.name}
+              {currentSite?.name || 'Mäga Site Operations'}
             </p>
           </div>
 
@@ -140,15 +141,15 @@ export function SupervisorDashboardView({
         <div className="mt-3.5 pt-3 border-t border-white/15 grid grid-cols-3 gap-2 text-center text-xs">
           <div>
             <p className="text-[10px] text-blue-200 font-medium">Labor Hours</p>
-            <p className="font-bold text-sm text-white tabular-nums mt-0.5">{totalLaborHours.toFixed(1)}h</p>
+            <p className="font-bold text-sm text-white tabular-nums mt-0.5">{(Number(totalLaborHours) || 0).toFixed(1)}h</p>
           </div>
           <div className="border-x border-white/15">
             <p className="text-[10px] text-blue-200 font-medium">Total OT</p>
-            <p className="font-bold text-sm text-amber-300 tabular-nums mt-0.5">+{totalOtHours.toFixed(1)}h</p>
+            <p className="font-bold text-sm text-amber-300 tabular-nums mt-0.5">+{(Number(totalOtHours) || 0).toFixed(1)}h</p>
           </div>
           <div>
             <p className="text-[10px] text-blue-200 font-medium">Machinery</p>
-            <p className="font-bold text-sm text-emerald-300 tabular-nums mt-0.5">{totalMachineHours.toFixed(1)}h</p>
+            <p className="font-bold text-sm text-emerald-300 tabular-nums mt-0.5">{(Number(totalMachineHours) || 0).toFixed(1)}h</p>
           </div>
         </div>
       </div>

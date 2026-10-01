@@ -50,24 +50,25 @@ export function DailySummaryView({
   const [submitSuccessToast, setSubmitSuccessToast] = useState(false);
 
   // Aggregated calculations
-  const totalLaborers = laborers.length;
-  const completedLaborers = laborers.filter((l) => l.inTime && l.outTime).length;
-  const totalLaborHours = laborers.reduce((acc, l) => acc + (l.shiftHours || 0), 0);
+  const totalLaborers = (laborers || []).length;
+  const completedLaborers = (laborers || []).filter((l) => l.inTime && l.outTime).length;
+  const totalLaborHours = (laborers || []).reduce((acc, l) => acc + (Number(l.shiftHours) || 0), 0);
 
-  const totalOperators = operators.length;
+  const totalOperators = (operators || []).length;
   // An operator is "complete" when inTime & outTime are set.
   // Machine assignment is optional — unassigned operators auto-balance to ZXQOPRIDLE.
-  const completedOperators = operators.filter((o) => o.inTime && o.outTime).length;
-  const operatorsMissingTime = operators.filter((o) => !o.inTime || !o.outTime).length;
+  const completedOperators = (operators || []).filter((o) => o.inTime && o.outTime).length;
+  const operatorsMissingTime = (operators || []).filter((o) => !o.inTime || !o.outTime).length;
   // Operators that have times but no machine assignment → will be ZXQOPRIDLE (valid)
-  const zxqopridleOperators = operators.filter((o) => o.inTime && o.outTime && !o.assignedEquipmentId && (!o.equipmentSplits || o.equipmentSplits.length === 0)).length;
+  const zxqopridleOperators = (operators || []).filter((o) => o.inTime && o.outTime && !o.assignedEquipmentId && (!o.equipmentSplits || o.equipmentSplits.length === 0)).length;
 
   // Activity breakdown aggregation
   const activityHoursMap: Record<string, number> = {};
-  laborers.forEach((l) => {
-    l.activities.forEach((a) => {
-      if (a.activityCode && a.hours > 0) {
-        activityHoursMap[a.activityCode] = (activityHoursMap[a.activityCode] || 0) + a.hours;
+  (laborers || []).forEach((l) => {
+    (l.activities || []).forEach((a) => {
+      const h = Number(a.hours) || 0;
+      if (a.activityCode && h > 0) {
+        activityHoursMap[a.activityCode] = (activityHoursMap[a.activityCode] || 0) + h;
       }
     });
   });
@@ -369,7 +370,7 @@ export function DailySummaryView({
             {Object.entries(activityHoursMap).map(([code, hrs]) => (
               <div key={code} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 dark:border-slate-750 last:border-none">
                 <span className="font-mono font-medium text-slate-700 dark:text-slate-300">{code}</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 tabular-nums">{hrs.toFixed(1)} hrs</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 tabular-nums">{(Number(hrs) || 0).toFixed(1)} hrs</span>
               </div>
             ))}
           </div>
