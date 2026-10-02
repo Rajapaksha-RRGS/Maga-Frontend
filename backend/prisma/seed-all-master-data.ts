@@ -5,13 +5,8 @@ import prisma from '../src/config/prisma';
 async function main() {
   console.log('🚀 Starting Clean Corporate Master Data Seeding from testdata.md...');
 
-  // Wipe corporate tables first to remove previous messy records
-  console.log('Cleaning old corporate master records...');
-  await prisma.corporateEmployee.deleteMany({});
-  await prisma.corporateEquipment.deleteMany({});
-  await prisma.corporateBusinessPartner.deleteMany({});
-  await prisma.corporateActivityCode.deleteMany({});
-  await prisma.corporateProject.deleteMany({});
+  // Upsert corporate tables to preserve existing records and insert/update new ones from testdata.md
+  console.log('Seeding corporate master records (preserving existing data)...');
 
   const testDataPath = path.resolve(__dirname, '../../testdata.md');
   if (!fs.existsSync(testDataPath)) {
@@ -69,8 +64,17 @@ async function main() {
       const currentWorkingProject = parts[6] || 'M00000531';
 
       if (code && name) {
-        await prisma.corporateBusinessPartner.create({
-          data: {
+        await prisma.corporateBusinessPartner.upsert({
+          where: { code },
+          update: {
+            name,
+            type,
+            contactPerson,
+            phone,
+            currentWorkingProject,
+            status: 'active',
+          },
+          create: {
             code,
             name,
             type,
@@ -99,8 +103,21 @@ async function main() {
       const businessPartnerName = parts[9] || 'Mäga Engineering (Pvt) Ltd';
 
       if (employeeCode) {
-        await prisma.corporateEmployee.create({
-          data: {
+        await prisma.corporateEmployee.upsert({
+          where: { employeeCode },
+          update: {
+            callingName,
+            fullName,
+            tradeGroup,
+            nicNo,
+            epfNo,
+            isOperator: true,
+            businessPartnerCode,
+            businessPartnerName,
+            currentWorkingProject: 'M00000531',
+            status: 'active',
+          },
+          create: {
             employeeCode,
             callingName,
             fullName,
@@ -133,8 +150,21 @@ async function main() {
       const businessPartnerName = parts[8] || 'Mäga Engineering (Pvt) Ltd';
 
       if (employeeCode) {
-        await prisma.corporateEmployee.create({
-          data: {
+        await prisma.corporateEmployee.upsert({
+          where: { employeeCode },
+          update: {
+            callingName,
+            fullName,
+            tradeGroup,
+            nicNo,
+            epfNo,
+            isOperator: false,
+            businessPartnerCode,
+            businessPartnerName,
+            currentWorkingProject: 'M00000531',
+            status: 'active',
+          },
+          create: {
             employeeCode,
             callingName,
             fullName,
@@ -178,8 +208,24 @@ async function main() {
       const bpCode = parts[9] || 'BP1002885';
 
       if (erpNewCode) {
-        await prisma.corporateEquipment.create({
-          data: {
+        await prisma.corporateEquipment.upsert({
+          where: { erpNewCode },
+          update: {
+            standardEquipmentNumber,
+            vehicleNo,
+            equipmentName,
+            condition,
+            unit: normalizedUnit,
+            primaryUnit: normalizedUnit,
+            availableUnits: [normalizedUnit],
+            minimumUtilization: minUtil,
+            dailyRate,
+            costRate,
+            businessPartner: bpCode,
+            currentWorkingProject: 'M00000531',
+            status: 'active',
+          },
+          create: {
             erpNewCode,
             standardEquipmentNumber,
             vehicleNo,
@@ -187,7 +233,7 @@ async function main() {
             condition,
             unit: normalizedUnit,
             primaryUnit: normalizedUnit,
-            availableUnits: [normalizedUnit], // Single unit for single master data record
+            availableUnits: [normalizedUnit],
             minimumUtilization: minUtil,
             dailyRate,
             costRate,
@@ -210,8 +256,22 @@ async function main() {
       const description = parts[2];
 
       if (projectCode && code) {
-        await prisma.corporateActivityCode.create({
-          data: {
+        await prisma.corporateActivityCode.upsert({
+          where: {
+            projectCode_code: {
+              projectCode,
+              code,
+            },
+          },
+          update: {
+            description,
+            searchKey: description.slice(0, 16).toUpperCase(),
+            activityType: 'Work Package',
+            unit: 'ite',
+            timeUnit: 'hrs',
+            currentWorkingProject: projectCode,
+          },
+          create: {
             projectCode,
             code,
             description,
@@ -242,8 +302,19 @@ async function main() {
       const currency = parts[8] || 'LKR';
 
       if (projectCode && projectCode.startsWith('M00')) {
-        await prisma.corporateProject.create({
-          data: {
+        await prisma.corporateProject.upsert({
+          where: { projectCode },
+          update: {
+            description,
+            searchKey,
+            projectManager,
+            status,
+            addressCode,
+            projectName,
+            enterpriseUnit,
+            currency,
+          },
+          create: {
             projectCode,
             description,
             searchKey,

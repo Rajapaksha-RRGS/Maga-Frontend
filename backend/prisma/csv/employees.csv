@@ -1,0 +1,5 @@
+employeeCode,callingName,fullName,tradeGroup,nicNo,epfNo,isOperator,businessPartnerCode,businessPartnerName
+R8184,101,Piyasena PWM,Driver,921530170V,,true,BP1002885,Mäga Engineering (Pvt) Ltd
+R8562,102,Vipula RA,Driver,672970342V,74493,true,BP1002885,Mäga Engineering (Pvt) Ltd
+HK030,HK030,Lab Helper HK030,Lab Helper,961173612V,,false,BP1002885,Mäga Engineering (Pvt) Ltd
+HI101,101,Kamal Perera,Mason,881234567V,EPF-9021,false,BP1002885,Mäga Engineering (Pvt) Ltd
