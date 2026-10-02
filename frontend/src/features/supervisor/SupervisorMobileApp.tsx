@@ -14,6 +14,8 @@ import { SupervisorTopBar } from './components/SupervisorTopBar';
 import { SupervisorDrawer } from './components/SupervisorDrawer';
 import { SupervisorSubHeader } from './components/SupervisorSubHeader';
 import { SupervisorBottomNav, type SupervisorTabKey } from './components/SupervisorBottomNav';
+import { SupervisorNotificationModal } from './components/SupervisorNotificationModal';
+import { fetchSupervisorReminders, type CalendarEvent } from '../calendar/services/calendarEventService';
 
 // 5 Dedicated Tab Views
 import { SupervisorDashboardView } from './views/SupervisorDashboardView';
@@ -39,6 +41,18 @@ export default function SupervisorMobileApp() {
   // Sync state
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(() => supervisorStorage.getPendingSyncCount());
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Admin Reminders & Notifications state
+  const [reminders, setReminders] = useState<CalendarEvent[]>([]);
+  const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
+  const [readReminderIds, setReadReminderIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('maga_supervisor_read_reminders');
+      return stored ? new Set(JSON.parse(stored)) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
 
   // Data state per selected date
   const [laborers, setLaborers] = useState<LaborerEntry[]>([]);
@@ -107,8 +121,37 @@ export default function SupervisorMobileApp() {
           setEquipment(freshEquipment);
         })
         .catch((err) => console.warn('Could not fetch assigned equipment:', err));
+
+      // Fetch head office / admin reminders for this supervisor on selectedDate
+      fetchSupervisorReminders(user.id, selectedDate)
+        .then((freshReminders) => {
+          setReminders(freshReminders);
+        })
+        .catch((err) => console.warn('Could not fetch supervisor reminders:', err));
     }
   }, [selectedDate, user?.id]);
+
+  const handleMarkReminderAsRead = (id: string) => {
+    setReadReminderIds((prev) => {
+      const updated = new Set(prev);
+      updated.add(id);
+      try {
+        localStorage.setItem('maga_supervisor_read_reminders', JSON.stringify(Array.from(updated)));
+      } catch {}
+      return updated;
+    });
+  };
+
+  const handleMarkAllRemindersAsRead = () => {
+    setReadReminderIds((prev) => {
+      const updated = new Set(prev);
+      reminders.forEach((r) => updated.add(r.id));
+      try {
+        localStorage.setItem('maga_supervisor_read_reminders', JSON.stringify(Array.from(updated)));
+      } catch {}
+      return updated;
+    });
+  };
 
   // Auto-flush queued offline submissions when network reconnects
   useEffect(() => {
@@ -209,6 +252,7 @@ export default function SupervisorMobileApp() {
   const equipmentPendingCount = (equipment || []).filter((e) => !isEquipmentLogged(e)).length;
 
   const supervisorDisplayName = user?.fullName || 'Supervisor';
+  const unreadNotificationsCount = reminders.filter((r) => !readReminderIds.has(r.id)).length;
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors">
@@ -221,6 +265,8 @@ export default function SupervisorMobileApp() {
         isSyncing={isSyncing}
         onOpenDrawer={() => setDrawerOpen(true)}
         isDayLocked={isDayLocked}
+        unreadNotificationsCount={unreadNotificationsCount}
+        onOpenNotifications={() => setNotificationsModalOpen(true)}
       />
 
       {/* ── Slide Drawer ────────────────────────────────────────────────────── */}
@@ -252,6 +298,8 @@ export default function SupervisorMobileApp() {
             equipment={equipment}
             pendingSyncCount={pendingSyncCount}
             isDayLocked={isDayLocked}
+            reminders={reminders}
+            onOpenNotifications={() => setNotificationsModalOpen(true)}
             onNavigateTab={(tab) => {
               setActiveTab(tab);
               window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -315,6 +363,17 @@ export default function SupervisorMobileApp() {
           operatorPending: operatorPendingCount,
           equipmentPending: equipmentPendingCount,
         }}
+      />
+
+      {/* ── Admin Reminders & Notifications Modal ───────────────────────── */}
+      <SupervisorNotificationModal
+        isOpen={notificationsModalOpen}
+        onClose={() => setNotificationsModalOpen(false)}
+        reminders={reminders}
+        selectedDate={selectedDate}
+        readReminderIds={readReminderIds}
+        onMarkAsRead={handleMarkReminderAsRead}
+        onMarkAllAsRead={handleMarkAllRemindersAsRead}
       />
     </div>
   );

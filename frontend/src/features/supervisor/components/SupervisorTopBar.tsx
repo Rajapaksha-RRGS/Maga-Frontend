@@ -7,7 +7,8 @@ import {
   Moon, 
   Menu, 
   CheckCircle2,
-  Lock
+  Lock,
+  Bell
 } from 'lucide-react';
 import { useTheme } from '../../../context/ThemeContext';
 import { type SiteProject } from '../services/supervisorStorageService';
@@ -21,6 +22,8 @@ interface SupervisorTopBarProps {
   isSyncing: boolean;
   onOpenDrawer: () => void;
   isDayLocked?: boolean;
+  unreadNotificationsCount?: number;
+  onOpenNotifications?: () => void;
 }
 
 export function SupervisorTopBar({
@@ -30,6 +33,8 @@ export function SupervisorTopBar({
   isSyncing,
   onOpenDrawer,
   isDayLocked = false,
+  unreadNotificationsCount = 0,
+  onOpenNotifications,
 }: SupervisorTopBarProps) {
   const { theme, toggleTheme } = useTheme();
   const [syncSuccessToast, setSyncSuccessToast] = useState(false);
@@ -99,6 +104,22 @@ export function SupervisorTopBar({
               </span>
             </button>
           )}
+
+          {/* Admin Notifications / Task Reminders Bell */}
+          <button
+            type="button"
+            onClick={onOpenNotifications}
+            aria-label="View site reminders and notifications"
+            className="relative w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors active:scale-95 border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+            title={unreadNotificationsCount > 0 ? `${unreadNotificationsCount} unread reminders` : 'Site Reminders'}
+          >
+            <Bell size={17} className={unreadNotificationsCount > 0 ? 'text-blue-600 dark:text-blue-400' : ''} />
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white shadow-xs animate-pulse">
+                {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+              </span>
+            )}
+          </button>
 
           {/* Theme Toggle Button (Light/Dark) */}
           <button
