@@ -41,6 +41,10 @@ export function QuickAssignModal({
       w.businessPartner.toLowerCase().includes(search.toLowerCase()) ||
       w.employeeCode.toLowerCase().includes(search.toLowerCase());
     return !isAlreadyIn && matchesSearch;
+  }).sort((a, b) => {
+    const nameCompare = (a.callingName || '').localeCompare(b.callingName || '', undefined, { numeric: true, sensitivity: 'base' });
+    if (nameCompare !== 0) return nameCompare;
+    return (a.employeeCode || '').localeCompare(b.employeeCode || '', undefined, { numeric: true, sensitivity: 'base' });
   });
 
   const handleConfirm = () => {
@@ -132,10 +136,10 @@ export function QuickAssignModal({
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-slate-900 dark:text-slate-100 font-mono">{(w as any).employeeCode || w.id}</span>
-                        <span className="text-xs text-slate-600 dark:text-slate-400">({w.callingName})</span>
+                        <span className="font-bold text-slate-900 dark:text-slate-100">{w.callingName}</span>
+                        <span className="text-xs text-slate-500 font-mono">({(w as any).employeeCode || w.id})</span>
                       </div>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400">{w.tradeGroup} · {w.businessPartner}</p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">{w.tradeGroup}</p>
                     </div>
                   </div>
                   {isSelected && <CheckCircle2 size={16} className="text-blue-600 dark:text-blue-400" />}

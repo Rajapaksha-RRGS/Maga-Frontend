@@ -60,7 +60,3 @@ Line 59: unmappedOperators — machine නෑ කිවාට Operator ගේ in
 Line 71-73: hasPendingItems — unmappedOperators > 0 ඇත්නම් warning දෙයි, ඒ නිසා "Unassigned Machine" warning approve screen ලදි.
 Line 323-335: Operator row ලා machine නොමැතිනම් Unmapped (red) ලෙස දකී — but should show ZXQOPRIDLE.
 සියල්ල fix කරමු:
-
-
-
-hri mama denata enter karapu deta tika ain karala deta base cleen karala one , mt me dewa thiya ganan one coperate leval walata deta demma admin kenek haduwa 531 project ekata eyata suppavisorla dennek haduwa oya tika thiyagena assigment karapu ewa record wala satahan un ewa ain karanna one okkoma 

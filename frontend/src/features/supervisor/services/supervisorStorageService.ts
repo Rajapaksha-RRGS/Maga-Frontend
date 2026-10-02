@@ -37,6 +37,7 @@ export interface ActivitySplit {
 export interface LaborerEntry {
   id: string;
   callingName: string;
+  fullName?: string;
   employeeCode: string;
   tradeGroup: string;
   businessPartner: string;
@@ -48,6 +49,7 @@ export interface LaborerEntry {
   activities: ActivitySplit[];
   status: 'draft' | 'pending' | 'done';
   isStandbyAssigned?: boolean;
+  isAbsent?: boolean;
   lastSavedAt?: string;
 }
 
@@ -507,6 +509,7 @@ export const supervisorStorage = {
             id: emp.id,
             employeeCode: emp.employeeCode || '',
             callingName: emp.callingName || emp.fullName || '',
+            fullName: emp.fullName || '',
             tradeGroup: emp.tradeGroup || 'General labour',
             businessPartner: emp.businessPartner || 'Direct',
             nic: emp.nicNo || '',
@@ -516,6 +519,7 @@ export const supervisorStorage = {
             otHours,
             activities,
             status,
+            isAbsent: localDraft?.isAbsent || false,
             lastSavedAt: localDraft?.lastSavedAt,
           };
         });

@@ -17,8 +17,10 @@ import {
   LogOut, 
   Clock,
   Lock,
-  PauseCircle
+  PauseCircle,
+  UserX
 } from 'lucide-react';
+import { SearchableActivitySelect } from '../components/SearchableActivitySelect';
 import { 
   supervisorStorage,
   type ActivityCodeItem,
@@ -77,7 +79,8 @@ export function LaborEntryView({
 
   // Internal search and filters
   const [localSearch, setLocalSearch] = useState('');
-  // Shift Hours Filter state (replaces trade filter)
+  // Trade Group & Shift Filter states
+  const [selectedTradeFilter, setSelectedTradeFilter] = useState<string>('all');
   const [selectedShiftFilter, setSelectedShiftFilter] = useState<string>('all');
   const [targetShiftHours, setTargetShiftHours] = useState<number>(8.0);
   const [showShiftMismatchModal, setShowShiftMismatchModal] = useState<boolean>(false);
@@ -85,8 +88,6 @@ export function LaborEntryView({
     groups: Record<string, LaborerEntry[]>;
     targetSum: number;
   } | null>(null);
-
-  const [localStatusFilter, setLocalStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
 
   // Selection state for batch actions
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
@@ -141,9 +142,21 @@ export function LaborEntryView({
     return { counts, keys };
   }, [laborers, batchOutTime]);
 
+  // Derived unique Trade Groups for Trade filter chips
+  const tradeGroupStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    laborers.forEach((l) => {
+      const trade = l.tradeGroup || 'General labour';
+      counts[trade] = (counts[trade] || 0) + 1;
+    });
+
+    const keys = Object.keys(counts).sort((a, b) => a.localeCompare(b));
+    return { counts, keys };
+  }, [laborers]);
+
   // Combined search query (external + local)
   const effectiveSearch = localSearch || externalSearchQuery;
-  const effectiveStatus = localStatusFilter !== 'all' ? localStatusFilter : externalStatusFilter;
+  const effectiveStatus = externalStatusFilter;
 
   // Filtered workers
   const filteredLaborers = useMemo(() => {
@@ -152,6 +165,7 @@ export function LaborEntryView({
       const matchesSearch = 
         !search ||
         (l.employeeCode && l.employeeCode.toLowerCase().includes(search)) ||
+        (l.fullName && l.fullName.toLowerCase().includes(search)) ||
         l.callingName.toLowerCase().includes(search) ||
         l.tradeGroup.toLowerCase().includes(search) ||
         (l.nic && l.nic.toLowerCase().includes(search)) ||
@@ -159,7 +173,12 @@ export function LaborEntryView({
 
       if (!matchesSearch) return false;
 
-      // Shift Hours filter (replaces trade filter)
+      // Trade Group filter
+      if (selectedTradeFilter !== 'all' && (l.tradeGroup || 'General labour') !== selectedTradeFilter) {
+        return false;
+      }
+
+      // Shift Hours filter
       if (selectedShiftFilter !== 'all') {
         const info = getWorkerEffectiveShift(l, batchOutTime);
         const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
@@ -177,14 +196,18 @@ export function LaborEntryView({
       }
 
       return true;
+    }).sort((a, b) => {
+      const nameCompare = (a.callingName || '').localeCompare(b.callingName || '', undefined, { numeric: true, sensitivity: 'base' });
+      if (nameCompare !== 0) return nameCompare;
+      const fullCompare = (a.fullName || '').localeCompare(b.fullName || '', undefined, { numeric: true, sensitivity: 'base' });
+      if (fullCompare !== 0) return fullCompare;
+      return (a.employeeCode || '').localeCompare(b.employeeCode || '', undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [laborers, effectiveSearch, selectedShiftFilter, batchOutTime, effectiveStatus]);
+  }, [laborers, effectiveSearch, selectedTradeFilter, selectedShiftFilter, batchOutTime, effectiveStatus]);
 
   // Stats
   const inMarkedCount = laborers.filter((l) => !!l.inTime).length;
   const outMarkedCount = laborers.filter((l) => !!l.outTime).length;
-  const completedCount = laborers.filter((l) => l.inTime && l.outTime && l.activities.length > 0).length;
-  const pendingCount = laborers.length - completedCount;
 
   // Only the selected worker IDs that are currently visible/filtered
   const selectedFilteredWorkerIds = useMemo(() => {
@@ -234,6 +257,7 @@ export function LaborEntryView({
         inTime,
         shiftHours: shift,
         otHours: ot,
+        isAbsent: false,
         status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
         lastSavedAt: `In: ${batchInTime}`,
       };
@@ -340,8 +364,27 @@ export function LaborEntryView({
   };
 
   const handleRemoveBatchActivityRow = (id: string) => {
-    if (batchActivities.length <= 1) return;
+    if (batchActivities.length <= 1) {
+      setBatchActivities([{ id: 'batch-act-1', activityCode: '', hours: 0 }]);
+      return;
+    }
     setBatchActivities((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  // Clear all activities for currently selected workers in bulk
+  const handleBatchClearActivities = () => {
+    const targetIds = selectedFilteredWorkerIds;
+    if (targetIds.length === 0) return;
+
+    const updated = laborers.map((l) => {
+      if (!targetIds.includes(l.id)) return l;
+      return {
+        ...l,
+        activities: [],
+        status: 'draft' as const,
+      };
+    });
+    onSaveLaborers(updated);
   };
 
   // ── APPLY BATCH OUT TIME & ACTIVITIES (WITH MISMATCH VALIDATION) ──
@@ -379,12 +422,14 @@ export function LaborEntryView({
       const outTime = batchOutTime;
       const { shift, ot } = computeHours(inTime, outTime);
 
-      // Map batch activities to laborer splits
-      const newSplits: ActivitySplit[] = batchActivities.map((ba) => ({
-        id: `split-${Date.now()}-${l.id}-${ba.id}`,
-        activityCode: ba.activityCode,
-        hours: ba.hours,
-      }));
+      // Map batch activities to laborer splits (only valid activity codes)
+      const newSplits: ActivitySplit[] = batchActivities
+        .filter((ba) => ba.activityCode && ba.activityCode.trim() !== '')
+        .map((ba) => ({
+          id: `split-${Date.now()}-${l.id}-${ba.id}`,
+          activityCode: ba.activityCode,
+          hours: ba.hours,
+        }));
 
       return {
         ...l,
@@ -421,7 +466,26 @@ export function LaborEntryView({
         shiftHours: shift,
         otHours: ot,
         activities,
+        isAbsent: inTime ? false : l.isAbsent,
         status: (inTime && outTime && activities.length > 0 ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+      };
+    });
+    onSaveLaborers(updated);
+  };
+
+  const handleToggleAbsent = (id: string) => {
+    const updated = laborers.map((l) => {
+      if (l.id !== id) return l;
+      const willBeAbsent = !l.isAbsent;
+      return {
+        ...l,
+        isAbsent: willBeAbsent,
+        inTime: willBeAbsent ? '' : l.inTime,
+        outTime: willBeAbsent ? '' : l.outTime,
+        shiftHours: willBeAbsent ? 0 : l.shiftHours,
+        otHours: willBeAbsent ? 0 : l.otHours,
+        activities: willBeAbsent ? [] : l.activities,
+        status: (willBeAbsent ? 'draft' : l.status) as 'draft' | 'pending' | 'done',
       };
     });
     onSaveLaborers(updated);
@@ -461,9 +525,25 @@ export function LaborEntryView({
 
   const handleRemoveIndividualActivitySplit = (laborerId: string, splitId: string) => {
     const updated = laborers.map((l) => {
-      if (l.id !== laborerId || l.activities.length <= 1) return l;
+      if (l.id !== laborerId) return l;
       const activities = l.activities.filter((a) => a.id !== splitId);
-      return { ...l, activities, status: 'draft' as const };
+      return { 
+        ...l, 
+        activities, 
+        status: (l.inTime && l.outTime && activities.length > 0 ? 'done' : 'draft') as 'draft' | 'pending' | 'done' 
+      };
+    });
+    onSaveLaborers(updated);
+  };
+
+  const handleClearAllActivities = (laborerId: string) => {
+    const updated = laborers.map((l) => {
+      if (l.id !== laborerId) return l;
+      return {
+        ...l,
+        activities: [],
+        status: 'draft' as const,
+      };
     });
     onSaveLaborers(updated);
   };
@@ -610,61 +690,56 @@ export function LaborEntryView({
           </div>
         </div>
 
-        {/* Status Filter Chips: Completed vs Pending */}
+        {/* Trade Group Filter Chips (Replaces Shift Status) */}
         <div>
-          <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider block mb-2 px-0.5">
-            Shift Status:
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setLocalStatusFilter('all')}
-              className={[
-                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border cursor-pointer',
-                localStatusFilter === 'all'
-                  ? 'bg-slate-900 dark:bg-slate-100 border-slate-900 dark:border-slate-100 text-white dark:text-slate-900 shadow-2xs font-bold'
-                  : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-750'
-              ].join(' ')}
-            >
-              <span>All</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/10 dark:bg-white/10 font-mono">
-                {filteredLaborers.length}
-              </span>
-            </button>
+          <div className="flex items-center justify-between mb-1.5 px-0.5">
+            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Users size={12} className="text-blue-600 dark:text-blue-400" />
+              Filter by Trade:
+            </span>
+            {selectedTradeFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setSelectedTradeFilter('all')}
+                className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
+              >
+                Clear Filter
+              </button>
+            )}
+          </div>
 
+         <div className="flex items-center gap-2 overflow-x-auto pb-2 text-xs">
             <button
               type="button"
-              onClick={() => setLocalStatusFilter('done')}
+              onClick={() => setSelectedTradeFilter('all')}
               className={[
-                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border cursor-pointer',
-                localStatusFilter === 'done'
-                  ? 'bg-emerald-600 border-emerald-600 text-white shadow-2xs font-bold'
-                  : 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/50'
+                'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
+                selectedTradeFilter === 'all'
+                  ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-xs font-bold'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
               ].join(' ')}
             >
-              <CheckCircle2 size={13} />
-              <span>Done</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-700/20 dark:bg-emerald-400/20 font-mono">
-                {completedCount}
-              </span>
+              All Trades ({laborers.length})
             </button>
-
-            <button
-              type="button"
-              onClick={() => setLocalStatusFilter('pending')}
-              className={[
-                'flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border cursor-pointer',
-                localStatusFilter === 'pending'
-                  ? 'bg-amber-600 border-amber-600 text-white shadow-2xs font-bold'
-                  : 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/50'
-              ].join(' ')}
-            >
-              <Clock size={13} />
-              <span>Pending</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-700/20 dark:bg-amber-400/20 font-mono">
-                {pendingCount}
-              </span>
-            </button>
+            {tradeGroupStats.keys.map((trade) => {
+              const count = tradeGroupStats.counts[trade];
+              const isSelected = selectedTradeFilter === trade;
+              return (
+                <button
+                  key={trade}
+                  type="button"
+                  onClick={() => setSelectedTradeFilter(trade)}
+                  className={[
+                    'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
+                    isSelected
+                      ? 'bg-blue-600 text-white shadow-xs font-bold'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
+                  ].join(' ')}
+                >
+                  {trade} ({count})
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -771,17 +846,12 @@ export function LaborEntryView({
 
             {batchActivities.map((row) => (
               <div key={row.id} className="flex items-center gap-1.5 w-full">
-                <select
+                <SearchableActivitySelect
                   value={row.activityCode}
-                  onChange={(e) => handleUpdateBatchActivityRow(row.id, 'activityCode', e.target.value)}
-                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-600 truncate"
-                >
-                  {activityOptions.map((act) => (
-                    <option key={act.code} value={act.code}>
-                      {act.code} - {act.name || act.code}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(code) => handleUpdateBatchActivityRow(row.id, 'activityCode', code)}
+                  options={activityOptions}
+                  placeholder="Search activity code..."
+                />
 
                 <div className="w-16 flex-shrink-0">
                   <input
@@ -796,15 +866,14 @@ export function LaborEntryView({
                   />
                 </div>
 
-                {batchActivities.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveBatchActivityRow(row.id)}
-                    className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => handleRemoveBatchActivityRow(row.id)}
+                  title={batchActivities.length > 1 ? "Remove activity row" : "Clear activity code"}
+                  className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
             ))}
 
@@ -838,7 +907,7 @@ export function LaborEntryView({
           </div>
 
           {/* Selection Controls & Apply Button */}
-          <div className="flex items-center justify-between gap-2 pt-1 border-t border-blue-200/60 dark:border-blue-800/60">
+          <div className="flex items-center justify-between gap-2 pt-1 border-t border-blue-200/60 dark:border-blue-800/60 flex-wrap">
             <button
               type="button"
               onClick={handleToggleSelectAll}
@@ -852,15 +921,28 @@ export function LaborEntryView({
               <span>{isAllFilteredSelected ? 'Deselect All' : `Select All (${filteredLaborers.length})`}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleApplyBatchOut}
-              disabled={isDayLocked || selectedFilteredCount === 0}
-              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98]"
-            >
-              <Check size={14} />
-              <span>Apply to {selectedFilteredCount} Workers</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleBatchClearActivities}
+                disabled={isDayLocked || selectedFilteredCount === 0}
+                className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-40"
+                title="Clear all activities for selected workers"
+              >
+                <Trash2 size={13} />
+                <span>Clear Activities</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleApplyBatchOut}
+                disabled={isDayLocked || selectedFilteredCount === 0}
+                className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
+              >
+                <Check size={14} />
+                <span>Apply to {selectedFilteredCount} Workers</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -880,7 +962,7 @@ export function LaborEntryView({
         ) : (
           filteredLaborers.map((worker) => {
             const isSelected = selectedWorkerIds.includes(worker.id);
-            const isExpanded = tabMode === 'out' && expandedId === worker.id;
+            const isExpanded = expandedId === worker.id;
             const activitySum = worker.activities.reduce((acc, a) => acc + (Number(a.hours) || 0), 0);
             void activitySum; // consumed if needed
 
@@ -891,6 +973,8 @@ export function LaborEntryView({
                   'rounded-2xl border transition-all duration-150 overflow-hidden shadow-2xs',
                   isSelected
                     ? 'border-blue-500 bg-blue-50/20 dark:bg-blue-950/40 ring-1 ring-blue-500/20'
+                    : worker.isAbsent
+                    ? 'border-rose-300 dark:border-rose-900/60 bg-rose-50/25 dark:bg-rose-950/20'
                     : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
                 ].join(' ')}
               >
@@ -915,18 +999,16 @@ export function LaborEntryView({
                     onClick={() => setExpandedId(isExpanded ? null : worker.id)}
                     className="flex-1 min-w-0 flex items-center gap-2.5 cursor-pointer"
                   >
-                    {/* <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-bold flex items-center justify-center text-[10px] tracking-tight flex-shrink-0 border border-blue-200 dark:border-blue-800 font-mono">
-                      {worker.employeeCode || worker.callingName.charAt(0)}
-                    </div> */}
-
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-xs text-slate-900 dark:text-slate-100 font-mono">
-                          {worker.employeeCode}
-                        </span>
-                        <span className="text-xs text-slate-700 dark:text-slate-300 truncate">
+                        <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
                           {worker.callingName}
                         </span>
+                        {worker.fullName && worker.fullName.trim() !== worker.callingName.trim() && (
+                          <span className="text-xs text-slate-600 dark:text-slate-300 font-medium truncate">
+                            · {worker.fullName}
+                          </span>
+                        )}
                         {worker.isStandbyAssigned && (
                           <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200">
                             Standby
@@ -934,48 +1016,129 @@ export function LaborEntryView({
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        <span className="font-medium text-slate-600 dark:text-slate-300">{worker.tradeGroup}</span>
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        <span className="font-mono text-slate-600 dark:text-slate-300 font-medium">
+                          {worker.employeeCode}
+                        </span>
                         <span>·</span>
-                        <span className="truncate">{worker.businessPartner}</span>
+                        <span className="font-medium text-slate-600 dark:text-slate-300">
+                          {worker.tradeGroup}
+                        </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Times & Status Badges */}
+                  {/* Times & Direct Controls */}
                   <div 
                     onClick={() => setExpandedId(isExpanded ? null : worker.id)}
-                    className="flex items-center gap-2 flex-shrink-0 cursor-pointer text-right"
+                    className="flex items-center gap-1.5 flex-shrink-0 cursor-pointer text-right"
                   >
-                    <div>
-                      {worker.inTime ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
-                          In: {worker.inTime}
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
-                          Pending In
-                        </span>
-                      )}
+                    {tabMode === 'in' ? (
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        {worker.isAbsent ? (
+                          <div className="flex items-center gap-1">
+                            <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-800 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                              <UserX size={11} className="text-rose-600" />
+                              Absent
+                            </span>
+                            {!isDayLocked && (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleAbsent(worker.id)}
+                                className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                                title="Unmark Absent (Make Pending)"
+                              >
+                                <X size={13} />
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            <div className="relative">
+                              <input
+                                type="time"
+                                disabled={isDayLocked}
+                                value={worker.inTime || ''}
+                                onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
+                                className={[
+                                  'w-[80px] text-xs font-bold rounded-lg px-1.5 py-1 border transition-all text-center focus:outline-none focus:ring-2 cursor-pointer',
+                                  worker.inTime
+                                    ? 'text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 focus:ring-emerald-500'
+                                    : 'text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/80 border-dashed border-slate-300 dark:border-slate-700 hover:border-emerald-400 focus:ring-blue-500'
+                                ].join(' ')}
+                                title={worker.inTime ? 'Edit In-Time' : 'Choose custom In-Time'}
+                              />
+                            </div>
 
-                      {/* Out Time only visible on OUT mode */}
-                      {tabMode === 'out' && (
+                            {!worker.inTime ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={isDayLocked}
+                                  onClick={() => handleIndividualTimeChange(worker.id, batchInTime, worker.outTime)}
+                                  className="flex items-center gap-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:opacity-40 px-2 py-1 rounded-lg shadow-2xs transition-all cursor-pointer"
+                                  title={`Quick In at ${batchInTime}`}
+                                >
+                                  <LogIn size={11} />
+                                  <span>In</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isDayLocked}
+                                  onClick={() => handleToggleAbsent(worker.id)}
+                                  className="flex items-center gap-0.5 text-[10px] font-semibold text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 hover:border-rose-300 px-1.5 py-1 rounded-lg transition-colors cursor-pointer"
+                                  title="Mark as Absent"
+                                >
+                                  <UserX size={11} />
+                                  <span>Abs</span>
+                                </button>
+                              </div>
+                            ) : (
+                              !isDayLocked && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleIndividualTimeChange(worker.id, '', worker.outTime)}
+                                  className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-md transition-colors cursor-pointer"
+                                  title="Clear In-Time"
+                                >
+                                  <X size={13} />
+                                </button>
+                              )
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div>
+                        {worker.isAbsent ? (
+                          <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold bg-rose-50 dark:bg-rose-950/60 px-2 py-0.5 rounded border border-rose-200 dark:border-rose-800 flex items-center gap-0.5">
+                            <UserX size={10} />
+                            Absent
+                          </span>
+                        ) : worker.inTime ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                            In: {worker.inTime}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                            Pending In
+                          </span>
+                        )}
+
                         <div className="text-[10px] mt-0.5 text-slate-400">
-                          {worker.outTime ? (
+                          {worker.isAbsent ? null : worker.outTime ? (
                             <span className="font-medium text-slate-700 dark:text-slate-300">Out: {worker.outTime}</span>
                           ) : (
                             <span>Pending Out</span>
                           )}
                         </div>
-                      )}
-                    </div>
-
-                    {/* Chevron Icon */}
-                      {tabMode === 'out' && (
-                      <div className="text-slate-400 pl-1">
-                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                       </div>
                     )}
+
+                    {/* Chevron Icon */}
+                    <div className="text-slate-400 pl-0.5">
+                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </div>
                   </div>
                 </div>
 
@@ -986,11 +1149,36 @@ export function LaborEntryView({
                     {worker.activities.map((act) => (
                       <span
                         key={act.id}
-                        className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                        className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
                       >
-                        {act.activityCode}: {act.hours}h
+                        <span>{act.activityCode}: {act.hours}h</span>
+                        {!isDayLocked && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveIndividualActivitySplit(worker.id, act.id);
+                            }}
+                            className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
+                            title={`Delete ${act.activityCode}`}
+                          >
+                            <X size={10} />
+                          </button>
+                        )}
                       </span>
                     ))}
+                    {!isDayLocked && worker.activities.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleClearAllActivities(worker.id);
+                        }}
+                        className="text-[10px] text-red-500 hover:underline font-semibold ml-1 cursor-pointer"
+                      >
+                        Clear All
+                      </button>
+                    )}
                     {worker.shiftHours > 0 && (
                       <span className="text-[10px] font-bold ml-auto text-blue-700 dark:text-blue-300">
                         {worker.shiftHours}h Shift
@@ -1058,59 +1246,72 @@ export function LaborEntryView({
                           Activity Code
                         </label>
                         {!isDayLocked && (
-                          <button
-                            type="button"
-                            onClick={() => handleAddIndividualActivitySplit(worker.id)}
-                            className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5"
-                          >
-                            <Plus size={13} /> Add Task
-                          </button>
+                          <div className="flex items-center gap-2">
+                            {worker.activities.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleClearAllActivities(worker.id)}
+                                className="text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400 hover:underline font-semibold cursor-pointer"
+                              >
+                                Clear All
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleAddIndividualActivitySplit(worker.id)}
+                              className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5 cursor-pointer"
+                            >
+                              <Plus size={13} /> Add Task
+                            </button>
+                          </div>
                         )}
                       </div>
 
                       <div className="space-y-2">
-                        {worker.activities.map((act) => (
-                          <div
-                            key={act.id}
-                            className="flex items-center gap-1.5 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 w-full"
-                          >
-                            <select
-                              disabled={isDayLocked}
-                              value={act.activityCode}
-                              onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'activityCode', e.target.value)}
-                              className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-600 truncate"
-                            >
-                              {activityOptions.map((item) => (
-                                <option key={item.code} value={item.code}>
-                                  {item.code} - {item.name || item.code}
-                                </option>
-                              ))}
-                            </select>
-
-                            <div className="w-16 flex-shrink-0">
-                              <input
-                                type="number"
-                                step="0.5"
-                                min="0"
-                                max="24"
-                                disabled={isDayLocked}
-                                value={act.hours}
-                                onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'hours', parseFloat(e.target.value) || 0)}
-                                className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600"
-                              />
-                            </div>
-
-                            {!isDayLocked && worker.activities.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveIndividualActivitySplit(worker.id, act.id)}
-                                className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            )}
+                        {worker.activities.length === 0 ? (
+                          <div className="p-3 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-700 text-xs text-slate-400">
+                            No activities assigned. Tap "+ Add Task" to allocate hours.
                           </div>
-                        ))}
+                        ) : (
+                          worker.activities.map((act) => (
+                            <div
+                              key={act.id}
+                              className="flex items-center gap-1.5 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 w-full"
+                            >
+                              <SearchableActivitySelect
+                                disabled={isDayLocked}
+                                value={act.activityCode}
+                                onChange={(code) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'activityCode', code)}
+                                options={activityOptions}
+                                placeholder="Select activity code..."
+                              />
+
+                              <div className="w-16 flex-shrink-0">
+                                <input
+                                  type="number"
+                                  step="0.5"
+                                  min="0"
+                                  max="24"
+                                  disabled={isDayLocked}
+                                  value={act.hours}
+                                  onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'hours', parseFloat(e.target.value) || 0)}
+                                  className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600"
+                                />
+                              </div>
+
+                              {!isDayLocked && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveIndividualActivitySplit(worker.id, act.id)}
+                                  className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer transition-colors"
+                                  title="Delete activity"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                            </div>
+                          ))
+                        )}
                       </div>
 
                       {/* Discrepancy Notice & ZIDLE Auto-Balance */}
