@@ -37,13 +37,30 @@ export interface OvertimeBreakdown {
 }
 
 /**
- * Determine the lunch break deduction based on shift gross hours.
- * Business Rule:
+ * Determine the break deductions based on shift gross hours and out-time.
+ * Business Rules:
  * - Shifts < 5.0 hours: No lunch break deducted (0.0 hr).
  * - Shifts >= 5.0 hours: 1.0 hour deducted for lunch break (on all days: Mon-Sun).
+ * - Out-time passes 11:00 PM (23:00): Additional 1.0 hour deducted for dinner/night break.
  */
-export function calculateBreakHours(grossHours: number): number {
-  return grossHours >= 5.0 ? 1.0 : 0.0;
+export function calculateBreakHours(grossHours: number, inTime?: string, outTime?: string): number {
+  let breaks = grossHours >= 5.0 ? 1.0 : 0.0;
+  if (outTime) {
+    const [outH, outM] = outTime.split(':').map(Number);
+    const outMins = outH * 60 + (outM || 0);
+    let inMins = 0;
+    if (inTime) {
+      const [inH, inM] = inTime.split(':').map(Number);
+      inMins = inH * 60 + (inM || 0);
+    }
+    const isPast11PM = (outMins >= inMins)
+      ? (outMins >= 23 * 60)
+      : (inMins <= 23 * 60 || outMins >= 23 * 60);
+    if (isPast11PM) {
+      breaks += 1.0;
+    }
+  }
+  return breaks;
 }
 
 /**
@@ -162,12 +179,13 @@ export function calculateShiftBreakdown(
 ): OvertimeBreakdown | null {
   const inMins = timeToMinutes(inTime);
   const outMins = timeToMinutes(outTime);
-  const diffMins = outMins - inMins;
+  let diffMins = outMins - inMins;
+  if (diffMins < 0) diffMins += 24 * 60;
 
   if (diffMins <= 0) return null;
 
   const grossHours = Math.round((diffMins / 60) * 100) / 100;
-  const breakHours = calculateBreakHours(grossHours);
+  const breakHours = calculateBreakHours(grossHours, inTime, outTime);
   const effectiveHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
 
   return calculateDailyHoursAndOT(dateStr, effectiveHours, explicitDayType, breakHours, grossHours);

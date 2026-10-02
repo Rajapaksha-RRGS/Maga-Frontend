@@ -75,9 +75,9 @@ export function CheckoutRow({
             {breakdown.breakHours > 0 && (
               <span
                 className="text-[11px] font-medium text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded"
-                title={`${formatDecimalHours(breakdown.grossHours)} gross - 1h lunch = ${formatDecimalHours(breakdown.effectiveHours)} effective`}
+                title={`${formatDecimalHours(breakdown.grossHours)} gross - ${breakdown.breakHours}h break = ${formatDecimalHours(breakdown.effectiveHours)} effective`}
               >
-                -1h lunch
+                -{breakdown.breakHours}h break
               </span>
             )}
             {breakdown.isAllOvertime ? (

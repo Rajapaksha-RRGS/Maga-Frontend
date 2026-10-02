@@ -10,6 +10,7 @@
  */
 
 import { apiFetch, API_URL } from "../../../config/api";
+import { DEFAULT_MASTER_ACTIVITY_CODES } from "../data/defaultActivityCodes";
 
 export interface ActivityCodeItem {
   id?: string;
@@ -228,81 +229,82 @@ export const supervisorStorage = {
     const activeSite = this.getActiveSite();
     const siteCode = activeSite?.code;
     const key = siteCode ? `${STORAGE_PREFIX}activities_cache_${siteCode}` : `${STORAGE_PREFIX}activities_cache`;
+    const fallbackKey = `${STORAGE_PREFIX}activities_master_cache`;
 
     try {
       // 1. Fetch tenant/project activity codes from backend
       const queryParam = siteCode ? `?projectCode=${encodeURIComponent(siteCode)}` : '';
-      const res = await apiFetch(`${API_URL}/activity-codes${queryParam}`);
+      let res = await apiFetch(`${API_URL}/activity-codes${queryParam}`);
+      if (!res.ok && siteCode) {
+        // Try tenant-wide without projectCode
+        res = await apiFetch(`${API_URL}/activity-codes`);
+      }
+
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          // Validate: only accept activity codes belonging to our own project (or unassigned/global)
-          const validCodes = data.filter((d: any) => {
-            if (!d.projectCode || !siteCode) return true;
-            return d.projectCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
-          });
+          // If projectCode matches siteCode, prioritize them; otherwise accept general tenant codes
+          const projectSpecific = data.filter((d: any) => d.projectCode && siteCode && d.projectCode.trim().toLowerCase() === siteCode.trim().toLowerCase());
+          const candidateList = projectSpecific.length > 0 ? projectSpecific : data;
 
-          if (validCodes.length > 0) {
-            const mapped: ActivityCodeItem[] = validCodes.map((d: any) => ({
-              id: d.id,
-              code: d.code,
-              name: d.description || d.code,
-              trade: d.trade || '',
-              category: d.category || '',
-              projectCode: d.projectCode || siteCode,
-            }));
-            localStorage.setItem(key, JSON.stringify(mapped));
-            return mapped;
-          }
+          const mapped: ActivityCodeItem[] = candidateList.map((d: any) => ({
+            id: d.id,
+            code: d.code,
+            name: d.description || d.code,
+            trade: d.trade || '',
+            category: d.category || '',
+            projectCode: d.projectCode || siteCode,
+          }));
+          localStorage.setItem(key, JSON.stringify(mapped));
+          localStorage.setItem(fallbackKey, JSON.stringify(mapped));
+          return mapped;
         }
       }
 
-      // 2. If tenant doesn't have codes for this project yet, query Corporate ERP Catalog by projectCode
-      if (siteCode) {
-        const corpRes = await apiFetch(`${API_URL}/activity-codes/corporate-master?projectCode=${encodeURIComponent(siteCode)}`);
-        if (corpRes.ok) {
-          const corpData = await corpRes.json();
-          if (Array.isArray(corpData) && corpData.length > 0) {
-            // Validate: strictly ensure each code belongs to our project
-            const validCorp = corpData.filter((d: any) => {
-              const pCode = d.projectCode || d.currentWorkingProject;
-              return !pCode || pCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
-            });
+      // 2. If tenant doesn't have custom codes, query Corporate ERP Catalog
+      let corpRes: Response | null = null;
+      if (siteCode && siteCode !== 'MAGA') {
+        corpRes = await apiFetch(`${API_URL}/activity-codes/corporate-master?projectCode=${encodeURIComponent(siteCode)}`);
+      }
+      if (!corpRes || !corpRes.ok) {
+        // Query general corporate catalog (124+ codes)
+        corpRes = await apiFetch(`${API_URL}/activity-codes/corporate-master`);
+      }
 
-            if (validCorp.length > 0) {
-              const mapped: ActivityCodeItem[] = validCorp.map((d: any) => ({
-                id: d.id,
-                code: d.code,
-                name: d.description || d.code,
-                trade: d.tradeGroup || '',
-                category: d.activityType || 'Civil',
-                projectCode: d.projectCode || siteCode,
-              }));
-              localStorage.setItem(key, JSON.stringify(mapped));
-              return mapped;
-            }
-          }
+      if (corpRes && corpRes.ok) {
+        const corpData = await corpRes.json();
+        if (Array.isArray(corpData) && corpData.length > 0) {
+          const mapped: ActivityCodeItem[] = corpData.map((d: any) => ({
+            id: d.id,
+            code: d.code,
+            name: d.description || d.code,
+            trade: d.tradeGroup || '',
+            category: d.activityType || 'Civil',
+            projectCode: d.projectCode || siteCode,
+          }));
+          localStorage.setItem(key, JSON.stringify(mapped));
+          localStorage.setItem(fallbackKey, JSON.stringify(mapped));
+          return mapped;
         }
       }
     } catch (err) {
-      console.warn('Backend unavailable, using cached activities:', err);
+      console.warn('Backend unavailable, trying cached/bundled activities:', err);
     }
 
-    const cached = localStorage.getItem(key);
+    // 3. Try Site-specific Cache
+    const cached = localStorage.getItem(key) || localStorage.getItem(fallbackKey);
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Validate cached items against current site code
-          const validated = parsed.filter((item: ActivityCodeItem) => {
-            if (!item.projectCode || !siteCode) return true;
-            return item.projectCode.trim().toLowerCase() === siteCode.trim().toLowerCase();
-          });
-          if (validated.length > 0) return validated;
+          return parsed;
         }
       } catch {}
     }
-    return [];
+
+    // 4. Bundled Offline Fallback (Guaranteed to populate for Mobile APK)
+    localStorage.setItem(fallbackKey, JSON.stringify(DEFAULT_MASTER_ACTIVITY_CODES));
+    return DEFAULT_MASTER_ACTIVITY_CODES;
   },
 
   async resolveActivityByCode(code: string): Promise<ActivityCodeItem | undefined> {
@@ -450,8 +452,7 @@ export const supervisorStorage = {
         const assignedList = await resAssigned.json();
         const timeEntryList = resEntries.ok ? await resEntries.json() : [];
         console.log("Time entry list:", timeEntryList);
-        // Check if entries for this day are already submitted or approved
-        const isSubmitted = timeEntryList.some((t: any) => t.status === 'submitted' || t.status === 'approved');
+        const isLockedOrApproved = this.isDayLocked(date);
 
         // Existing local drafts map for smart reconciliation
         const existingLocal = this.getLaborers(date);
@@ -462,46 +463,53 @@ export const supervisorStorage = {
           const myEntries = timeEntryList.filter((e: any) => e.employeeId === emp.id);
           const localDraft = localMap.get(emp.id);
 
-          const hasBackendEntries = myEntries.length > 0 && (myEntries[0].inTime || myEntries[0].outTime || myEntries[0].hours > 0);
+          const backendInTime = myEntries[0]?.inTime || '';
+          const backendOutTime = myEntries[0]?.outTime || '';
+          const backendShift = myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0);
+          const backendOt = myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0);
+          const backendActivities: ActivitySplit[] = myEntries
+            .filter((e: any) => e.activity?.code || e.activityId)
+            .map((e: any, idx: number) => ({
+              id: e.id || `act-${idx}`,
+              activityCode: e.activity?.code || '',
+              hours: Number(e.hours) || 0,
+            }));
 
-          // Priority rule:
-          // If backend has submitted/approved records OR recorded time entries, prioritize backend.
-          // If backend has no recorded entries for this worker, preserve the supervisor's local draft.
-          const inTime = (isSubmitted || hasBackendEntries)
-            ? (myEntries[0]?.inTime || '')
-            : (localDraft?.inTime || '');
+          // Smart Reconciliation Priority:
+          // 1. If day is locked/approved by Admin, server state is authoritative.
+          // 2. If day is editable (draft), supervisor's LOCAL DRAFT has absolute priority over backend time entries!
+          // We only fallback to backend when there is NO local draft for that worker.
+          const inTime = isLockedOrApproved
+            ? (backendInTime || localDraft?.inTime || '')
+            : (localDraft?.inTime !== undefined ? localDraft.inTime : backendInTime);
 
-          const outTime = (isSubmitted || hasBackendEntries)
-            ? (myEntries[0]?.outTime || '')
-            : (localDraft?.outTime || '');
+          const outTime = isLockedOrApproved
+            ? (backendOutTime || localDraft?.outTime || '')
+            : (localDraft?.outTime !== undefined ? localDraft.outTime : backendOutTime);
 
-          const shiftHours = (isSubmitted || hasBackendEntries)
-            ? myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0)
-            : (localDraft?.shiftHours || 0);
+          const shiftHours = isLockedOrApproved
+            ? (backendShift || localDraft?.shiftHours || 0)
+            : (localDraft?.shiftHours !== undefined && localDraft.shiftHours > 0 ? localDraft.shiftHours : backendShift);
 
-          const otHours = (isSubmitted || hasBackendEntries)
-            ? myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0)
-            : (localDraft?.otHours || 0);
+          const otHours = isLockedOrApproved
+            ? (backendOt || localDraft?.otHours || 0)
+            : (localDraft?.otHours !== undefined && localDraft.otHours > 0 ? localDraft.otHours : backendOt);
 
-          let activities: ActivitySplit[] = [];
-          if (isSubmitted || hasBackendEntries) {
-            activities = myEntries
-              .filter((e: any) => e.activity?.code || e.activityId)
-              .map((e: any, idx: number) => ({
-                id: e.id || `act-${idx}`,
-                activityCode: e.activity?.code || '',
-                hours: Number(e.hours) || 0,
-              }));
-          } else {
-            activities = localDraft?.activities || [];
-          }
+          const activities = isLockedOrApproved
+            ? (backendActivities.length > 0 ? backendActivities : (localDraft?.activities || []))
+            : ((localDraft?.activities && localDraft.activities.length > 0) ? localDraft.activities : backendActivities);
+
+          const isAbsent = isLockedOrApproved
+            ? false
+            : (localDraft?.isAbsent ?? false);
 
           let status: 'draft' | 'pending' | 'done' = 'pending';
-          if (isSubmitted) {
+          if (isLockedOrApproved) {
             status = 'done';
-          } else if (inTime && outTime) {
-            status = myEntries.some((e: any) => e.status === 'draft') ? 'draft' : (localDraft?.status || 'done');
-          } else if (inTime || outTime) {
+          } else if (localDraft?.status) {
+            // Respect the supervisor's explicitly chosen status
+            status = localDraft.status;
+          } else if (inTime || outTime || activities.length > 0) {
             status = 'draft';
           }
 
@@ -519,7 +527,7 @@ export const supervisorStorage = {
             otHours,
             activities,
             status,
-            isAbsent: localDraft?.isAbsent || false,
+            isAbsent,
             lastSavedAt: localDraft?.lastSavedAt,
           };
         });
@@ -570,6 +578,7 @@ export const supervisorStorage = {
         const existingLocal = this.getOperators(date);
         const localMap = new Map<string, OperatorEntry>(existingLocal.map((o) => [o.id, o]));
 
+        const isLockedOrApproved = this.isDayLocked(date);
         const mapped: OperatorEntry[] = (assignedData || []).map((asgn: any) => {
           const opId = asgn.operatorId || asgn.id;
           const existing = localMap.get(opId);
@@ -580,15 +589,15 @@ export const supervisorStorage = {
             employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
             licenseNo: asgn.licenseNo || '',
             designation: asgn.operatorTrade || 'Machine Operator',
-            inTime: existing?.inTime || te?.inTime || '',
-            outTime: existing?.outTime || te?.outTime || '',
-            shiftHours: existing?.shiftHours !== undefined && existing?.shiftHours > 0 ? existing.shiftHours : (te?.shiftHours || 0),
-            otHours: existing?.otHours !== undefined && existing?.otHours > 0 ? existing.otHours : (te?.otHours || 0),
-            assignedEquipmentId: existing?.assignedEquipmentId || te?.assignedEquipmentId || '',
-            equipmentSplits: existing?.equipmentSplits || (existing?.assignedEquipmentId ? [{ id: '1', equipmentId: existing.assignedEquipmentId, hours: existing.shiftHours || 0 }] : (te?.assignedEquipmentId ? [{ id: '1', equipmentId: te.assignedEquipmentId, hours: te.shiftHours || 0 }] : [])),
-            status: (te?.status === 'submitted' || te?.status === 'approved')
-              ? te.status
-              : ((existing as any)?.status === 'submitted' ? 'draft' : (existing?.status || te?.status || 'pending')),
+            inTime: isLockedOrApproved ? (te?.inTime || existing?.inTime || '') : (existing?.inTime !== undefined ? existing.inTime : (te?.inTime || '')),
+            outTime: isLockedOrApproved ? (te?.outTime || existing?.outTime || '') : (existing?.outTime !== undefined ? existing.outTime : (te?.outTime || '')),
+            shiftHours: isLockedOrApproved ? (te?.shiftHours || existing?.shiftHours || 0) : (existing?.shiftHours !== undefined && existing?.shiftHours > 0 ? existing.shiftHours : (te?.shiftHours || 0)),
+            otHours: isLockedOrApproved ? (te?.otHours || existing?.otHours || 0) : (existing?.otHours !== undefined && existing?.otHours > 0 ? existing.otHours : (te?.otHours || 0)),
+            assignedEquipmentId: isLockedOrApproved ? (te?.assignedEquipmentId || existing?.assignedEquipmentId || '') : (existing?.assignedEquipmentId || te?.assignedEquipmentId || ''),
+            equipmentSplits: (existing?.equipmentSplits && existing.equipmentSplits.length > 0) ? existing.equipmentSplits : (existing?.assignedEquipmentId ? [{ id: '1', equipmentId: existing.assignedEquipmentId, hours: existing.shiftHours || 0 }] : (te?.assignedEquipmentId ? [{ id: '1', equipmentId: te.assignedEquipmentId, hours: te.shiftHours || 0 }] : [])),
+            status: isLockedOrApproved
+              ? 'done'
+              : (existing?.status ? existing.status : (te?.status === 'submitted' || te?.status === 'approved' ? 'draft' : 'pending')),
             notes: existing?.notes || te?.notes || '',
           };
         });

@@ -14,6 +14,7 @@ import type {
   EquipmentLogEntry, 
   SiteProject 
 } from '../services/supervisorStorageService';
+import { formatHhmm, sumHhmm } from '../utils/timeUtils';
 
 interface SupervisorDashboardViewProps {
   supervisorName: string;
@@ -61,9 +62,9 @@ export function SupervisorDashboardView({
   };
   const runningEquipment = equipment.filter(isEquipmentLogged).length;
 
-  // Total daily hours (safely cast to Number to prevent string concatenation and .toFixed crash)
-  const totalLaborHours = (laborers || []).reduce((acc, l) => acc + (Number(l.shiftHours) || 0), 0);
-  const totalOtHours = (laborers || []).reduce((acc, l) => acc + (Number(l.otHours) || 0), 0);
+  // Total daily hours using true clock minutes arithmetic
+  const totalLaborHours = sumHhmm((laborers || []).map((l) => l.shiftHours));
+  const totalOtHours = sumHhmm((laborers || []).map((l) => l.otHours));
   const totalMachineHours = (equipment || []).reduce((acc, e) => {
     const hoursVal = Number(e.hoursValue) || 0;
     const netHrs = Number(e.netHours) || 0;
@@ -141,11 +142,11 @@ export function SupervisorDashboardView({
         <div className="mt-3.5 pt-3 border-t border-white/15 grid grid-cols-3 gap-2 text-center text-xs">
           <div>
             <p className="text-[10px] text-blue-200 font-medium">Labor Hours</p>
-            <p className="font-bold text-sm text-white tabular-nums mt-0.5">{(Number(totalLaborHours) || 0).toFixed(1)}h</p>
+            <p className="font-bold text-sm text-white tabular-nums mt-0.5 font-mono">{formatHhmm(totalLaborHours)}h</p>
           </div>
           <div className="border-x border-white/15">
             <p className="text-[10px] text-blue-200 font-medium">Total OT</p>
-            <p className="font-bold text-sm text-amber-300 tabular-nums mt-0.5">+{(Number(totalOtHours) || 0).toFixed(1)}h</p>
+            <p className="font-bold text-sm text-amber-300 tabular-nums mt-0.5 font-mono">+{formatHhmm(totalOtHours)}h</p>
           </div>
           <div>
             <p className="text-[10px] text-blue-200 font-medium">Machinery</p>

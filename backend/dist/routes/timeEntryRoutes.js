@@ -11,6 +11,7 @@ router.post('/check-in', timeEntryController_1.checkInEmployee);
 router.post('/check-out', timeEntryController_1.checkOutEmployee);
 router.post('/assign-activity', timeEntryController_1.assignActivityBulk);
 router.post('/upsert', timeEntryController_1.upsertTimeEntry);
+router.post('/labor/bulk', timeEntryController_1.saveBulkLaborTimeEntries);
 router.post('/submit', timeEntryController_1.submitDay);
 router.get('/day-status', timeEntryController_1.getDayStatus);
 // Approval & Admin Adjustment routes (protected with authorization)

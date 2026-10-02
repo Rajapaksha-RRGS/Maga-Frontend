@@ -18,6 +18,7 @@ import type {
   EquipmentLogEntry, 
   SiteProject 
 } from '../services/supervisorStorageService';
+import { formatHhmm, sumHhmm } from '../utils/timeUtils';
 
 interface DailySummaryViewProps {
   supervisorName: string;
@@ -52,7 +53,7 @@ export function DailySummaryView({
   // Aggregated calculations
   const totalLaborers = (laborers || []).length;
   const completedLaborers = (laborers || []).filter((l) => l.inTime && l.outTime).length;
-  const totalLaborHours = (laborers || []).reduce((acc, l) => acc + (Number(l.shiftHours) || 0), 0);
+  const totalLaborHours = sumHhmm((laborers || []).map((l) => l.shiftHours));
 
   const totalOperators = (operators || []).length;
   // An operator is "complete" when inTime & outTime are set.
@@ -289,8 +290,8 @@ export function DailySummaryView({
                 <span className="text-center text-slate-900 dark:text-slate-100">
                   {laborer.outTime || '---'}
                 </span>
-                <span className="text-center text-slate-900 dark:text-slate-100">
-                  {laborer.shiftHours || '---'} 
+                <span className="text-center text-slate-900 dark:text-slate-100 font-mono">
+                  {laborer.shiftHours ? `${formatHhmm(laborer.shiftHours)}h` : '---'} 
                 </span>
                 <span className="text-center text-slate-900 dark:text-slate-100">
                   {laborer.activities.length || '0'} 
@@ -353,7 +354,7 @@ export function DailySummaryView({
                         ZXQOPRIDLE
                       </span>
                     ) : null}
-                    <span className="font-bold text-slate-700 dark:text-slate-300">{op.shiftHours}h</span>
+                    <span className="font-bold text-slate-700 dark:text-slate-300 font-mono">{formatHhmm(op.shiftHours)}h</span>
                   </div>
                 </div>
               );
@@ -370,7 +371,7 @@ export function DailySummaryView({
             {Object.entries(activityHoursMap).map(([code, hrs]) => (
               <div key={code} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 dark:border-slate-750 last:border-none">
                 <span className="font-mono font-medium text-slate-700 dark:text-slate-300">{code}</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 tabular-nums">{(Number(hrs) || 0).toFixed(1)} hrs</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 tabular-nums font-mono">{formatHhmm(hrs)} hrs</span>
               </div>
             ))}
           </div>

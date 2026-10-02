@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Search, ChevronDown, Check, X } from 'lucide-react';
 import type { ActivityCodeItem } from '../services/supervisorStorageService';
+import { DEFAULT_MASTER_ACTIVITY_CODES } from '../data/defaultActivityCodes';
 
 interface SearchableActivitySelectProps {
   value: string;
@@ -14,7 +15,7 @@ interface SearchableActivitySelectProps {
 export function SearchableActivitySelect({
   value,
   onChange,
-  options,
+  options: propOptions,
   disabled = false,
   className = '',
   placeholder = 'Select activity...',
@@ -23,6 +24,13 @@ export function SearchableActivitySelect({
   const [searchQuery, setSearchQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // If propOptions is empty, seamlessly fall back to default corporate codes
+  const options = useMemo(() => {
+    return Array.isArray(propOptions) && propOptions.length > 0
+      ? propOptions
+      : DEFAULT_MASTER_ACTIVITY_CODES;
+  }, [propOptions]);
 
   // Find currently selected item
   const selectedItem = useMemo(() => {
@@ -41,18 +49,20 @@ export function SearchableActivitySelect({
     );
   }, [options, searchQuery]);
 
-  // Close on outside click
+  // Close on outside click / mobile touch
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
+    function handleClickOutside(event: MouseEvent | TouchEvent) {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
     }
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
     };
   }, [isOpen]);
 
@@ -161,6 +171,10 @@ export function SearchableActivitySelect({
                   <button
                     key={opt.code}
                     type="button"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      handleSelect(opt.code);
+                    }}
                     onClick={() => handleSelect(opt.code)}
                     className={[
                       'w-full px-3 py-2 text-left flex items-center justify-between gap-2 text-xs transition-colors cursor-pointer',

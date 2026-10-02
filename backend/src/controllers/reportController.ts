@@ -72,22 +72,30 @@ function computeAttendanceHoursAndOt(
   if (inTime && outTime) {
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
-    if (!isNaN(inH) && !isNaN(outH)) {
-      let diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+      const inMins = inH * 60 + (inM || 0);
+      const outMins = outH * 60 + (outM || 0);
+      let diffMins = outMins - inMins;
       if (diffMins < 0) diffMins += 24 * 60; // Crosses midnight
-      if (diffMins >= 300) diffMins -= 60; // 1-hour lunch break deduction
-      const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 10) / 10 : 0;
+
+      let breakMins = 0;
+      if (diffMins >= 300) breakMins += 60; // 1-hour lunch break deduction
+      const isPast11PM = (outMins >= inMins)
+        ? (outMins >= 23 * 60)
+        : (inMins <= 23 * 60 || outMins >= 23 * 60);
+      if (isPast11PM) breakMins += 60; // 1-hour late night break deduction
+
+      diffMins = Math.max(0, diffMins - breakMins);
+      const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 100) / 100 : 0;
       if (shiftHours > 0) {
         let ot = 0;
         if (isAllOvertime) {
           ot = shiftHours;
         } else if (shiftHours > standardCap) {
-          ot = Math.round((shiftHours - standardCap) * 10) / 10;
+          ot = Math.round((shiftHours - standardCap) * 100) / 100;
         }
         return { workHours: shiftHours, otHours: ot };
       }
     }
-  }
 
   // Fallback if no in/out times were recorded
   let ot = 0;
@@ -735,11 +743,14 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
       const inH = parseTimeToHours(inTime);
       const outH = parseTimeToHours(outTime);
 
-      if (inH !== null && outH !== null && outH > inH) {
-        const grossH = outH - inH;
+      if (inH !== null && outH !== null) {
+        let grossH = outH - inH;
+        if (grossH < 0) grossH += 24;
         let breakH = Number(groupEntries.find((e) => e.breakHours !== null)?.breakHours) || 0;
-        if (breakH === 0 && grossH >= 5.0) {
-          breakH = 1.0;
+        if (breakH === 0) {
+          if (grossH >= 5.0) breakH += 1.0;
+          const isPast11PM = (outH >= inH) ? (outH >= 23.0) : (inH <= 23.0 || outH >= 23.0);
+          if (isPast11PM) breakH += 1.0;
         }
         shiftEffectiveHours = Math.max(0, Math.round((grossH - breakH) * 100) / 100);
       }
@@ -944,10 +955,15 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       if (breakHours === 0 && inTime !== '—' && outTime !== '—') {
         const [inH, inM] = inTime.split(':').map(Number);
         const [outH, outM] = outTime.split(':').map(Number);
-        const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
-        if (diffMins >= 300) {
-          breakHours = 1.0;
-        }
+        const inMins = inH * 60 + (inM || 0);
+        const outMins = outH * 60 + (outM || 0);
+        let diffMins = outMins - inMins;
+        if (diffMins < 0) diffMins += 24 * 60;
+        if (diffMins >= 300) breakHours += 1.0;
+        const isPast11PM = (outMins >= inMins)
+          ? (outMins >= 23 * 60)
+          : (inMins <= 23 * 60 || outMins >= 23 * 60);
+        if (isPast11PM) breakHours += 1.0;
       }
 
       let totalDayHours = activities.reduce((sum, a) => sum + a.hours, 0) ||

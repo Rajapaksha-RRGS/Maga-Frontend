@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.saveBulkEquipmentLogs = exports.saveBulkOperatorEntries = exports.saveOperatorEntry = exports.getOperatorEntries = exports.adminAdjustWorkerTimeEntry = exports.rejectTimeEntries = exports.approveTimeEntries = exports.getApprovalOverview = exports.getDayStatus = exports.submitDay = exports.getTimeEntries = exports.upsertTimeEntry = exports.assignActivityBulk = exports.checkOutEmployee = exports.checkInEmployee = exports.getAssignedEmployees = void 0;
+exports.saveBulkLaborTimeEntries = exports.saveBulkEquipmentLogs = exports.saveBulkOperatorEntries = exports.saveOperatorEntry = exports.getOperatorEntries = exports.adminAdjustWorkerTimeEntry = exports.rejectTimeEntries = exports.approveTimeEntries = exports.getApprovalOverview = exports.getDayStatus = exports.submitDay = exports.getTimeEntries = exports.upsertTimeEntry = exports.assignActivityBulk = exports.checkOutEmployee = exports.checkInEmployee = exports.getAssignedEmployees = void 0;
 exports.getDayTypeRulesAndId = getDayTypeRulesAndId;
 exports.computeBreakHours = computeBreakHours;
 exports.calculateShiftAndOvertime = calculateShiftAndOvertime;
@@ -140,15 +140,28 @@ function parseDate(dateStr) {
     const [year, month, day] = clean.split('-').map(Number);
     return new Date(Date.UTC(year, month - 1, day));
 }
-// Helper: compute lunch break hours based on inTime & outTime
-// Construction rule: shifts >= 5.0 hours (300 mins) have 1.0 hour lunch deducted; shifts < 5.0h have 0.0 deducted.
+// Helper: compute break hours (lunch & late night) based on inTime & outTime
+// Construction rules:
+// 1. Shifts >= 5.0 hours (300 mins) have 1.0 hour lunch deducted; shifts < 5.0h have 0.0 deducted.
+// 2. If out-time passes 11:00 PM (23:00), an additional 1.0 hour is deducted for dinner/night break.
 function computeBreakHours(inTime, outTime) {
     if (!inTime || !outTime)
         return 0;
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
-    const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
-    return diffMins >= 300 ? 1.0 : 0.0;
+    const inMins = inH * 60 + (inM || 0);
+    const outMins = outH * 60 + (outM || 0);
+    let diffMins = outMins - inMins;
+    if (diffMins < 0)
+        diffMins += 24 * 60;
+    let breaks = diffMins >= 300 ? 1.0 : 0.0;
+    const isPast11PM = (outMins >= inMins)
+        ? (outMins >= 23 * 60)
+        : (inMins <= 23 * 60 || outMins >= 23 * 60);
+    if (isPast11PM) {
+        breaks += 1.0;
+    }
+    return breaks;
 }
 // Master Helper: calculate net shift hours and Overtime (OT) strictly from In/Out attendance times
 function calculateShiftAndOvertime(inTime, outTime, standardHoursCap = 8.0, isAllOvertime = false) {
@@ -156,19 +169,28 @@ function calculateShiftAndOvertime(inTime, outTime, standardHoursCap = 8.0, isAl
         return { shiftHours: 0, otHours: 0, breakHours: 0 };
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
-    let diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+    const inMins = inH * 60 + (inM || 0);
+    const outMins = outH * 60 + (outM || 0);
+    let diffMins = outMins - inMins;
     if (diffMins < 0)
         diffMins += 24 * 60; // Handles shifts crossing midnight
-    const breakHours = diffMins >= 300 ? 1.0 : 0.0;
+    let breakMinutes = 0;
     if (diffMins >= 300)
-        diffMins -= 60; // 1-hour lunch break deduction
-    const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 10) / 10 : 0;
+        breakMinutes += 60; // 1-hour lunch break deduction
+    const isPast11PM = (outMins >= inMins)
+        ? (outMins >= 23 * 60)
+        : (inMins <= 23 * 60 || outMins >= 23 * 60);
+    if (isPast11PM)
+        breakMinutes += 60; // 1-hour late night break deduction
+    diffMins = Math.max(0, diffMins - breakMinutes);
+    const breakHours = Math.round((breakMinutes / 60) * 100) / 100;
+    const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 100) / 100 : 0;
     let otHours = 0;
     if (isAllOvertime) {
         otHours = shiftHours;
     }
     else if (shiftHours > standardHoursCap) {
-        otHours = Math.round((shiftHours - standardHoursCap) * 10) / 10;
+        otHours = Math.round((shiftHours - standardHoursCap) * 100) / 100;
     }
     return { shiftHours, otHours, breakHours };
 }
@@ -1302,17 +1324,24 @@ const getApprovalOverview = async (req, res) => {
             const isSheetApproved = sheet?.status === 'approved';
             const allLaborApproved = supEntries.length > 0 && supEntries.every((t) => t.status === 'approved');
             const allOpApproved = operatorDetails.length > 0 && operatorDetails.every((o) => o.status === 'approved');
-            const allEqApproved = equipmentDetails.length > 0 && equipmentDetails.every((e) => e.status === 'approved' || e.status === 'done');
+            const allEqApproved = equipmentDetails.length > 0 && equipmentDetails.every((e) => e.status === 'approved');
             const isApproved = isSheetApproved || (allLaborApproved && (operatorDetails.length === 0 || allOpApproved) && (equipmentDetails.length === 0 || allEqApproved));
             const isSheetSubmitted = sheet?.status === 'submitted';
             const hasLaborSubmitted = supEntries.some((t) => t.status === 'submitted' || t.status === 'approved');
             const hasOpSubmitted = operatorDetails.some((o) => o.status === 'submitted' || o.status === 'approved');
-            const hasEqSubmitted = equipmentDetails.some((e) => e.status === 'submitted' || e.status === 'approved' || e.status === 'done');
-            const isSubmitted = isSheetSubmitted || hasLaborSubmitted || hasOpSubmitted || hasEqSubmitted;
+            const hasEqSubmitted = equipmentDetails.some((e) => e.status === 'submitted' || e.status === 'approved');
+            const isSubmitted = isSheetSubmitted || (!sheet && (hasLaborSubmitted || hasOpSubmitted || hasEqSubmitted));
             const hasAnyDraft = workerDetails.some((w) => w.status === 'draft') || operatorDetails.some((o) => o.status === 'draft') || equipmentDetails.some((e) => e.status === 'draft');
-            const supervisorStatus = isApproved
-                ? 'approved'
-                : (isSubmitted ? 'submitted' : (hasAnyDraft ? 'draft' : 'not_started'));
+            let supervisorStatus = 'not_started';
+            if (isApproved) {
+                supervisorStatus = 'approved';
+            }
+            else if (isSubmitted) {
+                supervisorStatus = 'submitted';
+            }
+            else if (sheet?.status === 'draft' || hasAnyDraft) {
+                supervisorStatus = 'draft';
+            }
             const groupData = {
                 supervisorId: supId,
                 supervisorName: supInfo.fullName,
@@ -1504,7 +1533,7 @@ const approveTimeEntries = async (req, res) => {
                 where: {
                     assignmentId: { in: eqAssignments.map((a) => a.id) },
                 },
-                data: { status: 'done' },
+                data: { status: 'approved' },
             });
             eqApprovedCount = eqResult.count;
         }
@@ -1861,12 +1890,12 @@ const saveOperatorEntry = async (req, res) => {
                 },
             });
         }
-        // Guard: Prevent edits to approved/done operator time entries
+        // Guard: Prevent edits to approved or submitted operator time entries
         const existingEntry = await prisma_1.default.operatorTimeEntry.findUnique({
             where: { assignmentId: assignment.id },
         });
-        if (existingEntry && (existingEntry.status === 'approved' || existingEntry.status === 'done')) {
-            res.status(403).json({ error: 'Cannot edit operator time entry: Record has already been Approved or Completed.' });
+        if (existingEntry && (existingEntry.status === 'approved' || existingEntry.status === 'submitted')) {
+            res.status(403).json({ error: 'Cannot edit operator time entry: Record has already been Submitted or Approved.' });
             return;
         }
         // 2. Upsert OperatorTimeEntry
@@ -2170,3 +2199,120 @@ const saveBulkEquipmentLogs = async (req, res) => {
     }
 };
 exports.saveBulkEquipmentLogs = saveBulkEquipmentLogs;
+// 12. Save / Upsert bulk labor time entries (high performance single-trip)
+const saveBulkLaborTimeEntries = async (req, res) => {
+    try {
+        const { entries, date, supervisorId } = req.body;
+        if (!Array.isArray(entries) || !date) {
+            res.status(400).json({ error: 'entries array and date are required' });
+            return;
+        }
+        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const targetDate = parseDate(date);
+        const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(tenantId, targetDate);
+        let effectiveSupervisorId = supervisorId;
+        if (!effectiveSupervisorId) {
+            const defaultSupervisor = await prisma_1.default.user.findFirst({
+                where: { tenantId, role: { in: ['supervisor', 'admin'] } },
+            });
+            effectiveSupervisorId = defaultSupervisor?.id;
+        }
+        // Guard against modifying approved entries
+        const approvedCheck = await prisma_1.default.timeEntry.findFirst({
+            where: {
+                tenantId,
+                date: targetDate,
+                status: 'approved',
+            },
+        });
+        if (approvedCheck) {
+            res.status(403).json({ error: 'Cannot edit time entries: Daily attendance has already been Approved by Admin.' });
+            return;
+        }
+        for (const item of entries) {
+            const { employeeId, activityId, hours, inTime, outTime, remarks, equipmentId } = item;
+            if (!employeeId || !activityId)
+                continue;
+            const numHours = hours !== undefined ? parseFloat(hours) : 0;
+            const finalInTime = inTime ?? null;
+            const finalOutTime = outTime ?? null;
+            let shiftHoursVal = null;
+            let overtimeHours = 0;
+            let otHoursVal = 0;
+            let breakHours = 0;
+            if (finalInTime && finalOutTime) {
+                const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, standardHoursCap, isAllOvertime);
+                shiftHoursVal = calc.shiftHours;
+                overtimeHours = calc.otHours;
+                otHoursVal = calc.otHours;
+                breakHours = calc.breakHours;
+            }
+            else {
+                breakHours = computeBreakHours(finalInTime, finalOutTime);
+                if (isAllOvertime) {
+                    overtimeHours = numHours;
+                    otHoursVal = numHours;
+                }
+                else if (numHours > standardHoursCap) {
+                    overtimeHours = numHours - standardHoursCap;
+                    otHoursVal = numHours - standardHoursCap;
+                }
+            }
+            const existing = await prisma_1.default.timeEntry.findFirst({
+                where: {
+                    tenantId,
+                    employeeId,
+                    activityId,
+                    date: targetDate,
+                },
+            });
+            if (existing) {
+                if (existing.status !== 'submitted') {
+                    await prisma_1.default.timeEntry.update({
+                        where: { id: existing.id },
+                        data: {
+                            hours: numHours,
+                            shiftHours: shiftHoursVal,
+                            overtimeHours,
+                            otHours: otHoursVal,
+                            breakHours,
+                            inTime: finalInTime,
+                            outTime: finalOutTime,
+                            equipmentId: equipmentId ?? existing.equipmentId,
+                            remarks: remarks ?? existing.remarks,
+                            supervisorId: effectiveSupervisorId || existing.supervisorId,
+                        },
+                    });
+                }
+            }
+            else {
+                await prisma_1.default.timeEntry.create({
+                    data: {
+                        tenantId,
+                        employeeId,
+                        supervisorId: effectiveSupervisorId,
+                        date: targetDate,
+                        activityId,
+                        equipmentId: equipmentId ?? null,
+                        effectiveDayTypeId,
+                        inTime: finalInTime,
+                        outTime: finalOutTime,
+                        hours: numHours,
+                        shiftHours: shiftHoursVal,
+                        overtimeHours,
+                        otHours: otHoursVal,
+                        breakHours,
+                        remarks: remarks || null,
+                        status: 'draft',
+                    },
+                });
+            }
+        }
+        res.json({ success: true, count: entries.length });
+    }
+    catch (error) {
+        console.error('Error in saveBulkLaborTimeEntries:', error);
+        res.status(500).json({ error: 'Failed to bulk save labor time entries' });
+    }
+};
+exports.saveBulkLaborTimeEntries = saveBulkLaborTimeEntries;

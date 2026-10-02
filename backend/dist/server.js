@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
+dotenv_1.default.config();
 const employeeRoutes_1 = __importDefault(require("./routes/employeeRoutes"));
 const businessPartnerRoutes_1 = __importDefault(require("./routes/businessPartnerRoutes"));
 const activityCodeRoutes_1 = __importDefault(require("./routes/activityCodeRoutes"));
@@ -17,7 +18,6 @@ const reportRoutes_1 = __importDefault(require("./routes/reportRoutes"));
 const equipmentRoutes_1 = __importDefault(require("./routes/equipmentRoutes"));
 const calendarRoutes_1 = __importDefault(require("./routes/calendarRoutes"));
 const tenantRoutes_1 = __importDefault(require("./routes/tenantRoutes"));
-dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5000;
 // 1. Crash-proof CORS Middleware

@@ -65,16 +65,10 @@ const getSupervisorActiveSite = async (req, res) => {
             location: matchedCorp?.addressCode || tenant.addressLine1 || tenant.addressLine2 || 'Site Base Office',
             projectManager: matchedCorp?.projectManager ? `Eng. ${matchedCorp.projectManager}` : 'Eng. Project Lead',
         };
-        const availableSites = corporateProjects.map((cp) => ({
-            id: cp.id,
-            name: cp.projectName || cp.description,
-            code: cp.projectCode,
-            location: cp.addressCode || 'Sri Lanka',
-            projectManager: cp.projectManager ? `Eng. ${cp.projectManager}` : 'Eng. Project Lead',
-        }));
+        const availableSites = [activeSite];
         res.json({
             activeSite,
-            availableSites: availableSites.length > 0 ? availableSites : [activeSite],
+            availableSites,
         });
     }
     catch (error) {

@@ -45,17 +45,17 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
         render: (e) => <span className="font-medium text-slate-900">{e.tradeGroup}</span>,
       },
      
-      // {
-      //   header: 'Daily Rate',
-      //   accessor: 'dailyRate',
-      //   render: (e) => (
-      //     <span className="font-medium text-slate-800 tabular-nums">
-      //       {e.dailyRate != null
-      //         ? Number(e.dailyRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      //         : '—'}
-      //     </span>
-      //   ),
-      // },
+       {
+        header: 'Daily Rate',
+        accessor: 'dailyRate',
+        render: (e) => (
+          <span className="font-semibold text-slate-800 tabular-nums font-mono text-xs"> 
+            {e.dailyRate != null
+              ? Number(e.dailyRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+              : '—'}
+          </span>
+        ),
+      },
       {
         header: 'Business Partner',
         accessor: 'businessPartner',

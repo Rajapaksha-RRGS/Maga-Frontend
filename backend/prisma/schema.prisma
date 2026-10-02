@@ -576,6 +576,7 @@ model CorporateEmployee {
   fullName              String   @map("full_name")
   nicNo                 String   @map("nic_no")
   tradeGroup            String   @map("trade_group")
+  dailyRate             Decimal?  @map("daily_rate") @db.Decimal(12,2)
   isOperator            Boolean  @default(false) @map("is_operator")
   licenseNo             String?  @map("license_no")
   epfNo                 String?  @map("epf_no")

@@ -54,16 +54,27 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const isApproved = group.status === 'approved';
   const isSubmitted = group.status === 'submitted';
 
-  // Preview hours calculation (1-hr lunch deduction if >= 5 hours)
+  // Preview hours calculation (1-hr lunch deduction if >= 5 hours, + 1-hr late night break if out-time passes 11:00 PM)
   const computePreviewHours = (inTime: string, outTime: string) => {
     if (!inTime || !outTime) return { hours: 0, otHours: 0 };
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
-    let diff = (outH * 60 + outM) - (inH * 60 + inM);
+    const inMins = inH * 60 + (inM || 0);
+    const outMins = outH * 60 + (outM || 0);
+    let diff = outMins - inMins;
     if (diff < 0) diff += 24 * 60;
-    if (diff >= 300) diff -= 60; // 1-hour break deduction
-    const net = diff > 0 ? parseFloat((diff / 60).toFixed(1)) : 0;
-    const ot = net > 8.0 ? parseFloat((net - 8.0).toFixed(1)) : 0;
+    if (diff <= 0) return { hours: 0, otHours: 0 };
+
+    let breakMins = 0;
+    if (diff >= 300) breakMins += 60; // 1-hour lunch break deduction
+    const isPast11PM = (outMins >= inMins)
+      ? (outMins >= 23 * 60)
+      : (inMins <= 23 * 60 || outMins >= 23 * 60);
+    if (isPast11PM) breakMins += 60; // 1-hour late night break deduction
+
+    const netMins = Math.max(0, diff - breakMins);
+    const net = netMins > 0 ? parseFloat((netMins / 60).toFixed(2)) : 0;
+    const ot = net > 8.0 ? parseFloat((net - 8.0).toFixed(2)) : 0;
     return { hours: net, otHours: ot };
   };
 

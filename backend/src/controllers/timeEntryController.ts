@@ -149,14 +149,27 @@ function parseDate(dateStr?: string): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
-// Helper: compute lunch break hours based on inTime & outTime
-// Construction rule: shifts >= 5.0 hours (300 mins) have 1.0 hour lunch deducted; shifts < 5.0h have 0.0 deducted.
+// Helper: compute break hours (lunch & late night) based on inTime & outTime
+// Construction rules:
+// 1. Shifts >= 5.0 hours (300 mins) have 1.0 hour lunch deducted; shifts < 5.0h have 0.0 deducted.
+// 2. If out-time passes 11:00 PM (23:00), an additional 1.0 hour is deducted for dinner/night break.
 export function computeBreakHours(inTime?: string | null, outTime?: string | null): number {
   if (!inTime || !outTime) return 0;
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
-  const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
-  return diffMins >= 300 ? 1.0 : 0.0;
+  const inMins = inH * 60 + (inM || 0);
+  const outMins = outH * 60 + (outM || 0);
+  let diffMins = outMins - inMins;
+  if (diffMins < 0) diffMins += 24 * 60;
+
+  let breaks = diffMins >= 300 ? 1.0 : 0.0;
+  const isPast11PM = (outMins >= inMins)
+    ? (outMins >= 23 * 60)
+    : (inMins <= 23 * 60 || outMins >= 23 * 60);
+  if (isPast11PM) {
+    breaks += 1.0;
+  }
+  return breaks;
 }
 
 // Master Helper: calculate net shift hours and Overtime (OT) strictly from In/Out attendance times
@@ -169,16 +182,26 @@ export function calculateShiftAndOvertime(
   if (!inTime || !outTime) return { shiftHours: 0, otHours: 0, breakHours: 0 };
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
-  let diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+  const inMins = inH * 60 + (inM || 0);
+  const outMins = outH * 60 + (outM || 0);
+  let diffMins = outMins - inMins;
   if (diffMins < 0) diffMins += 24 * 60; // Handles shifts crossing midnight
-  const breakHours = diffMins >= 300 ? 1.0 : 0.0;
-  if (diffMins >= 300) diffMins -= 60; // 1-hour lunch break deduction
-  const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 10) / 10 : 0;
+
+  let breakMinutes = 0;
+  if (diffMins >= 300) breakMinutes += 60; // 1-hour lunch break deduction
+  const isPast11PM = (outMins >= inMins)
+    ? (outMins >= 23 * 60)
+    : (inMins <= 23 * 60 || outMins >= 23 * 60);
+  if (isPast11PM) breakMinutes += 60; // 1-hour late night break deduction
+
+  diffMins = Math.max(0, diffMins - breakMinutes);
+  const breakHours = Math.round((breakMinutes / 60) * 100) / 100;
+  const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 100) / 100 : 0;
   let otHours = 0;
   if (isAllOvertime) {
     otHours = shiftHours;
   } else if (shiftHours > standardHoursCap) {
-    otHours = Math.round((shiftHours - standardHoursCap) * 10) / 10;
+    otHours = Math.round((shiftHours - standardHoursCap) * 100) / 100;
   }
   return { shiftHours, otHours, breakHours };
 }

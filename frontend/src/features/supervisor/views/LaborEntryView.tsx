@@ -27,6 +27,13 @@ import {
   type LaborerEntry, 
   type ActivitySplit 
 } from '../services/supervisorStorageService';
+import {
+  computeHours,
+  formatHhmm,
+  sumHhmm,
+  hhmmToMinutes,
+  minutesToHhmm
+} from '../utils/timeUtils';
 
 interface LaborEntryViewProps {
   laborers: LaborerEntry[];
@@ -40,23 +47,6 @@ interface BatchActivityItem {
   id: string;
   activityCode: string;
   hours: number;
-}
-
-// Calculate hours between two HH:MM strings (with 1h lunch deduction if >= 5h)
-function computeHours(inTime: string, outTime: string): { shift: number; ot: number } {
-  if (!inTime || !outTime) return { shift: 0, ot: 0 };
-  const [inH, inM] = inTime.split(':').map(Number);
-  const [outH, outM] = outTime.split(':').map(Number);
-
-  let totalMinutes = (outH * 60 + outM) - (inH * 60 + inM);
-  if (totalMinutes < 0) totalMinutes += 24 * 60; // Crosses midnight
-  if (totalMinutes >= 300) totalMinutes -= 60; // 1-hour lunch deduction
-
-  const shiftHours = totalMinutes > 0 ? parseFloat((totalMinutes / 60).toFixed(1)) : 0;
-  // Standard shift is 8.0 hours; anything above is OT
-  const otHours = shiftHours > 8.0 ? parseFloat((shiftHours - 8.0).toFixed(1)) : 0;
-
-  return { shift: shiftHours, ot: otHours };
 }
 
 // Helper to get effective shift hours for a worker in current context
@@ -128,7 +118,7 @@ export function LaborEntryView({
     const counts: Record<string, number> = {};
     laborers.forEach((l) => {
       const info = getWorkerEffectiveShift(l, batchOutTime);
-      const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
+      const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
       counts[key] = (counts[key] || 0) + 1;
     });
 
@@ -181,7 +171,7 @@ export function LaborEntryView({
       // Shift Hours filter
       if (selectedShiftFilter !== 'all') {
         const info = getWorkerEffectiveShift(l, batchOutTime);
-        const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
+        const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
         if (key !== selectedShiftFilter) {
           return false;
         }
@@ -268,6 +258,43 @@ export function LaborEntryView({
     setSelectedWorkerIds([]);
   };
 
+  // ── DYNAMIC OUT-TIME CHANGE HANDLER ──
+  const handleBatchOutTimeChange = (newOutTime: string) => {
+    setBatchOutTime(newOutTime);
+    // Compute effective shift for active/sample workers with this new out-time
+    const sampleWorker = laborers.find((l) => selectedWorkerIds.includes(l.id) && l.inTime) ||
+      laborers.find((l) => l.inTime) ||
+      { inTime: batchInTime || '07:00' };
+    const inTime = sampleWorker.inTime || '07:00';
+    const { shift } = computeHours(inTime, newOutTime);
+    if (shift > 0) {
+      setTargetShiftHours(shift);
+      setBatchActivities((prev) => {
+        if (prev.length <= 1) {
+          return [{
+            id: 'batch-act-1',
+            activityCode: prev[0]?.activityCode || activityOptions[0]?.code || '',
+            hours: shift,
+          }];
+        } else {
+          const sum = prev.reduce((acc, a) => acc + (a.hours || 0), 0);
+          if (sum > 0) {
+            let allocated = 0;
+            return prev.map((a, idx) => {
+              if (idx === prev.length - 1) {
+                return { ...a, hours: parseFloat(Math.max(0.5, shift - allocated).toFixed(1)) };
+              }
+              const share = parseFloat(((a.hours / sum) * shift).toFixed(1));
+              allocated += share;
+              return { ...a, hours: share };
+            });
+          }
+          return prev;
+        }
+      });
+    }
+  };
+
   // ── SHIFT FILTER SELECTOR (DYNAMIC TARGET HOURS & AUTO-SELECT COHORT) ──
   const handleSelectShiftFilter = (shiftKey: string) => {
     setSelectedShiftFilter(shiftKey);
@@ -279,7 +306,7 @@ export function LaborEntryView({
       // Auto-select all workers belonging to this specific shift cohort!
       const matchingCohortIds = laborers.filter((l) => {
         const info = getWorkerEffectiveShift(l, batchOutTime);
-        const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
+        const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
         return key === shiftKey;
       }).map((l) => l.id);
 
@@ -324,10 +351,11 @@ export function LaborEntryView({
     const currentSum = batchActivities.reduce((acc, a) => acc + (a.hours || 0), 0);
 
     // Case 1: Only 1 activity exists and its hours equal targetShiftHours (unmodified)
-    // -> Split evenly! (e.g. 8.0h -> 4.0h & 4.0h, or 6.0h -> 3.0h & 3.0h)
-    if (batchActivities.length === 1 && Math.abs(batchActivities[0].hours - targetShiftHours) < 0.1) {
-      const half = parseFloat((targetShiftHours / 2).toFixed(1));
-      const secondHalf = parseFloat((targetShiftHours - half).toFixed(1));
+    // -> Split evenly! (e.g. 8.00h -> 4.00h & 4.00h, or 12.50h -> 6.25h & 6.25h)
+    if (batchActivities.length === 1 && Math.abs(hhmmToMinutes(batchActivities[0].hours) - hhmmToMinutes(targetShiftHours)) < 1) {
+      const halfMins = Math.round(hhmmToMinutes(targetShiftHours) / 2);
+      const half = minutesToHhmm(halfMins);
+      const secondHalf = minutesToHhmm(hhmmToMinutes(targetShiftHours) - halfMins);
 
       const updatedFirst = { ...batchActivities[0], hours: half };
       const newRow: BatchActivityItem = {
@@ -340,10 +368,11 @@ export function LaborEntryView({
     }
 
     // Case 2: Top activity or existing activities were edited and sum < targetShiftHours
-    // -> Auto-fill the remaining hours! (e.g. 8.0 - 5.0 = 3.0h)
+    // -> Auto-fill the remaining hours! (e.g. 12.50 - 8.00 = 4.50h)
     let fillHours = 4.0;
-    if (currentSum < targetShiftHours) {
-      fillHours = parseFloat((targetShiftHours - currentSum).toFixed(1));
+    const diffMins = hhmmToMinutes(targetShiftHours) - hhmmToMinutes(currentSum);
+    if (diffMins > 0) {
+      fillHours = minutesToHhmm(diffMins);
     } else {
       fillHours = 1.0;
     }
@@ -398,7 +427,7 @@ export function LaborEntryView({
     const selectedShiftGroups: Record<string, LaborerEntry[]> = {};
     selectedWorkers.forEach((w) => {
       const info = getWorkerEffectiveShift(w, batchOutTime);
-      const key = !info.hasIn ? 'pending_in' : `${info.shift.toFixed(1)}h`;
+      const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
       if (!selectedShiftGroups[key]) selectedShiftGroups[key] = [];
       selectedShiftGroups[key].push(w);
     });
@@ -407,7 +436,7 @@ export function LaborEntryView({
 
     // If supervisor selected workers with DIFFERENT shift hours -> Show Error Modal!
     if (distinctShiftKeys.length > 1) {
-      const currentBatchSum = batchActivities.reduce((acc, a) => acc + (a.hours || 0), 0);
+      const currentBatchSum = sumHhmm(batchActivities.map((a) => a.hours));
       setMismatchData({
         groups: selectedShiftGroups,
         targetSum: currentBatchSum,
@@ -467,7 +496,8 @@ export function LaborEntryView({
         otHours: ot,
         activities,
         isAbsent: inTime ? false : l.isAbsent,
-        status: (inTime && outTime && activities.length > 0 ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+        status: 'draft' as const, // Always keep as draft while editing until explicitly marked Done
+        lastSavedAt: `Draft: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
       };
     });
     onSaveLaborers(updated);
@@ -491,12 +521,66 @@ export function LaborEntryView({
     onSaveLaborers(updated);
   };
 
+  const handleMarkIndividualDone = (id: string) => {
+    const updated = laborers.map((l) => {
+      if (l.id !== id) return l;
+      const inTime = l.inTime || batchInTime || '07:00';
+      const outTime = l.outTime || batchOutTime || '17:00';
+      const { shift, ot } = computeHours(inTime, outTime);
+
+      return {
+        ...l,
+        inTime,
+        outTime,
+        shiftHours: shift,
+        otHours: ot,
+        activities: l.activities || [],
+        isAbsent: false,
+        status: 'done' as const,
+        lastSavedAt: `Done at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      };
+    });
+    onSaveLaborers(updated);
+    setExpandedId(null);
+  };
+
+  const handleToggleIndividualDone = (id: string) => {
+    const laborer = laborers.find((l) => l.id === id);
+    if (!laborer) return;
+
+    if (laborer.status === 'done') {
+      const updated = laborers.map((l) => 
+        l.id === id ? { ...l, status: 'draft' as const, lastSavedAt: 'Reverted to Draft' } : l
+      );
+      onSaveLaborers(updated);
+    } else {
+      handleMarkIndividualDone(id);
+    }
+  };
+
+  // Reset selected workers to draft status (removes green Done border)
+  const handleBatchResetToDraft = () => {
+    const targetIds = selectedFilteredWorkerIds;
+    if (targetIds.length === 0) return;
+
+    const updated = laborers.map((l) => {
+      if (!targetIds.includes(l.id)) return l;
+      return {
+        ...l,
+        status: 'draft' as const,
+        lastSavedAt: 'Reset to Draft',
+      };
+    });
+    onSaveLaborers(updated);
+  };
+
   const handleAddIndividualActivitySplit = (laborerId: string) => {
     const laborer = laborers.find((l) => l.id === laborerId);
     if (!laborer) return;
 
-    const allocatedSum = laborer.activities.reduce((acc, a) => acc + (a.hours || 0), 0);
-    const remaining = Math.max(0, parseFloat((laborer.shiftHours - allocatedSum).toFixed(1)));
+    const allocatedSum = sumHhmm(laborer.activities.map((a) => a.hours));
+    const remainingMins = Math.max(0, hhmmToMinutes(laborer.shiftHours) - hhmmToMinutes(allocatedSum));
+    const remaining = minutesToHhmm(remainingMins);
 
     const newSplit: ActivitySplit = {
       id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
@@ -530,7 +614,7 @@ export function LaborEntryView({
       return { 
         ...l, 
         activities, 
-        status: (l.inTime && l.outTime && activities.length > 0 ? 'done' : 'draft') as 'draft' | 'pending' | 'done' 
+        status: 'draft' as const,
       };
     });
     onSaveLaborers(updated);
@@ -650,7 +734,7 @@ export function LaborEntryView({
               Filter by Shift Hours:
             </span>
             <span className="text-[10px] text-slate-500 font-medium">
-              Target: <strong className="text-blue-700 dark:text-blue-400 font-mono">{targetShiftHours.toFixed(1)}h</strong>
+              Target: <strong className="text-blue-700 dark:text-blue-400 font-mono">{formatHhmm(targetShiftHours)}h</strong>
             </span>
           </div>
 
@@ -819,7 +903,7 @@ export function LaborEntryView({
               <input
                 type="time"
                 value={batchOutTime}
-                onChange={(e) => setBatchOutTime(e.target.value)}
+                onChange={(e) => handleBatchOutTimeChange(e.target.value)}
                 className="text-xs font-bold text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none"
               />
             </div>
@@ -832,7 +916,7 @@ export function LaborEntryView({
                 <Briefcase size={12} className="text-blue-600" />
                 Activity Codes Split 
                 <span className="text-[10px] text-slate-500 font-normal ml-1">
-                  (Target: <strong className="text-blue-700 dark:text-blue-300 font-mono">{targetShiftHours.toFixed(1)}h</strong>)
+                  (Target: <strong className="text-blue-700 dark:text-blue-300 font-mono">{formatHhmm(targetShiftHours)}h</strong>)
                 </span>
               </span>
               <button
@@ -879,26 +963,27 @@ export function LaborEntryView({
 
             {/* Live Hours Balance Indicator */}
             {(() => {
-              const currentSum = batchActivities.reduce((a, b) => a + (Number(b.hours) || 0), 0);
-              const diff = parseFloat((currentSum - targetShiftHours).toFixed(1));
-              const isBalanced = Math.abs(diff) < 0.1;
+              const currentSum = sumHhmm(batchActivities.map((b) => b.hours));
+              const diffMinutes = hhmmToMinutes(currentSum) - hhmmToMinutes(targetShiftHours);
+              const isBalanced = Math.abs(diffMinutes) < 1;
+              const diffHhmm = minutesToHhmm(Math.abs(diffMinutes));
 
               return (
                 <div className="flex items-center justify-between text-[11px] px-1 pt-1.5 border-t border-slate-200/60 dark:border-slate-800">
                   <span className="text-slate-600 dark:text-slate-400">
-                    Allocated: <strong className={isBalanced ? 'text-emerald-700 dark:text-emerald-300 font-bold' : 'text-amber-700 dark:text-amber-300 font-bold'}>{currentSum.toFixed(1)}h</strong> / {targetShiftHours.toFixed(1)}h Target
+                    Allocated: <strong className={isBalanced ? 'text-emerald-700 dark:text-emerald-300 font-bold' : 'text-amber-700 dark:text-amber-300 font-bold'}>{formatHhmm(currentSum)}h</strong> / {formatHhmm(targetShiftHours)}h Target
                   </span>
                   {isBalanced ? (
                     <span className="text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1 text-[10px]">
                       <CheckCircle2 size={12} /> Balanced
                     </span>
-                  ) : diff < 0 ? (
+                  ) : diffMinutes < 0 ? (
                     <span className="text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 text-[10px]">
-                      <PauseCircle size={12} className="text-amber-600" /> Auto-Idle (ZIDLE): {Math.abs(diff).toFixed(1)}h
+                      <PauseCircle size={12} className="text-amber-600" /> Auto-Idle (ZIDLE): {formatHhmm(diffHhmm)}h
                     </span>
                   ) : (
                     <span className="text-red-600 dark:text-red-400 font-semibold flex items-center gap-1 text-[10px]">
-                      <AlertTriangle size={12} /> +{diff.toFixed(1)}h Excess
+                      <AlertTriangle size={12} /> +{formatHhmm(diffHhmm)}h Excess
                     </span>
                   )}
                 </div>
@@ -922,6 +1007,17 @@ export function LaborEntryView({
             </button>
 
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleBatchResetToDraft}
+                disabled={isDayLocked || selectedFilteredCount === 0}
+                className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-40"
+                title="Mark selected workers as Draft (removes green Done border)"
+              >
+                <Clock size={13} />
+                <span>Mark Draft</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleBatchClearActivities}
@@ -963,7 +1059,12 @@ export function LaborEntryView({
           filteredLaborers.map((worker) => {
             const isSelected = selectedWorkerIds.includes(worker.id);
             const isExpanded = expandedId === worker.id;
-            const activitySum = worker.activities.reduce((acc, a) => acc + (Number(a.hours) || 0), 0);
+            const isDone = tabMode === 'out' && 
+              !worker.isAbsent && 
+              Boolean(worker.inTime) && 
+              Boolean(worker.outTime) && 
+              worker.status === 'done';
+            const activitySum = sumHhmm(worker.activities.map((a) => a.hours));
             void activitySum; // consumed if needed
 
             return (
@@ -975,6 +1076,8 @@ export function LaborEntryView({
                     ? 'border-blue-500 bg-blue-50/20 dark:bg-blue-950/40 ring-1 ring-blue-500/20'
                     : worker.isAbsent
                     ? 'border-rose-300 dark:border-rose-900/60 bg-rose-50/25 dark:bg-rose-950/20'
+                    : isDone
+                    ? 'border-emerald-500 dark:border-emerald-500 bg-emerald-50/15 dark:bg-emerald-950/20 ring-1 ring-emerald-500/30 shadow-emerald-500/5'
                     : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
                 ].join(' ')}
               >
@@ -1109,29 +1212,60 @@ export function LaborEntryView({
                         )}
                       </div>
                     ) : (
-                      <div>
-                        {worker.isAbsent ? (
-                          <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold bg-rose-50 dark:bg-rose-950/60 px-2 py-0.5 rounded border border-rose-200 dark:border-rose-800 flex items-center gap-0.5">
-                            <UserX size={10} />
-                            Absent
-                          </span>
-                        ) : worker.inTime ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
-                            In: {worker.inTime}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
-                            Pending In
-                          </span>
-                        )}
-
-                        <div className="text-[10px] mt-0.5 text-slate-400">
-                          {worker.isAbsent ? null : worker.outTime ? (
-                            <span className="font-medium text-slate-700 dark:text-slate-300">Out: {worker.outTime}</span>
+                      <div className="flex items-center gap-2">
+                        <div>
+                          {worker.isAbsent ? (
+                            <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold bg-rose-50 dark:bg-rose-950/60 px-2 py-0.5 rounded border border-rose-200 dark:border-rose-800 flex items-center gap-0.5">
+                              <UserX size={10} />
+                              Absent
+                            </span>
+                          ) : isDone ? (
+                            <button
+                              type="button"
+                              disabled={isDayLocked}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleIndividualDone(worker.id);
+                              }}
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 hover:bg-emerald-200 dark:hover:bg-emerald-800/80 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-700 shadow-2xs transition-colors cursor-pointer"
+                              title="Click to revert back to Draft"
+                            >
+                              <Check size={11} className="stroke-[3]" /> Done
+                            </button>
+                          ) : worker.inTime ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                              In: {worker.inTime}
+                            </span>
                           ) : (
-                            <span>Pending Out</span>
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                              Pending In
+                            </span>
                           )}
+
+                          <div className="text-[10px] mt-0.5 text-slate-400">
+                            {worker.isAbsent ? null : worker.outTime ? (
+                              <span className="font-medium text-slate-700 dark:text-slate-300">Out: {worker.outTime}</span>
+                            ) : (
+                              <span>Pending Out</span>
+                            )}
+                          </div>
                         </div>
+
+                        {/* Quick Done button in header if not already done and not absent */}
+                        {!isDayLocked && !worker.isAbsent && !isDone && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMarkIndividualDone(worker.id);
+                            }}
+                            className="flex items-center gap-1 text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 px-2 py-1 rounded-lg shadow-2xs transition-all cursor-pointer"
+                            title="Quick mark Done"
+                          >
+                            <Check size={11} className="stroke-[3]" />
+                            <span>Done</span>
+                          </button>
+                        )}
                       </div>
                     )}
 
@@ -1142,46 +1276,55 @@ export function LaborEntryView({
                   </div>
                 </div>
 
-                {/* Compact Activity Splits Preview (Only visible when on OUT mode and collapsed) */}
-                {tabMode === 'out' && worker.activities.length > 0 && !isExpanded && (
+                {/* Compact Activity Splits / Auto-Idle Preview (Only visible when on OUT mode and collapsed) */}
+                {tabMode === 'out' && !isExpanded && (worker.activities.length > 0 || (worker.inTime && worker.outTime)) && (
                   <div className="px-3.5 pb-2.5 pt-0.5 flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Activities:</span>
-                    {worker.activities.map((act) => (
-                      <span
-                        key={act.id}
-                        className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
-                      >
-                        <span>{act.activityCode}: {act.hours}h</span>
-                        {!isDayLocked && (
+                    {worker.activities.length > 0 ? (
+                      <>
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Activities:</span>
+                        {worker.activities.map((act) => (
+                          <span
+                            key={act.id}
+                            className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
+                          >
+                            <span>{act.activityCode}: {act.hours}h</span>
+                            {!isDayLocked && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveIndividualActivitySplit(worker.id, act.id);
+                                }}
+                                className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
+                                title={`Delete ${act.activityCode}`}
+                              >
+                                <X size={10} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                        {!isDayLocked && worker.activities.length > 1 && (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleRemoveIndividualActivitySplit(worker.id, act.id);
+                              handleClearAllActivities(worker.id);
                             }}
-                            className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
-                            title={`Delete ${act.activityCode}`}
+                            className="text-[10px] text-red-500 hover:underline font-semibold ml-1 cursor-pointer"
                           >
-                            <X size={10} />
+                            Clear All
                           </button>
                         )}
+                      </>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                        <PauseCircle size={11} className="text-amber-600" />
+                        <span>Auto-Idle (ZIDLE): {formatHhmm(worker.shiftHours)}h</span>
                       </span>
-                    ))}
-                    {!isDayLocked && worker.activities.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleClearAllActivities(worker.id);
-                        }}
-                        className="text-[10px] text-red-500 hover:underline font-semibold ml-1 cursor-pointer"
-                      >
-                        Clear All
-                      </button>
                     )}
                     {worker.shiftHours > 0 && (
                       <span className="text-[10px] font-bold ml-auto text-blue-700 dark:text-blue-300">
-                        {worker.shiftHours}h Shift
+                        {formatHhmm(worker.shiftHours)}h Shift
                       </span>
                     )}
                   </div>
@@ -1317,32 +1460,59 @@ export function LaborEntryView({
                       {/* Discrepancy Notice & ZIDLE Auto-Balance */}
                       <div className="mt-2 flex items-center justify-between text-xs px-1">
                         <span className="text-slate-500 dark:text-slate-400">
-                          Total: <strong className="text-slate-800 dark:text-slate-200">{activitySum.toFixed(1)}h</strong> / {worker.shiftHours.toFixed(1)}h
+                          Total: <strong className="text-slate-800 dark:text-slate-200">{formatHhmm(activitySum)}h</strong> / {formatHhmm(worker.shiftHours)}h
                         </span>
-                        {worker.shiftHours > activitySum ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
-                            <PauseCircle size={12} className="text-amber-600" />
-                            <span>Auto-Idle (ZIDLE): {(worker.shiftHours - activitySum).toFixed(1)}h</span>
-                          </span>
-                        ) : activitySum > worker.shiftHours ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400">
-                            <AlertTriangle size={13} /> +{(activitySum - worker.shiftHours).toFixed(1)}h Excess
-                          </span>
-                        ) : worker.shiftHours > 0 ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                            <CheckCircle2 size={13} /> Hours Balanced
-                          </span>
-                        ) : null}
+                        {(() => {
+                          const diffMinutes = hhmmToMinutes(worker.shiftHours) - hhmmToMinutes(activitySum);
+                          if (diffMinutes > 0) {
+                            const idleHhmm = minutesToHhmm(diffMinutes);
+                            return (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                                <PauseCircle size={12} className="text-amber-600" />
+                                <span>Auto-Idle (ZIDLE): {formatHhmm(idleHhmm)}h</span>
+                              </span>
+                            );
+                          } else if (diffMinutes < 0) {
+                            const excessHhmm = minutesToHhmm(Math.abs(diffMinutes));
+                            return (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400">
+                                <AlertTriangle size={13} /> +{formatHhmm(excessHhmm)}h Excess
+                              </span>
+                            );
+                          } else if (worker.shiftHours > 0) {
+                            return (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                <CheckCircle2 size={13} /> Hours Balanced
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     </div>
 
-                    {/* ── Auto-save Status ── */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
-                      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                    {/* ── Auto-save Status & Mark as Done button ── */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-[10px]">
                         <Check size={13} className="text-emerald-500" />
                         <span>Auto-saved</span>
                       </span>
-                      <span className="text-[10px]">Changes save automatically</span>
+                      {!isDayLocked && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleIndividualDone(worker.id)}
+                          className={[
+                            'flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer',
+                            isDone
+                              ? 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200'
+                              : 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
+                          ].join(' ')}
+                          title={isDone ? 'Click to revert card back to Draft' : 'Save and mark card as completed'}
+                        >
+                          <CheckCircle2 size={14} />
+                          <span>{isDone ? 'Revert to Draft' : 'Done'}</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}

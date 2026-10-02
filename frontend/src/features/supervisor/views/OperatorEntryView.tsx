@@ -25,6 +25,13 @@ import type {
   EquipmentLogEntry,
   OperatorEquipmentSplit 
 } from '../services/supervisorStorageService';
+import {
+  computeHours,
+  formatHhmm,
+  sumHhmm,
+  hhmmToMinutes,
+  minutesToHhmm
+} from '../utils/timeUtils';
 
 interface OperatorEntryViewProps {
   operators: OperatorEntry[];
@@ -33,21 +40,6 @@ interface OperatorEntryViewProps {
   searchQuery?: string;
   statusFilter?: 'all' | 'pending' | 'done';
   isDayLocked?: boolean;
-}
-
-function computeHours(inTime: string, outTime: string): { shift: number; ot: number } {
-  if (!inTime || !outTime) return { shift: 0, ot: 0 };
-  const [inH, inM] = inTime.split(':').map(Number);
-  const [outH, outM] = outTime.split(':').map(Number);
-
-  let totalMinutes = (outH * 60 + outM) - (inH * 60 + inM);
-  if (totalMinutes < 0) totalMinutes += 24 * 60;
-  if (totalMinutes >= 300) totalMinutes -= 60; // 1-hour lunch deduction
-
-  const shiftHours = totalMinutes > 0 ? parseFloat((totalMinutes / 60).toFixed(1)) : 0;
-  const otHours = shiftHours > 8.0 ? parseFloat((shiftHours - 8.0).toFixed(1)) : 0;
-
-  return { shift: shiftHours, ot: otHours };
 }
 
 // Helper to get logged working hours on a machine from equipment logs
@@ -143,8 +135,9 @@ export function OperatorEntryView({
   const getOperatorHourBreakdown = (operator: OperatorEntry) => {
     const shift = Number(operator.shiftHours) || 0;
     const splits = operator.equipmentSplits || [];
-    const operatingHours = splits.reduce((sum, s) => sum + (Number(s.hours) || 0), 0);
-    const idleHours = Math.max(0, Math.round((shift - operatingHours) * 10) / 10);
+    const operatingHours = sumHhmm(splits.map((s) => s.hours));
+    const idleMinutes = Math.max(0, hhmmToMinutes(shift) - hhmmToMinutes(operatingHours));
+    const idleHours = minutesToHhmm(idleMinutes);
     return { shift, operatingHours, idleHours };
   };
 
@@ -257,10 +250,50 @@ export function OperatorEntryView({
         shiftHours: shift,
         otHours: ot,
         equipmentSplits: splits,
-        status: (inTime && outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+        status: 'draft' as const, // Editing keeps/sets it as draft
+        lastSavedAt: `Draft: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
       };
     });
     onSaveOperators(updated);
+  };
+
+  const handleMarkOperatorDone = (id: string) => {
+    const updated = operators.map((o) => {
+      if (o.id !== id) return o;
+      const inTime = o.inTime || '07:00';
+      const outTime = o.outTime || batchOutTime || '17:00';
+      const { shift, ot } = computeHours(inTime, outTime);
+      let splits = o.equipmentSplits || [];
+      if (splits.length === 1 && shift > 0) {
+        splits = [{ ...splits[0], hours: shift }];
+      }
+      return {
+        ...o,
+        inTime,
+        outTime,
+        shiftHours: shift,
+        otHours: ot,
+        equipmentSplits: splits,
+        status: 'done' as const,
+        lastSavedAt: `Done at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      };
+    });
+    onSaveOperators(updated);
+    setExpandedId(null);
+  };
+
+  const handleToggleOperatorDone = (id: string) => {
+    const op = operators.find((o) => o.id === id);
+    if (!op) return;
+
+    if (op.status === 'done') {
+      const updated = operators.map((o) => 
+        o.id === id ? { ...o, status: 'draft' as const, lastSavedAt: 'Reverted to Draft' } : o
+      );
+      onSaveOperators(updated);
+    } else {
+      handleMarkOperatorDone(id);
+    }
   };
 
   // ── MULTI-VEHICLE SPLIT HANDLERS ──
@@ -285,8 +318,10 @@ export function OperatorEntryView({
         newSplits = [newSplit];
       } else if (currentSplits.length === 1) {
         // Thawa wahanayak add kaloth dekata bedenna (50/50 split)
-        const half1 = parseFloat((targetShift / 2).toFixed(1));
-        const half2 = parseFloat((targetShift - half1).toFixed(1));
+        const targetMins = hhmmToMinutes(targetShift);
+        const halfMins = Math.round(targetMins / 2);
+        const half1 = minutesToHhmm(halfMins);
+        const half2 = minutesToHhmm(targetMins - halfMins);
 
         const updatedFirst: OperatorEquipmentSplit = {
           ...currentSplits[0],
@@ -300,8 +335,9 @@ export function OperatorEntryView({
         newSplits = [updatedFirst, newSplit];
       } else {
         // 3rd or more vehicle: assign remaining hours if any
-        const currentSum = currentSplits.reduce((acc, s) => acc + (Number(s.hours) || 0), 0);
-        const remainingHours = Math.max(0, parseFloat((targetShift - currentSum).toFixed(1)));
+        const currentSum = sumHhmm(currentSplits.map((s) => s.hours));
+        const remMins = Math.max(0, hhmmToMinutes(targetShift) - hhmmToMinutes(currentSum));
+        const remainingHours = minutesToHhmm(remMins);
         const newSplit: OperatorEquipmentSplit = {
           id: `split-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
           equipmentId: defaultEqId,
@@ -347,7 +383,8 @@ export function OperatorEntryView({
       let splits: OperatorEquipmentSplit[];
       if (currentSplits.length === 2) {
         // Auto-balance the other vehicle to take remaining shift hours
-        const balancedHours = Math.max(0, parseFloat((targetShift - newHours).toFixed(1)));
+        const balancedMins = Math.max(0, hhmmToMinutes(targetShift) - hhmmToMinutes(newHours));
+        const balancedHours = minutesToHhmm(balancedMins);
         splits = currentSplits.map((s) => {
           if (s.id === splitId) {
             return { ...s, hours: newHours };
@@ -697,6 +734,11 @@ export function OperatorEntryView({
             const { shift, operatingHours, idleHours } = getOperatorHourBreakdown(operator);
             const splits = operator.equipmentSplits || [];
 
+            const isDone = tabMode === 'out' && 
+              Boolean(operator.inTime) && 
+              Boolean(operator.outTime) && 
+              operator.status === 'done';
+
             return (
               <div
                 key={operator.id}
@@ -704,6 +746,8 @@ export function OperatorEntryView({
                   'rounded-2xl border transition-all duration-150 overflow-hidden shadow-2xs',
                   isSelected
                     ? 'border-blue-500 bg-blue-50/20 dark:bg-blue-950/40 ring-1 ring-blue-500/20'
+                    : isDone
+                    ? 'border-emerald-500 dark:border-emerald-500 bg-emerald-50/15 dark:bg-emerald-950/20 ring-1 ring-emerald-500/30 shadow-emerald-500/5'
                     : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
                 ].join(' ')}
               >
@@ -748,7 +792,20 @@ export function OperatorEntryView({
                     className="flex items-center gap-2 flex-shrink-0 cursor-pointer text-right"
                   >
                     <div>
-                      {operator.inTime ? (
+                      {isDone && tabMode === 'out' ? (
+                        <button
+                          type="button"
+                          disabled={isDayLocked}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleOperatorDone(operator.id);
+                          }}
+                          className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 hover:bg-emerald-200 dark:hover:bg-emerald-800/80 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-700 shadow-2xs transition-colors cursor-pointer"
+                          title="Click to revert back to Draft"
+                        >
+                          <Check size={11} className="stroke-[3]" /> Done
+                        </button>
+                      ) : operator.inTime ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
                           In: {operator.inTime}
                         </span>
@@ -769,9 +826,25 @@ export function OperatorEntryView({
                       )}
                     </div>
 
+                    {/* Quick Done button on card header if not yet done */}
+                    {tabMode === 'out' && !isDayLocked && !isDone && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMarkOperatorDone(operator.id);
+                        }}
+                        className="flex items-center gap-1 text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 px-2 py-1 rounded-lg shadow-2xs transition-all cursor-pointer"
+                        title="Quick mark Done"
+                      >
+                        <Check size={11} className="stroke-[3]" />
+                        <span>Done</span>
+                      </button>
+                    )}
+
                     {/* Chevron Icon */}
                     {tabMode === 'out' && (
-                      <div className="text-slate-400 pl-1">
+                      <div className="text-slate-400 pl-0.5">
                         {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                       </div>
                     )}
@@ -979,18 +1052,18 @@ export function OperatorEntryView({
                       <div className="pt-2.5 border-t border-slate-100 dark:border-slate-700/80 flex items-center justify-between text-xs flex-wrap gap-2">
                         <div className="flex items-center gap-2">
                           <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                            Shift: <strong className="text-slate-800 dark:text-slate-200 font-mono">{shift}h</strong>
+                            Shift: <strong className="text-slate-800 dark:text-slate-200 font-mono">{formatHhmm(shift)}h</strong>
                           </span>
                           <span className="text-slate-300 dark:text-slate-600">•</span>
                           <span className="text-[11px] text-blue-700 dark:text-blue-300 font-semibold">
-                            Operating: <strong className="font-mono">{operatingHours}h</strong>
+                            Operating: <strong className="font-mono">{formatHhmm(operatingHours)}h</strong>
                           </span>
                         </div>
 
                         {idleHours > 0 ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100/70 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800">
                             <PauseCircle size={11} className="text-amber-600" />
-                            <span>Auto-Idle (ZXQOPRIDLE): {idleHours}h</span>
+                            <span>Auto-Idle (ZXQOPRIDLE): {formatHhmm(idleHours)}h</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
@@ -1001,19 +1074,28 @@ export function OperatorEntryView({
                       </div>
                     </div>
 
-                    {/* ── Auto-save Status ── */}
-                    <div className="pt-1 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
-                      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                    {/* ── Auto-save Status & Done Button ── */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-[10px]">
                         <Check size={13} className="text-emerald-500" />
-                        <span>Auto-saved to daily roster</span>
+                        <span>Auto-saved</span>
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => setExpandedId(null)}
-                        className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
-                      >
-                        Done
-                      </button>
+                      {!isDayLocked && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleOperatorDone(operator.id)}
+                          className={[
+                            'flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer',
+                            isDone
+                              ? 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200'
+                              : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white'
+                          ].join(' ')}
+                          title={isDone ? 'Click to revert card back to Draft' : 'Save and mark card as completed'}
+                        >
+                          <CheckCircle2 size={14} />
+                          <span>{isDone ? 'Revert to Draft' : 'Done'}</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
