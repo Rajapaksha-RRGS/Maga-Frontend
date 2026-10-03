@@ -428,3 +428,56 @@ export const setCalendarEvents = async (req: Request, res: Response): Promise<vo
     res.status(500).json({ error: 'Failed to save calendar events' });
   }
 };
+
+// 7. GET /api/calendar/supervisor-reminders?supervisorId=...&date=...
+export const getSupervisorReminders = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+    const supervisorId = req.query.supervisorId as string;
+    const dateStr = req.query.date as string;
+
+    if (!dateStr) {
+      res.status(400).json({ error: 'date query parameter is required' });
+      return;
+    }
+
+    const date = parseCalendarDate(dateStr);
+    const day = await prisma.calendarDay.findUnique({
+      where: {
+        tenantId_date: {
+          tenantId,
+          date,
+        },
+      },
+    });
+
+    let allEvents: any[] = [];
+    if (day?.remarks) {
+      try {
+        allEvents = JSON.parse(day.remarks);
+        if (!Array.isArray(allEvents)) allEvents = [];
+      } catch {
+        allEvents = [];
+      }
+    }
+
+    // Filter events targeted for all supervisors or this specific supervisor
+    const relevantReminders = allEvents.filter((evt) => {
+      if (!evt.targetSupervisorId) return false;
+      if (evt.targetSupervisorId === 'ADMIN_ONLY') return false;
+      if (evt.targetSupervisorId === 'ALL') return true;
+      if (supervisorId && evt.targetSupervisorId === supervisorId) return true;
+      return false;
+    });
+
+    res.json({
+      date: dateStr,
+      reminders: relevantReminders,
+      count: relevantReminders.length,
+    });
+  } catch (error) {
+    console.error('Error fetching supervisor reminders:', error);
+    res.status(500).json({ error: 'Failed to fetch supervisor reminders' });
+  }
+};
+

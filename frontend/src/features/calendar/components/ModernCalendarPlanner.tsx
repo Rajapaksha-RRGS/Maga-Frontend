@@ -7,6 +7,11 @@ import {
   Clock,
   MapPin,
   Sparkles,
+  Bell,
+  Send,
+  AlertCircle,
+  Users,
+  User,
 } from 'lucide-react';
 import type { DayType } from '../services/calendarService';
 import {
@@ -17,6 +22,7 @@ import {
   getDatesWithEventsForMonth,
   type CalendarEvent,
 } from '../services/calendarEventService';
+import { getAll as getSupervisors, type Supervisor } from '../../supervisors/services/supervisorService';
 import { DayTypeConfirmModal } from './DayTypeConfirmModal';
 
 interface ModernCalendarPlannerProps {
@@ -101,6 +107,25 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
   const [selectedTime, setSelectedTime] = useState<string>('09:00 - 10:00');
   const [newLocation, setNewLocation] = useState('');
   const [newColor, setNewColor] = useState<CalendarEvent['color']>('purple');
+  const [targetSupervisorId, setTargetSupervisorId] = useState<string>('ALL');
+  const [priority, setPriority] = useState<'normal' | 'important' | 'urgent'>('normal');
+  const [newNotes, setNewNotes] = useState('');
+  const [supervisors, setSupervisors] = useState<Supervisor[]>([]);
+
+  // Fetch active supervisors for task/reminder assignment
+  useEffect(() => {
+    let isMounted = true;
+    getSupervisors()
+      .then((list) => {
+        if (isMounted && Array.isArray(list)) {
+          setSupervisors(list.filter((s) => s.status === 'active'));
+        }
+      })
+      .catch((err) => console.warn('Could not load supervisors list:', err));
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Day type confirmation modal state
   const [pendingDayType, setPendingDayType] = useState<DayType | null>(null);
@@ -205,10 +230,24 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
     const time = selectedTime;
     const location = newLocation.trim() || undefined;
     const color = newColor;
+    const notes = newNotes.trim() || undefined;
+
+    let targetSupervisorName: string | undefined = undefined;
+    if (targetSupervisorId === 'ADMIN_ONLY') {
+      targetSupervisorName = 'Admin Only';
+    } else if (targetSupervisorId === 'ALL') {
+      targetSupervisorName = 'All Field Supervisors';
+    } else {
+      const match = supervisors.find((s) => s.id === targetSupervisorId);
+      targetSupervisorName = match ? match.fullName : 'Field Supervisor';
+    }
 
     setNewTitle('');
     setSelectedTime('09:00 - 10:00');
     setNewLocation('');
+    setNewNotes('');
+    setTargetSupervisorId('ALL');
+    setPriority('normal');
     setIsAddingEvent(false);
 
     const updated = await addEventToDate(selectedDate, {
@@ -216,6 +255,10 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
       time,
       location,
       color,
+      notes,
+      targetSupervisorId,
+      targetSupervisorName,
+      priority,
     });
 
     setEvents(updated);
@@ -456,7 +499,10 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
                 className="mb-5 p-4 rounded-2xl bg-white border border-indigo-200 shadow-sm space-y-3 animate-in fade-in duration-150"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-900">New Site Event / Task</span>
+                  <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <Bell size={13} className="text-indigo-600" />
+                    New Site Event / Supervisor Reminder
+                  </span>
                   <button
                     type="button"
                     onClick={() => setIsAddingEvent(false)}
@@ -468,12 +514,70 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
 
                 <input
                   type="text"
-                  placeholder="Event title (e.g. Standup, Concrete Pouring)"
+                  placeholder="Task / Event Title (e.g. Morning Tool-Box Talk, Concrete Pouring)"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   required
-                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                 />
+
+                {/* Target Supervisor Reminder Selector */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                    <Send size={11} className="text-indigo-600" />
+                    <span>Send Reminder To</span>
+                  </label>
+                  <select
+                    value={targetSupervisorId}
+                    onChange={(e) => setTargetSupervisorId(e.target.value)}
+                    className="w-full text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="ALL">📢 All Field Supervisors (Broadcast Reminder)</option>
+                    <option value="ADMIN_ONLY">🔒 Admin Only (Private Calendar Note)</option>
+                    {supervisors.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        👷 {s.fullName} ({s.username})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Priority Selection */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                    <AlertCircle size={11} className="text-indigo-600" />
+                    <span>Priority Level</span>
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(['normal', 'important', 'urgent'] as const).map((p) => {
+                      const isSel = priority === p;
+                      const labels = {
+                        normal: 'Normal',
+                        important: '⚡ Important',
+                        urgent: '🔥 Urgent',
+                      };
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setPriority(p)}
+                          className={[
+                            'py-1 px-2 text-xs font-semibold rounded-lg border text-center transition-all',
+                            isSel
+                              ? p === 'urgent'
+                                ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
+                                : p === 'important'
+                                ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
+                                : 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100',
+                          ].join(' ')}
+                        >
+                          {labels[p]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 {/* Time Selection: 4 Preset Cards Only */}
                 <div className="space-y-1.5">
@@ -516,7 +620,21 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
                   />
                 </div>
 
-                {/* Color Selector */}
+                {/* Supervisor Instructions / Notes */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                    Instructions / Message for Supervisor (Optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Detailed reminder instructions or notes..."
+                    value={newNotes}
+                    onChange={(e) => setNewNotes(e.target.value)}
+                    className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                  />
+                </div>
+
+                {/* Color Selector & Submit */}
                 <div className="flex items-center justify-between pt-1">
                   <div className="flex items-center gap-1.5">
                     {(['purple', 'amber', 'emerald', 'blue', 'rose'] as const).map((c) => (
@@ -535,9 +653,10 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
 
                   <button
                     type="submit"
-                    className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors"
+                    className="px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors shadow-xs flex items-center gap-1.5"
                   >
-                    Save Event
+                    <Send size={12} />
+                    <span>Save & Notify</span>
                   </button>
                 </div>
               </form>
@@ -563,6 +682,9 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
 
               {events.map((evt: CalendarEvent) => {
                 const style = EVENT_COLOR_MAP[evt.color] || EVENT_COLOR_MAP.purple;
+                const isUrgent = evt.priority === 'urgent';
+                const isImportant = evt.priority === 'important';
+
                 return (
                   <div
                     key={evt.id}
@@ -572,21 +694,60 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
                     ].join(' ')}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-900 group-hover:text-indigo-900 transition-colors">
-                          {evt.title}
-                        </h4>
-                        <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-                          {evt.time && <span>{evt.time}</span>}
-                          {evt.time && evt.location && <span>·</span>}
-                          {evt.location && <span>{evt.location}</span>}
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h4 className="text-sm font-semibold text-slate-900 group-hover:text-indigo-900 transition-colors">
+                            {evt.title}
+                          </h4>
+                          {isUrgent && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                              🔥 Urgent
+                            </span>
+                          )}
+                          {isImportant && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+                              ⚡ Important
+                            </span>
+                          )}
                         </div>
+
+                        {/* Recipient / Target badge */}
+                        <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                          {evt.targetSupervisorId === 'ADMIN_ONLY' ? (
+                            <span className="text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                              🔒 Admin Only
+                            </span>
+                          ) : evt.targetSupervisorId === 'ALL' || (!evt.targetSupervisorId && evt.targetSupervisorName?.includes('All')) ? (
+                            <span className="text-indigo-700 bg-indigo-50 border border-indigo-100/80 px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
+                              <Users size={10} />
+                              All Supervisors
+                            </span>
+                          ) : evt.targetSupervisorName ? (
+                            <span className="text-emerald-700 bg-emerald-50 border border-emerald-100/80 px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
+                              <User size={10} />
+                              To: {evt.targetSupervisorName}
+                            </span>
+                          ) : null}
+
+                          <div className="flex items-center gap-1.5 text-slate-500">
+                            {evt.time && <span>{evt.time}</span>}
+                            {evt.time && evt.location && <span>·</span>}
+                            {evt.location && <span>{evt.location}</span>}
+                          </div>
+                        </div>
+
+                        {/* Notes / Instructions preview if provided */}
+                        {evt.notes && (
+                          <p className="mt-1 text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 leading-relaxed">
+                            {evt.notes}
+                          </p>
+                        )}
                       </div>
 
                       <button
                         type="button"
                         onClick={() => handleDeleteEvent(evt.id)}
-                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 p-1 rounded-md transition-all"
+                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 p-1 rounded-md transition-all self-start"
                         title="Delete event"
                       >
                         <Trash2 size={13} />

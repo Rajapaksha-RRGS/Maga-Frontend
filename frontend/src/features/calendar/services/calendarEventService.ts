@@ -14,6 +14,9 @@ export interface CalendarEvent {
   location?: string;
   color: 'purple' | 'amber' | 'emerald' | 'blue' | 'rose';
   notes?: string;
+  targetSupervisorId?: string; // 'ADMIN_ONLY' | 'ALL' | supervisorId
+  targetSupervisorName?: string; // e.g. 'All Supervisors' or 'Kamal Perera'
+  priority?: 'normal' | 'important' | 'urgent';
   createdAt: string;
 }
 
@@ -148,3 +151,25 @@ export function populateEventsFromMonthEntries(
     }
   });
 }
+
+/**
+ * Fetch supervisor reminders for a given supervisor and date from backend
+ */
+export async function fetchSupervisorReminders(
+  supervisorId: string,
+  dateStr: string
+): Promise<CalendarEvent[]> {
+  try {
+    const res = await apiFetch(
+      `${API_URL}/calendar/supervisor-reminders?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(dateStr)}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      return Array.isArray(data.reminders) ? data.reminders : [];
+    }
+  } catch (err) {
+    console.warn('Failed to fetch supervisor reminders:', err);
+  }
+  return [];
+}
+

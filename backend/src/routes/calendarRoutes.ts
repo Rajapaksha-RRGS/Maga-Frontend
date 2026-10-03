@@ -6,6 +6,7 @@ import {
   batchSetCalendarDays,
   getCalendarEvents,
   setCalendarEvents,
+  getSupervisorReminders,
 } from '../controllers/calendarController';
 
 const router = Router();
@@ -16,5 +17,6 @@ router.post('/set-day', setCalendarDay);
 router.post('/batch-set', batchSetCalendarDays);
 router.get('/events', getCalendarEvents);
 router.post('/events', setCalendarEvents);
+router.get('/supervisor-reminders', getSupervisorReminders);
 
 export default router;
