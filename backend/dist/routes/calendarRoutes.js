@@ -9,4 +9,5 @@ router.post('/set-day', calendarController_1.setCalendarDay);
 router.post('/batch-set', calendarController_1.batchSetCalendarDays);
 router.get('/events', calendarController_1.getCalendarEvents);
 router.post('/events', calendarController_1.setCalendarEvents);
+router.get('/supervisor-reminders', calendarController_1.getSupervisorReminders);
 exports.default = router;

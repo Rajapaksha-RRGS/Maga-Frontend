@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.setCalendarEvents = exports.getCalendarEvents = exports.batchSetCalendarDays = exports.setCalendarDay = exports.getCalendarMonth = exports.getDayTypes = void 0;
+exports.getSupervisorReminders = exports.setCalendarEvents = exports.getCalendarEvents = exports.batchSetCalendarDays = exports.setCalendarDay = exports.getCalendarMonth = exports.getDayTypes = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const employeeController_1 = require("./employeeController");
 const timeEntryController_1 = require("./timeEntryController");
@@ -402,3 +402,57 @@ const setCalendarEvents = async (req, res) => {
     }
 };
 exports.setCalendarEvents = setCalendarEvents;
+// 7. GET /api/calendar/supervisor-reminders?supervisorId=...&date=...
+const getSupervisorReminders = async (req, res) => {
+    try {
+        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const supervisorId = req.query.supervisorId;
+        const dateStr = req.query.date;
+        if (!dateStr) {
+            res.status(400).json({ error: 'date query parameter is required' });
+            return;
+        }
+        const date = parseCalendarDate(dateStr);
+        const day = await prisma_1.default.calendarDay.findUnique({
+            where: {
+                tenantId_date: {
+                    tenantId,
+                    date,
+                },
+            },
+        });
+        let allEvents = [];
+        if (day?.remarks) {
+            try {
+                allEvents = JSON.parse(day.remarks);
+                if (!Array.isArray(allEvents))
+                    allEvents = [];
+            }
+            catch {
+                allEvents = [];
+            }
+        }
+        // Filter events targeted for all supervisors or this specific supervisor
+        const relevantReminders = allEvents.filter((evt) => {
+            if (!evt.targetSupervisorId)
+                return false;
+            if (evt.targetSupervisorId === 'ADMIN_ONLY')
+                return false;
+            if (evt.targetSupervisorId === 'ALL')
+                return true;
+            if (supervisorId && evt.targetSupervisorId === supervisorId)
+                return true;
+            return false;
+        });
+        res.json({
+            date: dateStr,
+            reminders: relevantReminders,
+            count: relevantReminders.length,
+        });
+    }
+    catch (error) {
+        console.error('Error fetching supervisor reminders:', error);
+        res.status(500).json({ error: 'Failed to fetch supervisor reminders' });
+    }
+};
+exports.getSupervisorReminders = getSupervisorReminders;
