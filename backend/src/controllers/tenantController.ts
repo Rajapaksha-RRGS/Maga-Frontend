@@ -9,16 +9,20 @@ const getParam = (param: string | string[] | undefined): string => {
 
 function generateTempPassword(): string {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$';
-  let pw = '';
-  for (let i = 0; i < 10; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+  let pw = 'ERP@';
+  for (let i = 0; i <=4; i++) pw += chars[Math.floor(Math.random() * chars.length)];
   return pw;
 }
 
 function formatTenant(t: any) {
   return {
     id: t.id,
-    company_name: t.companyName,
-    companyName: t.companyName,
+    projectCode: t.projectCode,
+    project_code: t.projectCode,
+    projectName: t.projectName,
+    project_name: t.projectName,
+    company_name: t.projectName,   // Frontend එක සඳහා
+    companyName: t.projectName,    // Frontend එක සඳහා
     subdomain: t.subdomain,
     address_line1: t.addressLine1 || '',
     addressLine1: t.addressLine1 || '',
@@ -32,10 +36,11 @@ function formatTenant(t: any) {
   };
 }
 
+
 // 1. GET /api/tenants — List all tenants with admin details
 export const getAllTenants = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const tenants = await prisma.tenant.findMany({
+    const projects = await prisma.project.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
         users: {
@@ -52,22 +57,23 @@ export const getAllTenants = async (_req: Request, res: Response): Promise<void>
           select: {
             users: true,
             employees: true,
-            assignments: true,
           },
         },
       },
     });
 
-    const formatted = tenants.map((t) => {
+    const formatted = projects.map((t) => {
       const adminUsers = t.users.filter((u) => u.role === 'admin');
       const primaryAdmin = adminUsers[0] || null;
       return {
         id: t.id,
-        companyName: t.companyName,
-        company_name: t.companyName,
-        subdomain: t.subdomain,
+        projectCode: t.projectCode,
+        projectName: t.projectName,
+        companyName: t.projectName,
+        company_name: t.projectName,
+        subdomain: t.projectCode,
         addressLine1: t.addressLine1 || '',
-        address_line1: t.addressLine1 || '',
+        address_line1: t.address || '',
         addressLine2: t.addressLine2 || '',
         address_line2: t.addressLine2 || '',
         phone: t.phone || '',

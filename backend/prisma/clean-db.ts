@@ -5,7 +5,7 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🧹 Starting Database Cleanup...');
 
-  // 1. Delete Transactional Data (Logs, Time Entries, Assignments, etc.)
+  
   console.log('Cleaning transactional records...');
   await prisma.laborActivitySplit.deleteMany({});
   await prisma.operatorTimeEntry.deleteMany({});
