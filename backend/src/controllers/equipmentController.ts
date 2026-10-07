@@ -1,57 +1,143 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
-import { getDefaultTenantId } from './employeeController';
+import '../middleware/tenantMiddleware';
+import { getDefaultTenantId } from '../utils/tenantHelper';
 
 const getParam = (param: string | string[] | undefined): string => {
   if (Array.isArray(param)) return param[0] || '';
   return param || '';
 };
 
-// 1. GET /api/equipment
+const equipmentSelectOptimized = {
+  id: true,
+  projectId: true,
+  corporateEquipmentId: true,
+  condition: true,
+  costRate: true,
+  status: true,
+  meterUnitCode: true,
+  ownerPartnerId: true,
+  createdAt: true,
+  corporateEquipment: {
+    select: {
+      id: true,
+      standardEquipmentNumber: true,
+      equipmentName: true,
+      condition: true,
+      unit: true,
+      minimumUtilization: true,
+      dailyRate: true,
+      businessPartner: true,
+      vehicleNo: true,
+      costRate: true,
+      type: true,
+    },
+  },
+  ownerPartner: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+    },
+  },
+  meterUnit: {
+    select: {
+      code: true,
+      name: true,
+    },
+  },
+};
+
+function formatEquipment(item: any) {
+  const corp = item.corporateEquipment || {};
+  const costRateNum = Number(item.costRate ?? corp.costRate ?? corp.dailyRate ?? 0);
+  const primaryUnitStr = item.meterUnitCode || corp.unit || 'Hrs';
+
+  return {
+    id: item.id,
+    projectId: item.projectId,
+    tenantId: item.projectId, // Frontend backwards compatibility
+    corporateEquipmentId: item.corporateEquipmentId,
+    code: corp.standardEquipmentNumber || corp.vehicleNo || item.id,
+    vehicleNo: corp.vehicleNo || corp.standardEquipmentNumber || '',
+    vehicle_no: corp.vehicleNo || corp.standardEquipmentNumber || '',
+    magaNo: corp.standardEquipmentNumber || '',
+    maga_no: corp.standardEquipmentNumber || '',
+    name: corp.equipmentName || '',
+    type: corp.type || '',
+    condition: item.condition || corp.condition || 'DRY',
+    costRate: costRateNum,
+    cost_rate: costRateNum,
+    primaryUnit: primaryUnitStr,
+    primary_unit: primaryUnitStr,
+    availableUnits: [primaryUnitStr],
+    unitRates: [
+      {
+        unit: primaryUnitStr,
+        rate: costRateNum,
+        minUtilization: corp.minimumUtilization ? Number(corp.minimumUtilization) : undefined,
+      },
+    ],
+    status: item.status || 'active',
+    ownerPartnerId: item.ownerPartnerId || null,
+    businessPartner: item.ownerPartner ? item.ownerPartner.name : corp.businessPartner || null,
+    createdAt: item.createdAt,
+  };
+}
+
+// 1. GET /api/equipment — List equipment for project
 export const getAllEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (await getDefaultTenantId());
 
     const { status, type, query } = req.query;
-    const where: Record<string, any> = { tenantId };
+    const where: Record<string, any> = { projectId };
 
-    if (status && typeof status === 'string') {
+    if (status && typeof status === 'string' && status !== 'all') {
       where.status = status;
     }
     if (type && typeof type === 'string') {
-      where.type = type;
+      where.corporateEquipment = {
+        type: { equals: type, mode: 'insensitive' },
+      };
     }
-    if (query && typeof query === 'string') {
-      where.OR = [
-        { name: { contains: query, mode: 'insensitive' } },
-        { code: { contains: query, mode: 'insensitive' } },
-      ];
+    if (query && typeof query === 'string' && query.trim()) {
+      const q = query.trim();
+      where.corporateEquipment = {
+        ...(where.corporateEquipment || {}),
+        OR: [
+          { equipmentName: { contains: q, mode: 'insensitive' } },
+          { standardEquipmentNumber: { contains: q, mode: 'insensitive' } },
+          { vehicleNo: { contains: q, mode: 'insensitive' } },
+        ],
+      };
     }
 
     const equipment = await prisma.equipment.findMany({
       where,
-      include: {
-        unitRates: true,
-      },
+      select: equipmentSelectOptimized,
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json(equipment);
+    res.json(equipment.map(formatEquipment));
   } catch (error) {
     console.error('Error fetching equipment:', error);
     res.status(500).json({ error: 'Failed to fetch equipment list' });
   }
 };
 
-// 2. GET /api/equipment/:id
+// 2. GET /api/equipment/:id — Get equipment by ID
 export const getEquipmentById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
+    const id = getParam(req.params.id);
     const item = await prisma.equipment.findUnique({
-      where: { id: id as string },
-      include: {
-        unitRates: true,
-      },
+      where: { id },
+      select: equipmentSelectOptimized,
     });
 
     if (!item) {
@@ -59,187 +145,179 @@ export const getEquipmentById = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    res.json(item);
+    res.json(formatEquipment(item));
   } catch (error) {
     console.error('Error fetching equipment by id:', error);
     res.status(500).json({ error: 'Failed to fetch equipment record' });
   }
 };
 
-// 3. POST /api/equipment
+// 3. POST /api/equipment — Create new equipment
 export const createEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
-    const { 
-      code, 
-      vehicleNo, 
-      magaNo, 
-      name, 
-      type, 
-      condition, 
-      costRate, 
-      primaryUnit, 
-      availableUnits,
-      unitRates 
-    } = req.body;
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      req.body.projectId ||
+      req.body.tenantId ||
+      (await getDefaultTenantId());
+
+    const {
+      code,
+      vehicleNo,
+      magaNo,
+      name,
+      type,
+      condition,
+      costRate,
+      primaryUnit,
+      businessPartnerId,
+    } = req.body || {};
 
     if (!name || !name.trim()) {
       res.status(400).json({ error: 'Equipment name is required' });
       return;
     }
 
-    const assignedCode = code?.trim() || vehicleNo?.trim() || magaNo?.trim() || null;
+    const assignedCode = (code?.trim() || magaNo?.trim() || vehicleNo?.trim() || `EQ-${Date.now().toString().slice(-4)}`).toUpperCase();
+    const assignedVehicle = vehicleNo?.trim() || assignedCode;
     const numericCost = costRate !== undefined && costRate !== null && !isNaN(Number(costRate)) ? Number(costRate) : 0;
+    const assignedUnit = primaryUnit || 'Hrs';
 
-    const assignedUnit = primaryUnit || req.body.unit || 'Hrs';
-    const assignedAvailableUnits = Array.isArray(availableUnits) && availableUnits.length > 0 
-      ? availableUnits 
-      : [assignedUnit];
-
-    const created = await prisma.equipment.create({
-      data: {
-        tenantId,
-        code: assignedCode,
-        vehicleNo: vehicleNo?.trim() || assignedCode,
-        magaNo: magaNo?.trim() || null,
-        name: name.trim(),
-        type: type?.trim() || null,
-        condition: condition?.trim() || 'DRY',
-        costRate: numericCost,
-        primaryUnit: assignedUnit,
-        availableUnits: assignedAvailableUnits,
-        status: 'active',
-      },
-    });
-
-    // Create unit rates if provided
-    if (Array.isArray(unitRates) && unitRates.length > 0) {
-      for (const ur of unitRates) {
-        if (ur.unit) {
-          await prisma.equipmentUnitRate.upsert({
-            where: {
-              equipmentId_unit: { equipmentId: created.id, unit: ur.unit },
-            },
-            update: {
-              erpBillingCode: ur.erpBillingCode || null,
-              rate: ur.rate !== undefined && !isNaN(Number(ur.rate)) ? Number(ur.rate) : numericCost,
-              minUtilization: ur.minUtilization !== undefined && !isNaN(Number(ur.minUtilization)) ? Number(ur.minUtilization) : null,
-            },
-            create: {
-              equipmentId: created.id,
-              unit: ur.unit,
-              erpBillingCode: ur.erpBillingCode || null,
-              rate: ur.rate !== undefined && !isNaN(Number(ur.rate)) ? Number(ur.rate) : numericCost,
-              minUtilization: ur.minUtilization !== undefined && !isNaN(Number(ur.minUtilization)) ? Number(ur.minUtilization) : null,
-            },
-          });
-        }
-      }
-    } else {
-      // Default rate entry for primary unit
-      await prisma.equipmentUnitRate.create({
-        data: {
-          equipmentId: created.id,
-          unit: assignedUnit,
-          rate: numericCost,
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Ensure Unit exists if needed
+      await tx.unitMaster.upsert({
+        where: { code: assignedUnit },
+        update: {},
+        create: {
+          code: assignedUnit,
+          name: assignedUnit,
+          category: 'meter',
         },
       });
-    }
 
-    const result = await prisma.equipment.findUnique({
-      where: { id: created.id },
-      include: { unitRates: true },
+      // 2. Find or create Corporate Equipment
+      let corpEquip = await tx.corporateEquipment.findFirst({
+        where: {
+          OR: [
+            { standardEquipmentNumber: assignedCode },
+            { vehicleNo: assignedVehicle },
+          ],
+        },
+      });
+
+      if (!corpEquip) {
+        corpEquip = await tx.corporateEquipment.create({
+          data: {
+            standardEquipmentNumber: assignedCode,
+            equipmentName: name.trim(),
+            vehicleNo: assignedVehicle,
+            type: type?.trim() || null,
+            condition: condition?.trim() || 'DRY',
+            costRate: numericCost,
+            unit: assignedUnit,
+            status: 'active',
+          },
+        });
+      }
+
+      // 3. Enroll into Site Equipment
+      const siteEquip = await tx.equipment.create({
+        data: {
+          projectId,
+          corporateEquipmentId: corpEquip.id,
+          condition: condition?.trim() || corpEquip.condition,
+          costRate: numericCost,
+          meterUnitCode: assignedUnit,
+          ownerPartnerId: businessPartnerId || null,
+          status: 'active',
+        },
+        select: equipmentSelectOptimized,
+      });
+
+      return siteEquip;
     });
 
-    res.status(201).json(result);
-  } catch (error) {
+    res.status(201).json(formatEquipment(result));
+  } catch (error: any) {
     console.error('Error creating equipment:', error);
+    if (error.code === 'P2002') {
+      res.status(409).json({ error: 'Equipment already enrolled in this project' });
+      return;
+    }
     res.status(500).json({ error: 'Failed to create equipment' });
   }
 };
 
-// 4. PUT /api/equipment/:id
+// 4. PUT /api/equipment/:id — Update equipment
 export const updateEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { 
-      code, 
-      vehicleNo, 
-      magaNo, 
-      name, 
-      type, 
-      condition, 
-      costRate, 
-      status, 
-      primaryUnit, 
-      availableUnits,
-      unitRates 
-    } = req.body;
+    const {
+      name,
+      type,
+      condition,
+      costRate,
+      status,
+      primaryUnit,
+      businessPartnerId,
+    } = req.body || {};
+
+    const existing = await prisma.equipment.findUnique({
+      where: { id },
+      select: { id: true, corporateEquipmentId: true },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Equipment not found' });
+      return;
+    }
 
     const data: Record<string, any> = {};
-    if (code !== undefined) data.code = code?.trim() || null;
-    if (vehicleNo !== undefined) data.vehicleNo = vehicleNo?.trim() || null;
-    if (magaNo !== undefined) data.magaNo = magaNo?.trim() || null;
-    if (name !== undefined) data.name = name.trim();
-    if (type !== undefined) data.type = type?.trim() || null;
     if (condition !== undefined) data.condition = condition?.trim() || 'DRY';
-    if (costRate !== undefined) {
-      data.costRate = costRate !== null && !isNaN(Number(costRate)) ? Number(costRate) : null;
-    }
+    if (costRate !== undefined) data.costRate = costRate !== null && !isNaN(Number(costRate)) ? Number(costRate) : null;
     if (status !== undefined) data.status = status;
-    if (primaryUnit !== undefined) data.primaryUnit = primaryUnit;
-    if (availableUnits !== undefined) data.availableUnits = Array.isArray(availableUnits) ? availableUnits : [];
+    if (primaryUnit !== undefined) data.meterUnitCode = primaryUnit;
+    if (businessPartnerId !== undefined) data.ownerPartnerId = businessPartnerId || null;
 
-    const updated = await prisma.equipment.update({
-      where: { id },
-      data,
-    });
+    await prisma.$transaction(async (tx) => {
+      await tx.equipment.update({
+        where: { id },
+        data,
+      });
 
-    if (Array.isArray(unitRates)) {
-      for (const ur of unitRates) {
-        if (ur.unit) {
-          await prisma.equipmentUnitRate.upsert({
-            where: {
-              equipmentId_unit: { equipmentId: id, unit: ur.unit },
-            },
-            update: {
-              erpBillingCode: ur.erpBillingCode || null,
-              rate: ur.rate !== undefined && !isNaN(Number(ur.rate)) ? Number(ur.rate) : 0,
-              minUtilization: ur.minUtilization !== undefined && !isNaN(Number(ur.minUtilization)) ? Number(ur.minUtilization) : null,
-            },
-            create: {
-              equipmentId: id,
-              unit: ur.unit,
-              erpBillingCode: ur.erpBillingCode || null,
-              rate: ur.rate !== undefined && !isNaN(Number(ur.rate)) ? Number(ur.rate) : 0,
-              minUtilization: ur.minUtilization !== undefined && !isNaN(Number(ur.minUtilization)) ? Number(ur.minUtilization) : null,
-            },
-          });
-        }
+      if (name || type) {
+        await tx.corporateEquipment.update({
+          where: { id: existing.corporateEquipmentId },
+          data: {
+            equipmentName: name?.trim() || undefined,
+            type: type?.trim() || undefined,
+          },
+        });
       }
-    }
-
-    const result = await prisma.equipment.findUnique({
-      where: { id },
-      include: { unitRates: true },
     });
 
-    res.json(result);
+    const refreshed = await prisma.equipment.findUnique({
+      where: { id },
+      select: equipmentSelectOptimized,
+    });
+
+    res.json(formatEquipment(refreshed));
   } catch (error) {
     console.error('Error updating equipment:', error);
     res.status(500).json({ error: 'Failed to update equipment' });
   }
 };
 
-// 5. PATCH /api/equipment/:id/status
+// 5. PATCH /api/equipment/:id/status — Toggle status
 export const toggleEquipmentStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { status } = req.body;
+    const { status } = req.body || {};
 
     let targetStatus = status;
     if (!targetStatus) {
-      const existing = await prisma.equipment.findUnique({ where: { id } });
+      const existing = await prisma.equipment.findUnique({ where: { id }, select: { status: true } });
       if (!existing) {
         res.status(404).json({ error: 'Equipment not found' });
         return;
@@ -250,19 +328,36 @@ export const toggleEquipmentStatus = async (req: Request, res: Response): Promis
     const updated = await prisma.equipment.update({
       where: { id },
       data: { status: targetStatus },
+      select: equipmentSelectOptimized,
     });
 
-    res.json(updated);
+    res.json(formatEquipment(updated));
   } catch (error) {
     console.error('Error toggling equipment status:', error);
     res.status(500).json({ error: 'Failed to toggle equipment status' });
   }
 };
 
-// 6. DELETE /api/equipment/:id
+// 6. DELETE /api/equipment/:id — Delete or soft-deactivate
 export const deleteEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
+
+    const [assignmentsCount, entriesCount] = await Promise.all([
+      prisma.dailyEquipmentAssignment.count({ where: { equipmentId: id } }),
+      prisma.timeEntry.count({ where: { equipmentId: id } }),
+    ]);
+
+    const totalUsage = assignmentsCount + entriesCount;
+    if (totalUsage > 0) {
+      await prisma.equipment.update({
+        where: { id },
+        data: { status: 'inactive' },
+      });
+      res.json({ message: 'Equipment deactivated successfully (has operational history)' });
+      return;
+    }
+
     await prisma.equipment.delete({
       where: { id },
     });
@@ -274,290 +369,170 @@ export const deleteEquipment = async (req: Request, res: Response): Promise<void
   }
 };
 
-// 7. POST /api/equipment/batch-erp-import
-// Groups multi-line ERP rows for the same vehicle/equipment into a single Equipment with multiple unit rates
+// 7. POST /api/equipment/batch-erp-import — Import into project
 export const batchImportErpEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
-    const { items } = req.body;
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      req.body.projectId ||
+      req.body.tenantId ||
+      (await getDefaultTenantId());
 
+    const { items } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
       res.status(400).json({ error: 'Non-empty items array is required' });
       return;
     }
 
-    // Grouping by vehicleNo (if present) OR standardEquipmentNumber
-    const grouped = new Map<string, {
-      vehicleNo: string;
-      standardEquipmentNumber: string;
-      name: string;
-      type: string;
-      condition: string;
-      businessPartner?: string;
-      rates: Array<{
-        unit: string;
-        erpBillingCode?: string;
-        rate: number;
-        minUtilization?: number;
-      }>;
-    }>();
+    const imported = [];
+    for (const item of items) {
+      const code = (item.standardEquipmentNumber || item.code || item.vehicleNo || '').trim().toUpperCase();
+      if (!code) continue;
 
-    for (const row of items) {
-      const stdEqNo = (row.standardEquipmentNumber || row.standard_equipment_number || row.magaNo || '').trim();
-      const vehicleNo = (row.vehicleNo || row.vehicle_no || '').trim();
-      const erpNewCode = (row.erpNewCode || row.erp_new_code || row.erpSuffixCode || row.code || '').trim();
-      
-      // Determine standard code: if stdEqNo is provided, use it; else if erpNewCode, strip letter suffix; else fallback to vehicleNo
-      const baseStandardNo = stdEqNo || (erpNewCode ? erpNewCode.replace(/[A-Za-z]$/, '') : '') || vehicleNo;
-      
-      // Grouping key: vehicleNo if present, otherwise standardEquipmentNumber
-      const groupKey = vehicleNo || baseStandardNo || erpNewCode;
-      if (!groupKey) continue;
+      const name = item.name || item.equipmentName || code;
+      const unit = item.primaryUnit || item.unit || 'Hrs';
+      const numericRate = item.costRate !== undefined ? Number(item.costRate) : 0;
 
-      const unit = (row.unit || row.primaryUnit || 'hrs').trim().toLowerCase();
-      const rateVal = Number(row.dailyRate ?? row.costRate ?? row.rate ?? 0);
-      const minUtil = (row.minimumUtilization !== undefined && row.minimumUtilization !== null)
-        ? Number(row.minimumUtilization)
-        : (row.minUtilization !== undefined && row.minUtilization !== null)
-        ? Number(row.minUtilization)
-        : undefined;
-      const bp = (row.businessPartner || row.business_partner || '').trim();
-
-      const eqName = (row.equipmentName || row.equipment_name || row.equipment || row.name || row.description || groupKey).trim();
-      const eqCondition = (row.condition || 'DRY').trim().toUpperCase();
-
-      if (!grouped.has(groupKey)) {
-        grouped.set(groupKey, {
-          vehicleNo: vehicleNo || (groupKey.startsWith('P') ? groupKey : ''),
-          standardEquipmentNumber: baseStandardNo || groupKey,
-          name: eqName,
-          type: (row.type || 'Equipment').trim(),
-          condition: eqCondition,
-          businessPartner: bp || undefined,
-          rates: [],
-        });
-      }
-
-      grouped.get(groupKey)!.rates.push({
-        unit,
-        erpBillingCode: erpNewCode || baseStandardNo,
-        rate: rateVal,
-        minUtilization: minUtil,
+      // Ensure unit exists
+      await prisma.unitMaster.upsert({
+        where: { code: unit },
+        update: {},
+        create: { code: unit, name: unit, category: 'meter' },
       });
-    }
 
-    const savedRecords = [];
-    for (const [key, data] of grouped.entries()) {
-      // Find or link Business Partner if provided
-      let ownerPartnerId: string | undefined = undefined;
-      if (data.businessPartner) {
-        let partner = await prisma.businessPartner.findFirst({
-          where: {
-            tenantId,
-            OR: [
-              { code: data.businessPartner },
-              { name: data.businessPartner },
-            ],
-          },
-        });
-        if (!partner) {
-          partner = await prisma.businessPartner.create({
-            data: {
-              tenantId,
-              code: data.businessPartner,
-              name: data.businessPartner,
-              type: 'Subcontractor',
-            },
-          });
-        }
-        ownerPartnerId = partner.id;
-      }
-
-      // Find or upsert equipment
-      const existing = await prisma.equipment.findFirst({
+      // Find or create Corporate Equipment
+      let corp = await prisma.corporateEquipment.findFirst({
         where: {
-          tenantId,
           OR: [
-            { code: key },
-            ...(data.vehicleNo ? [{ vehicleNo: data.vehicleNo }] : []),
-            ...(data.standardEquipmentNumber ? [{ magaNo: data.standardEquipmentNumber }] : []),
+            { standardEquipmentNumber: code },
+            { vehicleNo: item.vehicleNo || code },
           ],
         },
       });
 
-      const unitsList = Array.from(new Set(data.rates.map((r) => r.unit)));
-      const primaryRate = data.rates[0]?.rate || 0;
-      const primaryUnit = data.rates[0]?.unit || 'hrs';
-
-      let equipmentId: string;
-
-      if (existing) {
-        equipmentId = existing.id;
-        await prisma.equipment.update({
-          where: { id: existing.id },
+      if (corp) {
+        corp = await prisma.corporateEquipment.update({
+          where: { id: corp.id },
           data: {
-            vehicleNo: data.vehicleNo || existing.vehicleNo,
-            magaNo: data.standardEquipmentNumber || existing.magaNo,
-            name: data.name || existing.name,
-            type: data.type || existing.type,
-            condition: data.condition || existing.condition,
-            costRate: primaryRate || existing.costRate,
-            primaryUnit: existing.primaryUnit || primaryUnit,
-            availableUnits: Array.from(new Set([...(existing.availableUnits || []), ...unitsList])),
-            ...(ownerPartnerId ? { ownerPartnerId } : {}),
+            equipmentName: name,
+            unit,
           },
         });
       } else {
-        const created = await prisma.equipment.create({
+        corp = await prisma.corporateEquipment.create({
           data: {
-            tenantId,
-            code: key,
-            vehicleNo: data.vehicleNo || null,
-            magaNo: data.standardEquipmentNumber || null,
-            name: data.name,
-            type: data.type,
-            condition: data.condition,
-            costRate: primaryRate,
-            primaryUnit,
-            availableUnits: unitsList,
+            standardEquipmentNumber: code,
+            equipmentName: name,
+            vehicleNo: item.vehicleNo || code,
+            unit,
+            costRate: numericRate,
+            condition: item.condition || 'DRY',
+            type: item.type || null,
             status: 'active',
-            ...(ownerPartnerId ? { ownerPartnerId } : {}),
-          },
-        });
-        equipmentId = created.id;
-      }
-
-      // Upsert unit rates
-      for (const r of data.rates) {
-        await prisma.equipmentUnitRate.upsert({
-          where: {
-            equipmentId_unit: { equipmentId, unit: r.unit },
-          },
-          update: {
-            erpBillingCode: r.erpBillingCode || null,
-            rate: r.rate,
-            minUtilization: r.minUtilization ?? null,
-          },
-          create: {
-            equipmentId,
-            unit: r.unit,
-            erpBillingCode: r.erpBillingCode || null,
-            rate: r.rate,
-            minUtilization: r.minUtilization ?? null,
           },
         });
       }
 
-      const fullEq = await prisma.equipment.findUnique({
-        where: { id: equipmentId },
-        include: { unitRates: true, ownerPartner: true },
+      // Upsert into Site Equipment
+      const site = await prisma.equipment.upsert({
+        where: {
+          projectId_corporateEquipmentId: {
+            projectId,
+            corporateEquipmentId: corp.id,
+          },
+        },
+        update: {
+          condition: item.condition || corp.condition,
+          costRate: numericRate,
+          meterUnitCode: unit,
+          status: 'active',
+        },
+        create: {
+          projectId,
+          corporateEquipmentId: corp.id,
+          condition: item.condition || corp.condition,
+          costRate: numericRate,
+          meterUnitCode: unit,
+          status: 'active',
+        },
+        select: equipmentSelectOptimized,
       });
-      savedRecords.push(fullEq);
+
+      imported.push(formatEquipment(site));
     }
 
-    res.json({
-      success: true,
-      importedCount: savedRecords.length,
-      equipment: savedRecords,
-    });
+    res.json({ success: true, count: imported.length, items: imported });
   } catch (error) {
     console.error('Error batch importing ERP equipment:', error);
-    res.status(500).json({ error: 'Failed to batch import ERP equipment' });
+    res.status(500).json({ error: 'Failed to batch import equipment' });
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CENTRAL CORPORATE ERP CATALOG CONTROLLERS
-// ─────────────────────────────────────────────────────────────────────────────
-
+// 8. GET /api/equipment/corporate-master — Catalog from corporate
 export const getCorporateEquipmentCatalog = async (_req: Request, res: Response): Promise<void> => {
   try {
     const list = await prisma.corporateEquipment.findMany({
-      orderBy: [
-        { standardEquipmentNumber: 'asc' },
-        { erpNewCode: 'asc' },
-      ],
+      orderBy: { standardEquipmentNumber: 'asc' },
     });
-
-    const formatted = list.map((item) => ({
-      ...item,
-      code: item.erpNewCode || item.code || item.standardEquipmentNumber || '',
-      name: item.equipmentName || item.description || item.standardEquipmentNumber || 'Equipment',
-      type: item.type || 'Equipment',
-      sourceProject: item.currentWorkingProject || 'Central Depot',
-      costRate: Number(item.dailyRate ?? item.costRate ?? 0),
-      dailyRate: Number(item.dailyRate ?? item.costRate ?? 0),
-      model: item.model || '',
-      registrationNo: item.registrationNo || item.vehicleNo || '',
-      searchKey: item.searchKey || item.equipmentName || '',
-    }));
-
-    res.json(formatted);
+    res.json(list);
   } catch (error) {
     console.error('Error fetching corporate equipment catalog:', error);
     res.status(500).json({ error: 'Failed to fetch corporate equipment catalog' });
   }
 };
 
+// 9. POST /api/equipment/corporate-master/batch — Batch sync corporate equipment
 export const batchSyncCorporateEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { items } = req.body;
+    const { items } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
-      res.status(400).json({ error: 'Non-empty items array is required' });
+      res.status(400).json({ error: 'Array of items required' });
       return;
     }
 
-    const synced = [];
-    for (const row of items) {
-      const stdEqNo = (row.standardEquipmentNumber || row.standard_equipment_number || row.magaNo || row.code || '').trim();
-      const erpCode = (row.erpNewCode || row.erp_new_code || row.erpSuffixCode || row.code || '').trim();
-      const eqName = (row.equipmentName || row.equipment_name || row.equipment || row.name || row.description || '').trim();
-      if (!stdEqNo || !erpCode) continue;
+    const results = [];
+    for (const item of items) {
+      const code = (item.standardEquipmentNumber || item.code || item.vehicleNo || '').trim().toUpperCase();
+      if (!code) continue;
 
-      const record = await prisma.corporateEquipment.upsert({
-        where: { erpNewCode: erpCode },
-        update: {
-          standardEquipmentNumber: stdEqNo,
-          equipmentName: eqName || stdEqNo,
-          condition: (row.condition || 'DRY').trim().toUpperCase(),
-          unit: (row.unit || 'hrs').trim(),
-          minimumUtilization: (row.minimumUtilization !== undefined && row.minimumUtilization !== null)
-            ? Number(row.minimumUtilization)
-            : (row.minUtilization !== undefined ? Number(row.minUtilization) : null),
-          dailyRate: Number(row.dailyRate ?? row.costRate ?? row.rate ?? 0),
-          businessPartner: (row.businessPartner || row.business_partner || null)?.trim(),
-          vehicleNo: (row.vehicleNo || row.vehicle_no || null)?.trim(),
-          code: erpCode,
-          description: eqName,
-        },
-        create: {
-          standardEquipmentNumber: stdEqNo,
-          equipmentName: eqName || stdEqNo,
-          condition: (row.condition || 'DRY').trim().toUpperCase(),
-          unit: (row.unit || 'hrs').trim(),
-          minimumUtilization: (row.minimumUtilization !== undefined && row.minimumUtilization !== null)
-            ? Number(row.minimumUtilization)
-            : (row.minUtilization !== undefined ? Number(row.minUtilization) : null),
-          dailyRate: Number(row.dailyRate ?? row.costRate ?? row.rate ?? 0),
-          businessPartner: (row.businessPartner || row.business_partner || null)?.trim(),
-          erpNewCode: erpCode,
-          vehicleNo: (row.vehicleNo || row.vehicle_no || null)?.trim(),
-          code: erpCode,
-          description: eqName,
-        },
+      let record = await prisma.corporateEquipment.findFirst({
+        where: { standardEquipmentNumber: code },
       });
-      synced.push(record);
+
+      if (record) {
+        record = await prisma.corporateEquipment.update({
+          where: { id: record.id },
+          data: {
+            equipmentName: item.equipmentName || item.name || code,
+            vehicleNo: item.vehicleNo || null,
+            condition: item.condition || 'DRY',
+            unit: item.unit || 'Hrs',
+            dailyRate: item.dailyRate ? Number(item.dailyRate) : 0,
+            costRate: item.costRate ? Number(item.costRate) : 0,
+            type: item.type || null,
+          },
+        });
+      } else {
+        record = await prisma.corporateEquipment.create({
+          data: {
+            standardEquipmentNumber: code,
+            equipmentName: item.equipmentName || item.name || code,
+            vehicleNo: item.vehicleNo || null,
+            condition: item.condition || 'DRY',
+            unit: item.unit || 'Hrs',
+            dailyRate: item.dailyRate ? Number(item.dailyRate) : 0,
+            costRate: item.costRate ? Number(item.costRate) : 0,
+            type: item.type || null,
+          },
+        });
+      }
+      results.push(record);
     }
 
-    res.json({
-      success: true,
-      syncedCount: synced.length,
-      items: synced,
-    });
+    res.json({ success: true, count: results.length });
   } catch (error) {
     console.error('Error batch syncing corporate equipment:', error);
     res.status(500).json({ error: 'Failed to batch sync corporate equipment' });
   }
 };
-
-

@@ -1,7 +1,8 @@
-import { Request, Response } from "express";
-import bcrypt from "bcrypt";
-import prisma from "../config/prisma";
-import { getDefaultTenantId } from "./employeeController";
+import { Request, Response } from 'express';
+import bcrypt from 'bcrypt';
+import prisma from '../config/prisma';
+import '../middleware/tenantMiddleware';
+import { getDefaultTenantId } from '../utils/tenantHelper';
 
 function generateTempPassword(): string {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -12,6 +13,7 @@ function generateTempPassword(): string {
   return pw;
 }
 
+// 1. GET /api/supervisors/active-site — Fetch supervisor active site project details
 export const getSupervisorActiveSite = async (req: Request, res: Response): Promise<void> => {
   try {
     const supervisorId = (req.query.supervisorId as string) || (req.query.userId as string);
@@ -20,10 +22,10 @@ export const getSupervisorActiveSite = async (req: Request, res: Response): Prom
     if (!tenantId && supervisorId) {
       const user = await prisma.user.findUnique({
         where: { id: supervisorId },
-        select: { tenantId: true },
+        select: { projectId: true },
       });
       if (user) {
-        tenantId = user.tenantId;
+        tenantId = user.projectId;
       }
     }
 
@@ -31,73 +33,57 @@ export const getSupervisorActiveSite = async (req: Request, res: Response): Prom
       tenantId = req.resolvedTenantId || (await getDefaultTenantId());
     }
 
-    const tenant = await prisma.tenant.findUnique({
+    // Direct indexed Project lookup — no secondary corporate catalog scans needed
+    const project = await prisma.project.findUnique({
       where: { id: tenantId },
+      select: {
+        id: true,
+        projectName: true,
+        projectCode: true,
+        subdomain: true,
+        projectManager: true,
+        addressCode: true,
+        addressLine1: true,
+        addressLine2: true,
+      },
     });
 
-    if (!tenant) {
-      res.status(404).json({ error: "Tenant/Site not found" });
+    if (!project) {
+      res.status(404).json({ error: 'Tenant/Site not found' });
       return;
     }
 
-    const corporateProjects = await prisma.corporateProject.findMany({
-      where: { status: 'Active' },
-      orderBy: { projectCode: 'asc' },
-    });
-
-    const cleanSubdomain = tenant.subdomain.trim().toLowerCase();
-    const cleanSubdomainNum = cleanSubdomain.replace(/[^0-9]/g, '');
-
-    let matchedCorp = corporateProjects.find((cp) => {
-      const pCodeLower = cp.projectCode.toLowerCase();
-      return (
-        pCodeLower === cleanSubdomain ||
-        pCodeLower.includes(cleanSubdomain) ||
-        cleanSubdomain.includes(pCodeLower) ||
-        (cleanSubdomainNum && cleanSubdomainNum.length > 0 && pCodeLower.includes(cleanSubdomainNum))
-      );
-    });
-
-    if (!matchedCorp) {
-      matchedCorp = corporateProjects.find((cp) => {
-        const pNameLower = (cp.projectName || cp.description).toLowerCase();
-        const cNameLower = tenant.companyName.toLowerCase();
-        return pNameLower.includes(cNameLower) || cNameLower.includes(pNameLower);
-      });
-    }
-
     const activeSite = {
-      id: tenant.id,
-      name: matchedCorp?.projectName || matchedCorp?.description || tenant.companyName,
-      code: matchedCorp?.projectCode || (tenant.subdomain.toUpperCase().startsWith('M') ? tenant.subdomain.toUpperCase() : `M00000${tenant.subdomain.toUpperCase()}`),
-      location: matchedCorp?.addressCode || tenant.addressLine1 || tenant.addressLine2 || 'Site Base Office',
-      projectManager: matchedCorp?.projectManager ? `Eng. ${matchedCorp.projectManager}` : 'Eng. Project Lead',
+      id: project.id,
+      name: project.projectName,
+      code: project.projectCode || project.subdomain,
+      location: project.addressCode || project.addressLine1 || project.addressLine2 || 'Site Base Office',
+      projectManager: project.projectManager ? `Eng. ${project.projectManager}` : 'Eng. Project Lead',
     };
-
-    const availableSites = [activeSite];
 
     res.json({
       activeSite,
-      availableSites,
+      availableSites: [activeSite],
     });
   } catch (error) {
-    console.error("Error fetching supervisor active site:", error);
-    res.status(500).json({ error: "Failed to fetch supervisor active site" });
+    console.error('Error fetching supervisor active site:', error);
+    res.status(500).json({ error: 'Failed to fetch supervisor active site' });
   }
 };
 
+// 2. GET /api/supervisors — List all supervisors for the project
 export const getAllSupervisors = async (req: Request, res: Response): Promise<void> => {
   try {
     const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
     if (!tenantId) {
-      res.status(401).json({ message: "Unauthorized: No tenantId found" });
+      res.status(401).json({ message: 'Unauthorized: No tenantId found' });
       return;
     }
 
     const supervisors = await prisma.user.findMany({
       where: {
-        tenantId,
+        projectId: tenantId,
         role: 'supervisor',
       },
       select: {
@@ -118,14 +104,20 @@ export const getAllSupervisors = async (req: Request, res: Response): Promise<vo
       .map((s) => s.employeeId)
       .filter(Boolean) as string[];
 
-    let empMap = new Map<string, string>();
+    const empMap = new Map<string, string>();
     if (employeeIds.length > 0) {
       const employees = await prisma.employee.findMany({
         where: { id: { in: employeeIds } },
-        select: { id: true, callingName: true, fullName: true },
+        select: {
+          id: true,
+          callingName: true,
+          corporateEmployee: {
+            select: { fullName: true },
+          },
+        },
       });
       employees.forEach((e) => {
-        empMap.set(e.id, e.callingName || e.fullName || '');
+        empMap.set(e.id, e.callingName || e.corporateEmployee?.fullName || '');
       });
     }
 
@@ -141,16 +133,17 @@ export const getAllSupervisors = async (req: Request, res: Response): Promise<vo
 
     res.json(formatted);
   } catch (error) {
-    console.error("Error fetching supervisors:", error);
-    res.status(500).json({ message: "Error fetching supervisors" });
+    console.error('Error fetching supervisors:', error);
+    res.status(500).json({ message: 'Error fetching supervisors' });
   }
 };
 
+// 3. POST /api/supervisors — Create supervisor
 export const createSupervisor = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { fullName, username, linkedEmployeeId, employeeId } = req.body;
+    const { fullName, username, linkedEmployeeId, employeeId } = req.body || {};
     if (!fullName || !username) {
-      res.status(400).json({ message: "All fields are required" });
+      res.status(400).json({ message: 'All fields are required' });
       return;
     }
 
@@ -161,13 +154,13 @@ export const createSupervisor = async (req: Request, res: Response): Promise<voi
 
     const newSupervisor = await prisma.user.create({
       data: {
-        tenantId,
+        projectId: tenantId,
         fullName: fullName.trim(),
         username: username.trim().toLowerCase(),
-        role: "supervisor",
+        role: 'supervisor',
         passwordHash: hashedPassword,
         employeeId: resolvedEmployeeId,
-        status: "active",
+        status: 'active',
         mustChangePassword: true,
       },
     });
@@ -176,10 +169,15 @@ export const createSupervisor = async (req: Request, res: Response): Promise<voi
     if (resolvedEmployeeId) {
       const emp = await prisma.employee.findUnique({
         where: { id: resolvedEmployeeId },
-        select: { callingName: true, fullName: true },
+        select: {
+          callingName: true,
+          corporateEmployee: {
+            select: { fullName: true },
+          },
+        },
       });
       if (emp) {
-        linkedEmployeeName = emp.callingName || emp.fullName;
+        linkedEmployeeName = emp.callingName || emp.corporateEmployee?.fullName || null;
       }
     }
 
@@ -193,18 +191,19 @@ export const createSupervisor = async (req: Request, res: Response): Promise<voi
         linkedEmployeeName,
       },
       tempPassword,
-      message: "Supervisor created successfully",
+      message: 'Supervisor created successfully',
     });
   } catch (error: any) {
     console.error('Error creating supervisor:', error);
     if (error.code === 'P2002') {
-      res.status(409).json({ message: 'Supervisor with this username already exists' });
+      res.status(409).json({ message: 'Supervisor with this username already exists in this project' });
       return;
     }
     res.status(500).json({ message: 'Failed to create supervisor' });
   }
 };
 
+// 4. POST /api/supervisors/:id/reset-password — Reset password
 export const resetSupervisorPassword = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = (req.params.id as string) || '';
@@ -220,24 +219,25 @@ export const resetSupervisorPassword = async (req: Request, res: Response): Prom
     });
 
     res.json({
-      message: "Password reset successfully",
+      message: 'Password reset successfully',
       tempPassword,
       name: update.fullName,
     });
   } catch (error: any) {
-    console.error("Error resetting supervisor password:", error);
+    console.error('Error resetting supervisor password:', error);
     if (error.code === 'P2025') {
-      res.status(404).json({ message: "Supervisor not found" });
+      res.status(404).json({ message: 'Supervisor not found' });
       return;
     }
-    res.status(500).json({ message: "Error resetting supervisor password" });
+    res.status(500).json({ message: 'Error resetting supervisor password' });
   }
 };
 
+// 5. PATCH /api/supervisors/:id/status — Toggle status
 export const updateSupervisorStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = (req.params.id as string) || '';
-    const { status } = req.body;
+    const { status } = req.body || {};
 
     const update = await prisma.user.update({
       where: { id },
@@ -246,15 +246,16 @@ export const updateSupervisorStatus = async (req: Request, res: Response): Promi
 
     res.json(update);
   } catch (error: any) {
-    console.error("Error updating supervisor status:", error);
+    console.error('Error updating supervisor status:', error);
     if (error.code === 'P2025') {
-      res.status(404).json({ message: "Supervisor not found" });
+      res.status(404).json({ message: 'Supervisor not found' });
       return;
     }
-    res.status(500).json({ message: "Error updating supervisor status" });
+    res.status(500).json({ message: 'Error updating supervisor status' });
   }
 };
 
+// 6. DELETE /api/supervisors/:id — Delete or deactivate supervisor
 export const deleteSupervisor = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = (req.params.id as string) || '';
@@ -264,26 +265,35 @@ export const deleteSupervisor = async (req: Request, res: Response): Promise<voi
     });
 
     if (!supervisor) {
-      res.status(404).json({ message: "Supervisor not found" });
+      res.status(404).json({ message: 'Supervisor not found' });
       return;
     }
 
-    // Clean up any assigned tasks or time entries if linked
-    await prisma.dailyAssignment.deleteMany({ where: { supervisorId: id } });
-    await prisma.timeEntry.deleteMany({ where: { supervisorId: id } });
+    // Check if supervisor has operational records (daily sheets or recorded time entries)
+    const sheetsCount = await prisma.dailySheet.count({ where: { supervisorId: id } });
+    const entriesCount = await prisma.timeEntry.count({ where: { recordedById: id } });
+
+    if (sheetsCount > 0 || entriesCount > 0) {
+      // Soft-delete / deactivate to preserve audit trail and foreign key integrity
+      await prisma.user.update({
+        where: { id },
+        data: { status: 'inactive' },
+      });
+      res.json({ message: 'Supervisor deactivated successfully (retained due to existing daily sheet records)' });
+      return;
+    }
 
     await prisma.user.delete({
       where: { id },
     });
 
-    res.json({ message: "Supervisor deleted successfully" });
+    res.json({ message: 'Supervisor deleted successfully' });
   } catch (error: any) {
-    console.error("Error deleting supervisor:", error);
+    console.error('Error deleting supervisor:', error);
     if (error.code === 'P2025') {
-      res.status(404).json({ message: "Supervisor not found" });
+      res.status(404).json({ message: 'Supervisor not found' });
       return;
     }
-    res.status(500).json({ message: "Failed to delete supervisor" });
+    res.status(500).json({ message: 'Failed to delete supervisor' });
   }
 };
-

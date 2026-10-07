@@ -1,46 +1,60 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
-import { getDefaultTenantId } from './employeeController';
-import { promises } from 'node:dns';
 
-// Helper to extract string param
+// Helper to extract string param safely
 const getParam = (param: string | string[] | undefined): string => {
   if (Array.isArray(param)) return param[0] || '';
   return param || '';
 };
 
-// Get all business partners
+const partnerSelectOptimized = {
+  id: true,
+  code: true,
+  name: true,
+  type: true,
+  contactPerson: true,
+  phone: true,
+  email: true,
+  rating: true,
+  currentWorkingProject: true,
+  status: true,
+  createdAt: true,
+  _count: {
+    select: {
+      employees: true,
+      equipment: true,
+    },
+  },
+};
+
+// 1. GET /api/business-partners — List all business partners
 export const getAllBusinessPartners = async (req: Request, res: Response): Promise<void> => {
   try {
     const { status, search } = req.query;
-    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
 
-    const where: Record<string, any> = { tenantId };
+    const where: Record<string, any> = {};
     if (status && typeof status === 'string' && status !== 'all') {
       where.status = status;
     }
-    if (search && typeof search === 'string') {
+    if (search && typeof search === 'string' && search.trim()) {
+      const q = search.trim();
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { code: { contains: search, mode: 'insensitive' } },
-        { contactPerson: { contains: search, mode: 'insensitive' } },
+        { name: { contains: q, mode: 'insensitive' } },
+        { code: { contains: q, mode: 'insensitive' } },
+        { contactPerson: { contains: q, mode: 'insensitive' } },
       ];
     }
 
-    const partners = await prisma.businessPartner.findMany({
+    const partners = await prisma.corporateBusinessPartner.findMany({
       where,
-      include: {
-        _count: {
-          select: { employees: true },
-        },
-      },
+      select: partnerSelectOptimized,
       orderBy: { code: 'asc' },
     });
 
-    // Format response to include employee count
     const formatted = partners.map((p) => ({
       ...p,
       employeeCount: p._count.employees,
+      equipmentCount: p._count.equipment,
     }));
 
     res.json(formatted);
@@ -50,15 +64,13 @@ export const getAllBusinessPartners = async (req: Request, res: Response): Promi
   }
 };
 
-// Get single business partner
+// 2. GET /api/business-partners/:id — Get single business partner by ID
 export const getBusinessPartnerById = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const partner = await prisma.businessPartner.findUnique({
+    const partner = await prisma.corporateBusinessPartner.findUnique({
       where: { id },
-      include: {
-        employees: true,
-      },
+      select: partnerSelectOptimized,
     });
 
     if (!partner) {
@@ -66,27 +78,25 @@ export const getBusinessPartnerById = async (req: Request, res: Response): Promi
       return;
     }
 
-    res.json(partner);
+    res.json({
+      ...partner,
+      employeeCount: partner._count.employees,
+      equipmentCount: partner._count.equipment,
+    });
   } catch (error) {
     console.error('Error fetching business partner:', error);
     res.status(500).json({ error: 'Failed to fetch business partner' });
   }
 };
 
-
-  
-
-
-// Get next available BP code (BP1xxxxxx)
-export const getNextBusinessPartnerCode = async (req: Request, res: Response): Promise<void> => {
+// 3. GET /api/business-partners/next-code — Get next available BP code
+export const getNextBusinessPartnerCode = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
-
-    const latest = await prisma.businessPartner.findFirst({
+    const latest = await prisma.corporateBusinessPartner.findFirst({
       where: {
-        tenantId,
-        code: { startsWith: 'BP1' },
+        code: { startsWith: 'BP' },
       },
+      select: { code: true },
       orderBy: { code: 'desc' },
     });
 
@@ -95,7 +105,7 @@ export const getNextBusinessPartnerCode = async (req: Request, res: Response): P
       return;
     }
 
-    const currentNum = parseInt(latest.code.replace('BP', ''), 10);
+    const currentNum = parseInt(latest.code.replace(/[^0-9]/g, ''), 10);
     if (isNaN(currentNum)) {
       res.json({ nextCode: 'BP1001001' });
       return;
@@ -109,41 +119,35 @@ export const getNextBusinessPartnerCode = async (req: Request, res: Response): P
   }
 };
 
-// Create new business partner
+// 4. POST /api/business-partners — Create business partner
 export const createBusinessPartner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, name, contactPerson, phone, email, address, status } = req.body;
+    const { code, name, contactPerson, phone, email, status, type } = req.body || {};
 
     if (!code || !name) {
       res.status(400).json({ error: 'Code and Name are required fields' });
       return;
     }
 
-    // Validate code format (Alphanumeric with hyphens/underscores)
-    const bpRegex = /^[A-Za-z0-9-_ ]{2,50}$/;
-    if (!bpRegex.test(code.trim())) {
-      res.status(400).json({
-        error: 'Invalid BP Code format. Code must be between 2 and 50 characters (e.g. BP1002885, BP-MAGA, BP1020469)',
-      });
-      return;
-    }
-
-    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
-
-    const partner = await prisma.businessPartner.create({
+    const cleanCode = String(code).trim().toUpperCase();
+    const partner = await prisma.corporateBusinessPartner.create({
       data: {
-        tenantId,
-        code,
-        name,
-        contactPerson: contactPerson || null,
-        phone: phone || null,
-        email: email || null,
-        address: address || null,
+        code: cleanCode,
+        name: String(name).trim(),
+        type: type || 'subcontractor',
+        contactPerson: contactPerson?.trim() || null,
+        phone: phone?.trim() || null,
+        email: email?.trim() || null,
         status: status || 'active',
       },
+      select: partnerSelectOptimized,
     });
 
-    res.status(201).json(partner);
+    res.status(201).json({
+      ...partner,
+      employeeCount: 0,
+      equipmentCount: 0,
+    });
   } catch (error: any) {
     console.error('Error creating business partner:', error);
     if (error.code === 'P2002') {
@@ -154,25 +158,30 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
   }
 };
 
-// Update business partner
+// 5. PUT /api/business-partners/:id — Update business partner
 export const updateBusinessPartner = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { name, contactPerson, phone, email, address, status } = req.body;
+    const { name, contactPerson, phone, email, status, type } = req.body || {};
 
-    const partner = await prisma.businessPartner.update({
+    const partner = await prisma.corporateBusinessPartner.update({
       where: { id },
       data: {
-        name,
-        contactPerson,
-        phone,
-        email,
-        address,
-        status,
+        name: name?.trim(),
+        type: type || undefined,
+        contactPerson: contactPerson?.trim() || null,
+        phone: phone?.trim() || null,
+        email: email?.trim() || null,
+        status: status || undefined,
       },
+      select: partnerSelectOptimized,
     });
 
-    res.json(partner);
+    res.json({
+      ...partner,
+      employeeCount: partner._count.employees,
+      equipmentCount: partner._count.equipment,
+    });
   } catch (error: any) {
     console.error('Error updating business partner:', error);
     if (error.code === 'P2025') {
@@ -183,24 +192,27 @@ export const updateBusinessPartner = async (req: Request, res: Response): Promis
   }
 };
 
-// Delete business partner
+// 6. DELETE /api/business-partners/:id — Delete business partner
 export const deleteBusinessPartner = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
 
-    // Check if any employees are linked
+    // Check if any employees or equipment are linked
     const linkedEmployees = await prisma.employee.count({
       where: { businessPartnerId: id },
     });
+    const linkedEquipment = await prisma.equipment.count({
+      where: { ownerPartnerId: id },
+    });
 
-    if (linkedEmployees > 0) {
+    if (linkedEmployees > 0 || linkedEquipment > 0) {
       res.status(400).json({
-        error: `Cannot delete: ${linkedEmployees} employee(s) are currently assigned to this Business Partner.`,
+        error: `Cannot delete: ${linkedEmployees} employee(s) and ${linkedEquipment} equipment unit(s) are assigned to this Business Partner.`,
       });
       return;
     }
 
-    await prisma.businessPartner.delete({
+    await prisma.corporateBusinessPartner.delete({
       where: { id },
     });
 
@@ -215,23 +227,28 @@ export const deleteBusinessPartner = async (req: Request, res: Response): Promis
   }
 };
 
-// Toggle business partner status (active <-> inactive)
+// 7. PATCH /api/business-partners/:id/status — Toggle status
 export const toggleBusinessPartnerStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { status } = req.body;
+    const { status } = req.body || {};
 
     if (!status || !['active', 'inactive'].includes(status)) {
       res.status(400).json({ error: 'Valid status ("active" | "inactive") is required' });
       return;
     }
 
-    const partner = await prisma.businessPartner.update({
+    const partner = await prisma.corporateBusinessPartner.update({
       where: { id },
       data: { status },
+      select: partnerSelectOptimized,
     });
 
-    res.json(partner);
+    res.json({
+      ...partner,
+      employeeCount: partner._count.employees,
+      equipmentCount: partner._count.equipment,
+    });
   } catch (error: any) {
     console.error('Error toggling business partner status:', error);
     if (error.code === 'P2025') {
@@ -242,12 +259,21 @@ export const toggleBusinessPartnerStatus = async (req: Request, res: Response): 
   }
 };
 
-// ── CENTRAL CORPORATE ERP CATALOG CONTROLLERS ──────────────────────────────
-
-// Get all corporate business partners
+// 8. GET /api/business-partners/catalog — Catalog for dropdowns/pickers
 export const getCorporateBusinessPartnersCatalog = async (_req: Request, res: Response): Promise<void> => {
   try {
     const list = await prisma.corporateBusinessPartner.findMany({
+      where: { status: 'active' },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        type: true,
+        contactPerson: true,
+        phone: true,
+        rating: true,
+        status: true,
+      },
       orderBy: { code: 'asc' },
     });
     res.json(list);
@@ -256,4 +282,3 @@ export const getCorporateBusinessPartnersCatalog = async (_req: Request, res: Re
     res.status(500).json({ error: 'Failed to fetch corporate business partners catalog' });
   }
 };
-

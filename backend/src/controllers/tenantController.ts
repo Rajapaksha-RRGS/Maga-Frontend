@@ -10,20 +10,27 @@ const getParam = (param: string | string[] | undefined): string => {
 function generateTempPassword(): string {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$';
   let pw = 'ERP@';
-  for (let i = 0; i <=4; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i <= 4; i++) pw += chars[Math.floor(Math.random() * chars.length)];
   return pw;
 }
 
 function formatTenant(t: any) {
+  const primaryAdmin = t.users && t.users.length > 0 ? {
+    id: t.users[0].id,
+    username: t.users[0].username,
+    fullName: t.users[0].fullName,
+    status: t.users[0].status,
+  } : null;
+
   return {
     id: t.id,
     projectCode: t.projectCode,
     project_code: t.projectCode,
     projectName: t.projectName,
     project_name: t.projectName,
-    company_name: t.projectName,   // Frontend එක සඳහා
-    companyName: t.projectName,    // Frontend එක සඳහා
-    subdomain: t.subdomain,
+    company_name: t.projectName,   // Frontend compatibility
+    companyName: t.projectName,    // Frontend compatibility
+    subdomain: t.subdomain || t.projectCode,
     address_line1: t.addressLine1 || '',
     addressLine1: t.addressLine1 || '',
     address_line2: t.addressLine2 || '',
@@ -33,67 +40,52 @@ function formatTenant(t: any) {
     email: t.email || '',
     status: t.status || 'active',
     createdAt: t.createdAt,
+    userCount: t._count?.users ?? 0,
+    employeeCount: t._count?.employees ?? 0,
+    primaryAdmin,
   };
 }
 
+// Common optimized projection for Project / Tenant queries
+const projectSelectOptimized = {
+  id: true,
+  projectCode: true,
+  projectName: true,
+  subdomain: true,
+  addressLine1: true,
+  addressLine2: true,
+  phone: true,
+  fax: true,
+  email: true,
+  status: true,
+  createdAt: true,
+  users: {
+    where: { role: 'admin' },
+    take: 1,
+    select: {
+      id: true,
+      username: true,
+      fullName: true,
+      status: true,
+    },
+  },
+  _count: {
+    select: {
+      users: true,
+      employees: true,
+    },
+  },
+};
 
-// 1. GET /api/tenants — List all tenants with admin details
+// 1. GET /api/tenants — List all projects/tenants with primary admin & counts
 export const getAllTenants = async (_req: Request, res: Response): Promise<void> => {
   try {
     const projects = await prisma.project.findMany({
       orderBy: { createdAt: 'desc' },
-      include: {
-        users: {
-          select: {
-            id: true,
-            username: true,
-            fullName: true,
-            role: true,
-            status: true,
-            createdAt: true,
-          },
-        },
-        _count: {
-          select: {
-            users: true,
-            employees: true,
-          },
-        },
-      },
+      select: projectSelectOptimized,
     });
 
-    const formatted = projects.map((t) => {
-      const adminUsers = t.users.filter((u) => u.role === 'admin');
-      const primaryAdmin = adminUsers[0] || null;
-      return {
-        id: t.id,
-        projectCode: t.projectCode,
-        projectName: t.projectName,
-        companyName: t.projectName,
-        company_name: t.projectName,
-        subdomain: t.projectCode,
-        addressLine1: t.addressLine1 || '',
-        address_line1: t.address || '',
-        addressLine2: t.addressLine2 || '',
-        address_line2: t.addressLine2 || '',
-        phone: t.phone || '',
-        fax: t.fax || '',
-        email: t.email || '',
-        status: t.status || 'active',
-        createdAt: t.createdAt,
-        userCount: t._count.users,
-        employeeCount: t._count.employees,
-        primaryAdmin: primaryAdmin
-          ? {
-              id: primaryAdmin.id,
-              username: primaryAdmin.username,
-              fullName: primaryAdmin.fullName,
-              status: primaryAdmin.status,
-            }
-          : null,
-      };
-    });
-
+    const formatted = projects.map(formatTenant);
     res.json(formatted);
   } catch (error) {
     console.error('Error fetching all tenants:', error);
@@ -101,58 +93,54 @@ export const getAllTenants = async (_req: Request, res: Response): Promise<void>
   }
 };
 
-// 2. GET /api/tenants/:id
+// 2. GET /api/tenants/:id — Fetch single project/tenant by ID
 export const getTenantById = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const tenant = await prisma.tenant.findUnique({
+    const project = await prisma.project.findUnique({
       where: { id },
-      include: {
-        users: {
-          select: {
-            id: true,
-            username: true,
-            fullName: true,
-            role: true,
-            status: true,
-          },
-        },
-      },
+      select: projectSelectOptimized,
     });
 
-    if (!tenant) {
+    if (!project) {
       res.status(404).json({ error: 'Tenant not found' });
       return;
     }
 
-    res.json(formatTenant(tenant));
+    res.json(formatTenant(project));
   } catch (error) {
     console.error('Error fetching tenant by ID:', error);
     res.status(500).json({ error: 'Failed to fetch tenant' });
   }
 };
 
-// 3. GET /api/tenants/by-subdomain/:subdomain
+// 3. GET /api/tenants/by-subdomain/:subdomain — Fetch by subdomain or projectCode
 export const getTenantBySubdomain = async (req: Request, res: Response): Promise<void> => {
   try {
     const subdomain = getParam(req.params.subdomain).toLowerCase().trim();
-    const tenant = await prisma.tenant.findUnique({
-      where: { subdomain },
+    const project = await prisma.project.findFirst({
+      where: {
+        OR: [
+          { subdomain: { equals: subdomain, mode: 'insensitive' } },
+          { projectCode: { equals: subdomain, mode: 'insensitive' } },
+        ],
+      },
+      select: projectSelectOptimized,
     });
 
-    if (!tenant) {
+    if (!project) {
       res.status(404).json({ error: 'Tenant not found' });
       return;
     }
 
-    res.json(formatTenant(tenant));
+    res.json(formatTenant(project));
   } catch (error) {
     console.error('Error fetching tenant by subdomain:', error);
     res.status(500).json({ error: 'Failed to fetch tenant' });
   }
 };
 
-// 4. POST /api/tenants/register — Register new tenant & initial admin
+// 4. POST /api/tenants/register — Register new project/tenant & initial admin
 export const registerTenant = async (req: Request, res: Response): Promise<void> => {
   try {
     const {
@@ -175,31 +163,37 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const cleanSubdomain = subdomain.toUpperCase().trim().replace(/[^A-Z0-9-]/g, '');
+    const cleanSubdomain = subdomain.trim();
     if (!cleanSubdomain) {
-      res.status(400).json({ error: 'Invalid project code format. Use letters, numbers, and hyphens only (e.g. 531M, M00000403).' });
+      res.status(400).json({ error: 'Invalid project code format.' });
       return;
     }
 
-    // Check if project code exists
-    const existing = await prisma.tenant.findUnique({
-      where: { subdomain: cleanSubdomain },
+    // Check if project code or subdomain already exists (indexed unique check)
+    const existing = await prisma.project.findFirst({
+      where: {
+        OR: [
+          { subdomain: { equals: cleanSubdomain, mode: 'insensitive' } },
+          { projectCode: { equals: cleanSubdomain, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true },
     });
     if (existing) {
-      res.status(409).json({ error: `Project code "${cleanSubdomain}" is already registered.` });
+      res.status(409).json({ error: `Project code or subdomain "${cleanSubdomain}" is already registered.` });
       return;
     }
 
-    // Password to use
     const isCustomPassword = Boolean(adminPassword && adminPassword.trim().length > 0);
     const passwordToUse = isCustomPassword ? adminPassword!.trim() : generateTempPassword();
     const passwordHash = await bcrypt.hash(passwordToUse, 10);
 
     const result = await prisma.$transaction(async (tx) => {
-      const tenant = await tx.tenant.create({
+      const project = await tx.project.create({
         data: {
-          companyName: companyName.trim(),
-          subdomain: cleanSubdomain,
+          projectCode: cleanSubdomain,
+          projectName: companyName.trim(),
+          subdomain: cleanSubdomain.toLowerCase(),
           addressLine1: addressLine1?.trim() || null,
           addressLine2: addressLine2?.trim() || null,
           phone: phone?.trim() || null,
@@ -211,7 +205,7 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
 
       const adminUser = await tx.user.create({
         data: {
-          tenantId: tenant.id,
+          projectId: project.id,
           username: adminUsername.trim().toLowerCase(),
           fullName: adminFullName.trim(),
           passwordHash,
@@ -221,25 +215,27 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
         },
       });
 
-      return { tenant, adminUser };
+      return { project, adminUser };
     });
 
     res.status(201).json({
       message: 'Tenant and Admin created successfully',
       tenant: {
-        id: result.tenant.id,
-        companyName: result.tenant.companyName,
-        company_name: result.tenant.companyName,
-        subdomain: result.tenant.subdomain,
-        addressLine1: result.tenant.addressLine1 || '',
-        address_line1: result.tenant.addressLine1 || '',
-        addressLine2: result.tenant.addressLine2 || '',
-        address_line2: result.tenant.addressLine2 || '',
-        phone: result.tenant.phone || '',
-        fax: result.tenant.fax || '',
-        email: result.tenant.email || '',
-        status: result.tenant.status,
-        createdAt: result.tenant.createdAt,
+        id: result.project.id,
+        projectCode: result.project.projectCode,
+        projectName: result.project.projectName,
+        companyName: result.project.projectName,
+        company_name: result.project.projectName,
+        subdomain: result.project.subdomain,
+        addressLine1: result.project.addressLine1 || '',
+        address_line1: result.project.addressLine1 || '',
+        addressLine2: result.project.addressLine2 || '',
+        address_line2: result.project.addressLine2 || '',
+        phone: result.project.phone || '',
+        fax: result.project.fax || '',
+        email: result.project.email || '',
+        status: result.project.status,
+        createdAt: result.project.createdAt,
         userCount: 1,
         employeeCount: 0,
         primaryAdmin: {
@@ -257,7 +253,7 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
   }
 };
 
-// 5. PUT /api/tenants/:id — Update tenant details
+// 5. PUT /api/tenants/:id — Update project/tenant details
 export const updateTenant = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
@@ -268,16 +264,17 @@ export const updateTenant = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const updated = await prisma.tenant.update({
+    const updated = await prisma.project.update({
       where: { id },
       data: {
-        companyName: companyName.trim(),
+        projectName: companyName.trim(),
         addressLine1: addressLine1?.trim() || null,
         addressLine2: addressLine2?.trim() || null,
         phone: phone?.trim() || null,
         fax: fax?.trim() || null,
         email: email?.trim() || null,
       },
+      select: projectSelectOptimized,
     });
 
     res.json(formatTenant(updated));
@@ -298,9 +295,10 @@ export const updateTenantStatus = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const updated = await prisma.tenant.update({
+    const updated = await prisma.project.update({
       where: { id },
       data: { status },
+      select: projectSelectOptimized,
     });
 
     res.json(formatTenant(updated));
@@ -310,12 +308,13 @@ export const updateTenantStatus = async (req: Request, res: Response): Promise<v
   }
 };
 
-// 7. POST /api/tenants/:id/reset-admin-password — Reset admin password for a tenant
+// 7. POST /api/tenants/:id/reset-admin-password — Reset admin password for a tenant/project
 export const resetTenantAdminPassword = async (req: Request, res: Response): Promise<void> => {
   try {
     const tenantId = getParam(req.params.id);
     const adminUser = await prisma.user.findFirst({
-      where: { tenantId, role: 'admin' },
+      where: { projectId: tenantId, role: 'admin' },
+      select: { id: true, fullName: true, username: true },
     });
 
     if (!adminUser) {
@@ -349,8 +348,20 @@ export const resetTenantAdminPassword = async (req: Request, res: Response): Pro
 // 8. GET /api/tenants/corporate-projects — Get all corporate projects catalog for dropdown/picker
 export const getCorporateProjectsCatalog = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const list = await prisma.corporateProject.findMany({
+    const list = await prisma.project.findMany({
       orderBy: { projectCode: 'asc' },
+      select: {
+        id: true,
+        projectCode: true,
+        projectName: true,
+        description: true,
+        searchKey: true,
+        projectManager: true,
+        addressCode: true,
+        enterpriseUnit: true,
+        currency: true,
+        status: true,
+      },
     });
     res.json(list);
   } catch (error) {
@@ -358,4 +369,3 @@ export const getCorporateProjectsCatalog = async (_req: Request, res: Response):
     res.status(500).json({ error: 'Failed to fetch corporate projects catalog' });
   }
 };
-

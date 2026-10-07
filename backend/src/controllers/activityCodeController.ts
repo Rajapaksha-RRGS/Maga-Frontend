@@ -1,31 +1,51 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
-import { getDefaultTenantId } from './employeeController';
+import '../middleware/tenantMiddleware';
+import { getDefaultTenantId } from '../utils/tenantHelper';
 
 const getParam = (param: string | string[] | undefined): string => {
   if (Array.isArray(param)) return param[0] || '';
   return param || '';
 };
 
-// Get all activity codes (scoped to tenant)
+// 1. GET /api/activity-codes — List all activity codes scoped to project
 export const getAllActivityCodes = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { search, projectCode } = req.query;
-    const tenantId = req.resolvedTenantId || (req.query.tenantId as string) || (await getDefaultTenantId());
+    const { search } = req.query;
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (await getDefaultTenantId());
 
-    const where: Record<string, any> = { tenantId };
-    if (projectCode && typeof projectCode === 'string') {
-      where.projectCode = projectCode;
-    }
-    if (search && typeof search === 'string') {
+    const where: Record<string, any> = { projectId };
+    if (search && typeof search === 'string' && search.trim()) {
+      const q = search.trim();
       where.OR = [
-        { code: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
+        { code: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
       ];
     }
 
     const activityCodes = await prisma.activityCode.findMany({
       where,
+      select: {
+        id: true,
+        projectId: true,
+        code: true,
+        description: true,
+        unit: true,
+        createdAt: true,
+        corporateActivityCodeId: true,
+        corporateActivityCode: {
+          select: {
+            id: true,
+            code: true,
+            description: true,
+          },
+        },
+      },
       orderBy: { code: 'asc' },
     });
 
@@ -36,12 +56,21 @@ export const getAllActivityCodes = async (req: Request, res: Response): Promise<
   }
 };
 
-// Get activity code by ID
+// 2. GET /api/activity-codes/:id — Get activity code by ID
 export const getActivityCodeById = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
     const code = await prisma.activityCode.findUnique({
       where: { id },
+      select: {
+        id: true,
+        projectId: true,
+        code: true,
+        description: true,
+        unit: true,
+        createdAt: true,
+        corporateActivityCodeId: true,
+      },
     });
 
     if (!code) {
@@ -56,25 +85,37 @@ export const getActivityCodeById = async (req: Request, res: Response): Promise<
   }
 };
 
-// Create activity code
+// 3. POST /api/activity-codes — Create activity code
 export const createActivityCode = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, description, projectCode, trade, category } = req.body;
+    const { code, description, unit } = req.body || {};
     if (!code) {
       res.status(400).json({ error: 'Code is required' });
       return;
     }
 
-    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      req.body.projectId ||
+      req.body.tenantId ||
+      (await getDefaultTenantId());
+
+    const cleanCode = String(code).trim();
+
+    // Check if corporate master has this code
+    const corpMatch = await prisma.corporateActivityCode.findUnique({
+      where: { code: cleanCode },
+      select: { id: true, description: true, unit: true },
+    });
 
     const newCode = await prisma.activityCode.create({
       data: {
-        tenantId,
-        projectCode: projectCode || null,
-        code,
-        description: description || null,
-        trade: trade || null,
-        category: category || null,
+        projectId,
+        code: cleanCode,
+        description: description?.trim() || corpMatch?.description || cleanCode,
+        unit: unit?.trim() || corpMatch?.unit || null,
+        corporateActivityCodeId: corpMatch?.id || null,
       },
     });
 
@@ -82,25 +123,23 @@ export const createActivityCode = async (req: Request, res: Response): Promise<v
   } catch (error: any) {
     console.error('Error creating activity code:', error);
     if (error.code === 'P2002') {
-      res.status(409).json({ error: 'Activity code already exists in this tenant' });
+      res.status(409).json({ error: 'Activity code already exists in this project' });
       return;
     }
     res.status(500).json({ error: 'Failed to create activity code' });
   }
 };
 
-// Update activity code
+// 4. PUT /api/activity-codes/:id — Update activity code
 export const updateActivityCode = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { code, description, projectCode, trade, category } = req.body;
+    const { code, description, unit } = req.body || {};
 
     const data: Record<string, any> = {};
-    if (code !== undefined) data.code = code;
-    if (description !== undefined) data.description = description;
-    if (projectCode !== undefined) data.projectCode = projectCode;
-    if (trade !== undefined) data.trade = trade;
-    if (category !== undefined) data.category = category;
+    if (code !== undefined) data.code = String(code).trim();
+    if (description !== undefined) data.description = description?.trim() || null;
+    if (unit !== undefined) data.unit = unit?.trim() || null;
 
     const updated = await prisma.activityCode.update({
       where: { id },
@@ -118,19 +157,22 @@ export const updateActivityCode = async (req: Request, res: Response): Promise<v
   }
 };
 
-// Delete activity code
+// 5. DELETE /api/activity-codes/:id — Delete activity code
 export const deleteActivityCode = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
 
-    // Check if time entries reference this activity
-    const usageCount = await prisma.timeEntry.count({
-      where: { activityId: id },
-    });
+    // Check if time entries or logs reference this activity
+    const [timeEntriesCount, splitsCount, equipLogsCount] = await Promise.all([
+      prisma.timeEntry.count({ where: { activityId: id } }),
+      prisma.laborActivitySplit.count({ where: { activityCodeId: id } }),
+      prisma.equipmentDailyLogActivity.count({ where: { activityCodeId: id } }),
+    ]);
 
-    if (usageCount > 0) {
+    const totalUsage = timeEntriesCount + splitsCount + equipLogsCount;
+    if (totalUsage > 0) {
       res.status(400).json({
-        error: `Cannot delete: ${usageCount} time entry record(s) reference this activity code.`,
+        error: `Cannot delete: ${totalUsage} active record(s) reference this activity code.`,
       });
       return;
     }
@@ -150,29 +192,32 @@ export const deleteActivityCode = async (req: Request, res: Response): Promise<v
   }
 };
 
-// ── CENTRAL CORPORATE ERP ACTIVITY CATALOG CONTROLLERS ───────────────────────
+// ── CENTRAL CORPORATE ERP ACTIVITY CATALOG ───────────────────────────────
 
-// GET /api/activity-codes/corporate-master
+// 6. GET /api/activity-codes/corporate-master — Catalog from corporate
 export const getCorporateActivityCodesCatalog = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { projectCode, search } = req.query;
+    const { search } = req.query;
     const where: Record<string, any> = {};
 
-    if (projectCode && typeof projectCode === 'string') {
-      where.projectCode = projectCode;
-    }
-
-    if (search && typeof search === 'string') {
+    if (search && typeof search === 'string' && search.trim()) {
+      const q = search.trim();
       where.OR = [
-        { code: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { searchKey: { contains: search, mode: 'insensitive' } },
+        { code: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
       ];
     }
 
     const list = await prisma.corporateActivityCode.findMany({
       where,
-      orderBy: [{ projectCode: 'asc' }, { code: 'asc' }],
+      select: {
+        id: true,
+        code: true,
+        description: true,
+        unit: true,
+        createdAt: true,
+      },
+      orderBy: { code: 'asc' },
     });
 
     res.json(list);
@@ -182,10 +227,10 @@ export const getCorporateActivityCodesCatalog = async (req: Request, res: Respon
   }
 };
 
-// POST /api/activity-codes/corporate-master/batch
+// 7. POST /api/activity-codes/corporate-master/batch — Batch sync corporate activities
 export const batchSyncCorporateActivityCodes = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { items } = req.body;
+    const { items } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
       res.status(400).json({ error: 'Array of items required' });
       return;
@@ -193,31 +238,18 @@ export const batchSyncCorporateActivityCodes = async (req: Request, res: Respons
 
     const results = [];
     for (const item of items) {
-      const pCode = item.projectCode || item.currentWorkingProject || null;
+      if (!item.code) continue;
+      const cleanCode = String(item.code).trim();
       const record = await prisma.corporateActivityCode.upsert({
-        where: {
-          projectCode_code: {
-            projectCode: pCode,
-            code: item.code,
-          },
-        },
+        where: { code: cleanCode },
         update: {
-          description: item.description,
-          searchKey: item.searchKey || null,
-          activityType: item.activityType || 'Work Package',
+          description: item.description || cleanCode,
           unit: item.unit || null,
-          timeUnit: item.timeUnit || null,
-          currentWorkingProject: item.currentWorkingProject || pCode,
         },
         create: {
-          projectCode: pCode,
-          code: item.code,
-          description: item.description,
-          searchKey: item.searchKey || null,
-          activityType: item.activityType || 'Work Package',
+          code: cleanCode,
+          description: item.description || cleanCode,
           unit: item.unit || null,
-          timeUnit: item.timeUnit || null,
-          currentWorkingProject: item.currentWorkingProject || pCode,
         },
       });
       results.push(record);
@@ -230,47 +262,45 @@ export const batchSyncCorporateActivityCodes = async (req: Request, res: Respons
   }
 };
 
-// POST /api/activity-codes/import-from-corporate
+// 8. POST /api/activity-codes/import-from-corporate — Import into site project
 export const importActivityCodesFromCorporate = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tenantId = req.resolvedTenantId || req.body.tenantId || (await getDefaultTenantId());
-    const { items, projectCode } = req.body;
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      req.body.projectId ||
+      req.body.tenantId ||
+      (await getDefaultTenantId());
 
+    const { items } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
       res.status(400).json({ error: 'Array of items required' });
       return;
     }
 
     const imported = [];
-    const skipped = [];
-
     for (const item of items) {
-      const itemProject = item.projectCode || item.currentWorkingProject || null;
-
-      // Project code validation: If target projectCode is specified and item has a projectCode, validate match
-      if (projectCode && itemProject && itemProject.toLowerCase() !== projectCode.toLowerCase()) {
-        skipped.push({ code: item.code, reason: `Project code mismatch: expected ${projectCode}, got ${itemProject}` });
-        continue;
-      }
+      if (!item.code) continue;
+      const cleanCode = String(item.code).trim();
 
       const upserted = await prisma.activityCode.upsert({
         where: {
-          tenantId_code: {
-            tenantId,
-            code: item.code,
+          projectId_code: {
+            projectId,
+            code: cleanCode,
           },
         },
         update: {
-          description: item.description,
-          projectCode: itemProject || projectCode || null,
-          category: item.activityType || 'Civil',
+          description: item.description || cleanCode,
+          unit: item.unit || null,
+          corporateActivityCodeId: item.id || undefined,
         },
         create: {
-          tenantId,
-          code: item.code,
-          description: item.description,
-          projectCode: itemProject || projectCode || null,
-          category: item.activityType || 'Civil',
+          projectId,
+          code: cleanCode,
+          description: item.description || cleanCode,
+          unit: item.unit || null,
+          corporateActivityCodeId: item.id || null,
         },
       });
       imported.push(upserted);
@@ -279,8 +309,6 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
     res.json({
       success: true,
       importedCount: imported.length,
-      skippedCount: skipped.length,
-      skipped,
       activities: imported,
     });
   } catch (error) {
@@ -288,4 +316,3 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
     res.status(500).json({ error: 'Failed to import activity codes' });
   }
 };
-
