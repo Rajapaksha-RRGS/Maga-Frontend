@@ -8,10 +8,10 @@ datasource db {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// LEVEL 1: GLOBAL / CORPORATE MASTER DATA & HEAD OFFICE
+// LEVEL 1: GLOBAL / CORPORATE MASTER DATA & HEAD OFFICE (MF_G_*)
 // ═════════════════════════════════════════════════════════════════════════════
 
-model SuperAdmin {
+model MF_G_SuperAdmin {
   id           String   @id @default(uuid())
   username     String   @unique
   email        String?  @unique
@@ -23,10 +23,156 @@ model SuperAdmin {
   @@map("MF_G_SUPER_ADMIN")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UNIFIED PROJECT / SITE ENTITY (Merged CorporateProject + Tenant)
-// ─────────────────────────────────────────────────────────────────────────────
-model Project {
+model MF_G_BusinessPartner {
+  id                    String   @id @default(uuid())
+  code                  String   @unique
+  name                  String
+  type                  String   @default("subcontractor")
+  contactPerson         String?  @map("contact_person")
+  phone                 String?
+  email                 String?
+  rating                String?
+  currentWorkingProject String?  @map("current_working_project")
+  status                String   @default("active")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  corporateEmployees MF_G_Employee[]
+  employees          MF_P_Employee[]
+  equipment          MF_P_Equipment[]
+
+  @@map("MF_G_BUSINESS_PARTNER")
+}
+
+model MF_G_TradeGroup {
+  id                String   @id @default(uuid())
+  code              String   @unique
+  name              String
+  standardDailyRate Decimal  @default(1400.00) @map("standard_daily_rate") @db.Decimal(10, 2)
+  standardOtRate    Decimal? @map("standard_ot_rate") @db.Decimal(10, 2)
+  status            String   @default("active")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  corporateEmployees MF_G_Employee[]
+  employees          MF_P_Employee[]
+
+  @@map("MF_G_TRADE_GROUP")
+}
+
+model MF_G_UnitMaster {
+  id        String   @id @default(uuid())
+  code      String   @unique // "Days", "Hrs", "EX.hrs", "mth", "m2", "km"
+  name      String
+  category  String   @default("meter")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  equipmentMeterUnit MF_P_Equipment[]         @relation("EquipmentMeterUnit")
+  equipmentDailyLogs MF_OP_EquipmentDailyLog[]
+
+  @@map("MF_G_UNIT_MASTER")
+}
+
+model MF_G_DayType {
+  id             String   @id @default(uuid())
+  code           String   @unique // "NORMAL", "POYA", "SUNDAY", "SPECIAL"
+  name           String
+  rateMultiplier Decimal  @default(1.00) @map("rate_multiplier") @db.Decimal(3, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  calendarDays MF_P_CalendarDay[]
+  timeEntries  MF_OP_TimeEntry[]
+
+  @@map("MF_G_DAY_TYPE")
+}
+
+model MF_G_Employee {
+  id                         String   @id @default(uuid())
+  employeeCode               String   @unique @map("employee_code")
+  fullName                   String   @map("full_name")
+  nicNo                      String   @map("nic_no")
+  tradeGroupId               String?  @map("trade_group_id")
+  dailyRate                  Decimal? @map("daily_rate") @db.Decimal(12, 2)
+  isOperator                 Boolean  @default(false) @map("is_operator")
+  epfNo                      String?  @map("epf_no")
+  corporateBusinessPartnerId String?  @map("corporate_business_partner_id")
+  currentWorkingProject      String?  @map("current_working_project")
+  status                     String   @default("active")
+  createdAt                  DateTime @default(now()) @map("created_at")
+
+  tradeGroup               MF_G_TradeGroup?       @relation(fields: [tradeGroupId], references: [id])
+  corporateBusinessPartner MF_G_BusinessPartner? @relation(fields: [corporateBusinessPartnerId], references: [id])
+  projectEmployees         MF_P_Employee[]
+  transfers                MF_G_EmployeeTransfer[]
+
+  @@index([tradeGroupId])
+  @@index([corporateBusinessPartnerId])
+  @@map("MF_G_EMPLOYEE")
+}
+
+model MF_G_Equipment {
+  id                      String   @id @default(uuid())
+  standardEquipmentNumber String   @map("standard_equipment_number")
+  equipmentName           String   @map("equipment_name")
+  condition               String   @default("DRY")
+  unit                    String   @default("hrs")
+  minimumUtilization      Decimal? @map("minimum_utilization") @db.Decimal(10, 2)
+  dailyRate               Decimal  @default(0.00) @map("daily_rate") @db.Decimal(12, 2)
+  businessPartner         String?  @map("business_partner")
+  vehicleNo               String?  @map("vehicle_no")
+  description             String?
+  searchKey               String?  @map("search_key")
+  costRate                Decimal  @default(0.00) @map("cost_rate") @db.Decimal(12, 2)
+  currency                String   @default("LKR")
+  type                    String?
+  currentWorkingProject   String?  @map("current_working_project")
+  status                  String   @default("active")
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  projectEquipment MF_P_Equipment[]
+
+  @@index([standardEquipmentNumber])
+  @@index([vehicleNo])
+  @@map("MF_G_EQUIPMENT")
+}
+
+model MF_G_ActivityCode {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  description String
+  unit        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  activityCodes MF_P_ActivityCode[]
+
+  @@map("MF_G_ACTIVITY_CODE")
+}
+
+model MF_G_EmployeeTransfer {
+  id                  String    @id @default(uuid())
+  corporateEmployeeId String    @map("corporate_employee_id")
+  fromProjectId       String?   @map("from_project_id")
+  toProjectId         String    @map("to_project_id")
+  startDate           DateTime  @map("start_date") @db.Date
+  endDate             DateTime? @map("end_date") @db.Date
+  status              String    @default("active") // "active" | "transferred" | "released"
+  remarks             String?
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  corporateEmployee MF_G_Employee @relation(fields: [corporateEmployeeId], references: [id], onDelete: Cascade)
+  fromProject       MF_P_Project? @relation("TransfersFrom", fields: [fromProjectId], references: [id])
+  toProject         MF_P_Project  @relation("TransfersTo", fields: [toProjectId], references: [id])
+
+  @@index([corporateEmployeeId])
+  @@index([fromProjectId])
+  @@index([toProjectId])
+  @@index([toProjectId, startDate, endDate])
+  @@map("MF_G_EMPLOYEE_TRANSFER")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LEVEL 2: PROJECT / SITE OPERATIONAL MASTER DATA (MF_P_*)
+// ═════════════════════════════════════════════════════════════════════════════
+
+model MF_P_Project {
   id             String   @id @default(uuid())
   projectCode    String   @unique @map("project_code") // e.g. "PRJ530", "550", "570"
   projectName    String   @map("project_name")        // e.g. "Kandy Highway Project"
@@ -46,172 +192,20 @@ model Project {
   createdAt      DateTime @default(now()) @map("created_at")
 
   // Site Operations & Resources
-  users          User[]
-  employees      Employee[]
-  equipment      Equipment[]
-  activityCodes  ActivityCode[]
-  calendarDays   CalendarDay[]
-  dailySheets    DailySheet[]
-  timeEntries    TimeEntry[]
-  transfersFrom  EmployeeTransfer[] @relation("TransfersFrom")
-  transfersTo    EmployeeTransfer[] @relation("TransfersTo")
+  users          MF_P_User[]
+  employees      MF_P_Employee[]
+  equipment      MF_P_Equipment[]
+  activityCodes  MF_P_ActivityCode[]
+  calendarDays   MF_P_CalendarDay[]
+  dailySheets    MF_OP_DailySheet[]
+  timeEntries    MF_OP_TimeEntry[]
+  transfersFrom  MF_G_EmployeeTransfer[] @relation("TransfersFrom")
+  transfersTo    MF_G_EmployeeTransfer[] @relation("TransfersTo")
 
   @@map("MF_PROJECT")
 }
 
-model CorporateBusinessPartner {
-  id                    String   @id @default(uuid())
-  code                  String   @unique
-  name                  String
-  type                  String   @default("subcontractor")
-  contactPerson         String?  @map("contact_person")
-  phone                 String?
-  email                 String?
-  rating                String?
-  currentWorkingProject String?  @map("current_working_project")
-  status                String   @default("active")
-  createdAt             DateTime @default(now()) @map("created_at")
-
-  corporateEmployees CorporateEmployee[]
-  employees          Employee[]
-  equipment          Equipment[]
-
-  @@map("MF_G_BUSINESS_PARTNER")
-}
-
-model CorporateTradeGroup {
-  id                String   @id @default(uuid())
-  code              String   @unique
-  name              String
-  standardDailyRate Decimal  @default(1400.00) @map("standard_daily_rate") @db.Decimal(10, 2)
-  standardOtRate    Decimal? @map("standard_ot_rate") @db.Decimal(10, 2)
-  status            String   @default("active")
-  createdAt         DateTime @default(now()) @map("created_at")
-
-  corporateEmployees CorporateEmployee[]
-  employees          Employee[]
-
-  @@map("MF_G_TRADE_GROUP")
-}
-
-model UnitMaster {
-  id        String   @id @default(uuid())
-  code      String   @unique // "Days", "Hrs", "EX.hrs", "mth", "m2", "km"
-  name      String
-  category  String   @default("meter")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  equipmentMeterUnit Equipment[]         @relation("EquipmentMeterUnit")
-  equipmentDailyLogs EquipmentDailyLog[]
-
-  @@map("MF_G_UNIT_MASTER")
-}
-
-model DayType {
-  id             String   @id @default(uuid())
-  code           String   @unique // "NORMAL", "POYA", "SUNDAY", "SPECIAL"
-  name           String
-  rateMultiplier Decimal  @default(1.00) @map("rate_multiplier") @db.Decimal(3, 2)
-  createdAt      DateTime @default(now()) @map("created_at")
-
-  calendarDays CalendarDay[]
-  timeEntries  TimeEntry[]
-
-  @@map("MF_G_DAY_TYPE")
-}
-
-model CorporateEmployee {
-  id                         String   @id @default(uuid())
-  employeeCode               String   @unique @map("employee_code")
-  fullName                   String   @map("full_name")
-  nicNo                      String   @map("nic_no")
-  tradeGroupId               String?  @map("trade_group_id")
-  dailyRate                  Decimal? @map("daily_rate") @db.Decimal(12, 2)
-  isOperator                 Boolean  @default(false) @map("is_operator")
-  epfNo                      String?  @map("epf_no")
-  corporateBusinessPartnerId String?  @map("corporate_business_partner_id")
-  currentWorkingProject      String?  @map("current_working_project")
-  status                     String   @default("active")
-  createdAt                  DateTime @default(now()) @map("created_at")
-
-  tradeGroup               CorporateTradeGroup?      @relation(fields: [tradeGroupId], references: [id])
-  corporateBusinessPartner CorporateBusinessPartner? @relation(fields: [corporateBusinessPartnerId], references: [id])
-  projectEmployees         Employee[]
-  transfers                EmployeeTransfer[]
-
-  @@index([tradeGroupId])
-  @@index([corporateBusinessPartnerId])
-  @@map("MF_G_EMPLOYEE")
-}
-
-model CorporateEquipment {
-  id                      String   @id @default(uuid())
-  standardEquipmentNumber String   @map("standard_equipment_number")
-  equipmentName           String   @map("equipment_name")
-  condition               String   @default("DRY")
-  unit                    String   @default("hrs")
-  minimumUtilization      Decimal? @map("minimum_utilization") @db.Decimal(10, 2)
-  dailyRate               Decimal  @default(0.00) @map("daily_rate") @db.Decimal(12, 2)
-  businessPartner         String?  @map("business_partner")
-  vehicleNo               String?  @map("vehicle_no")
-  description             String?
-  searchKey               String?  @map("search_key")
-  costRate                Decimal  @default(0.00) @map("cost_rate") @db.Decimal(12, 2)
-  currency                String   @default("LKR")
-  type                    String?
-  currentWorkingProject   String?  @map("current_working_project")
-  status                  String   @default("active")
-  createdAt               DateTime @default(now()) @map("created_at")
-
-  projectEquipment Equipment[]
-
-  @@index([standardEquipmentNumber])
-  @@index([vehicleNo])
-  @@map("MF_G_EQUIPMENT")
-}
-
-model CorporateActivityCode {
-  id          String   @id @default(uuid())
-  code        String   @unique
-  description String
-  unit        String?
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  activityCodes ActivityCode[]
-
-  @@map("MF_G_ACTIVITY_CODE")
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EMPLOYEE TRANSFER LEDGER (Project-to-Project Transfers)
-// ─────────────────────────────────────────────────────────────────────────────
-model EmployeeTransfer {
-  id                  String    @id @default(uuid())
-  corporateEmployeeId String    @map("corporate_employee_id")
-  fromProjectId       String?   @map("from_project_id")
-  toProjectId         String    @map("to_project_id")
-  startDate           DateTime  @map("start_date") @db.Date
-  endDate             DateTime? @map("end_date") @db.Date
-  status              String    @default("active") // "active" | "transferred" | "released"
-  remarks             String?
-  createdAt           DateTime  @default(now()) @map("created_at")
-
-  corporateEmployee CorporateEmployee @relation(fields: [corporateEmployeeId], references: [id], onDelete: Cascade)
-  fromProject       Project?          @relation("TransfersFrom", fields: [fromProjectId], references: [id])
-  toProject         Project           @relation("TransfersTo", fields: [toProjectId], references: [id])
-
-  @@index([corporateEmployeeId])
-  @@index([fromProjectId])
-  @@index([toProjectId])
-  @@index([toProjectId, startDate, endDate])
-  @@map("MF_G_EMPLOYEE_TRANSFER")
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// LEVEL 2: PROJECT / SITE OPERATIONAL MASTER DATA (MF_L_*)
-// ═════════════════════════════════════════════════════════════════════════════
-
-model User {
+model MF_P_User {
   id                 String   @id @default(uuid())
   projectId          String   @map("project_id")
   username           String
@@ -224,16 +218,16 @@ model User {
   status             String   @default("active")
   createdAt          DateTime @default(now()) @map("created_at")
 
-  project               Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  dailySheets         DailySheet[]
-  timeEntriesRecorded TimeEntry[]  @relation("TimeEntryRecordedBy")
+  project               MF_P_Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dailySheets         MF_OP_DailySheet[]
+  timeEntriesRecorded MF_OP_TimeEntry[]  @relation("TimeEntryRecordedBy")
 
   @@unique([projectId, username])
   @@index([projectId])
   @@map("MF_L_USER")
 }
 
-model Employee {
+model MF_P_Employee {
   id                  String   @id @default(uuid())
   projectId           String   @map("project_id")
   corporateEmployeeId String   @map("corporate_employee_id")
@@ -246,13 +240,13 @@ model Employee {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  project              Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  corporateEmployee    CorporateEmployee          @relation(fields: [corporateEmployeeId], references: [id])
-  tradeGroup           CorporateTradeGroup?       @relation(fields: [tradeGroupId], references: [id])
-  businessPartner      CorporateBusinessPartner?  @relation(fields: [businessPartnerId], references: [id])
-  assignments          DailyAssignment[]
-  operatorAssignments DailyEquipmentAssignment[] @relation("OperatorAssigned")
-  timeEntries          TimeEntry[]
+  project              MF_P_Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  corporateEmployee    MF_G_Employee                 @relation(fields: [corporateEmployeeId], references: [id])
+  tradeGroup           MF_G_TradeGroup?              @relation(fields: [tradeGroupId], references: [id])
+  businessPartner      MF_G_BusinessPartner?         @relation(fields: [businessPartnerId], references: [id])
+  assignments          MF_OP_DailyAssignment[]
+  operatorAssignments MF_OP_DailyEquipmentAssignment[] @relation("OperatorAssigned")
+  timeEntries          MF_OP_TimeEntry[]
 
   @@unique([projectId, corporateEmployeeId])
   @@index([projectId])
@@ -262,7 +256,7 @@ model Employee {
   @@map("MF_L_EMPLOYEE")
 }
 
-model Equipment {
+model MF_P_Equipment {
   id                   String   @id @default(uuid())
   projectId            String   @map("project_id")
   corporateEquipmentId String   @map("corporate_equipment_id")
@@ -273,12 +267,12 @@ model Equipment {
   ownerPartnerId       String?  @map("owner_partner_id")
   createdAt            DateTime @default(now()) @map("created_at")
 
-  project            Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  corporateEquipment CorporateEquipment         @relation(fields: [corporateEquipmentId], references: [id])
-  meterUnit          UnitMaster?                @relation("EquipmentMeterUnit", fields: [meterUnitCode], references: [code])
-  ownerPartner       CorporateBusinessPartner?  @relation(fields: [ownerPartnerId], references: [id])
-  dailyAssignments   DailyEquipmentAssignment[]
-  timeEntries        TimeEntry[]
+  project            MF_P_Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  corporateEquipment MF_G_Equipment                 @relation(fields: [corporateEquipmentId], references: [id])
+  meterUnit          MF_G_UnitMaster?               @relation("EquipmentMeterUnit", fields: [meterUnitCode], references: [code])
+  ownerPartner       MF_G_BusinessPartner?          @relation(fields: [ownerPartnerId], references: [id])
+  dailyAssignments   MF_OP_DailyEquipmentAssignment[]
+  timeEntries        MF_OP_TimeEntry[]
 
   @@unique([projectId, corporateEquipmentId])
   @@index([projectId])
@@ -288,7 +282,7 @@ model Equipment {
   @@map("MF_L_EQUIPMENT")
 }
 
-model ActivityCode {
+model MF_P_ActivityCode {
   id                      String   @id @default(uuid())
   projectId               String   @map("project_id")
   corporateActivityCodeId String?  @map("corporate_activity_code_id")
@@ -297,11 +291,11 @@ model ActivityCode {
   unit                    String?
   createdAt               DateTime @default(now()) @map("created_at")
 
-  project                     Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  corporateActivityCode       CorporateActivityCode?      @relation(fields: [corporateActivityCodeId], references: [id])
-  timeEntries                 TimeEntry[]
-  activitySplits              LaborActivitySplit[]
-  equipmentDailyLogActivities EquipmentDailyLogActivity[]
+  project                     MF_P_Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  corporateActivityCode       MF_G_ActivityCode?               @relation(fields: [corporateActivityCodeId], references: [id])
+  timeEntries                 MF_OP_TimeEntry[]
+  activitySplits              MF_OP_LaborActivitySplit[]
+  equipmentDailyLogActivities MF_OP_EquipmentDailyLogActivity[]
 
   @@unique([projectId, code])
   @@index([projectId])
@@ -309,14 +303,14 @@ model ActivityCode {
   @@map("MF_L_ACTIVITY_CODE")
 }
 
-model CalendarDay {
+model MF_P_CalendarDay {
   projectId String   @map("project_id")
   date      DateTime @db.Date
   dayTypeId String   @map("day_type_id")
   remarks   String?
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  dayType DayType @relation(fields: [dayTypeId], references: [id])
+  project MF_P_Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dayType MF_G_DayType @relation(fields: [dayTypeId], references: [id])
 
   @@id([projectId, date])
   @@index([projectId])
@@ -325,10 +319,10 @@ model CalendarDay {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// LEVEL 3: DAILY OPERATIONAL TRANSACTIONS (MF_L_*)
+// LEVEL 3: DAILY OPERATIONAL TRANSACTIONS (MF_OP_*)
 // ═════════════════════════════════════════════════════════════════════════════
 
-model DailySheet {
+model MF_OP_DailySheet {
   id           String    @id @default(uuid())
   projectId    String    @map("project_id")
   date         DateTime  @db.Date
@@ -343,11 +337,11 @@ model DailySheet {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  project              Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  supervisor           User                       @relation(fields: [supervisorId], references: [id])
-  assignments          DailyAssignment[]
-  equipmentAssignments DailyEquipmentAssignment[]
-  timeEntries          TimeEntry[]
+  project              MF_P_Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supervisor           MF_P_User                       @relation(fields: [supervisorId], references: [id])
+  assignments          MF_OP_DailyAssignment[]
+  equipmentAssignments MF_OP_DailyEquipmentAssignment[]
+  timeEntries          MF_OP_TimeEntry[]
 
   @@unique([projectId, supervisorId, date])
   @@index([projectId, date])
@@ -355,15 +349,15 @@ model DailySheet {
   @@map("MF_L_DAILY_SHEET")
 }
 
-model DailyAssignment {
+model MF_OP_DailyAssignment {
   id           String   @id @default(uuid())
   dailySheetId String   @map("daily_sheet_id")
   employeeId   String   @map("employee_id")
   isStandby    Boolean  @default(false) @map("is_standby")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  dailySheet DailySheet @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
-  employee   Employee   @relation(fields: [employeeId], references: [id])
+  dailySheet MF_OP_DailySheet @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
+  employee   MF_P_Employee    @relation(fields: [employeeId], references: [id])
 
   @@unique([dailySheetId, employeeId])
   @@index([dailySheetId])
@@ -371,17 +365,17 @@ model DailyAssignment {
   @@map("MF_L_DAILY_ASSIGNMENT")
 }
 
-model DailyEquipmentAssignment {
+model MF_OP_DailyEquipmentAssignment {
   id           String   @id @default(uuid())
   dailySheetId String   @map("daily_sheet_id")
   equipmentId  String   @map("equipment_id")
   operatorId   String   @map("operator_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  dailySheet DailySheet         @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
-  equipment  Equipment          @relation(fields: [equipmentId], references: [id])
-  operator   Employee           @relation("OperatorAssigned", fields: [operatorId], references: [id])
-  dailyLog   EquipmentDailyLog?
+  dailySheet MF_OP_DailySheet       @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
+  equipment  MF_P_Equipment         @relation(fields: [equipmentId], references: [id])
+  operator   MF_P_Employee          @relation("OperatorAssigned", fields: [operatorId], references: [id])
+  dailyLog   MF_OP_EquipmentDailyLog?
 
   @@unique([dailySheetId, operatorId, equipmentId])
   @@index([dailySheetId])
@@ -390,7 +384,7 @@ model DailyEquipmentAssignment {
   @@map("MF_L_DAILY_EQUIPMENT_ASSIGNMENT")
 }
 
-model EquipmentDailyLog {
+model MF_OP_EquipmentDailyLog {
   id               String   @id @default(uuid())
   assignmentId     String   @unique @map("assignment_id")
   
@@ -418,15 +412,15 @@ model EquipmentDailyLog {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  assignment DailyEquipmentAssignment    @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  activeUnit UnitMaster?                 @relation(fields: [unitCode], references: [code])
-  activities EquipmentDailyLogActivity[]
+  assignment MF_OP_DailyEquipmentAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  activeUnit MF_G_UnitMaster?                @relation(fields: [unitCode], references: [code])
+  activities MF_OP_EquipmentDailyLogActivity[]
 
   @@index([unitCode])
   @@map("MF_L_EQUIPMENT_DAILY_LOG")
 }
 
-model EquipmentDailyLogActivity {
+model MF_OP_EquipmentDailyLogActivity {
   id             String   @id @default(uuid())
   dailyLogId     String   @map("daily_log_id")
   activityCodeId String   @map("activity_code_id")
@@ -434,15 +428,15 @@ model EquipmentDailyLogActivity {
   remarks        String?
   createdAt      DateTime @default(now()) @map("created_at")
 
-  dailyLog     EquipmentDailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
-  activityCode ActivityCode      @relation(fields: [activityCodeId], references: [id])
+  dailyLog     MF_OP_EquipmentDailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  activityCode MF_P_ActivityCode       @relation(fields: [activityCodeId], references: [id])
 
   @@index([dailyLogId])
   @@index([activityCodeId])
   @@map("MF_L_EQUIPMENT_DAILY_LOG_ACTIVITY")
 }
 
-model TimeEntry {
+model MF_OP_TimeEntry {
   id                 String    @id @default(uuid())
   projectId          String    @map("project_id")
   dailySheetId       String?   @map("daily_sheet_id")
@@ -464,14 +458,14 @@ model TimeEntry {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  project          Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  dailySheet       DailySheet?          @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
-  employee         Employee             @relation(fields: [employeeId], references: [id])
-  activity         ActivityCode         @relation(fields: [activityId], references: [id])
-  equipment        Equipment?           @relation(fields: [equipmentId], references: [id])
-  effectiveDayType DayType              @relation(fields: [effectiveDayTypeId], references: [id])
-  recordedBy       User?                @relation("TimeEntryRecordedBy", fields: [recordedById], references: [id])
-  activitySplits   LaborActivitySplit[]
+  project          MF_P_Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dailySheet       MF_OP_DailySheet?            @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
+  employee         MF_P_Employee                @relation(fields: [employeeId], references: [id])
+  activity         MF_P_ActivityCode            @relation(fields: [activityId], references: [id])
+  equipment        MF_P_Equipment?              @relation(fields: [equipmentId], references: [id])
+  effectiveDayType MF_G_DayType                 @relation(fields: [effectiveDayTypeId], references: [id])
+  recordedBy       MF_P_User?                   @relation("TimeEntryRecordedBy", fields: [recordedById], references: [id])
+  activitySplits   MF_OP_LaborActivitySplit[]
 
   @@index([projectId, date])
   @@index([dailySheetId])
@@ -483,15 +477,15 @@ model TimeEntry {
   @@map("MF_L_TIME_ENTRY")
 }
 
-model LaborActivitySplit {
+model MF_OP_LaborActivitySplit {
   id             String   @id @default(uuid())
   timeEntryId    String   @map("time_entry_id")
   activityCodeId String   @map("activity_code_id")
   hours          Decimal  @default(0.00) @db.Decimal(5, 2)
   createdAt      DateTime @default(now()) @map("created_at")
 
-  timeEntry    TimeEntry    @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
-  activityCode ActivityCode @relation(fields: [activityCodeId], references: [id])
+  timeEntry    MF_OP_TimeEntry   @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  activityCode MF_P_ActivityCode @relation(fields: [activityCodeId], references: [id])
 
   @@index([timeEntryId])
   @@index([activityCodeId])

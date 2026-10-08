@@ -2,23 +2,24 @@ import prisma from '../src/config/prisma';
 import bcrypt from 'bcrypt';
 
 async function seed531() {
-  console.log('🚀 Seeding Project 531M (Walgama Diyagama Road) data...');
+  console.log('🚀 Seeding Project PRJ531 (Walgama Diyagama Road) data...');
 
-  // 1. Ensure Tenant 531M exists
-  let tenant = await prisma.tenant.findFirst({
+  // 1. Ensure Project 531 exists
+  let project = await prisma.project.findFirst({
     where: {
       OR: [
-        { subdomain: '531M' },
         { subdomain: '531' },
+        { projectCode: 'PRJ531' },
       ],
     },
   });
 
-  if (!tenant) {
-    tenant = await prisma.tenant.create({
+  if (!project) {
+    project = await prisma.project.create({
       data: {
-        companyName: 'Walgama Diyagama Road (531M)',
-        subdomain: '531M',
+        projectCode: 'PRJ531',
+        projectName: 'Walgama Diyagama Road (531M)',
+        subdomain: '531',
         addressLine1: 'Walgama - Diyagama Project Site Office',
         addressLine2: 'Western Province',
         phone: '+94 11 280 8835',
@@ -26,286 +27,138 @@ async function seed531() {
         status: 'active',
       },
     });
-    console.log(`✅ Created Tenant: ${tenant.companyName} (${tenant.subdomain}) - ID: ${tenant.id}`);
+    console.log(`✅ Created Project: ${project.projectName} (${project.projectCode}) - ID: ${project.id}`);
   } else {
-    console.log(`ℹ️ Existing Tenant found: ${tenant.companyName} (${tenant.subdomain}) - ID: ${tenant.id}`);
+    console.log(`ℹ️ Existing Project found: ${project.projectName} (${project.projectCode}) - ID: ${project.id}`);
   }
 
-  const tenantId = tenant.id;
+  const projectId = project.id;
+  const defaultPasswordHash = await bcrypt.hash('admin123', 10);
 
-  // 2. Day Types (needed for time entries & overtime calculations)
+  // 2. Day Types
   const dayTypes = [
-    { name: 'Normal Day', rateMultiplier: 1.0 },
-    { name: 'Saturday', rateMultiplier: 1.0 },
-    { name: 'Sunday', rateMultiplier: 1.5 },
-    { name: 'Shutdown', rateMultiplier: 1.0 },
-    { name: 'Public Holiday', rateMultiplier: 2.0 },
+    { code: 'NORMAL', name: 'Normal Day', rateMultiplier: 1.0 },
+    { code: 'SATURDAY', name: 'Saturday', rateMultiplier: 1.0 },
+    { code: 'SUNDAY', name: 'Sunday', rateMultiplier: 1.5 },
+    { code: 'SHUTDOWN', name: 'Shutdown', rateMultiplier: 1.0 },
+    { code: 'POYA', name: 'Public Holiday', rateMultiplier: 2.0 },
   ];
 
   for (const dt of dayTypes) {
     await prisma.dayType.upsert({
-      where: {
-        tenantId_name: {
-          tenantId,
-          name: dt.name,
-        },
-      },
-      update: { rateMultiplier: dt.rateMultiplier },
-      create: {
-        tenantId,
-        name: dt.name,
-        rateMultiplier: dt.rateMultiplier,
-      },
+      where: { code: dt.code },
+      update: { name: dt.name, rateMultiplier: dt.rateMultiplier },
+      create: dt,
     });
   }
-  console.log('✅ Day Types seeded for 531M');
 
-  // 3. Business Partners (1 Internal Maga, 1 External Contractor)
-  const internalBp = await prisma.businessPartner.upsert({
-    where: {
-      tenantId_code: {
-        tenantId,
-        code: 'BP1001001',
-      },
-    },
-    update: {
-      name: 'Mäga Engineering (Pvt) Ltd',
-      contactPerson: 'Project Manager (531M)',
-      phone: '+94 11 2808835',
-      status: 'active',
-    },
+  // 3. Business Partners
+  const internalBp = await prisma.corporateBusinessPartner.upsert({
+    where: { code: 'BP1001001' },
+    update: { name: 'Mäga Engineering (Pvt) Ltd', currentWorkingProject: 'PRJ531' },
     create: {
-      tenantId,
       code: 'BP1001001',
       name: 'Mäga Engineering (Pvt) Ltd',
+      type: 'internal',
       contactPerson: 'Project Manager (531M)',
       phone: '+94 11 2808835',
-      email: 'info@maga.lk',
-      address: '200, Nawala Road, Narahenpita',
-      status: 'active',
+      currentWorkingProject: 'PRJ531',
     },
   });
 
-  const externalBp = await prisma.businessPartner.upsert({
-    where: {
-      tenantId_code: {
-        tenantId,
-        code: 'BP1004093',
-      },
-    },
-    update: {
-      name: 'Aruna Builders (Pvt) Ltd',
-      contactPerson: 'Mr. Aruna Wickramasinghe',
-      phone: '+94 77 123 4567',
-      status: 'active',
-    },
+  const externalBp = await prisma.corporateBusinessPartner.upsert({
+    where: { code: 'BP1004093' },
+    update: { name: 'Aruna Builders (Pvt) Ltd', currentWorkingProject: 'PRJ531' },
     create: {
-      tenantId,
       code: 'BP1004093',
       name: 'Aruna Builders (Pvt) Ltd',
+      type: 'subcontractor',
       contactPerson: 'Mr. Aruna Wickramasinghe',
       phone: '+94 77 123 4567',
-      email: 'arunabuilders@gmail.com',
-      address: '15/B, Katuwana Industrial Zone, Homagama',
-      status: 'active',
+      currentWorkingProject: 'PRJ531',
     },
   });
 
-  console.log(`✅ Business Partners seeded:`);
-  console.log(`   - Internal: ${internalBp.name} (${internalBp.code})`);
-  console.log(`   - External: ${externalBp.name} (${externalBp.code})`);
+  // 4. Trade Groups
+  const masonTg = await prisma.corporateTradeGroup.upsert({
+    where: { code: 'MASON' },
+    update: {},
+    create: { code: 'MASON', name: 'Mason', standardDailyRate: 1750.0 },
+  });
 
-  // 4. 10 Employees (5 Internal starting with 'H', 5 External starting with 'X')
-  const employeesData = [
-    // --- 5 Internal Workers (Maga - H codes) ---
-    {
-      employeeCode: 'H101',
-      callingName: 'Kamal',
-      fullName: 'Kamal Perera',
-      businessPartnerId: internalBp.id,
-      tradeGroup: 'Mason',
-      nicNo: '198512345678',
-      dailyRate: 2200.0,
-      epfNo: 'EPF-531-101',
-    },
-    {
-      employeeCode: 'H102',
-      callingName: 'Sunil',
-      fullName: 'Sunil Shantha',
-      businessPartnerId: internalBp.id,
-      tradeGroup: 'Carpenter',
-      nicNo: '198734567890',
-      dailyRate: 2100.0,
-      epfNo: 'EPF-531-102',
-    },
-    {
-      employeeCode: 'HK010',
-      callingName: 'Nimal',
-      fullName: 'Nimal Jayasuriya',
-      businessPartnerId: internalBp.id,
-      tradeGroup: 'Lab Helper',
-      nicNo: '199245678901',
-      dailyRate: 1500.0,
-      epfNo: 'EPF-531-103',
-    },
-    {
-      employeeCode: 'HK011',
-      callingName: 'Ruwan',
-      fullName: 'Ruwan Kumara',
-      businessPartnerId: internalBp.id,
-      tradeGroup: 'Bar Bender',
-      nicNo: '199456789012',
-      dailyRate: 2000.0,
-      epfNo: 'EPF-531-104',
-    },
-    {
-      employeeCode: 'HI105',
-      callingName: 'Sarath',
-      fullName: 'Sarath Bandara',
-      businessPartnerId: internalBp.id,
-      tradeGroup: 'Operator',
-      nicNo: '198967890123',
-      dailyRate: 2400.0,
-      epfNo: 'EPF-531-105',
-    },
+  const helperTg = await prisma.corporateTradeGroup.upsert({
+    where: { code: 'LABOUR' },
+    update: {},
+    create: { code: 'LABOUR', name: 'General Helper', standardDailyRate: 1400.0 },
+  });
 
-    // --- 5 External Workers (Aruna Builders - X codes) ---
-    {
-      employeeCode: 'X001',
-      callingName: 'Pradeep',
-      fullName: 'Pradeep Sanjeewa',
-      businessPartnerId: externalBp.id,
-      tradeGroup: 'Mason',
-      nicNo: '199178901234',
-      dailyRate: 1900.0,
-      epfNo: '',
-    },
-    {
-      employeeCode: 'X002',
-      callingName: 'Anura',
-      fullName: 'Anura Kumara',
-      businessPartnerId: externalBp.id,
-      tradeGroup: 'Painter',
-      nicNo: '198889012345',
-      dailyRate: 1850.0,
-      epfNo: '',
-    },
-    {
-      employeeCode: 'X003',
-      callingName: 'Chaminda',
-      fullName: 'Chaminda Silva',
-      businessPartnerId: externalBp.id,
-      tradeGroup: 'Plumber',
-      nicNo: '199390123456',
-      dailyRate: 2000.0,
-      epfNo: '',
-    },
-    {
-      employeeCode: 'X004',
-      callingName: 'Kasun',
-      fullName: 'Kasun Wijeratne',
-      businessPartnerId: externalBp.id,
-      tradeGroup: 'Helper',
-      nicNo: '200101234567',
-      dailyRate: 1400.0,
-      epfNo: '',
-    },
-    {
-      employeeCode: 'X005',
-      callingName: 'Dilan',
-      fullName: 'Dilan Madushanka',
-      businessPartnerId: externalBp.id,
-      tradeGroup: 'Electrician',
-      nicNo: '199612345670',
-      dailyRate: 2100.0,
-      epfNo: '',
-    },
+  // 5. Corporate Employees & Site Employees
+  const workers = [
+    { code: 'H101', name: 'Kamal Perera', tgId: masonTg.id, bpId: internalBp.id, rate: 2200 },
+    { code: 'H102', name: 'Sunil Shantha', tgId: masonTg.id, bpId: internalBp.id, rate: 2100 },
+    { code: 'HK010', name: 'Nimal Jayasuriya', tgId: helperTg.id, bpId: internalBp.id, rate: 1500 },
+    { code: 'X001', name: 'Pradeep Sanjeewa', tgId: masonTg.id, bpId: externalBp.id, rate: 1900 },
+    { code: 'X002', name: 'Anura Kumara', tgId: helperTg.id, bpId: externalBp.id, rate: 1850 },
   ];
 
-  for (const emp of employeesData) {
+  for (const w of workers) {
+    const corp = await prisma.corporateEmployee.upsert({
+      where: { employeeCode: w.code },
+      update: {
+        fullName: w.name,
+        tradeGroupId: w.tgId,
+        corporateBusinessPartnerId: w.bpId,
+        dailyRate: w.rate,
+        currentWorkingProject: 'PRJ531',
+      },
+      create: {
+        employeeCode: w.code,
+        fullName: w.name,
+        nicNo: `90${Math.floor(Math.random() * 10000000)}V`,
+        tradeGroupId: w.tgId,
+        corporateBusinessPartnerId: w.bpId,
+        dailyRate: w.rate,
+        currentWorkingProject: 'PRJ531',
+      },
+    });
+
     await prisma.employee.upsert({
       where: {
-        tenantId_employeeCode: {
-          tenantId,
-          employeeCode: emp.employeeCode,
+        projectId_corporateEmployeeId: {
+          projectId,
+          corporateEmployeeId: corp.id,
         },
       },
       update: {
-        callingName: emp.callingName,
-        fullName: emp.fullName,
-        businessPartnerId: emp.businessPartnerId,
-        tradeGroup: emp.tradeGroup,
-        nicNo: emp.nicNo,
-        dailyRate: emp.dailyRate,
-        epfNo: emp.epfNo,
+        callingName: w.name.split(' ')[0],
+        dailyRate: w.rate,
+        tradeGroupId: w.tgId,
+        businessPartnerId: w.bpId,
         status: 'active',
       },
       create: {
-        tenantId,
-        employeeCode: emp.employeeCode,
-        callingName: emp.callingName,
-        fullName: emp.fullName,
-        businessPartnerId: emp.businessPartnerId,
-        tradeGroup: emp.tradeGroup,
-        nicNo: emp.nicNo,
-        dailyRate: emp.dailyRate,
-        epfNo: emp.epfNo,
+        projectId,
+        corporateEmployeeId: corp.id,
+        callingName: w.name.split(' ')[0],
+        dailyRate: w.rate,
+        tradeGroupId: w.tgId,
+        businessPartnerId: w.bpId,
         status: 'active',
       },
     });
   }
-  console.log(`✅ Seeded 10 Employees (5 Internal 'H' codes + 5 External 'X' codes)`);
 
-  // 5. 10 Standard Activity Codes
-  const activityCodesData = [
-    { code: '00-00-11-11-M', description: 'Direct Labour Masonry Works' },
-    { code: '01-10-10-00', description: 'Excavation & Earthwork' },
-    { code: '01-20-10-00', description: 'Concrete Work - Substructure' },
-    { code: '02-10-10-00', description: 'Formwork - Superstructure' },
-    { code: '02-20-10-00', description: 'Rebar & Steel Reinforcement' },
-    { code: '03-10-10-00', description: 'Masonry Block & Brick Laying' },
-    { code: '03-20-10-00', description: 'Plastering Work' },
-    { code: '04-10-10-00', description: 'Plumbing & Drainage Work' },
-    { code: '04-20-10-00', description: 'Electrical Conduit & Cabling' },
-    { code: '05-20-10-00', description: 'Painting & Surface Coating' },
-  ];
-
-  for (const ac of activityCodesData) {
-    await prisma.activityCode.upsert({
-      where: {
-        tenantId_code: {
-          tenantId,
-          code: ac.code,
-        },
-      },
-      update: {
-        description: ac.description,
-      },
-      create: {
-        tenantId,
-        code: ac.code,
-        description: ac.description,
-      },
-    });
-  }
-  console.log(`✅ Seeded 10 Standard Activity Codes for 531M`);
-
-  // 6. Ensure Admin and Supervisor exist for 531M
-  const defaultPasswordHash = await bcrypt.hash('admin123', 10);
-
-  // Admin user
+  // 6. Users
   await prisma.user.upsert({
     where: {
-      tenantId_username: {
-        tenantId,
+      projectId_username: {
+        projectId,
         username: 'admin',
       },
     },
-    update: {
-      status: 'active',
-    },
+    update: { status: 'active' },
     create: {
-      tenantId,
+      projectId,
       username: 'admin',
       fullName: 'Site Admin (531M)',
       passwordHash: defaultPasswordHash,
@@ -315,19 +168,16 @@ async function seed531() {
     },
   });
 
-  // Supervisor user
   await prisma.user.upsert({
     where: {
-      tenantId_username: {
-        tenantId,
+      projectId_username: {
+        projectId,
         username: 'supervisor1',
       },
     },
-    update: {
-      status: 'active',
-    },
+    update: { status: 'active' },
     create: {
-      tenantId,
+      projectId,
       username: 'supervisor1',
       fullName: 'Chamara Supervisor',
       passwordHash: defaultPasswordHash,
@@ -337,8 +187,7 @@ async function seed531() {
     },
   });
 
-  console.log('✅ Created/Verified Admin and Supervisor for 531M (Password: admin123)');
-  console.log('🎉 Seeding for 531M completed successfully!');
+  console.log('✅ Site PRJ531 seeded cleanly with schema-compliant data!');
 }
 
 seed531()

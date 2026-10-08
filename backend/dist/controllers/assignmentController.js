@@ -5,13 +5,32 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getStandbyPoolForDate = exports.copyEquipmentGangsFromDate = exports.unassignEquipment = exports.assignEquipment = exports.getEquipmentAssignmentsForDate = exports.copyOperatorGangsFromDate = exports.unassignOperator = exports.assignOperators = exports.getOperatorAssignmentsForDate = exports.copyGangsFromDate = exports.unassignEmployee = exports.assignEmployees = exports.getRecentGangSummaries = exports.getAssignmentsForDate = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
-const employeeController_1 = require("./employeeController");
+require("../middleware/tenantMiddleware");
+const tenantHelper_1 = require("../utils/tenantHelper");
 // Helper: parse date to UTC midnight for date column
 function parseDate(dateStr) {
     const [year, month, day] = dateStr.split('-').map(Number);
     return new Date(Date.UTC(year, month - 1, day));
 }
-// 1. Get assignments for a specific date
+async function getOrCreateDailySheet(projectId, supervisorId, date) {
+    return await prisma_1.default.mF_OP_DailySheet.upsert({
+        where: {
+            projectId_supervisorId_date: {
+                projectId,
+                supervisorId,
+                date,
+            },
+        },
+        update: {},
+        create: {
+            projectId,
+            supervisorId,
+            date,
+            status: 'draft',
+        },
+    });
+}
+// 1. GET /api/assignments?date=YYYY-MM-DD
 const getAssignmentsForDate = async (req, res) => {
     try {
         const dateStr = req.query.date;
@@ -19,25 +38,45 @@ const getAssignmentsForDate = async (req, res) => {
             res.status(400).json({ error: 'Date query parameter (YYYY-MM-DD) is required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const targetDate = parseDate(dateStr);
-        const assignments = await prisma_1.default.dailyAssignment.findMany({
+        const assignments = await prisma_1.default.mF_OP_DailyAssignment.findMany({
             where: {
-                tenantId,
-                date: targetDate,
+                dailySheet: {
+                    projectId,
+                    date: targetDate,
+                },
             },
-            include: {
-                supervisor: {
-                    select: { id: true, fullName: true, username: true },
+            select: {
+                id: true,
+                employeeId: true,
+                isStandby: true,
+                dailySheet: {
+                    select: {
+                        id: true,
+                        supervisorId: true,
+                        supervisor: {
+                            select: { id: true, fullName: true, username: true },
+                        },
+                    },
                 },
                 employee: {
                     select: {
                         id: true,
-                        employeeCode: true,
                         callingName: true,
-                        fullName: true,
-                        tradeGroup: true,
-                        businessPartner: { select: { id: true, name: true, code: true } },
+                        corporateEmployee: {
+                            select: { employeeCode: true, fullName: true },
+                        },
+                        tradeGroup: {
+                            select: { name: true },
+                        },
+                        businessPartner: {
+                            select: { id: true, name: true, code: true },
+                        },
                     },
                 },
             },
@@ -46,12 +85,14 @@ const getAssignmentsForDate = async (req, res) => {
         const formatted = assignments.map((a) => ({
             id: a.id,
             date: dateStr,
-            supervisorId: a.supervisorId,
+            supervisorId: a.dailySheet.supervisorId,
             employeeId: a.employeeId,
-            supervisorName: a.supervisor.fullName,
-            employeeName: a.employee.callingName,
-            employeeTrade: a.employee.tradeGroup,
+            supervisorName: a.dailySheet.supervisor.fullName,
+            employeeName: a.employee.callingName || a.employee.corporateEmployee.fullName,
+            employeeCode: a.employee.corporateEmployee.employeeCode,
+            employeeTrade: a.employee.tradeGroup?.name || 'General Labour',
             businessPartner: a.employee.businessPartner?.name || 'Direct',
+            isStandby: a.isStandby,
         }));
         res.json(formatted);
     }
@@ -61,51 +102,55 @@ const getAssignmentsForDate = async (req, res) => {
     }
 };
 exports.getAssignmentsForDate = getAssignmentsForDate;
-// 2. Get past days gang summary (Past 5-7 days of recorded gangs)
+// 2. GET /api/assignments/recent-gangs?days=5
 const getRecentGangSummaries = async (req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const limitDays = parseInt(req.query.days, 10) || 5;
         const beforeDateStr = req.query.before || req.query.targetDate;
         const beforeDate = beforeDateStr ? parseDate(beforeDateStr) : undefined;
-        // Fetch distinct assignment dates (strictly before beforeDate if provided)
-        const distinctDates = await prisma_1.default.dailyAssignment.findMany({
+        const sheets = await prisma_1.default.mF_OP_DailySheet.findMany({
             where: {
-                tenantId,
+                projectId,
                 ...(beforeDate ? { date: { lt: beforeDate } } : {}),
             },
-            select: { date: true },
-            distinct: ['date'],
+            select: {
+                date: true,
+                supervisorId: true,
+                supervisor: { select: { id: true, fullName: true } },
+                _count: { select: { assignments: true } },
+            },
             orderBy: { date: 'desc' },
-            take: limitDays,
+            take: limitDays * 10,
         });
-        const summaries = await Promise.all(distinctDates.map(async ({ date }) => {
-            const dateISO = date.toISOString().split('T')[0];
-            const dayAssignments = await prisma_1.default.dailyAssignment.findMany({
-                where: { tenantId, date },
-                include: {
-                    supervisor: { select: { id: true, fullName: true } },
-                },
+        const dateMap = new Map();
+        for (const s of sheets) {
+            const key = s.date.toISOString().split('T')[0];
+            if (!dateMap.has(key)) {
+                if (dateMap.size >= limitDays)
+                    continue;
+                dateMap.set(key, {
+                    date: key,
+                    totalWorkers: 0,
+                    supervisorsCount: 0,
+                    gangs: [],
+                });
+            }
+            const item = dateMap.get(key);
+            const count = s._count.assignments;
+            item.totalWorkers += count;
+            item.supervisorsCount += 1;
+            item.gangs.push({
+                supervisorId: s.supervisorId,
+                supervisorName: s.supervisor.fullName,
+                workerCount: count,
             });
-            const supervisorGangMap = {};
-            dayAssignments.forEach((a) => {
-                if (!supervisorGangMap[a.supervisorId]) {
-                    supervisorGangMap[a.supervisorId] = {
-                        supervisorId: a.supervisorId,
-                        supervisorName: a.supervisor.fullName,
-                        workerCount: 0,
-                    };
-                }
-                supervisorGangMap[a.supervisorId].workerCount += 1;
-            });
-            return {
-                date: dateISO,
-                totalWorkers: dayAssignments.length,
-                supervisorsCount: Object.keys(supervisorGangMap).length,
-                gangs: Object.values(supervisorGangMap),
-            };
-        }));
-        res.json(summaries);
+        }
+        res.json(Array.from(dateMap.values()));
     }
     catch (error) {
         console.error('Error fetching recent gang summaries:', error);
@@ -113,52 +158,59 @@ const getRecentGangSummaries = async (req, res) => {
     }
 };
 exports.getRecentGangSummaries = getRecentGangSummaries;
-// 3. Assign employees to a supervisor for a date
+// 3. POST /api/assignments — Assign employees to supervisor for a date
 const assignEmployees = async (req, res) => {
     try {
-        const { date, supervisorId, employeeIds } = req.body;
+        const { date, supervisorId, employeeIds } = req.body || {};
         if (!date || !supervisorId || !Array.isArray(employeeIds) || employeeIds.length === 0) {
             res.status(400).json({ error: 'date, supervisorId, and non-empty employeeIds array are required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
-        // Validate supervisor belongs to tenant
-        const supervisor = await prisma_1.default.user.findFirst({
-            where: { id: supervisorId, tenantId },
+        // Verify supervisor belongs to project
+        const supervisor = await prisma_1.default.mF_P_User.findFirst({
+            where: { id: supervisorId, projectId },
         });
         if (!supervisor) {
-            res.status(404).json({ error: 'Supervisor not found for this tenant' });
+            res.status(404).json({ error: 'Supervisor not found for this project' });
             return;
         }
-        // Validate employee IDs belong to tenant
-        const validEmployees = await prisma_1.default.employee.findMany({
-            where: { id: { in: employeeIds }, tenantId },
-            select: { id: true },
-        });
-        const validEmpIdSet = new Set(validEmployees.map((e) => e.id));
-        const invalidEmpIds = employeeIds.filter((id) => !validEmpIdSet.has(id));
-        if (invalidEmpIds.length > 0) {
-            res.status(400).json({ error: `The following employee ID(s) do not belong to this tenant: ${invalidEmpIds.join(', ')}` });
-            return;
-        }
+        // Ensure DailySheet exists
+        const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
         const createdAssignments = [];
         for (const empId of employeeIds) {
-            const assignment = await prisma_1.default.dailyAssignment.upsert({
+            // Remove any existing assignment on the same date under other sheets
+            const otherSheets = await prisma_1.default.mF_OP_DailyAssignment.findMany({
                 where: {
-                    tenantId_date_employeeId: {
-                        tenantId,
+                    employeeId: empId,
+                    dailySheet: {
+                        projectId,
                         date: targetDate,
+                        id: { not: dailySheet.id },
+                    },
+                },
+                select: { id: true },
+            });
+            if (otherSheets.length > 0) {
+                await prisma_1.default.mF_OP_DailyAssignment.deleteMany({
+                    where: { id: { in: otherSheets.map((o) => o.id) } },
+                });
+            }
+            const assignment = await prisma_1.default.mF_OP_DailyAssignment.upsert({
+                where: {
+                    dailySheetId_employeeId: {
+                        dailySheetId: dailySheet.id,
                         employeeId: empId,
                     },
                 },
-                update: {
-                    supervisorId,
-                },
+                update: {},
                 create: {
-                    tenantId,
-                    date: targetDate,
-                    supervisorId,
+                    dailySheetId: dailySheet.id,
                     employeeId: empId,
                 },
             });
@@ -167,7 +219,12 @@ const assignEmployees = async (req, res) => {
         res.status(201).json({
             success: true,
             count: createdAssignments.length,
-            assignments: createdAssignments,
+            assignments: createdAssignments.map((a) => ({
+                id: a.id,
+                date,
+                supervisorId,
+                employeeId: a.employeeId,
+            })),
         });
     }
     catch (error) {
@@ -176,19 +233,11 @@ const assignEmployees = async (req, res) => {
     }
 };
 exports.assignEmployees = assignEmployees;
-// 4. Unassign an employee
+// 4. DELETE /api/assignments/:id — Unassign employee
 const unassignEmployee = async (req, res) => {
     try {
         const id = req.params.id;
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const existing = await prisma_1.default.dailyAssignment.findFirst({
-            where: { id, tenantId },
-        });
-        if (!existing) {
-            res.status(404).json({ error: 'Assignment record not found' });
-            return;
-        }
-        await prisma_1.default.dailyAssignment.delete({
+        await prisma_1.default.mF_OP_DailyAssignment.delete({
             where: { id },
         });
         res.json({ success: true, message: 'Employee unassigned successfully' });
@@ -203,63 +252,65 @@ const unassignEmployee = async (req, res) => {
     }
 };
 exports.unassignEmployee = unassignEmployee;
-// 5. Copy gang from any selected past date to target date
+// 5. POST /api/assignments/copy — Copy gangs from a past date
 const copyGangsFromDate = async (req, res) => {
     try {
-        const { sourceDate, targetDate, supervisorIds, overwrite = true } = req.body;
+        const { sourceDate, targetDate, supervisorIds, overwrite = true } = req.body || {};
         if (!sourceDate || !targetDate) {
             res.status(400).json({ error: 'sourceDate and targetDate are required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const srcDateParsed = parseDate(sourceDate);
         const tgtDateParsed = parseDate(targetDate);
-        // Fetch assignments from source date
-        const sourceWhere = {
-            tenantId,
-            date: srcDateParsed,
-        };
-        if (Array.isArray(supervisorIds) && supervisorIds.length > 0) {
-            sourceWhere.supervisorId = { in: supervisorIds };
-        }
-        const sourceAssignments = await prisma_1.default.dailyAssignment.findMany({
-            where: sourceWhere,
+        const sourceSheets = await prisma_1.default.mF_OP_DailySheet.findMany({
+            where: {
+                projectId,
+                date: srcDateParsed,
+                ...(Array.isArray(supervisorIds) && supervisorIds.length > 0
+                    ? { supervisorId: { in: supervisorIds } }
+                    : {}),
+            },
+            include: {
+                assignments: true,
+            },
         });
-        if (sourceAssignments.length === 0) {
-            res.json({
-                success: true,
-                copiedCount: 0,
-                message: `No gang records found on ${sourceDate} to copy.`,
-            });
-            return;
-        }
-        // Overwrite existing assignments on target date so stale old assignments don't stay attached to other supervisors
-        if (overwrite !== false) {
-            const deleteWhere = {
-                tenantId,
-                date: tgtDateParsed,
-            };
-            if (Array.isArray(supervisorIds) && supervisorIds.length > 0) {
-                deleteWhere.supervisorId = { in: supervisorIds };
+        let copiedCount = 0;
+        for (const srcSheet of sourceSheets) {
+            if (srcSheet.assignments.length === 0)
+                continue;
+            const targetSheet = await getOrCreateDailySheet(projectId, srcSheet.supervisorId, tgtDateParsed);
+            if (overwrite) {
+                await prisma_1.default.mF_OP_DailyAssignment.deleteMany({
+                    where: { dailySheetId: targetSheet.id },
+                });
             }
-            await prisma_1.default.dailyAssignment.deleteMany({
-                where: deleteWhere,
-            });
+            for (const assign of srcSheet.assignments) {
+                await prisma_1.default.mF_OP_DailyAssignment.upsert({
+                    where: {
+                        dailySheetId_employeeId: {
+                            dailySheetId: targetSheet.id,
+                            employeeId: assign.employeeId,
+                        },
+                    },
+                    update: {},
+                    create: {
+                        dailySheetId: targetSheet.id,
+                        employeeId: assign.employeeId,
+                        isStandby: assign.isStandby,
+                    },
+                });
+                copiedCount++;
+            }
         }
-        // Insert copied assignments into target date
-        await prisma_1.default.dailyAssignment.createMany({
-            data: sourceAssignments.map((src) => ({
-                tenantId,
-                date: tgtDateParsed,
-                supervisorId: src.supervisorId,
-                employeeId: src.employeeId,
-            })),
-            skipDuplicates: true,
-        });
         res.json({
             success: true,
-            copiedCount: sourceAssignments.length,
-            message: `Successfully copied ${sourceAssignments.length} gang assignment(s) from ${sourceDate} to ${targetDate}.`,
+            copiedCount,
+            message: `Successfully copied ${copiedCount} gang assignment(s) from ${sourceDate} to ${targetDate}.`,
         });
     }
     catch (error) {
@@ -268,10 +319,7 @@ const copyGangsFromDate = async (req, res) => {
     }
 };
 exports.copyGangsFromDate = copyGangsFromDate;
-// ─────────────────────────────────────────────────────────────────────────────
-// OPERATOR ASSIGNMENT CONTROLLER FUNCTIONS
-// ─────────────────────────────────────────────────────────────────────────────
-// 6. Get operator assignments for a specific date
+// 6. GET /api/assignments/operator?date=YYYY-MM-DD
 const getOperatorAssignmentsForDate = async (req, res) => {
     try {
         const dateStr = req.query.date;
@@ -279,38 +327,48 @@ const getOperatorAssignmentsForDate = async (req, res) => {
             res.status(400).json({ error: 'Date query parameter (YYYY-MM-DD) is required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const supervisorId = req.query.supervisorId;
         const targetDate = parseDate(dateStr);
-        const where = {
-            tenantId,
-            date: targetDate,
-        };
-        if (supervisorId) {
-            where.supervisorId = supervisorId;
-        }
-        const assignments = await prisma_1.default.dailyOperatorAssignment.findMany({
-            where,
+        const assignments = await prisma_1.default.mF_OP_DailyEquipmentAssignment.findMany({
+            where: {
+                dailySheet: {
+                    projectId,
+                    date: targetDate,
+                    ...(supervisorId ? { supervisorId } : {}),
+                },
+            },
             include: {
-                supervisor: {
-                    select: { id: true, fullName: true, username: true },
+                dailySheet: {
+                    select: {
+                        supervisorId: true,
+                        supervisor: { select: { id: true, fullName: true, username: true } },
+                    },
                 },
                 operator: {
                     select: {
                         id: true,
-                        employeeCode: true,
                         callingName: true,
-                        fullName: true,
-                        tradeGroup: true,
-                        isOperator: true,
-                        licenseNo: true,
-                        businessPartner: { select: { id: true, name: true, code: true } },
+                        corporateEmployee: {
+                            select: { employeeCode: true, fullName: true },
+                        },
+                        tradeGroup: { select: { name: true } },
+                        businessPartner: { select: { name: true } },
                     },
                 },
-                timeEntry: {
-                    include: {
-                        assignedEquipment: {
-                            select: { id: true, code: true, magaNo: true, name: true },
+                equipment: {
+                    select: {
+                        id: true,
+                        corporateEquipment: {
+                            select: {
+                                standardEquipmentNumber: true,
+                                vehicleNo: true,
+                                equipmentName: true,
+                            },
                         },
                     },
                 },
@@ -320,29 +378,17 @@ const getOperatorAssignmentsForDate = async (req, res) => {
         const formatted = assignments.map((a) => ({
             id: a.id,
             date: dateStr,
-            supervisorId: a.supervisorId,
+            supervisorId: a.dailySheet.supervisorId,
             operatorId: a.operatorId,
-            supervisorName: a.supervisor.fullName,
-            operatorName: a.operator.callingName,
-            operatorCode: a.operator.employeeCode,
-            operatorTrade: a.operator.tradeGroup,
-            licenseNo: a.operator.licenseNo || null,
+            equipmentId: a.equipmentId,
+            supervisorName: a.dailySheet.supervisor.fullName,
+            operatorName: a.operator.callingName || a.operator.corporateEmployee.fullName,
+            operatorCode: a.operator.corporateEmployee.employeeCode,
+            operatorTrade: a.operator.tradeGroup?.name || 'Operator',
+            equipmentCode: a.equipment.corporateEquipment.standardEquipmentNumber,
+            equipmentName: a.equipment.corporateEquipment.equipmentName,
+            vehicleNo: a.equipment.corporateEquipment.vehicleNo,
             businessPartner: a.operator.businessPartner?.name || 'Direct',
-            timeEntry: a.timeEntry
-                ? {
-                    id: a.timeEntry.id,
-                    inTime: a.timeEntry.inTime,
-                    outTime: a.timeEntry.outTime,
-                    shiftHours: Number(a.timeEntry.shiftHours || 0),
-                    otHours: Number(a.timeEntry.otHours || 0),
-                    assignedEquipmentId: a.timeEntry.assignedEquipmentId,
-                    equipmentCode: a.timeEntry.assignedEquipment?.code,
-                    equipmentMagaNo: a.timeEntry.assignedEquipment?.magaNo,
-                    equipmentName: a.timeEntry.assignedEquipment?.name,
-                    notes: a.timeEntry.notes,
-                    status: a.timeEntry.status,
-                }
-                : null,
         }));
         res.json(formatted);
     }
@@ -352,61 +398,57 @@ const getOperatorAssignmentsForDate = async (req, res) => {
     }
 };
 exports.getOperatorAssignmentsForDate = getOperatorAssignmentsForDate;
-// 7. Assign operators to a supervisor for a date
+// 7. POST /api/assignments/operator
 const assignOperators = async (req, res) => {
     try {
-        const { date, supervisorId, operatorIds } = req.body;
+        const { date, supervisorId, operatorIds, equipmentId } = req.body || {};
         if (!date || !supervisorId || !Array.isArray(operatorIds) || operatorIds.length === 0) {
             res.status(400).json({ error: 'date, supervisorId, and non-empty operatorIds array are required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
-        // Validate supervisor belongs to tenant
-        const supervisor = await prisma_1.default.user.findFirst({
-            where: { id: supervisorId, tenantId },
-        });
-        if (!supervisor) {
-            res.status(404).json({ error: 'Supervisor not found for this tenant' });
+        const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
+        // Resolve an equipment ID: either provided or fallback to first active project equipment
+        let targetEquipmentId = equipmentId;
+        if (!targetEquipmentId) {
+            const firstEq = await prisma_1.default.mF_P_Equipment.findFirst({
+                where: { projectId, status: 'active' },
+                select: { id: true },
+            });
+            targetEquipmentId = firstEq?.id;
+        }
+        if (!targetEquipmentId) {
+            res.status(400).json({ error: 'No equipment available to assign operators to' });
             return;
         }
-        // Validate operator IDs belong to tenant
-        const validOperators = await prisma_1.default.employee.findMany({
-            where: { id: { in: operatorIds }, tenantId },
-            select: { id: true },
-        });
-        const validOpIdSet = new Set(validOperators.map((o) => o.id));
-        const invalidOpIds = operatorIds.filter((id) => !validOpIdSet.has(id));
-        if (invalidOpIds.length > 0) {
-            res.status(400).json({ error: `The following operator ID(s) do not belong to this tenant: ${invalidOpIds.join(', ')}` });
-            return;
-        }
-        const createdAssignments = [];
+        const created = [];
         for (const opId of operatorIds) {
-            const assignment = await prisma_1.default.dailyOperatorAssignment.upsert({
+            const assignment = await prisma_1.default.mF_OP_DailyEquipmentAssignment.upsert({
                 where: {
-                    tenantId_date_operatorId: {
-                        tenantId,
-                        date: targetDate,
+                    dailySheetId_operatorId_equipmentId: {
+                        dailySheetId: dailySheet.id,
                         operatorId: opId,
+                        equipmentId: targetEquipmentId,
                     },
                 },
-                update: {
-                    supervisorId,
-                },
+                update: {},
                 create: {
-                    tenantId,
-                    date: targetDate,
-                    supervisorId,
+                    dailySheetId: dailySheet.id,
                     operatorId: opId,
+                    equipmentId: targetEquipmentId,
                 },
             });
-            createdAssignments.push(assignment);
+            created.push(assignment);
         }
         res.status(201).json({
             success: true,
-            count: createdAssignments.length,
-            assignments: createdAssignments,
+            count: created.length,
+            assignments: created,
         });
     }
     catch (error) {
@@ -415,19 +457,11 @@ const assignOperators = async (req, res) => {
     }
 };
 exports.assignOperators = assignOperators;
-// 8. Unassign an operator
+// 8. DELETE /api/assignments/operator/:id
 const unassignOperator = async (req, res) => {
     try {
         const id = req.params.id;
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const existing = await prisma_1.default.dailyOperatorAssignment.findFirst({
-            where: { id, tenantId },
-        });
-        if (!existing) {
-            res.status(404).json({ error: 'Operator assignment record not found' });
-            return;
-        }
-        await prisma_1.default.dailyOperatorAssignment.delete({
+        await prisma_1.default.mF_OP_DailyEquipmentAssignment.delete({
             where: { id },
         });
         res.json({ success: true, message: 'Operator unassigned successfully' });
@@ -435,79 +469,82 @@ const unassignOperator = async (req, res) => {
     catch (error) {
         console.error('Error unassigning operator:', error);
         if (error.code === 'P2025') {
-            res.status(404).json({ error: 'Operator assignment record not found' });
+            res.status(404).json({ error: 'Operator assignment not found' });
             return;
         }
         res.status(500).json({ error: 'Failed to unassign operator' });
     }
 };
 exports.unassignOperator = unassignOperator;
-// 9. Copy operator gangs from a past date to target date
+// 9. POST /api/assignments/operator/copy
 const copyOperatorGangsFromDate = async (req, res) => {
     try {
-        const { sourceDate, targetDate, supervisorIds, overwrite = true } = req.body;
+        const { sourceDate, targetDate, supervisorIds, overwrite = true } = req.body || {};
         if (!sourceDate || !targetDate) {
             res.status(400).json({ error: 'sourceDate and targetDate are required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const srcDateParsed = parseDate(sourceDate);
         const tgtDateParsed = parseDate(targetDate);
-        const sourceWhere = {
-            tenantId,
-            date: srcDateParsed,
-        };
-        if (Array.isArray(supervisorIds) && supervisorIds.length > 0) {
-            sourceWhere.supervisorId = { in: supervisorIds };
-        }
-        const sourceAssignments = await prisma_1.default.dailyOperatorAssignment.findMany({
-            where: sourceWhere,
+        const sourceSheets = await prisma_1.default.mF_OP_DailySheet.findMany({
+            where: {
+                projectId,
+                date: srcDateParsed,
+                ...(Array.isArray(supervisorIds) && supervisorIds.length > 0
+                    ? { supervisorId: { in: supervisorIds } }
+                    : {}),
+            },
+            include: {
+                equipmentAssignments: true,
+            },
         });
-        if (sourceAssignments.length === 0) {
-            res.json({
-                success: true,
-                copiedCount: 0,
-                message: `No operator gang records found on ${sourceDate} to copy.`,
-            });
-            return;
-        }
-        if (overwrite !== false) {
-            const deleteWhere = {
-                tenantId,
-                date: tgtDateParsed,
-            };
-            if (Array.isArray(supervisorIds) && supervisorIds.length > 0) {
-                deleteWhere.supervisorId = { in: supervisorIds };
+        let copiedCount = 0;
+        for (const srcSheet of sourceSheets) {
+            if (srcSheet.equipmentAssignments.length === 0)
+                continue;
+            const targetSheet = await getOrCreateDailySheet(projectId, srcSheet.supervisorId, tgtDateParsed);
+            if (overwrite) {
+                await prisma_1.default.mF_OP_DailyEquipmentAssignment.deleteMany({
+                    where: { dailySheetId: targetSheet.id },
+                });
             }
-            await prisma_1.default.dailyOperatorAssignment.deleteMany({
-                where: deleteWhere,
-            });
+            for (const eqAssign of srcSheet.equipmentAssignments) {
+                await prisma_1.default.mF_OP_DailyEquipmentAssignment.upsert({
+                    where: {
+                        dailySheetId_operatorId_equipmentId: {
+                            dailySheetId: targetSheet.id,
+                            operatorId: eqAssign.operatorId,
+                            equipmentId: eqAssign.equipmentId,
+                        },
+                    },
+                    update: {},
+                    create: {
+                        dailySheetId: targetSheet.id,
+                        operatorId: eqAssign.operatorId,
+                        equipmentId: eqAssign.equipmentId,
+                    },
+                });
+                copiedCount++;
+            }
         }
-        await prisma_1.default.dailyOperatorAssignment.createMany({
-            data: sourceAssignments.map((src) => ({
-                tenantId,
-                date: tgtDateParsed,
-                supervisorId: src.supervisorId,
-                operatorId: src.operatorId,
-            })),
-            skipDuplicates: true,
-        });
         res.json({
             success: true,
-            copiedCount: sourceAssignments.length,
-            message: `Successfully copied ${sourceAssignments.length} operator assignment(s) from ${sourceDate} to ${targetDate}.`,
+            copiedCount,
+            message: `Successfully copied ${copiedCount} operator assignment(s) from ${sourceDate} to ${targetDate}.`,
         });
     }
     catch (error) {
-        console.error('Error copying operator gangs from date:', error);
-        res.status(500).json({ error: 'Failed to copy operator gangs from date' });
+        console.error('Error copying operator gangs:', error);
+        res.status(500).json({ error: 'Failed to copy operator gangs' });
     }
 };
 exports.copyOperatorGangsFromDate = copyOperatorGangsFromDate;
-// ─────────────────────────────────────────────────────────────────────────────
-// EQUIPMENT ASSIGNMENT CONTROLLER FUNCTIONS
-// ─────────────────────────────────────────────────────────────────────────────
-// 10. Get equipment assignments for a specific date
+// 10. GET /api/assignments/equipment?date=YYYY-MM-DD
 const getEquipmentAssignmentsForDate = async (req, res) => {
     try {
         const dateStr = req.query.date;
@@ -515,39 +552,52 @@ const getEquipmentAssignmentsForDate = async (req, res) => {
             res.status(400).json({ error: 'Date query parameter (YYYY-MM-DD) is required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const supervisorId = req.query.supervisorId;
         const targetDate = parseDate(dateStr);
-        const where = {
-            tenantId,
-            date: targetDate,
-        };
-        if (supervisorId) {
-            where.supervisorId = supervisorId;
-        }
-        const assignments = await prisma_1.default.dailyEquipmentAssignment.findMany({
-            where,
+        const assignments = await prisma_1.default.mF_OP_DailyEquipmentAssignment.findMany({
+            where: {
+                dailySheet: {
+                    projectId,
+                    date: targetDate,
+                    ...(supervisorId ? { supervisorId } : {}),
+                },
+            },
             include: {
-                supervisor: {
-                    select: { id: true, fullName: true, username: true },
+                dailySheet: {
+                    select: {
+                        supervisorId: true,
+                        supervisor: { select: { id: true, fullName: true, username: true } },
+                    },
                 },
                 equipment: {
                     select: {
                         id: true,
-                        code: true,
-                        vehicleNo: true,
-                        magaNo: true,
-                        name: true,
-                        type: true,
                         condition: true,
                         costRate: true,
-                        primaryUnit: true,
-                        availableUnits: true,
-                        status: true,
-                        unitRates: true,
+                        meterUnitCode: true,
+                        corporateEquipment: {
+                            select: {
+                                standardEquipmentNumber: true,
+                                vehicleNo: true,
+                                equipmentName: true,
+                                type: true,
+                                unit: true,
+                            },
+                        },
                     },
                 },
-                // Include the daily log (supervisor-entered data) if it exists
+                operator: {
+                    select: {
+                        id: true,
+                        callingName: true,
+                        corporateEmployee: { select: { fullName: true } },
+                    },
+                },
                 dailyLog: {
                     include: {
                         activities: {
@@ -560,45 +610,47 @@ const getEquipmentAssignmentsForDate = async (req, res) => {
             },
             orderBy: { createdAt: 'asc' },
         });
-        const formatted = assignments.map((a) => ({
-            id: a.id,
-            date: dateStr,
-            supervisorId: a.supervisorId,
-            equipmentId: a.equipmentId,
-            supervisorName: a.supervisor.fullName,
-            equipmentName: a.equipment.name,
-            equipmentCode: a.equipment.code || '',
-            vehicleNo: a.equipment.vehicleNo || a.equipment.code || '',
-            magaNo: a.equipment.magaNo || '',
-            condition: a.equipment.condition || 'DRY',
-            equipmentType: a.equipment.type || '',
-            costRate: a.equipment.costRate !== null && a.equipment.costRate !== undefined ? Number(a.equipment.costRate) : 0,
-            primaryUnit: a.equipment.primaryUnit || 'mth',
-            availableUnits: a.equipment.availableUnits || [],
-            unitRates: a.equipment.unitRates || [],
-            // Include persisted daily log data so frontend can restore state from server
-            dailyLog: a.dailyLog ? {
-                startMeter: a.dailyLog.initialMeter || 0,
-                endMeter: a.dailyLog.finalMeter || 0,
-                netHours: a.dailyLog.netRunningHours || 0,
-                workingHours: a.dailyLog.workingHours || 0,
-                idleHours: a.dailyLog.idleHours || 0,
-                breakdownHours: a.dailyLog.breakdownHours || 0,
-                fuelIssuedLiters: a.dailyLog.fuelLiters || 0,
-                totalMileage: a.dailyLog.totalMileage || 0,
-                startMileage: a.dailyLog.startMileage || 0,
-                endMileage: a.dailyLog.endMileage || 0,
-                daysValue: a.dailyLog.loggedQuantity || undefined,
-                remarks: a.dailyLog.remarks || null,
-                status: a.dailyLog.status || 'pending',
-                activitySplits: (a.dailyLog.activities || []).map((act) => ({
-                    id: act.id,
-                    activityCode: act.activityCode?.code || '',
-                    unit: act.unit || 'mth',
-                    utilization: act.utilization || 0,
-                })),
-            } : null,
-        }));
+        const formatted = assignments.map((a) => {
+            const corp = a.equipment.corporateEquipment;
+            const primaryUnit = a.equipment.meterUnitCode || corp.unit || 'Hrs';
+            return {
+                id: a.id,
+                date: dateStr,
+                supervisorId: a.dailySheet.supervisorId,
+                equipmentId: a.equipmentId,
+                operatorId: a.operatorId,
+                operatorName: a.operator.callingName || a.operator.corporateEmployee.fullName,
+                supervisorName: a.dailySheet.supervisor.fullName,
+                equipmentName: corp.equipmentName,
+                equipmentCode: corp.standardEquipmentNumber,
+                vehicleNo: corp.vehicleNo || corp.standardEquipmentNumber,
+                condition: a.equipment.condition,
+                equipmentType: corp.type || '',
+                costRate: Number(a.equipment.costRate || 0),
+                primaryUnit,
+                dailyLog: a.dailyLog
+                    ? {
+                        startMeter: Number(a.dailyLog.initialMeter || 0),
+                        endMeter: Number(a.dailyLog.finalMeter || 0),
+                        netHours: Number(a.dailyLog.netRunningHours || 0),
+                        workingHours: Number(a.dailyLog.workingHours || 0),
+                        idleHours: Number(a.dailyLog.idleHours || 0),
+                        breakdownHours: Number(a.dailyLog.breakdownHours || 0),
+                        fuelIssuedLiters: Number(a.dailyLog.fuelLiters || 0),
+                        startMileage: Number(a.dailyLog.startMileage || 0),
+                        endMileage: Number(a.dailyLog.endMileage || 0),
+                        totalMileage: Number(a.dailyLog.totalMileage || 0),
+                        remarks: a.dailyLog.remarks,
+                        status: a.dailyLog.status,
+                        activitySplits: a.dailyLog.activities.map((act) => ({
+                            id: act.id,
+                            activityCode: act.activityCode?.code || '',
+                            utilization: Number(act.utilization || 0),
+                        })),
+                    }
+                    : null,
+            };
+        });
         res.json(formatted);
     }
     catch (error) {
@@ -607,61 +659,64 @@ const getEquipmentAssignmentsForDate = async (req, res) => {
     }
 };
 exports.getEquipmentAssignmentsForDate = getEquipmentAssignmentsForDate;
-// 11. Assign equipment items to a supervisor for a date
+// 11. POST /api/assignments/equipment
 const assignEquipment = async (req, res) => {
     try {
-        const { date, supervisorId, equipmentIds } = req.body;
+        const { date, supervisorId, equipmentIds, operatorId } = req.body || {};
         if (!date || !supervisorId || !Array.isArray(equipmentIds) || equipmentIds.length === 0) {
             res.status(400).json({ error: 'date, supervisorId, and non-empty equipmentIds array are required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const targetDate = parseDate(date);
-        // Validate supervisor belongs to tenant
-        const supervisor = await prisma_1.default.user.findFirst({
-            where: { id: supervisorId, tenantId },
-        });
-        if (!supervisor) {
-            res.status(404).json({ error: 'Supervisor not found for this tenant' });
+        const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
+        // Resolve an operator: either provided or fallback to first operator or employee
+        let targetOperatorId = operatorId;
+        if (!targetOperatorId) {
+            const firstOp = await prisma_1.default.mF_P_Employee.findFirst({
+                where: { projectId, isOperator: true, status: 'active' },
+                select: { id: true },
+            });
+            targetOperatorId = firstOp?.id;
+        }
+        if (!targetOperatorId) {
+            const anyEmp = await prisma_1.default.mF_P_Employee.findFirst({
+                where: { projectId, status: 'active' },
+                select: { id: true },
+            });
+            targetOperatorId = anyEmp?.id;
+        }
+        if (!targetOperatorId) {
+            res.status(400).json({ error: 'No operator or employee available to pair with equipment' });
             return;
         }
-        // Validate equipment IDs belong to tenant
-        const validEquipment = await prisma_1.default.equipment.findMany({
-            where: { id: { in: equipmentIds }, tenantId },
-            select: { id: true },
-        });
-        const validEqIdSet = new Set(validEquipment.map((eq) => eq.id));
-        const invalidEqIds = equipmentIds.filter((id) => !validEqIdSet.has(id));
-        if (invalidEqIds.length > 0) {
-            res.status(400).json({ error: `The following equipment ID(s) do not belong to this tenant: ${invalidEqIds.join(', ')}` });
-            return;
-        }
-        const createdAssignments = [];
+        const created = [];
         for (const eqId of equipmentIds) {
-            const assignment = await prisma_1.default.dailyEquipmentAssignment.upsert({
+            const assignment = await prisma_1.default.mF_OP_DailyEquipmentAssignment.upsert({
                 where: {
-                    tenantId_date_equipmentId: {
-                        tenantId,
-                        date: targetDate,
+                    dailySheetId_operatorId_equipmentId: {
+                        dailySheetId: dailySheet.id,
+                        operatorId: targetOperatorId,
                         equipmentId: eqId,
                     },
                 },
-                update: {
-                    supervisorId,
-                },
+                update: {},
                 create: {
-                    tenantId,
-                    date: targetDate,
-                    supervisorId,
+                    dailySheetId: dailySheet.id,
+                    operatorId: targetOperatorId,
                     equipmentId: eqId,
                 },
             });
-            createdAssignments.push(assignment);
+            created.push(assignment);
         }
         res.status(201).json({
             success: true,
-            count: createdAssignments.length,
-            assignments: createdAssignments,
+            count: created.length,
+            assignments: created,
         });
     }
     catch (error) {
@@ -670,19 +725,11 @@ const assignEquipment = async (req, res) => {
     }
 };
 exports.assignEquipment = assignEquipment;
-// 12. Unassign an equipment item
+// 12. DELETE /api/assignments/equipment/:id
 const unassignEquipment = async (req, res) => {
     try {
         const id = req.params.id;
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const existing = await prisma_1.default.dailyEquipmentAssignment.findFirst({
-            where: { id, tenantId },
-        });
-        if (!existing) {
-            res.status(404).json({ error: 'Equipment assignment record not found' });
-            return;
-        }
-        await prisma_1.default.dailyEquipmentAssignment.delete({
+        await prisma_1.default.mF_OP_DailyEquipmentAssignment.delete({
             where: { id },
         });
         res.json({ success: true, message: 'Equipment unassigned successfully' });
@@ -690,97 +737,52 @@ const unassignEquipment = async (req, res) => {
     catch (error) {
         console.error('Error unassigning equipment:', error);
         if (error.code === 'P2025') {
-            res.status(404).json({ error: 'Equipment assignment record not found' });
+            res.status(404).json({ error: 'Equipment assignment not found' });
             return;
         }
         res.status(500).json({ error: 'Failed to unassign equipment' });
     }
 };
 exports.unassignEquipment = unassignEquipment;
-// 13. Copy equipment gangs from a past date to target date
-const copyEquipmentGangsFromDate = async (req, res) => {
-    try {
-        const { sourceDate, targetDate, supervisorIds, overwrite = true } = req.body;
-        if (!sourceDate || !targetDate) {
-            res.status(400).json({ error: 'sourceDate and targetDate are required' });
-            return;
-        }
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const srcDateParsed = parseDate(sourceDate);
-        const tgtDateParsed = parseDate(targetDate);
-        const sourceWhere = {
-            tenantId,
-            date: srcDateParsed,
-        };
-        if (Array.isArray(supervisorIds) && supervisorIds.length > 0) {
-            sourceWhere.supervisorId = { in: supervisorIds };
-        }
-        const sourceAssignments = await prisma_1.default.dailyEquipmentAssignment.findMany({
-            where: sourceWhere,
-        });
-        if (sourceAssignments.length === 0) {
-            res.json({
-                success: true,
-                copiedCount: 0,
-                message: `No equipment gang records found on ${sourceDate} to copy.`,
-            });
-            return;
-        }
-        if (overwrite !== false) {
-            const deleteWhere = {
-                tenantId,
-                date: tgtDateParsed,
-            };
-            if (Array.isArray(supervisorIds) && supervisorIds.length > 0) {
-                deleteWhere.supervisorId = { in: supervisorIds };
-            }
-            await prisma_1.default.dailyEquipmentAssignment.deleteMany({
-                where: deleteWhere,
-            });
-        }
-        await prisma_1.default.dailyEquipmentAssignment.createMany({
-            data: sourceAssignments.map((src) => ({
-                tenantId,
-                date: tgtDateParsed,
-                supervisorId: src.supervisorId,
-                equipmentId: src.equipmentId,
-            })),
-            skipDuplicates: true,
-        });
-        res.json({
-            success: true,
-            copiedCount: sourceAssignments.length,
-            message: `Successfully copied ${sourceAssignments.length} equipment assignment(s) from ${sourceDate} to ${targetDate}.`,
-        });
-    }
-    catch (error) {
-        console.error('Error copying equipment gangs from date:', error);
-        res.status(500).json({ error: 'Failed to copy equipment gangs from date' });
-    }
-};
-exports.copyEquipmentGangsFromDate = copyEquipmentGangsFromDate;
-// 12. Get standby / available workers pool for a specific date
+// 13. POST /api/assignments/equipment/copy
+exports.copyEquipmentGangsFromDate = exports.copyOperatorGangsFromDate;
+// 14. GET /api/assignments/standby-pool?date=YYYY-MM-DD
 const getStandbyPoolForDate = async (req, res) => {
     try {
         const dateStr = req.query.date;
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const allEmployees = await prisma_1.default.employee.findMany({
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const allEmployees = await prisma_1.default.mF_P_Employee.findMany({
             where: {
-                tenantId,
+                projectId,
                 status: 'active',
             },
-            include: {
-                businessPartner: {
-                    select: { name: true, code: true },
+            select: {
+                id: true,
+                callingName: true,
+                corporateEmployee: {
+                    select: { employeeCode: true, fullName: true, nicNo: true },
                 },
+                tradeGroup: { select: { name: true } },
+                businessPartner: { select: { name: true } },
             },
-            orderBy: { employeeCode: 'asc' },
+            orderBy: {
+                corporateEmployee: { employeeCode: 'asc' },
+            },
         });
-        let assignedIds = new Set();
+        const assignedIds = new Set();
         if (dateStr) {
             const targetDate = parseDate(dateStr);
-            const assignments = await prisma_1.default.dailyAssignment.findMany({
-                where: { tenantId, date: targetDate },
+            const assignments = await prisma_1.default.mF_OP_DailyAssignment.findMany({
+                where: {
+                    dailySheet: {
+                        projectId,
+                        date: targetDate,
+                    },
+                },
                 select: { employeeId: true },
             });
             assignments.forEach((a) => assignedIds.add(a.employeeId));
@@ -789,12 +791,12 @@ const getStandbyPoolForDate = async (req, res) => {
         const poolList = available.length > 0 ? available : allEmployees;
         const formatted = poolList.map((e) => ({
             id: e.id,
-            employeeCode: e.employeeCode || `EMP-${e.id.slice(-3)}`,
-            callingName: e.callingName || e.fullName || 'Worker',
-            fullName: e.fullName || e.callingName || 'Worker',
-            tradeGroup: e.tradeGroup || 'General Helper',
+            employeeCode: e.corporateEmployee.employeeCode,
+            callingName: e.callingName || e.corporateEmployee.fullName,
+            fullName: e.corporateEmployee.fullName,
+            tradeGroup: e.tradeGroup?.name || 'General Helper',
             businessPartner: e.businessPartner?.name || 'Mäga Direct',
-            nic: e.nicNo || '',
+            nic: e.corporateEmployee.nicNo,
         }));
         res.json(formatted);
     }

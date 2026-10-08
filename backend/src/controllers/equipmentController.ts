@@ -70,7 +70,12 @@ function formatEquipment(item: any) {
     cost_rate: costRateNum,
     primaryUnit: primaryUnitStr,
     primary_unit: primaryUnitStr,
-    availableUnits: [primaryUnitStr],
+    availableUnits: [
+      primaryUnitStr,
+      ...['mth', 'Hrs', 'Days', 'EX.hrs', 'km', 'm2'].filter(
+        (u) => u.toLowerCase() !== primaryUnitStr.toLowerCase()
+      ),
+    ],
     unitRates: [
       {
         unit: primaryUnitStr,
@@ -118,7 +123,7 @@ export const getAllEquipment = async (req: Request, res: Response): Promise<void
       };
     }
 
-    const equipment = await prisma.equipment.findMany({
+    const equipment = await prisma.mF_P_Equipment.findMany({
       where,
       select: equipmentSelectOptimized,
       orderBy: { createdAt: 'desc' },
@@ -135,7 +140,7 @@ export const getAllEquipment = async (req: Request, res: Response): Promise<void
 export const getEquipmentById = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const item = await prisma.equipment.findUnique({
+    const item = await prisma.mF_P_Equipment.findUnique({
       where: { id },
       select: equipmentSelectOptimized,
     });
@@ -186,7 +191,7 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. Ensure Unit exists if needed
-      await tx.unitMaster.upsert({
+      await tx.mF_G_UnitMaster.upsert({
         where: { code: assignedUnit },
         update: {},
         create: {
@@ -197,7 +202,7 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
       });
 
       // 2. Find or create Corporate Equipment
-      let corpEquip = await tx.corporateEquipment.findFirst({
+      let corpEquip = await tx.mF_G_Equipment.findFirst({
         where: {
           OR: [
             { standardEquipmentNumber: assignedCode },
@@ -207,7 +212,7 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
       });
 
       if (!corpEquip) {
-        corpEquip = await tx.corporateEquipment.create({
+        corpEquip = await tx.mF_G_Equipment.create({
           data: {
             standardEquipmentNumber: assignedCode,
             equipmentName: name.trim(),
@@ -222,7 +227,7 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
       }
 
       // 3. Enroll into Site Equipment
-      const siteEquip = await tx.equipment.create({
+      const siteEquip = await tx.mF_P_Equipment.create({
         data: {
           projectId,
           corporateEquipmentId: corpEquip.id,
@@ -263,7 +268,7 @@ export const updateEquipment = async (req: Request, res: Response): Promise<void
       businessPartnerId,
     } = req.body || {};
 
-    const existing = await prisma.equipment.findUnique({
+    const existing = await prisma.mF_P_Equipment.findUnique({
       where: { id },
       select: { id: true, corporateEquipmentId: true },
     });
@@ -281,13 +286,13 @@ export const updateEquipment = async (req: Request, res: Response): Promise<void
     if (businessPartnerId !== undefined) data.ownerPartnerId = businessPartnerId || null;
 
     await prisma.$transaction(async (tx) => {
-      await tx.equipment.update({
+      await tx.mF_P_Equipment.update({
         where: { id },
         data,
       });
 
       if (name || type) {
-        await tx.corporateEquipment.update({
+        await tx.mF_G_Equipment.update({
           where: { id: existing.corporateEquipmentId },
           data: {
             equipmentName: name?.trim() || undefined,
@@ -297,7 +302,7 @@ export const updateEquipment = async (req: Request, res: Response): Promise<void
       }
     });
 
-    const refreshed = await prisma.equipment.findUnique({
+    const refreshed = await prisma.mF_P_Equipment.findUnique({
       where: { id },
       select: equipmentSelectOptimized,
     });
@@ -317,7 +322,7 @@ export const toggleEquipmentStatus = async (req: Request, res: Response): Promis
 
     let targetStatus = status;
     if (!targetStatus) {
-      const existing = await prisma.equipment.findUnique({ where: { id }, select: { status: true } });
+      const existing = await prisma.mF_P_Equipment.findUnique({ where: { id }, select: { status: true } });
       if (!existing) {
         res.status(404).json({ error: 'Equipment not found' });
         return;
@@ -325,7 +330,7 @@ export const toggleEquipmentStatus = async (req: Request, res: Response): Promis
       targetStatus = existing.status === 'active' ? 'inactive' : 'active';
     }
 
-    const updated = await prisma.equipment.update({
+    const updated = await prisma.mF_P_Equipment.update({
       where: { id },
       data: { status: targetStatus },
       select: equipmentSelectOptimized,
@@ -344,13 +349,13 @@ export const deleteEquipment = async (req: Request, res: Response): Promise<void
     const id = getParam(req.params.id);
 
     const [assignmentsCount, entriesCount] = await Promise.all([
-      prisma.dailyEquipmentAssignment.count({ where: { equipmentId: id } }),
-      prisma.timeEntry.count({ where: { equipmentId: id } }),
+      prisma.mF_OP_DailyEquipmentAssignment.count({ where: { equipmentId: id } }),
+      prisma.mF_OP_TimeEntry.count({ where: { equipmentId: id } }),
     ]);
 
     const totalUsage = assignmentsCount + entriesCount;
     if (totalUsage > 0) {
-      await prisma.equipment.update({
+      await prisma.mF_P_Equipment.update({
         where: { id },
         data: { status: 'inactive' },
       });
@@ -358,7 +363,7 @@ export const deleteEquipment = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    await prisma.equipment.delete({
+    await prisma.mF_P_Equipment.delete({
       where: { id },
     });
 
@@ -395,14 +400,14 @@ export const batchImportErpEquipment = async (req: Request, res: Response): Prom
       const numericRate = item.costRate !== undefined ? Number(item.costRate) : 0;
 
       // Ensure unit exists
-      await prisma.unitMaster.upsert({
+      await prisma.mF_G_UnitMaster.upsert({
         where: { code: unit },
         update: {},
         create: { code: unit, name: unit, category: 'meter' },
       });
 
       // Find or create Corporate Equipment
-      let corp = await prisma.corporateEquipment.findFirst({
+      let corp = await prisma.mF_G_Equipment.findFirst({
         where: {
           OR: [
             { standardEquipmentNumber: code },
@@ -412,7 +417,7 @@ export const batchImportErpEquipment = async (req: Request, res: Response): Prom
       });
 
       if (corp) {
-        corp = await prisma.corporateEquipment.update({
+        corp = await prisma.mF_G_Equipment.update({
           where: { id: corp.id },
           data: {
             equipmentName: name,
@@ -420,7 +425,7 @@ export const batchImportErpEquipment = async (req: Request, res: Response): Prom
           },
         });
       } else {
-        corp = await prisma.corporateEquipment.create({
+        corp = await prisma.mF_G_Equipment.create({
           data: {
             standardEquipmentNumber: code,
             equipmentName: name,
@@ -435,7 +440,7 @@ export const batchImportErpEquipment = async (req: Request, res: Response): Prom
       }
 
       // Upsert into Site Equipment
-      const site = await prisma.equipment.upsert({
+      const site = await prisma.mF_P_Equipment.upsert({
         where: {
           projectId_corporateEquipmentId: {
             projectId,
@@ -472,7 +477,7 @@ export const batchImportErpEquipment = async (req: Request, res: Response): Prom
 // 8. GET /api/equipment/corporate-master — Catalog from corporate
 export const getCorporateEquipmentCatalog = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const list = await prisma.corporateEquipment.findMany({
+    const list = await prisma.mF_G_Equipment.findMany({
       orderBy: { standardEquipmentNumber: 'asc' },
     });
     res.json(list);
@@ -496,12 +501,12 @@ export const batchSyncCorporateEquipment = async (req: Request, res: Response): 
       const code = (item.standardEquipmentNumber || item.code || item.vehicleNo || '').trim().toUpperCase();
       if (!code) continue;
 
-      let record = await prisma.corporateEquipment.findFirst({
+      let record = await prisma.mF_G_Equipment.findFirst({
         where: { standardEquipmentNumber: code },
       });
 
       if (record) {
-        record = await prisma.corporateEquipment.update({
+        record = await prisma.mF_G_Equipment.update({
           where: { id: record.id },
           data: {
             equipmentName: item.equipmentName || item.name || code,
@@ -514,7 +519,7 @@ export const batchSyncCorporateEquipment = async (req: Request, res: Response): 
           },
         });
       } else {
-        record = await prisma.corporateEquipment.create({
+        record = await prisma.mF_G_Equipment.create({
           data: {
             standardEquipmentNumber: code,
             equipmentName: item.equipmentName || item.name || code,

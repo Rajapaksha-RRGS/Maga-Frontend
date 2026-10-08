@@ -111,7 +111,7 @@ export const getAllEmployees = async (req: Request, res: Response): Promise<void
       };
     }
 
-    const employees = await prisma.employee.findMany({
+    const employees = await prisma.mF_P_Employee.findMany({
       where,
       select: employeeSelectOptimized,
       orderBy: {
@@ -132,7 +132,7 @@ export const getAllEmployees = async (req: Request, res: Response): Promise<void
 export const getEmployeeById = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const employee = await prisma.employee.findUnique({
+    const employee = await prisma.mF_P_Employee.findUnique({
       where: { id },
       select: employeeSelectOptimized,
     });
@@ -154,7 +154,7 @@ async function resolveTradeGroup(tradeGroupName?: string): Promise<string | null
   if (!tradeGroupName || !tradeGroupName.trim()) return null;
   const cleanName = tradeGroupName.trim();
 
-  const found = await prisma.corporateTradeGroup.findFirst({
+  const found = await prisma.mF_G_TradeGroup.findFirst({
     where: {
       OR: [
         { name: { equals: cleanName, mode: 'insensitive' } },
@@ -165,9 +165,9 @@ async function resolveTradeGroup(tradeGroupName?: string): Promise<string | null
   });
   if (found) return found.id;
 
-  const count = await prisma.corporateTradeGroup.count();
+  const count = await prisma.mF_G_TradeGroup.count();
   const code = `TG${String(count + 1).padStart(3, '0')}`;
-  const created = await prisma.corporateTradeGroup.create({
+  const created = await prisma.mF_G_TradeGroup.create({
     data: {
       code,
       name: cleanName,
@@ -185,7 +185,7 @@ export const resolveOrCreateBusinessPartner = async (
   input?: { id?: string; code?: string; name?: string }
 ): Promise<string | null> => {
   if (input?.id && input.id.length > 20) {
-    const existing = await prisma.corporateBusinessPartner.findUnique({
+    const existing = await prisma.mF_G_BusinessPartner.findUnique({
       where: { id: input.id },
       select: { id: true },
     });
@@ -196,7 +196,7 @@ export const resolveOrCreateBusinessPartner = async (
   const searchName = input?.name?.trim();
 
   if (searchCode || searchName) {
-    const existing = await prisma.corporateBusinessPartner.findFirst({
+    const existing = await prisma.mF_G_BusinessPartner.findFirst({
       where: {
         OR: [
           ...(searchCode ? [{ code: { equals: searchCode, mode: 'insensitive' as const } }] : []),
@@ -207,9 +207,9 @@ export const resolveOrCreateBusinessPartner = async (
     });
     if (existing) return existing.id;
 
-    const count = await prisma.corporateBusinessPartner.count();
+    const count = await prisma.mF_G_BusinessPartner.count();
     const bpCode = searchCode || `BP1${String(count + 1).padStart(6, '0')}`;
-    const created = await prisma.corporateBusinessPartner.create({
+    const created = await prisma.mF_G_BusinessPartner.create({
       data: {
         code: bpCode,
         name: searchName || searchCode || 'Mäga Engineering (Pvt) Ltd',
@@ -222,12 +222,12 @@ export const resolveOrCreateBusinessPartner = async (
   }
 
   // Default partner
-  let defaultPartner = await prisma.corporateBusinessPartner.findFirst({
+  let defaultPartner = await prisma.mF_G_BusinessPartner.findFirst({
     where: { code: 'BP1002885' },
     select: { id: true },
   });
   if (!defaultPartner) {
-    defaultPartner = await prisma.corporateBusinessPartner.findFirst({
+    defaultPartner = await prisma.mF_G_BusinessPartner.findFirst({
       select: { id: true },
     });
   }
@@ -284,14 +284,14 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. Ensure Corporate Employee exists
-      let corpEmp = await tx.corporateEmployee.findFirst({
+      let corpEmp = await tx.mF_G_Employee.findFirst({
         where: {
           OR: [{ employeeCode: cleanCode }, { nicNo: cleanNic }],
         },
       });
 
       if (!corpEmp) {
-        corpEmp = await tx.corporateEmployee.create({
+        corpEmp = await tx.mF_G_Employee.create({
           data: {
             employeeCode: cleanCode,
             fullName: fullName?.trim() || callingName.trim(),
@@ -307,7 +307,7 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
       }
 
       // 2. Create Site Employee enrollment
-      const siteEmp = await tx.employee.create({
+      const siteEmp = await tx.mF_P_Employee.create({
         data: {
           projectId,
           corporateEmployeeId: corpEmp.id,
@@ -352,7 +352,7 @@ export const updateEmployee = async (req: Request, res: Response): Promise<void>
       nicNo,
     } = req.body || {};
 
-    const existing = await prisma.employee.findUnique({
+    const existing = await prisma.mF_P_Employee.findUnique({
       where: { id },
       select: { id: true, corporateEmployeeId: true, projectId: true },
     });
@@ -374,13 +374,13 @@ export const updateEmployee = async (req: Request, res: Response): Promise<void>
     if (bpId !== undefined) updateData.businessPartnerId = bpId;
 
     await prisma.$transaction(async (tx) => {
-      await tx.employee.update({
+      await tx.mF_P_Employee.update({
         where: { id },
         data: updateData,
       });
 
       if (fullName || nicNo || epfNo) {
-        await tx.corporateEmployee.update({
+        await tx.mF_G_Employee.update({
           where: { id: existing.corporateEmployeeId },
           data: {
             fullName: fullName?.trim() || undefined,
@@ -391,7 +391,7 @@ export const updateEmployee = async (req: Request, res: Response): Promise<void>
       }
     });
 
-    const refreshed = await prisma.employee.findUnique({
+    const refreshed = await prisma.mF_P_Employee.findUnique({
       where: { id },
       select: employeeSelectOptimized,
     });
@@ -414,7 +414,7 @@ export const updateEmployeeStatus = async (req: Request, res: Response): Promise
       return;
     }
 
-    const updated = await prisma.employee.update({
+    const updated = await prisma.mF_P_Employee.update({
       where: { id },
       data: { status },
       select: employeeSelectOptimized,
@@ -433,14 +433,14 @@ export const deleteEmployee = async (req: Request, res: Response): Promise<void>
     const id = getParam(req.params.id);
 
     const [assignmentsCount, opAssignmentsCount, entriesCount] = await Promise.all([
-      prisma.dailyAssignment.count({ where: { employeeId: id } }),
-      prisma.dailyEquipmentAssignment.count({ where: { operatorId: id } }),
-      prisma.timeEntry.count({ where: { employeeId: id } }),
+      prisma.mF_OP_DailyAssignment.count({ where: { employeeId: id } }),
+      prisma.mF_OP_DailyEquipmentAssignment.count({ where: { operatorId: id } }),
+      prisma.mF_OP_TimeEntry.count({ where: { employeeId: id } }),
     ]);
 
     const totalUsage = assignmentsCount + opAssignmentsCount + entriesCount;
     if (totalUsage > 0) {
-      await prisma.employee.update({
+      await prisma.mF_P_Employee.update({
         where: { id },
         data: { status: 'inactive' },
       });
@@ -448,7 +448,7 @@ export const deleteEmployee = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    await prisma.employee.delete({
+    await prisma.mF_P_Employee.delete({
       where: { id },
     });
 
@@ -478,7 +478,7 @@ export const getCrossTenantEmployeeStatus = async (req: Request, res: Response):
     const nics = items.map((i: any) => i.nicNo).filter(Boolean) as string[];
     const codes = items.map((i: any) => i.code).filter(Boolean) as string[];
 
-    const existingEmployees = await prisma.employee.findMany({
+    const existingEmployees = await prisma.mF_P_Employee.findMany({
       where: {
         OR: [
           nics.length > 0 ? { corporateEmployee: { nicNo: { in: nics } } } : undefined,
@@ -588,7 +588,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
     const cleanNic = nicNo.trim();
 
     // 1. Find corporate employee
-    let corpEmp = await prisma.corporateEmployee.findFirst({
+    let corpEmp = await prisma.mF_G_Employee.findFirst({
       where: {
         OR: [
           { nicNo: cleanNic },
@@ -598,7 +598,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
     });
 
     if (!corpEmp) {
-      corpEmp = await prisma.corporateEmployee.create({
+      corpEmp = await prisma.mF_G_Employee.create({
         data: {
           employeeCode: cleanCode || `EMP${Date.now().toString().slice(-4)}`,
           fullName: fullName?.trim() || callingName.trim(),
@@ -610,7 +610,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
     }
 
     // 2. Identify previous active site assignment
-    const prevSiteEmp = await prisma.employee.findFirst({
+    const prevSiteEmp = await prisma.mF_P_Employee.findFirst({
       where: {
         corporateEmployeeId: corpEmp.id,
         status: 'active',
@@ -624,14 +624,14 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
     const result = await prisma.$transaction(async (tx) => {
       // Deactivate in previous site
       if (prevSiteEmp) {
-        await tx.employee.update({
+        await tx.mF_P_Employee.update({
           where: { id: prevSiteEmp.id },
           data: { status: 'inactive' },
         });
       }
 
       // Record transfer in ledger
-      await tx.employeeTransfer.create({
+      await tx.mF_G_EmployeeTransfer.create({
         data: {
           corporateEmployeeId: corpEmp.id,
           fromProjectId,
@@ -649,7 +649,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
       const targetTradeGroupId = await resolveTradeGroup(tradeGroup);
 
       // Upsert into target site
-      const siteEmp = await tx.employee.upsert({
+      const siteEmp = await tx.mF_P_Employee.upsert({
         where: {
           projectId_corporateEmployeeId: {
             projectId: targetProjectId,
@@ -692,7 +692,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
 // 9. GET /api/employees/corporate-master — Catalog from corporate master
 export const getCorporateEmployeesCatalog = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const list = await prisma.corporateEmployee.findMany({
+    const list = await prisma.mF_G_Employee.findMany({
       select: {
         id: true,
         employeeCode: true,

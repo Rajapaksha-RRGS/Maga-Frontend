@@ -28,7 +28,7 @@ export const getAllActivityCodes = async (req: Request, res: Response): Promise<
       ];
     }
 
-    const activityCodes = await prisma.activityCode.findMany({
+    const activityCodes = await prisma.mF_P_ActivityCode.findMany({
       where,
       select: {
         id: true,
@@ -60,7 +60,7 @@ export const getAllActivityCodes = async (req: Request, res: Response): Promise<
 export const getActivityCodeById = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const code = await prisma.activityCode.findUnique({
+    const code = await prisma.mF_P_ActivityCode.findUnique({
       where: { id },
       select: {
         id: true,
@@ -104,12 +104,12 @@ export const createActivityCode = async (req: Request, res: Response): Promise<v
     const cleanCode = String(code).trim();
 
     // Check if corporate master has this code
-    const corpMatch = await prisma.corporateActivityCode.findUnique({
+    const corpMatch = await prisma.mF_G_ActivityCode.findUnique({
       where: { code: cleanCode },
       select: { id: true, description: true, unit: true },
     });
 
-    const newCode = await prisma.activityCode.create({
+    const newCode = await prisma.mF_P_ActivityCode.create({
       data: {
         projectId,
         code: cleanCode,
@@ -141,7 +141,7 @@ export const updateActivityCode = async (req: Request, res: Response): Promise<v
     if (description !== undefined) data.description = description?.trim() || null;
     if (unit !== undefined) data.unit = unit?.trim() || null;
 
-    const updated = await prisma.activityCode.update({
+    const updated = await prisma.mF_P_ActivityCode.update({
       where: { id },
       data,
     });
@@ -164,9 +164,9 @@ export const deleteActivityCode = async (req: Request, res: Response): Promise<v
 
     // Check if time entries or logs reference this activity
     const [timeEntriesCount, splitsCount, equipLogsCount] = await Promise.all([
-      prisma.timeEntry.count({ where: { activityId: id } }),
-      prisma.laborActivitySplit.count({ where: { activityCodeId: id } }),
-      prisma.equipmentDailyLogActivity.count({ where: { activityCodeId: id } }),
+      prisma.mF_OP_TimeEntry.count({ where: { activityId: id } }),
+      prisma.mF_OP_LaborActivitySplit.count({ where: { activityCodeId: id } }),
+      prisma.mF_OP_EquipmentDailyLogActivity.count({ where: { activityCodeId: id } }),
     ]);
 
     const totalUsage = timeEntriesCount + splitsCount + equipLogsCount;
@@ -177,7 +177,7 @@ export const deleteActivityCode = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    await prisma.activityCode.delete({
+    await prisma.mF_P_ActivityCode.delete({
       where: { id },
     });
 
@@ -208,7 +208,7 @@ export const getCorporateActivityCodesCatalog = async (req: Request, res: Respon
       ];
     }
 
-    const list = await prisma.corporateActivityCode.findMany({
+    const list = await prisma.mF_G_ActivityCode.findMany({
       where,
       select: {
         id: true,
@@ -240,7 +240,7 @@ export const batchSyncCorporateActivityCodes = async (req: Request, res: Respons
     for (const item of items) {
       if (!item.code) continue;
       const cleanCode = String(item.code).trim();
-      const record = await prisma.corporateActivityCode.upsert({
+      const record = await prisma.mF_G_ActivityCode.upsert({
         where: { code: cleanCode },
         update: {
           description: item.description || cleanCode,
@@ -283,7 +283,7 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
       if (!item.code) continue;
       const cleanCode = String(item.code).trim();
 
-      const upserted = await prisma.activityCode.upsert({
+      const upserted = await prisma.mF_P_ActivityCode.upsert({
         where: {
           projectId_code: {
             projectId,

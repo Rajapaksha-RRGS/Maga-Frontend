@@ -5,40 +5,42 @@ import prisma from '../src/config/prisma';
 async function main() {
   console.log('Seeding Corporate Activity Codes...');
 
-  // Ensure CorporateProject M00000531 exists
-  await prisma.corporateProject.upsert({
-    where: { projectCode: 'M00000531' },
+  // Ensure Project PRJ531 exists
+  await prisma.project.upsert({
+    where: { projectCode: 'PRJ531' },
     update: {
       description: '531M - iRoad / Central Highway Section',
       projectName: '531M - iRoad / Central Highway Section',
       searchKey: '531M - IROAD',
-      status: 'Active',
+      status: 'active',
     },
     create: {
-      projectCode: 'M00000531',
+      projectCode: 'PRJ531',
+      subdomain: '531',
       description: '531M - iRoad / Central Highway Section',
       projectName: '531M - iRoad / Central Highway Section',
       searchKey: '531M - IROAD',
-      status: 'Active',
+      status: 'active',
       currency: 'LKR',
     },
   });
 
   // Ensure Maga - CWS project exists
-  await prisma.corporateProject.upsert({
-    where: { projectCode: 'M00000001' },
+  await prisma.project.upsert({
+    where: { projectCode: 'PRJ001' },
     update: {
-      description: 'Maga - CWS (Central Workshop)',
-      projectName: 'Central Workshop Walgama',
-      searchKey: 'MAGA - CWS',
-      status: 'Active',
+      description: 'Maga - Head Office & CWS',
+      projectName: 'Mäga Engineering (Head Office)',
+      searchKey: 'MAGA - HO',
+      status: 'active',
     },
     create: {
-      projectCode: 'M00000001',
-      description: 'Maga - CWS (Central Workshop)',
-      projectName: 'Central Workshop Walgama',
-      searchKey: 'MAGA - CWS',
-      status: 'Active',
+      projectCode: 'PRJ001',
+      subdomain: 'maga',
+      description: 'Maga - Head Office & CWS',
+      projectName: 'Mäga Engineering (Head Office)',
+      searchKey: 'MAGA - HO',
+      status: 'active',
       currency: 'LKR',
     },
   });
@@ -57,59 +59,40 @@ async function main() {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith('## Activity code')) {
+    if (trimmed.startsWith('## Activity code') || trimmed.startsWith('## Activity Code')) {
       inActivitySection = true;
       continue;
     }
-    if (inActivitySection && trimmed.startsWith('## ')) {
-      inActivitySection = false;
+    if (trimmed.startsWith('## ') && inActivitySection) {
       break;
     }
-    if (!inActivitySection) continue;
-    if (!trimmed || trimmed.toLowerCase().includes('projectcode')) continue;
+    if (!inActivitySection || !trimmed || trimmed.startsWith('#') || trimmed.startsWith('---')) {
+      continue;
+    }
 
-    // Line format: Projectcode | Activity| Description
     const parts = trimmed.split('|').map((p) => p.trim());
-    if (parts.length >= 3) {
-      const projectCode = parts[0];
-      const code = parts[1];
-      const description = parts.slice(2).join(' - ').trim();
+    if (parts.length >= 2) {
+      const code = parts[0];
+      const description = parts[1];
+      const unit = parts[2] || null;
 
-      if (code && projectCode) {
+      if (code && description && !code.toLowerCase().includes('code')) {
         await prisma.corporateActivityCode.upsert({
-          where: {
-            projectCode_code: {
-              projectCode,
-              code,
-            },
-          },
-          update: {
-            description,
-            searchKey: description.slice(0, 16).toUpperCase(),
-            currentWorkingProject: projectCode,
-          },
-          create: {
-            projectCode,
-            code,
-            description,
-            searchKey: description.slice(0, 16).toUpperCase(),
-            activityType: 'Work Package',
-            unit: 'ite',
-            timeUnit: 'hrs',
-            currentWorkingProject: projectCode,
-          },
+          where: { code },
+          update: { description, unit },
+          create: { code, description, unit },
         });
         count++;
       }
     }
   }
 
-  console.log(`Successfully seeded ${count} corporate activity codes for project M00000531!`);
+  console.log(`✅ Finished seeding ${count} Corporate Activity Codes.`);
 }
 
 main()
   .catch((e) => {
-    console.error('Error seeding activity codes:', e);
+    console.error('❌ Error in seed-activity-codes:', e);
     process.exit(1);
   })
   .finally(async () => {

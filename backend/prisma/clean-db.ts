@@ -1,61 +1,45 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../src/config/prisma';
 
 async function main() {
-  console.log('🧹 Starting Database Cleanup...');
+  console.log('🧹 Starting Database Cleanup for Unified Schema...');
 
-  
-  console.log('Cleaning transactional records...');
-  await prisma.laborActivitySplit.deleteMany({});
-  await prisma.operatorTimeEntry.deleteMany({});
-  await prisma.equipmentDailyLogActivity.deleteMany({});
-  await prisma.timeEntry.deleteMany({});
-  await prisma.equipmentDailyLog.deleteMany({});
-  
-  await prisma.dailyAssignment.deleteMany({});
-  await prisma.dailyOperatorAssignment.deleteMany({});
-  await prisma.dailyEquipmentAssignment.deleteMany({});
-  await prisma.dailySheet.deleteMany({});
+  // 1. Transactional & Log details (Child records)
+  console.log('1. Cleaning operational transactions & log details...');
+  await prisma.mF_OP_LaborActivitySplit.deleteMany({});
+  await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({});
+  await prisma.mF_OP_EquipmentDailyLog.deleteMany({});
+  await prisma.mF_OP_TimeEntry.deleteMany({});
+  await prisma.mF_OP_DailyAssignment.deleteMany({});
+  await prisma.mF_OP_DailyEquipmentAssignment.deleteMany({});
+  await prisma.mF_OP_DailySheet.deleteMany({});
 
-  // 2. Delete Master Data (Employees, Equipment, Codes)
-  console.log('Cleaning master data...');
-  await prisma.equipmentUnitRate.deleteMany({});
-  await prisma.employee.deleteMany({});
-  await prisma.equipment.deleteMany({});
-  await prisma.activityCode.deleteMany({});
-  await prisma.businessPartner.deleteMany({});
-  
-  await prisma.tradeGroup.deleteMany({});
-  await prisma.unitMaster.deleteMany({});
-  await prisma.calendarDay.deleteMany({});
-  await prisma.dayType.deleteMany({});
-
-  // 3. Delete Corporate Master Data
-  console.log('Cleaning corporate master data...');
-  await prisma.corporateEmployee.deleteMany({});
-  await prisma.corporateEquipment.deleteMany({});
-  await prisma.corporateActivityCode.deleteMany({});
-  await prisma.corporateBusinessPartner.deleteMany({});
-  await prisma.corporateProject.deleteMany({});
-
-  // 4. Delete Users (Except Super Admin)
-  console.log('Cleaning users...');
-  const deletedUsers = await prisma.user.deleteMany({
-    where: {
-      role: {
-        not: 'super_admin',
-      },
-    },
+  // 2. Project Site Operational Master Data
+  console.log('2. Cleaning project site operational masters...');
+  await prisma.mF_P_CalendarDay.deleteMany({});
+  await prisma.mF_G_EmployeeTransfer.deleteMany({});
+  await prisma.mF_P_Employee.deleteMany({});
+  await prisma.mF_P_Equipment.deleteMany({});
+  await prisma.mF_P_ActivityCode.deleteMany({});
+  await prisma.mF_P_User.deleteMany({
+    where: { role: { not: 'super_admin' } },
   });
-  console.log(`Deleted ${deletedUsers.count} non-super-admin users.`);
 
-  console.log('✅ Database cleaned successfully! Only super_admin accounts and Tenants remain.');
+  // 3. Global Corporate Master Data
+  console.log('3. Cleaning corporate global master data...');
+  await prisma.mF_G_Employee.deleteMany({});
+  await prisma.mF_G_Equipment.deleteMany({});
+  await prisma.mF_G_ActivityCode.deleteMany({});
+  await prisma.mF_G_TradeGroup.deleteMany({});
+  await prisma.mF_G_BusinessPartner.deleteMany({});
+  await prisma.mF_G_DayType.deleteMany({});
+  await prisma.mF_G_UnitMaster.deleteMany({});
+
+  console.log('✅ Database cleaned successfully! SuperAdmins and base Projects remain intact.');
 }
 
 main()
   .catch((e) => {
-    console.error('Error during database cleanup:', e);
+    console.error('❌ Error during database cleanup:', e);
     process.exit(1);
   })
   .finally(async () => {

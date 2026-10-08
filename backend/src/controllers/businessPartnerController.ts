@@ -45,7 +45,7 @@ export const getAllBusinessPartners = async (req: Request, res: Response): Promi
       ];
     }
 
-    const partners = await prisma.corporateBusinessPartner.findMany({
+    const partners = await prisma.mF_G_BusinessPartner.findMany({
       where,
       select: partnerSelectOptimized,
       orderBy: { code: 'asc' },
@@ -68,7 +68,7 @@ export const getAllBusinessPartners = async (req: Request, res: Response): Promi
 export const getBusinessPartnerById = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const partner = await prisma.corporateBusinessPartner.findUnique({
+    const partner = await prisma.mF_G_BusinessPartner.findUnique({
       where: { id },
       select: partnerSelectOptimized,
     });
@@ -92,7 +92,7 @@ export const getBusinessPartnerById = async (req: Request, res: Response): Promi
 // 3. GET /api/business-partners/next-code — Get next available BP code
 export const getNextBusinessPartnerCode = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const latest = await prisma.corporateBusinessPartner.findFirst({
+    const latest = await prisma.mF_G_BusinessPartner.findFirst({
       where: {
         code: { startsWith: 'BP' },
       },
@@ -130,7 +130,7 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
     }
 
     const cleanCode = String(code).trim().toUpperCase();
-    const partner = await prisma.corporateBusinessPartner.create({
+    const partner = await prisma.mF_G_BusinessPartner.create({
       data: {
         code: cleanCode,
         name: String(name).trim(),
@@ -164,7 +164,7 @@ export const updateBusinessPartner = async (req: Request, res: Response): Promis
     const id = getParam(req.params.id);
     const { name, contactPerson, phone, email, status, type } = req.body || {};
 
-    const partner = await prisma.corporateBusinessPartner.update({
+    const partner = await prisma.mF_G_BusinessPartner.update({
       where: { id },
       data: {
         name: name?.trim(),
@@ -198,21 +198,24 @@ export const deleteBusinessPartner = async (req: Request, res: Response): Promis
     const id = getParam(req.params.id);
 
     // Check if any employees or equipment are linked
-    const linkedEmployees = await prisma.employee.count({
+    const linkedEmployees = await prisma.mF_P_Employee.count({
       where: { businessPartnerId: id },
     });
-    const linkedEquipment = await prisma.equipment.count({
+    const linkedCorpEmployees = await prisma.mF_G_Employee.count({
+      where: { corporateBusinessPartnerId: id },
+    });
+    const linkedEquipment = await prisma.mF_P_Equipment.count({
       where: { ownerPartnerId: id },
     });
 
-    if (linkedEmployees > 0 || linkedEquipment > 0) {
+    if (linkedEmployees > 0 || linkedCorpEmployees > 0 || linkedEquipment > 0) {
       res.status(400).json({
-        error: `Cannot delete: ${linkedEmployees} employee(s) and ${linkedEquipment} equipment unit(s) are assigned to this Business Partner.`,
+        error: `Cannot delete: ${linkedEmployees + linkedCorpEmployees} employee(s) and ${linkedEquipment} equipment unit(s) are assigned to this Business Partner.`,
       });
       return;
     }
 
-    await prisma.corporateBusinessPartner.delete({
+    await prisma.mF_G_BusinessPartner.delete({
       where: { id },
     });
 
@@ -238,7 +241,7 @@ export const toggleBusinessPartnerStatus = async (req: Request, res: Response): 
       return;
     }
 
-    const partner = await prisma.corporateBusinessPartner.update({
+    const partner = await prisma.mF_G_BusinessPartner.update({
       where: { id },
       data: { status },
       select: partnerSelectOptimized,
@@ -262,7 +265,7 @@ export const toggleBusinessPartnerStatus = async (req: Request, res: Response): 
 // 8. GET /api/business-partners/catalog — Catalog for dropdowns/pickers
 export const getCorporateBusinessPartnersCatalog = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const list = await prisma.corporateBusinessPartner.findMany({
+    const list = await prisma.mF_G_BusinessPartner.findMany({
       where: { status: 'active' },
       select: {
         id: true,

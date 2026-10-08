@@ -21,11 +21,11 @@
  * Note: the existing SupervisorFlowPage.tsx is preserved in src/ — it will be
  * integrated under SupervisorLayout in Master Prompt 3.
  */
-import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Analytics } from "@vercel/analytics/react";
 
 // Auth
+import { useAuth } from './context/AuthContext';
 import ProtectedRoute from './features/auth/components/ProtectedRoute';
 import LoginPage from './features/auth/pages/LoginPage';
 
@@ -62,17 +62,9 @@ import SplashShowcasePage from './pages/SplashShowcasePage';
 import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
-  const [showInitialSplash, setShowInitialSplash] = useState(true);
+  const { isLoading } = useAuth();
 
-  useEffect(() => {
-    // Show startup splash screen for 1.6s on initial app load
-    const timer = setTimeout(() => {
-      setShowInitialSplash(false);
-    }, 1600);
-    return () => clearTimeout(timer);
-  }, []);
-
-  if (showInitialSplash) {
+  if (isLoading) {
     return (
       <SplashScreen
         theme="light"

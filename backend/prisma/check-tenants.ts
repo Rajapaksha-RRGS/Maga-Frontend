@@ -1,19 +1,21 @@
 import prisma from '../src/config/prisma';
 
 async function main() {
-  const tenants = await prisma.tenant.findMany({
+  const projects = await prisma.project.findMany({
     include: {
       _count: {
         select: {
           users: true,
           employees: true,
           equipment: true,
+          dailySheets: true,
+          timeEntries: true,
         },
       },
     },
   });
-  console.log('Current Tenants:');
-  console.log(JSON.stringify(tenants, null, 2));
+  console.log('Current Unified Projects:');
+  console.log(JSON.stringify(projects, null, 2));
 
   const users = await prisma.user.findMany({
     select: {
@@ -21,7 +23,7 @@ async function main() {
       username: true,
       fullName: true,
       role: true,
-      tenantId: true,
+      projectId: true,
     },
   });
   console.log('Current Users:');

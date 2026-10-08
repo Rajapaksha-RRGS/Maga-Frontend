@@ -28,12 +28,13 @@ export const resolveTenantMiddleware = async (req: Request, res: Response, next:
       const clean = rawId.trim();
 
       // Check if it matches a Tenant UUID directly 
-      const project = await prisma.project.findFirst({
+      const project = await prisma.mF_P_Project.findFirst({
         where: {
           OR: [
             { id: clean },
-            { projectCode: { equals: clean, mode: 'insensitive' } },
             { subdomain: { equals: clean, mode: 'insensitive' } },
+            { projectCode: { equals: clean, mode: 'insensitive' } },
+            { projectCode: { equals: `PRJ${clean}`, mode: 'insensitive' } },
           ],
         },
         select: { id: true },

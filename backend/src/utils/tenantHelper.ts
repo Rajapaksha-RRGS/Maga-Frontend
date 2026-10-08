@@ -5,14 +5,14 @@ import prisma from '../config/prisma';
  * Resolves to the first active Project, or auto-creates a default one if none exist.
  */
 export const getDefaultTenantId = async (): Promise<string> => {
-  const project = await prisma.project.findFirst({
+  const project = await prisma.mF_P_Project.findFirst({
     where: { status: 'active' },
     orderBy: { createdAt: 'asc' },
     select: { id: true },
   });
   if (project) return project.id;
 
-  const created = await prisma.project.create({
+  const created = await prisma.mF_P_Project.create({
     data: {
       projectCode: 'PRJ001',
       projectName: 'Mäga Engineering (Head Office)',

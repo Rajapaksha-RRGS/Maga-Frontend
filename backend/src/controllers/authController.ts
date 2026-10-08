@@ -20,7 +20,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     // Support SuperAdmin global login
     if (cleanTenant.toLowerCase() === 'superadmin' || cleanTenant.toLowerCase() === 'system') {
-      const superAdmin = await prisma.superAdmin.findFirst({
+      const superAdmin = await prisma.mF_G_SuperAdmin.findFirst({
         where: {
           OR: [
             { username: { equals: cleanUsername, mode: 'insensitive' } },
@@ -71,16 +71,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // 1. Optimized Project/Tenant lookup with selective projection
-    const project = await prisma.project.findFirst({
+    // 1. Optimized Project/Tenant lookup with priority for exact match
+    let project = await prisma.mF_P_Project.findFirst({
       where: {
         OR: [
           { id: cleanTenant },
-          { projectCode: { equals: cleanTenant, mode: 'insensitive' } },
           { subdomain: { equals: cleanTenant, mode: 'insensitive' } },
-          { subdomain: { equals: `${cleanTenant}M`, mode: 'insensitive' } },
-          { subdomain: { equals: cleanTenant.replace(/M$/i, ''), mode: 'insensitive' } },
-          { projectName: { contains: cleanTenant, mode: 'insensitive' } },
+          { projectCode: { equals: cleanTenant, mode: 'insensitive' } },
+          { projectCode: { equals: `PRJ${cleanTenant}`, mode: 'insensitive' } },
         ],
       },
       select: {
@@ -92,13 +90,34 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       },
     });
 
+    // Fallback to broader match if no exact match found
+    if (!project) {
+      project = await prisma.mF_P_Project.findFirst({
+        where: {
+          OR: [
+            { subdomain: { equals: `${cleanTenant}M`, mode: 'insensitive' } },
+            { subdomain: { equals: cleanTenant.replace(/M$/i, ''), mode: 'insensitive' } },
+            { projectCode: { contains: cleanTenant, mode: 'insensitive' } },
+            { projectName: { contains: cleanTenant, mode: 'insensitive' } },
+          ],
+        },
+        select: {
+          id: true,
+          projectCode: true,
+          projectName: true,
+          subdomain: true,
+          status: true,
+        },
+      });
+    }
+
     if (!project || project.status !== 'active') {
       res.status(400).json({ error: 'Invalid or inactive project/tenant' });
       return;
     }
 
     // 2. Optimized User lookup: leverages @@unique([projectId, username])
-    const user = await prisma.user.findFirst({
+    const user = await prisma.mF_P_User.findFirst({
       where: {
         projectId: project.id,
         username: { equals: cleanUsername, mode: 'insensitive' },

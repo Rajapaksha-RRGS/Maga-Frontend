@@ -5,29 +5,48 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.importActivityCodesFromCorporate = exports.batchSyncCorporateActivityCodes = exports.getCorporateActivityCodesCatalog = exports.deleteActivityCode = exports.updateActivityCode = exports.createActivityCode = exports.getActivityCodeById = exports.getAllActivityCodes = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
-const employeeController_1 = require("./employeeController");
+require("../middleware/tenantMiddleware");
+const tenantHelper_1 = require("../utils/tenantHelper");
 const getParam = (param) => {
     if (Array.isArray(param))
         return param[0] || '';
     return param || '';
 };
-// Get all activity codes (scoped to tenant)
+// 1. GET /api/activity-codes — List all activity codes scoped to project
 const getAllActivityCodes = async (req, res) => {
     try {
-        const { search, projectCode } = req.query;
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const where = { tenantId };
-        if (projectCode && typeof projectCode === 'string') {
-            where.projectCode = projectCode;
-        }
-        if (search && typeof search === 'string') {
+        const { search } = req.query;
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const where = { projectId };
+        if (search && typeof search === 'string' && search.trim()) {
+            const q = search.trim();
             where.OR = [
-                { code: { contains: search, mode: 'insensitive' } },
-                { description: { contains: search, mode: 'insensitive' } },
+                { code: { contains: q, mode: 'insensitive' } },
+                { description: { contains: q, mode: 'insensitive' } },
             ];
         }
-        const activityCodes = await prisma_1.default.activityCode.findMany({
+        const activityCodes = await prisma_1.default.mF_P_ActivityCode.findMany({
             where,
+            select: {
+                id: true,
+                projectId: true,
+                code: true,
+                description: true,
+                unit: true,
+                createdAt: true,
+                corporateActivityCodeId: true,
+                corporateActivityCode: {
+                    select: {
+                        id: true,
+                        code: true,
+                        description: true,
+                    },
+                },
+            },
             orderBy: { code: 'asc' },
         });
         res.json(activityCodes);
@@ -38,12 +57,21 @@ const getAllActivityCodes = async (req, res) => {
     }
 };
 exports.getAllActivityCodes = getAllActivityCodes;
-// Get activity code by ID
+// 2. GET /api/activity-codes/:id — Get activity code by ID
 const getActivityCodeById = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const code = await prisma_1.default.activityCode.findUnique({
+        const code = await prisma_1.default.mF_P_ActivityCode.findUnique({
             where: { id },
+            select: {
+                id: true,
+                projectId: true,
+                code: true,
+                description: true,
+                unit: true,
+                createdAt: true,
+                corporateActivityCodeId: true,
+            },
         });
         if (!code) {
             res.status(404).json({ error: 'Activity code not found' });
@@ -57,23 +85,32 @@ const getActivityCodeById = async (req, res) => {
     }
 };
 exports.getActivityCodeById = getActivityCodeById;
-// Create activity code
+// 3. POST /api/activity-codes — Create activity code
 const createActivityCode = async (req, res) => {
     try {
-        const { code, description, projectCode, trade, category } = req.body;
+        const { code, description, unit } = req.body || {};
         if (!code) {
             res.status(400).json({ error: 'Code is required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const newCode = await prisma_1.default.activityCode.create({
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const cleanCode = String(code).trim();
+        // Check if corporate master has this code
+        const corpMatch = await prisma_1.default.mF_G_ActivityCode.findUnique({
+            where: { code: cleanCode },
+            select: { id: true, description: true, unit: true },
+        });
+        const newCode = await prisma_1.default.mF_P_ActivityCode.create({
             data: {
-                tenantId,
-                projectCode: projectCode || null,
-                code,
-                description: description || null,
-                trade: trade || null,
-                category: category || null,
+                projectId,
+                code: cleanCode,
+                description: description?.trim() || corpMatch?.description || cleanCode,
+                unit: unit?.trim() || corpMatch?.unit || null,
+                corporateActivityCodeId: corpMatch?.id || null,
             },
         });
         res.status(201).json(newCode);
@@ -81,30 +118,26 @@ const createActivityCode = async (req, res) => {
     catch (error) {
         console.error('Error creating activity code:', error);
         if (error.code === 'P2002') {
-            res.status(409).json({ error: 'Activity code already exists in this tenant' });
+            res.status(409).json({ error: 'Activity code already exists in this project' });
             return;
         }
         res.status(500).json({ error: 'Failed to create activity code' });
     }
 };
 exports.createActivityCode = createActivityCode;
-// Update activity code
+// 4. PUT /api/activity-codes/:id — Update activity code
 const updateActivityCode = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const { code, description, projectCode, trade, category } = req.body;
+        const { code, description, unit } = req.body || {};
         const data = {};
         if (code !== undefined)
-            data.code = code;
+            data.code = String(code).trim();
         if (description !== undefined)
-            data.description = description;
-        if (projectCode !== undefined)
-            data.projectCode = projectCode;
-        if (trade !== undefined)
-            data.trade = trade;
-        if (category !== undefined)
-            data.category = category;
-        const updated = await prisma_1.default.activityCode.update({
+            data.description = description?.trim() || null;
+        if (unit !== undefined)
+            data.unit = unit?.trim() || null;
+        const updated = await prisma_1.default.mF_P_ActivityCode.update({
             where: { id },
             data,
         });
@@ -120,21 +153,24 @@ const updateActivityCode = async (req, res) => {
     }
 };
 exports.updateActivityCode = updateActivityCode;
-// Delete activity code
+// 5. DELETE /api/activity-codes/:id — Delete activity code
 const deleteActivityCode = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        // Check if time entries reference this activity
-        const usageCount = await prisma_1.default.timeEntry.count({
-            where: { activityId: id },
-        });
-        if (usageCount > 0) {
+        // Check if time entries or logs reference this activity
+        const [timeEntriesCount, splitsCount, equipLogsCount] = await Promise.all([
+            prisma_1.default.mF_OP_TimeEntry.count({ where: { activityId: id } }),
+            prisma_1.default.mF_OP_LaborActivitySplit.count({ where: { activityCodeId: id } }),
+            prisma_1.default.mF_OP_EquipmentDailyLogActivity.count({ where: { activityCodeId: id } }),
+        ]);
+        const totalUsage = timeEntriesCount + splitsCount + equipLogsCount;
+        if (totalUsage > 0) {
             res.status(400).json({
-                error: `Cannot delete: ${usageCount} time entry record(s) reference this activity code.`,
+                error: `Cannot delete: ${totalUsage} active record(s) reference this activity code.`,
             });
             return;
         }
-        await prisma_1.default.activityCode.delete({
+        await prisma_1.default.mF_P_ActivityCode.delete({
             where: { id },
         });
         res.json({ message: 'Activity code deleted successfully' });
@@ -149,25 +185,29 @@ const deleteActivityCode = async (req, res) => {
     }
 };
 exports.deleteActivityCode = deleteActivityCode;
-// ── CENTRAL CORPORATE ERP ACTIVITY CATALOG CONTROLLERS ───────────────────────
-// GET /api/activity-codes/corporate-master
+// ── CENTRAL CORPORATE ERP ACTIVITY CATALOG ───────────────────────────────
+// 6. GET /api/activity-codes/corporate-master — Catalog from corporate
 const getCorporateActivityCodesCatalog = async (req, res) => {
     try {
-        const { projectCode, search } = req.query;
+        const { search } = req.query;
         const where = {};
-        if (projectCode && typeof projectCode === 'string') {
-            where.projectCode = projectCode;
-        }
-        if (search && typeof search === 'string') {
+        if (search && typeof search === 'string' && search.trim()) {
+            const q = search.trim();
             where.OR = [
-                { code: { contains: search, mode: 'insensitive' } },
-                { description: { contains: search, mode: 'insensitive' } },
-                { searchKey: { contains: search, mode: 'insensitive' } },
+                { code: { contains: q, mode: 'insensitive' } },
+                { description: { contains: q, mode: 'insensitive' } },
             ];
         }
-        const list = await prisma_1.default.corporateActivityCode.findMany({
+        const list = await prisma_1.default.mF_G_ActivityCode.findMany({
             where,
-            orderBy: [{ projectCode: 'asc' }, { code: 'asc' }],
+            select: {
+                id: true,
+                code: true,
+                description: true,
+                unit: true,
+                createdAt: true,
+            },
+            orderBy: { code: 'asc' },
         });
         res.json(list);
     }
@@ -177,41 +217,29 @@ const getCorporateActivityCodesCatalog = async (req, res) => {
     }
 };
 exports.getCorporateActivityCodesCatalog = getCorporateActivityCodesCatalog;
-// POST /api/activity-codes/corporate-master/batch
+// 7. POST /api/activity-codes/corporate-master/batch — Batch sync corporate activities
 const batchSyncCorporateActivityCodes = async (req, res) => {
     try {
-        const { items } = req.body;
+        const { items } = req.body || {};
         if (!Array.isArray(items) || items.length === 0) {
             res.status(400).json({ error: 'Array of items required' });
             return;
         }
         const results = [];
         for (const item of items) {
-            const pCode = item.projectCode || item.currentWorkingProject || null;
-            const record = await prisma_1.default.corporateActivityCode.upsert({
-                where: {
-                    projectCode_code: {
-                        projectCode: pCode,
-                        code: item.code,
-                    },
-                },
+            if (!item.code)
+                continue;
+            const cleanCode = String(item.code).trim();
+            const record = await prisma_1.default.mF_G_ActivityCode.upsert({
+                where: { code: cleanCode },
                 update: {
-                    description: item.description,
-                    searchKey: item.searchKey || null,
-                    activityType: item.activityType || 'Work Package',
+                    description: item.description || cleanCode,
                     unit: item.unit || null,
-                    timeUnit: item.timeUnit || null,
-                    currentWorkingProject: item.currentWorkingProject || pCode,
                 },
                 create: {
-                    projectCode: pCode,
-                    code: item.code,
-                    description: item.description,
-                    searchKey: item.searchKey || null,
-                    activityType: item.activityType || 'Work Package',
+                    code: cleanCode,
+                    description: item.description || cleanCode,
                     unit: item.unit || null,
-                    timeUnit: item.timeUnit || null,
-                    currentWorkingProject: item.currentWorkingProject || pCode,
                 },
             });
             results.push(record);
@@ -224,42 +252,42 @@ const batchSyncCorporateActivityCodes = async (req, res) => {
     }
 };
 exports.batchSyncCorporateActivityCodes = batchSyncCorporateActivityCodes;
-// POST /api/activity-codes/import-from-corporate
+// 8. POST /api/activity-codes/import-from-corporate — Import into site project
 const importActivityCodesFromCorporate = async (req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const { items, projectCode } = req.body;
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const { items } = req.body || {};
         if (!Array.isArray(items) || items.length === 0) {
             res.status(400).json({ error: 'Array of items required' });
             return;
         }
         const imported = [];
-        const skipped = [];
         for (const item of items) {
-            const itemProject = item.projectCode || item.currentWorkingProject || null;
-            // Project code validation: If target projectCode is specified and item has a projectCode, validate match
-            if (projectCode && itemProject && itemProject.toLowerCase() !== projectCode.toLowerCase()) {
-                skipped.push({ code: item.code, reason: `Project code mismatch: expected ${projectCode}, got ${itemProject}` });
+            if (!item.code)
                 continue;
-            }
-            const upserted = await prisma_1.default.activityCode.upsert({
+            const cleanCode = String(item.code).trim();
+            const upserted = await prisma_1.default.mF_P_ActivityCode.upsert({
                 where: {
-                    tenantId_code: {
-                        tenantId,
-                        code: item.code,
+                    projectId_code: {
+                        projectId,
+                        code: cleanCode,
                     },
                 },
                 update: {
-                    description: item.description,
-                    projectCode: itemProject || projectCode || null,
-                    category: item.activityType || 'Civil',
+                    description: item.description || cleanCode,
+                    unit: item.unit || null,
+                    corporateActivityCodeId: item.id || undefined,
                 },
                 create: {
-                    tenantId,
-                    code: item.code,
-                    description: item.description,
-                    projectCode: itemProject || projectCode || null,
-                    category: item.activityType || 'Civil',
+                    projectId,
+                    code: cleanCode,
+                    description: item.description || cleanCode,
+                    unit: item.unit || null,
+                    corporateActivityCodeId: item.id || null,
                 },
             });
             imported.push(upserted);
@@ -267,8 +295,6 @@ const importActivityCodesFromCorporate = async (req, res) => {
         res.json({
             success: true,
             importedCount: imported.length,
-            skippedCount: skipped.length,
-            skipped,
             activities: imported,
         });
     }

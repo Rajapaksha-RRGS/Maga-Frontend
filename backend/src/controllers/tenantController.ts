@@ -80,7 +80,7 @@ const projectSelectOptimized = {
 // 1. GET /api/tenants — List all projects/tenants with primary admin & counts
 export const getAllTenants = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const projects = await prisma.project.findMany({
+    const projects = await prisma.mF_P_Project.findMany({
       orderBy: { createdAt: 'desc' },
       select: projectSelectOptimized,
     });
@@ -97,7 +97,7 @@ export const getAllTenants = async (_req: Request, res: Response): Promise<void>
 export const getTenantById = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const project = await prisma.project.findUnique({
+    const project = await prisma.mF_P_Project.findUnique({
       where: { id },
       select: projectSelectOptimized,
     });
@@ -118,11 +118,12 @@ export const getTenantById = async (req: Request, res: Response): Promise<void> 
 export const getTenantBySubdomain = async (req: Request, res: Response): Promise<void> => {
   try {
     const subdomain = getParam(req.params.subdomain).toLowerCase().trim();
-    const project = await prisma.project.findFirst({
+    const project = await prisma.mF_P_Project.findFirst({
       where: {
         OR: [
           { subdomain: { equals: subdomain, mode: 'insensitive' } },
           { projectCode: { equals: subdomain, mode: 'insensitive' } },
+          { projectCode: { equals: `PRJ${subdomain}`, mode: 'insensitive' } },
         ],
       },
       select: projectSelectOptimized,
@@ -170,7 +171,7 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
     }
 
     // Check if project code or subdomain already exists (indexed unique check)
-    const existing = await prisma.project.findFirst({
+    const existing = await prisma.mF_P_Project.findFirst({
       where: {
         OR: [
           { subdomain: { equals: cleanSubdomain, mode: 'insensitive' } },
@@ -189,7 +190,7 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
     const passwordHash = await bcrypt.hash(passwordToUse, 10);
 
     const result = await prisma.$transaction(async (tx) => {
-      const project = await tx.project.create({
+      const project = await tx.mF_P_Project.create({
         data: {
           projectCode: cleanSubdomain,
           projectName: companyName.trim(),
@@ -203,7 +204,7 @@ export const registerTenant = async (req: Request, res: Response): Promise<void>
         },
       });
 
-      const adminUser = await tx.user.create({
+      const adminUser = await tx.mF_P_User.create({
         data: {
           projectId: project.id,
           username: adminUsername.trim().toLowerCase(),
@@ -264,7 +265,7 @@ export const updateTenant = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const updated = await prisma.project.update({
+    const updated = await prisma.mF_P_Project.update({
       where: { id },
       data: {
         projectName: companyName.trim(),
@@ -295,7 +296,7 @@ export const updateTenantStatus = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const updated = await prisma.project.update({
+    const updated = await prisma.mF_P_Project.update({
       where: { id },
       data: { status },
       select: projectSelectOptimized,
@@ -312,7 +313,7 @@ export const updateTenantStatus = async (req: Request, res: Response): Promise<v
 export const resetTenantAdminPassword = async (req: Request, res: Response): Promise<void> => {
   try {
     const tenantId = getParam(req.params.id);
-    const adminUser = await prisma.user.findFirst({
+    const adminUser = await prisma.mF_P_User.findFirst({
       where: { projectId: tenantId, role: 'admin' },
       select: { id: true, fullName: true, username: true },
     });
@@ -325,7 +326,7 @@ export const resetTenantAdminPassword = async (req: Request, res: Response): Pro
     const newTempPassword = generateTempPassword();
     const passwordHash = await bcrypt.hash(newTempPassword, 10);
 
-    await prisma.user.update({
+    await prisma.mF_P_User.update({
       where: { id: adminUser.id },
       data: {
         passwordHash,
@@ -348,7 +349,7 @@ export const resetTenantAdminPassword = async (req: Request, res: Response): Pro
 // 8. GET /api/tenants/corporate-projects — Get all corporate projects catalog for dropdown/picker
 export const getCorporateProjectsCatalog = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const list = await prisma.project.findMany({
+    const list = await prisma.mF_P_Project.findMany({
       orderBy: { projectCode: 'asc' },
       select: {
         id: true,

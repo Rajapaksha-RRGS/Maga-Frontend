@@ -5,63 +5,119 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCorporateEmployeesCatalog = exports.transferEmployee = exports.getCrossTenantEmployeeStatus = exports.deleteEmployee = exports.updateEmployeeStatus = exports.updateEmployee = exports.createEmployee = exports.resolveOrCreateBusinessPartner = exports.getEmployeeById = exports.getAllEmployees = exports.getDefaultTenantId = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
-// Helper to get string param safely in Express 5
+require("../middleware/tenantMiddleware");
+const tenantHelper_1 = require("../utils/tenantHelper");
+Object.defineProperty(exports, "getDefaultTenantId", { enumerable: true, get: function () { return tenantHelper_1.getDefaultTenantId; } });
 const getParam = (param) => {
     if (Array.isArray(param))
         return param[0] || '';
     return param || '';
 };
-// Helper to get or ensure the default SaaS tenant (e.g. Mäga Engineering)
-const getDefaultTenantId = async () => {
-    const tenant = await prisma_1.default.tenant.upsert({
-        where: { subdomain: 'maga' },
-        update: {},
-        create: {
-            companyName: 'Mäga Engineering (Pvt) Ltd',
-            subdomain: 'maga',
-            addressLine1: '200, Nawala Road',
-            addressLine2: 'Narahenpita, Colombo 05',
-            phone: '+94 11 2808835',
-            email: 'info@maga.lk',
-            status: 'active',
+const employeeSelectOptimized = {
+    id: true,
+    projectId: true,
+    corporateEmployeeId: true,
+    callingName: true,
+    dailyRate: true,
+    isOperator: true,
+    status: true,
+    createdAt: true,
+    corporateEmployee: {
+        select: {
+            id: true,
+            employeeCode: true,
+            fullName: true,
+            nicNo: true,
+            epfNo: true,
+            dailyRate: true,
+            isOperator: true,
+            status: true,
         },
-    });
-    return tenant.id;
+    },
+    tradeGroup: {
+        select: {
+            id: true,
+            code: true,
+            name: true,
+            standardDailyRate: true,
+        },
+    },
+    businessPartner: {
+        select: {
+            id: true,
+            code: true,
+            name: true,
+            type: true,
+        },
+    },
 };
-exports.getDefaultTenantId = getDefaultTenantId;
-// Get all employees (scoped to tenant)
+function formatEmployee(emp) {
+    const corp = emp.corporateEmployee || {};
+    return {
+        id: emp.id,
+        projectId: emp.projectId,
+        tenantId: emp.projectId, // Frontend compatibility
+        corporateEmployeeId: emp.corporateEmployeeId,
+        employeeCode: corp.employeeCode || emp.id,
+        employee_code: corp.employeeCode || emp.id,
+        callingName: emp.callingName || corp.fullName || '',
+        calling_name: emp.callingName || corp.fullName || '',
+        fullName: corp.fullName || emp.callingName || '',
+        full_name: corp.fullName || emp.callingName || '',
+        nicNo: corp.nicNo || '',
+        nic_no: corp.nicNo || '',
+        epfNo: corp.epfNo || '',
+        epf_no: corp.epfNo || '',
+        dailyRate: Number(emp.dailyRate ?? corp.dailyRate ?? 1400.0),
+        isOperator: Boolean(emp.isOperator ?? corp.isOperator ?? false),
+        status: emp.status || 'active',
+        tradeGroupId: emp.tradeGroup?.id || null,
+        tradeGroup: emp.tradeGroup?.name || 'General Labour',
+        trade_group: emp.tradeGroup?.name || 'General Labour',
+        businessPartnerId: emp.businessPartner?.id || null,
+        businessPartner: emp.businessPartner
+            ? {
+                id: emp.businessPartner.id,
+                code: emp.businessPartner.code,
+                name: emp.businessPartner.name,
+            }
+            : null,
+        createdAt: emp.createdAt,
+    };
+}
+// 1. GET /api/employees — List all employees scoped to project
 const getAllEmployees = async (req, res) => {
     try {
         const { status, tradeGroup, businessPartner } = req.query;
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, exports.getDefaultTenantId)());
-        const where = { tenantId };
-        if (status && typeof status === 'string') {
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const where = { projectId };
+        if (status && typeof status === 'string' && status !== 'all') {
             where.status = status;
         }
         if (tradeGroup && typeof tradeGroup === 'string') {
-            where.tradeGroup = tradeGroup;
+            where.tradeGroup = {
+                name: { contains: tradeGroup, mode: 'insensitive' },
+            };
         }
         if (businessPartner && typeof businessPartner === 'string') {
             where.businessPartner = {
                 name: { contains: businessPartner, mode: 'insensitive' },
             };
         }
-        const employees = await prisma_1.default.employee.findMany({
+        const employees = await prisma_1.default.mF_P_Employee.findMany({
             where,
-            include: {
-                businessPartner: {
-                    select: {
-                        id: true,
-                        code: true,
-                        name: true,
-                    },
+            select: employeeSelectOptimized,
+            orderBy: {
+                corporateEmployee: {
+                    employeeCode: 'asc',
                 },
             },
-            orderBy: {
-                employeeCode: 'asc',
-            },
         });
-        res.json(employees);
+        res.json(employees.map(formatEmployee));
     }
     catch (error) {
         console.error('Error fetching employees:', error);
@@ -69,27 +125,19 @@ const getAllEmployees = async (req, res) => {
     }
 };
 exports.getAllEmployees = getAllEmployees;
-// Get employee by ID
+// 2. GET /api/employees/:id — Fetch single employee by ID
 const getEmployeeById = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const employee = await prisma_1.default.employee.findUnique({
+        const employee = await prisma_1.default.mF_P_Employee.findUnique({
             where: { id },
-            include: {
-                businessPartner: {
-                    select: {
-                        id: true,
-                        code: true,
-                        name: true,
-                    },
-                },
-            },
+            select: employeeSelectOptimized,
         });
         if (!employee) {
             res.status(404).json({ error: 'Employee not found' });
             return;
         }
-        res.json(employee);
+        res.json(formatEmployee(employee));
     }
     catch (error) {
         console.error('Error fetching employee:', error);
@@ -97,293 +145,331 @@ const getEmployeeById = async (req, res) => {
     }
 };
 exports.getEmployeeById = getEmployeeById;
-// Create new employee
-// Helper to resolve or auto-create a business partner for a tenant
-const resolveOrCreateBusinessPartner = async (tenantId, input) => {
-    // 1. If explicit UUID provided, verify if it exists in tenant
+// Helper: Resolve or create a Corporate Trade Group
+async function resolveTradeGroup(tradeGroupName) {
+    if (!tradeGroupName || !tradeGroupName.trim())
+        return null;
+    const cleanName = tradeGroupName.trim();
+    const found = await prisma_1.default.mF_G_TradeGroup.findFirst({
+        where: {
+            OR: [
+                { name: { equals: cleanName, mode: 'insensitive' } },
+                { code: { equals: cleanName, mode: 'insensitive' } },
+            ],
+        },
+        select: { id: true },
+    });
+    if (found)
+        return found.id;
+    const count = await prisma_1.default.mF_G_TradeGroup.count();
+    const code = `TG${String(count + 1).padStart(3, '0')}`;
+    const created = await prisma_1.default.mF_G_TradeGroup.create({
+        data: {
+            code,
+            name: cleanName,
+            standardDailyRate: 1400.0,
+            status: 'active',
+        },
+        select: { id: true },
+    });
+    return created.id;
+}
+// Helper: Resolve or create a Corporate Business Partner
+const resolveOrCreateBusinessPartner = async (_projectId, input) => {
     if (input?.id && input.id.length > 20) {
-        const existing = await prisma_1.default.businessPartner.findFirst({
-            where: { id: input.id, tenantId },
+        const existing = await prisma_1.default.mF_G_BusinessPartner.findUnique({
+            where: { id: input.id },
+            select: { id: true },
         });
         if (existing)
             return existing.id;
     }
-    // 2. Search tenant by code or name
     const searchCode = input?.code?.trim();
     const searchName = input?.name?.trim();
     if (searchCode || searchName) {
-        const existing = await prisma_1.default.businessPartner.findFirst({
+        const existing = await prisma_1.default.mF_G_BusinessPartner.findFirst({
             where: {
-                tenantId,
                 OR: [
                     ...(searchCode ? [{ code: { equals: searchCode, mode: 'insensitive' } }] : []),
                     ...(searchName ? [{ name: { equals: searchName, mode: 'insensitive' } }] : []),
                 ],
             },
+            select: { id: true },
         });
         if (existing)
             return existing.id;
-        // 3. Look up in CorporateBusinessPartner
-        const corpBp = await prisma_1.default.corporateBusinessPartner.findFirst({
-            where: {
-                OR: [
-                    ...(searchCode ? [{ code: { equals: searchCode, mode: 'insensitive' } }] : []),
-                    ...(searchName ? [{ name: { equals: searchName, mode: 'insensitive' } }] : []),
-                ],
-            },
-        });
-        if (corpBp) {
-            const created = await prisma_1.default.businessPartner.create({
-                data: {
-                    tenantId,
-                    code: corpBp.code,
-                    name: corpBp.name,
-                    type: corpBp.type,
-                    contactPerson: corpBp.contactPerson,
-                    phone: corpBp.phone,
-                    status: 'active',
-                },
-            });
-            return created.id;
-        }
-        // If custom name/code provided, create it
-        const created = await prisma_1.default.businessPartner.create({
+        const count = await prisma_1.default.mF_G_BusinessPartner.count();
+        const bpCode = searchCode || `BP1${String(count + 1).padStart(6, '0')}`;
+        const created = await prisma_1.default.mF_G_BusinessPartner.create({
             data: {
-                tenantId,
-                code: searchCode || `BP1${Date.now().toString().slice(-6)}`,
+                code: bpCode,
                 name: searchName || searchCode || 'Mäga Engineering (Pvt) Ltd',
                 type: (searchName || '').toLowerCase().includes('maga') ? 'internal' : 'subcontractor',
                 status: 'active',
             },
+            select: { id: true },
         });
         return created.id;
     }
-    // 4. Fallback to default corporate partner for this tenant
-    let defaultPartner = await prisma_1.default.businessPartner.findFirst({
-        where: { tenantId, code: 'BP1002885' },
+    // Default partner
+    let defaultPartner = await prisma_1.default.mF_G_BusinessPartner.findFirst({
+        where: { code: 'BP1002885' },
+        select: { id: true },
     });
     if (!defaultPartner) {
-        defaultPartner = await prisma_1.default.businessPartner.findFirst({
-            where: { tenantId },
+        defaultPartner = await prisma_1.default.mF_G_BusinessPartner.findFirst({
+            select: { id: true },
         });
     }
-    if (!defaultPartner) {
-        defaultPartner = await prisma_1.default.businessPartner.create({
-            data: {
-                tenantId,
-                code: 'BP1002885',
-                name: 'Mäga Engineering (Pvt) Ltd',
-                type: 'internal',
-                status: 'active',
-            },
-        });
-    }
-    return defaultPartner.id;
+    return defaultPartner?.id || null;
 };
 exports.resolveOrCreateBusinessPartner = resolveOrCreateBusinessPartner;
-// Create new employee
+// 3. POST /api/employees — Create employee
 const createEmployee = async (req, res) => {
     try {
-        const { employeeCode, callingName, fullName, businessPartnerId, businessPartnerCode, businessPartnerName, businessPartner, tradeGroup, nicNo, dailyRate, epfNo, status, isOperator, licenseNo, } = req.body;
+        const { employeeCode, callingName, fullName, businessPartnerId, businessPartnerCode, businessPartnerName, businessPartner, tradeGroup, nicNo, dailyRate, epfNo, status, isOperator, } = req.body || {};
         if (!callingName || !nicNo) {
-            res.status(400).json({ error: 'Missing required fields' });
+            res.status(400).json({ error: 'Calling name and NIC number are required' });
             return;
         }
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, exports.getDefaultTenantId)());
-        // Auto-resolve or create business partner for this tenant (from Corporate BP or default)
-        const resolvedBpId = await (0, exports.resolveOrCreateBusinessPartner)(tenantId, {
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const cleanCode = employeeCode?.trim() || `EMP${Date.now().toString().slice(-4)}`;
+        const cleanNic = String(nicNo).trim();
+        const resolvedBpId = await (0, exports.resolveOrCreateBusinessPartner)(projectId, {
             id: businessPartnerId,
             code: businessPartnerCode || (typeof businessPartner === 'string' && businessPartner.startsWith('BP') ? businessPartner : undefined),
             name: businessPartnerName || (typeof businessPartner === 'string' ? businessPartner : undefined),
         });
-        const newEmployee = await prisma_1.default.employee.create({
-            data: {
-                tenantId,
-                employeeCode: employeeCode || `EMP${Date.now().toString().slice(-4)}`,
-                callingName,
-                fullName: fullName || callingName,
-                tradeGroup: tradeGroup || 'General labour',
-                nicNo,
-                dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
-                epfNo: epfNo || '',
-                isOperator: Boolean(isOperator === true ||
-                    isOperator === 'true' ||
-                    (tradeGroup && ['operator', 'driver', 'heavy operator'].some(t => tradeGroup.toLowerCase().includes(t)))),
-                licenseNo: licenseNo || null,
-                status: status || 'active',
-                businessPartnerId: resolvedBpId,
-            },
-            include: {
-                businessPartner: true,
-            },
+        const resolvedTradeGroupId = await resolveTradeGroup(tradeGroup);
+        const isOperatorBool = Boolean(isOperator === true ||
+            isOperator === 'true' ||
+            (tradeGroup && ['operator', 'driver', 'heavy operator'].some((t) => tradeGroup.toLowerCase().includes(t))));
+        const result = await prisma_1.default.$transaction(async (tx) => {
+            // 1. Ensure Corporate Employee exists
+            let corpEmp = await tx.mF_G_Employee.findFirst({
+                where: {
+                    OR: [{ employeeCode: cleanCode }, { nicNo: cleanNic }],
+                },
+            });
+            if (!corpEmp) {
+                corpEmp = await tx.mF_G_Employee.create({
+                    data: {
+                        employeeCode: cleanCode,
+                        fullName: fullName?.trim() || callingName.trim(),
+                        nicNo: cleanNic,
+                        epfNo: epfNo?.trim() || null,
+                        dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
+                        isOperator: isOperatorBool,
+                        tradeGroupId: resolvedTradeGroupId,
+                        corporateBusinessPartnerId: resolvedBpId,
+                        status: 'active',
+                    },
+                });
+            }
+            // 2. Create Site Employee enrollment
+            const siteEmp = await tx.mF_P_Employee.create({
+                data: {
+                    projectId,
+                    corporateEmployeeId: corpEmp.id,
+                    callingName: callingName.trim(),
+                    dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : (corpEmp.dailyRate ?? 1400.0),
+                    isOperator: isOperatorBool,
+                    tradeGroupId: resolvedTradeGroupId,
+                    businessPartnerId: resolvedBpId,
+                    status: status || 'active',
+                },
+                select: employeeSelectOptimized,
+            });
+            return siteEmp;
         });
-        res.status(201).json(newEmployee);
+        res.status(201).json(formatEmployee(result));
     }
     catch (error) {
         console.error('Error creating employee:', error);
         if (error.code === 'P2002') {
-            res.status(409).json({ error: 'Employee with this code already exists in this tenant' });
+            res.status(409).json({ error: 'Employee already exists in this project' });
             return;
         }
         res.status(500).json({ error: 'Failed to create employee' });
     }
 };
 exports.createEmployee = createEmployee;
-// Update employee
+// 4. PUT /api/employees/:id — Update employee
 const updateEmployee = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const updateData = { ...req.body };
-        if (updateData.dailyRate !== undefined) {
-            updateData.dailyRate = parseFloat(updateData.dailyRate);
-        }
-        if (updateData.businessPartner !== undefined) {
-            if (!updateData.businessPartnerId && updateData.businessPartner) {
-                const bpNameOrCode = String(updateData.businessPartner).trim();
-                if (bpNameOrCode) {
-                    const emp = await prisma_1.default.employee.findUnique({ where: { id }, select: { tenantId: true } });
-                    const tenantId = emp?.tenantId || (await (0, exports.getDefaultTenantId)());
-                    let partner = await prisma_1.default.businessPartner.findFirst({
-                        where: {
-                            tenantId,
-                            OR: [
-                                { id: bpNameOrCode },
-                                { name: { equals: bpNameOrCode, mode: 'insensitive' } },
-                                { code: { equals: bpNameOrCode, mode: 'insensitive' } },
-                            ],
-                        },
-                    });
-                    if (!partner) {
-                        const count = await prisma_1.default.businessPartner.count({ where: { tenantId } });
-                        const code = `BP1${String(count + 1).padStart(6, '0')}`;
-                        partner = await prisma_1.default.businessPartner.create({
-                            data: {
-                                tenantId,
-                                name: bpNameOrCode,
-                                code,
-                            },
-                        });
-                    }
-                    updateData.businessPartnerId = partner.id;
-                }
-            }
-            delete updateData.businessPartner;
-        }
-        const updatedEmployee = await prisma_1.default.employee.update({
+        const { callingName, fullName, dailyRate, isOperator, status, tradeGroup, businessPartnerId, businessPartnerName, epfNo, nicNo, } = req.body || {};
+        const existing = await prisma_1.default.mF_P_Employee.findUnique({
             where: { id },
-            data: updateData,
-            include: {
-                businessPartner: true,
-            },
+            select: { id: true, corporateEmployeeId: true, projectId: true },
         });
-        res.json(updatedEmployee);
-    }
-    catch (error) {
-        console.error('Error updating employee:', error);
-        if (error.code === 'P2025') {
+        if (!existing) {
             res.status(404).json({ error: 'Employee not found' });
             return;
         }
+        const tradeGroupId = tradeGroup !== undefined ? await resolveTradeGroup(tradeGroup) : undefined;
+        const bpId = businessPartnerId || (businessPartnerName ? await (0, exports.resolveOrCreateBusinessPartner)(existing.projectId, { name: businessPartnerName }) : undefined);
+        const updateData = {};
+        if (callingName !== undefined)
+            updateData.callingName = callingName.trim();
+        if (dailyRate !== undefined)
+            updateData.dailyRate = parseFloat(dailyRate);
+        if (isOperator !== undefined)
+            updateData.isOperator = Boolean(isOperator);
+        if (status !== undefined)
+            updateData.status = status;
+        if (tradeGroupId !== undefined)
+            updateData.tradeGroupId = tradeGroupId;
+        if (bpId !== undefined)
+            updateData.businessPartnerId = bpId;
+        await prisma_1.default.$transaction(async (tx) => {
+            await tx.mF_P_Employee.update({
+                where: { id },
+                data: updateData,
+            });
+            if (fullName || nicNo || epfNo) {
+                await tx.mF_G_Employee.update({
+                    where: { id: existing.corporateEmployeeId },
+                    data: {
+                        fullName: fullName?.trim() || undefined,
+                        nicNo: nicNo?.trim() || undefined,
+                        epfNo: epfNo?.trim() || undefined,
+                    },
+                });
+            }
+        });
+        const refreshed = await prisma_1.default.mF_P_Employee.findUnique({
+            where: { id },
+            select: employeeSelectOptimized,
+        });
+        res.json(formatEmployee(refreshed));
+    }
+    catch (error) {
+        console.error('Error updating employee:', error);
         res.status(500).json({ error: 'Failed to update employee' });
     }
 };
 exports.updateEmployee = updateEmployee;
-// Update status (e.g. active / inactive)
+// 5. PATCH /api/employees/:id/status — Toggle status
 const updateEmployeeStatus = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        const { status } = req.body;
+        const { status } = req.body || {};
         if (!status || !['active', 'inactive'].includes(status)) {
             res.status(400).json({ error: 'Valid status ("active" | "inactive") is required' });
             return;
         }
-        const updated = await prisma_1.default.employee.update({
+        const updated = await prisma_1.default.mF_P_Employee.update({
             where: { id },
             data: { status },
+            select: employeeSelectOptimized,
         });
-        res.json(updated);
+        res.json(formatEmployee(updated));
     }
     catch (error) {
         console.error('Error updating employee status:', error);
-        if (error.code === 'P2025') {
-            res.status(404).json({ error: 'Employee not found' });
-            return;
-        }
-        res.status(500).json({ error: 'Failed to update status' });
+        res.status(500).json({ error: 'Failed to update employee status' });
     }
 };
 exports.updateEmployeeStatus = updateEmployeeStatus;
-// Delete employee
+// 6. DELETE /api/employees/:id — Delete or soft-deactivate
 const deleteEmployee = async (req, res) => {
     try {
         const id = getParam(req.params.id);
-        await prisma_1.default.employee.delete({
+        const [assignmentsCount, opAssignmentsCount, entriesCount] = await Promise.all([
+            prisma_1.default.mF_OP_DailyAssignment.count({ where: { employeeId: id } }),
+            prisma_1.default.mF_OP_DailyEquipmentAssignment.count({ where: { operatorId: id } }),
+            prisma_1.default.mF_OP_TimeEntry.count({ where: { employeeId: id } }),
+        ]);
+        const totalUsage = assignmentsCount + opAssignmentsCount + entriesCount;
+        if (totalUsage > 0) {
+            await prisma_1.default.mF_P_Employee.update({
+                where: { id },
+                data: { status: 'inactive' },
+            });
+            res.json({ message: 'Employee deactivated successfully (has operational history)' });
+            return;
+        }
+        await prisma_1.default.mF_P_Employee.delete({
             where: { id },
         });
         res.json({ message: 'Employee deleted successfully' });
     }
     catch (error) {
         console.error('Error deleting employee:', error);
-        if (error.code === 'P2025') {
-            res.status(404).json({ error: 'Employee not found' });
-            return;
-        }
         res.status(500).json({ error: 'Failed to delete employee' });
     }
 };
 exports.deleteEmployee = deleteEmployee;
-// Query cross-tenant employee status
+// 7. POST /api/employees/cross-tenant-status — Check cross-project employee availability
 const getCrossTenantEmployeeStatus = async (req, res) => {
     try {
-        const currentTenantId = req.resolvedTenantId || req.query.tenantId || (await (0, exports.getDefaultTenantId)());
-        const { items } = req.body;
+        const currentProjectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const { items } = req.body || {};
         if (!items || !Array.isArray(items) || items.length === 0) {
             res.json({});
             return;
         }
         const nics = items.map((i) => i.nicNo).filter(Boolean);
         const codes = items.map((i) => i.code).filter(Boolean);
-        const existingEmployees = await prisma_1.default.employee.findMany({
+        const existingEmployees = await prisma_1.default.mF_P_Employee.findMany({
             where: {
                 OR: [
-                    nics.length > 0 ? { nicNo: { in: nics } } : undefined,
-                    codes.length > 0 ? { employeeCode: { in: codes } } : undefined,
+                    nics.length > 0 ? { corporateEmployee: { nicNo: { in: nics } } } : undefined,
+                    codes.length > 0 ? { corporateEmployee: { employeeCode: { in: codes } } } : undefined,
                 ].filter(Boolean),
             },
-            include: {
-                tenant: {
+            select: {
+                id: true,
+                projectId: true,
+                status: true,
+                project: {
                     select: {
                         id: true,
-                        companyName: true,
+                        projectName: true,
                         subdomain: true,
+                        projectCode: true,
+                    },
+                },
+                corporateEmployee: {
+                    select: {
+                        employeeCode: true,
+                        nicNo: true,
+                        fullName: true,
                     },
                 },
             },
-            orderBy: {
-                createdAt: 'desc',
-            },
+            orderBy: { createdAt: 'desc' },
         });
         const resultMap = {};
         for (const item of items) {
-            const matches = existingEmployees.filter((emp) => (item.nicNo && emp.nicNo === item.nicNo) ||
-                (item.code && emp.employeeCode === item.code));
-            const inCurrent = matches.find((m) => m.tenantId === currentTenantId && m.status === 'active');
-            const inOther = matches.find((m) => m.tenantId !== currentTenantId && m.status === 'active');
+            const matches = existingEmployees.filter((emp) => (item.nicNo && emp.corporateEmployee.nicNo === item.nicNo) ||
+                (item.code && emp.corporateEmployee.employeeCode === item.code));
+            const inCurrent = matches.find((m) => m.projectId === currentProjectId && m.status === 'active');
+            const inOther = matches.find((m) => m.projectId !== currentProjectId && m.status === 'active');
             if (inCurrent) {
                 resultMap[item.code] = {
                     status: 'in_current_site',
-                    currentSiteName: inCurrent.tenant?.companyName,
-                    currentSiteCode: inCurrent.tenant?.subdomain,
-                    currentTenantId: inCurrent.tenantId,
+                    currentSiteName: inCurrent.project?.projectName,
+                    currentSiteCode: inCurrent.project?.projectCode || inCurrent.project?.subdomain,
+                    currentTenantId: inCurrent.projectId,
                     employeeId: inCurrent.id,
                 };
             }
             else if (inOther) {
                 resultMap[item.code] = {
                     status: 'in_other_site',
-                    currentSiteName: inOther.tenant?.companyName || `Site ${inOther.tenant?.subdomain}`,
-                    currentSiteCode: inOther.tenant?.subdomain,
-                    currentTenantId: inOther.tenantId,
+                    currentSiteName: inOther.project?.projectName || `Site ${inOther.project?.subdomain}`,
+                    currentSiteCode: inOther.project?.projectCode || inOther.project?.subdomain,
+                    currentTenantId: inOther.projectId,
                     employeeId: inOther.id,
                 };
             }
@@ -399,141 +485,136 @@ const getCrossTenantEmployeeStatus = async (req, res) => {
     }
 };
 exports.getCrossTenantEmployeeStatus = getCrossTenantEmployeeStatus;
-// Transfer an employee from another tenant/site to current tenant
+// 8. POST /api/employees/transfer — Transfer employee between projects
 const transferEmployee = async (req, res) => {
     try {
-        const targetTenantId = req.resolvedTenantId || req.body.targetTenantId || (await (0, exports.getDefaultTenantId)());
-        const { employeeCode, callingName, fullName, nicNo, businessPartnerName, tradeGroup, dailyRate, epfNo, } = req.body;
+        const targetProjectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.targetTenantId ||
+            req.body.targetProjectId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const { employeeCode, callingName, fullName, nicNo, businessPartnerName, tradeGroup, dailyRate, epfNo, remarks, } = req.body || {};
         if (!callingName || !nicNo) {
             res.status(400).json({ error: 'Calling name and NIC number are required' });
             return;
         }
-        // Find previous record across tenants to preserve operator metadata if not explicitly provided
-        const prevRecord = await prisma_1.default.employee.findFirst({
+        const cleanCode = employeeCode?.trim();
+        const cleanNic = nicNo.trim();
+        // 1. Find corporate employee
+        let corpEmp = await prisma_1.default.mF_G_Employee.findFirst({
             where: {
                 OR: [
-                    { nicNo },
-                    employeeCode ? { employeeCode } : undefined,
+                    { nicNo: cleanNic },
+                    cleanCode ? { employeeCode: cleanCode } : undefined,
                 ].filter(Boolean),
             },
-            orderBy: { createdAt: 'desc' },
         });
-        const isOperatorVal = req.body.isOperator !== undefined
-            ? Boolean(req.body.isOperator)
-            : (prevRecord?.isOperator ?? false);
-        const licenseNoVal = req.body.licenseNo !== undefined
-            ? req.body.licenseNo
-            : (prevRecord?.licenseNo || null);
-        // 1. Deactivate this worker in any previous tenant (where active)
-        await prisma_1.default.employee.updateMany({
+        if (!corpEmp) {
+            corpEmp = await prisma_1.default.mF_G_Employee.create({
+                data: {
+                    employeeCode: cleanCode || `EMP${Date.now().toString().slice(-4)}`,
+                    fullName: fullName?.trim() || callingName.trim(),
+                    nicNo: cleanNic,
+                    epfNo: epfNo?.trim() || null,
+                    status: 'active',
+                },
+            });
+        }
+        // 2. Identify previous active site assignment
+        const prevSiteEmp = await prisma_1.default.mF_P_Employee.findFirst({
             where: {
-                OR: [
-                    { nicNo },
-                    employeeCode ? { employeeCode } : undefined,
-                ].filter(Boolean),
+                corporateEmployeeId: corpEmp.id,
                 status: 'active',
-                tenantId: { not: targetTenantId },
-            },
-            data: {
-                status: 'inactive',
+                projectId: { not: targetProjectId },
             },
         });
-        // 2. Ensure BusinessPartner exists in target tenant
-        let targetBpId;
-        const partnerSearchName = businessPartnerName || 'Mäga Engineering (Direct)';
-        let partner = await prisma_1.default.businessPartner.findFirst({
-            where: {
-                tenantId: targetTenantId,
-                OR: [
-                    { name: { equals: partnerSearchName, mode: 'insensitive' } },
-                    { code: { equals: partnerSearchName, mode: 'insensitive' } },
-                ],
-            },
-        });
-        if (!partner) {
-            const count = await prisma_1.default.businessPartner.count({ where: { tenantId: targetTenantId } });
-            const bpCode = `BP1${String(count + 1).padStart(6, '0')}`;
-            partner = await prisma_1.default.businessPartner.create({
+        const fromProjectId = prevSiteEmp?.projectId || null;
+        // 3. Perform transfer atomically
+        const result = await prisma_1.default.$transaction(async (tx) => {
+            // Deactivate in previous site
+            if (prevSiteEmp) {
+                await tx.mF_P_Employee.update({
+                    where: { id: prevSiteEmp.id },
+                    data: { status: 'inactive' },
+                });
+            }
+            // Record transfer in ledger
+            await tx.mF_G_EmployeeTransfer.create({
                 data: {
-                    tenantId: targetTenantId,
-                    name: partnerSearchName,
-                    code: bpCode,
-                    type: partnerSearchName.toLowerCase().includes('maga') ? 'internal' : 'subcontractor',
-                },
-            });
-        }
-        targetBpId = partner.id;
-        // 3. Upsert into target tenant
-        const codeToUse = employeeCode || `EMP${Date.now().toString().slice(-4)}`;
-        const existingInTarget = await prisma_1.default.employee.findFirst({
-            where: {
-                tenantId: targetTenantId,
-                OR: [
-                    { employeeCode: codeToUse },
-                    { nicNo },
-                ],
-            },
-        });
-        let targetEmployee;
-        if (existingInTarget) {
-            targetEmployee = await prisma_1.default.employee.update({
-                where: { id: existingInTarget.id },
-                data: {
-                    callingName,
-                    fullName: fullName || callingName,
-                    tradeGroup: tradeGroup || 'General labour',
-                    dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
-                    epfNo: epfNo || '',
-                    isOperator: isOperatorVal,
-                    licenseNo: licenseNoVal,
+                    corporateEmployeeId: corpEmp.id,
+                    fromProjectId,
+                    toProjectId: targetProjectId,
+                    startDate: new Date(),
                     status: 'active',
-                    businessPartnerId: targetBpId,
-                },
-                include: {
-                    businessPartner: true,
-                    tenant: { select: { id: true, companyName: true, subdomain: true } },
+                    remarks: remarks || `Transferred to site ${targetProjectId}`,
                 },
             });
-        }
-        else {
-            targetEmployee = await prisma_1.default.employee.create({
-                data: {
-                    tenantId: targetTenantId,
-                    employeeCode: codeToUse,
-                    callingName,
-                    fullName: fullName || callingName,
-                    tradeGroup: tradeGroup || 'General labour',
-                    nicNo,
-                    dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
-                    epfNo: epfNo || '',
-                    isOperator: isOperatorVal,
-                    licenseNo: licenseNoVal,
+            // Resolve business partner and trade group for target site
+            const targetBpId = await (0, exports.resolveOrCreateBusinessPartner)(targetProjectId, {
+                name: businessPartnerName || 'Mäga Engineering (Direct)',
+            });
+            const targetTradeGroupId = await resolveTradeGroup(tradeGroup);
+            // Upsert into target site
+            const siteEmp = await tx.mF_P_Employee.upsert({
+                where: {
+                    projectId_corporateEmployeeId: {
+                        projectId: targetProjectId,
+                        corporateEmployeeId: corpEmp.id,
+                    },
+                },
+                update: {
+                    callingName: callingName.trim(),
+                    dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : (corpEmp.dailyRate ?? 1400.0),
+                    tradeGroupId: targetTradeGroupId,
+                    businessPartnerId: targetBpId,
                     status: 'active',
+                },
+                create: {
+                    projectId: targetProjectId,
+                    corporateEmployeeId: corpEmp.id,
+                    callingName: callingName.trim(),
+                    dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : (corpEmp.dailyRate ?? 1400.0),
+                    tradeGroupId: targetTradeGroupId,
                     businessPartnerId: targetBpId,
+                    status: 'active',
                 },
-                include: {
-                    businessPartner: true,
-                    tenant: { select: { id: true, companyName: true, subdomain: true } },
-                },
+                select: employeeSelectOptimized,
             });
-        }
+            return siteEmp;
+        });
         res.status(200).json({
             success: true,
-            message: `Employee ${callingName} successfully transferred to current site`,
-            employee: targetEmployee,
+            message: `Employee ${callingName} successfully transferred to target site`,
+            employee: formatEmployee(result),
         });
     }
     catch (error) {
         console.error('Error transferring employee:', error);
-        res.status(500).json({ error: 'Failed to transfer employee to current site' });
+        res.status(500).json({ error: 'Failed to transfer employee' });
     }
 };
 exports.transferEmployee = transferEmployee;
-// ── CENTRAL CORPORATE ERP CATALOG CONTROLLERS ──────────────────────────────
-// Get all corporate employees
+// 9. GET /api/employees/corporate-master — Catalog from corporate master
 const getCorporateEmployeesCatalog = async (_req, res) => {
     try {
-        const list = await prisma_1.default.corporateEmployee.findMany({
+        const list = await prisma_1.default.mF_G_Employee.findMany({
+            select: {
+                id: true,
+                employeeCode: true,
+                fullName: true,
+                nicNo: true,
+                epfNo: true,
+                dailyRate: true,
+                isOperator: true,
+                status: true,
+                currentWorkingProject: true,
+                tradeGroup: {
+                    select: { id: true, code: true, name: true },
+                },
+                corporateBusinessPartner: {
+                    select: { id: true, code: true, name: true },
+                },
+            },
             orderBy: { employeeCode: 'asc' },
         });
         res.json(list);

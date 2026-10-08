@@ -4,49 +4,44 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getSupervisorReminders = exports.setCalendarEvents = exports.getCalendarEvents = exports.batchSetCalendarDays = exports.setCalendarDay = exports.getCalendarMonth = exports.getDayTypes = void 0;
+exports.getDayTypeRulesAndId = getDayTypeRulesAndId;
 const prisma_1 = __importDefault(require("../config/prisma"));
-const employeeController_1 = require("./employeeController");
-const timeEntryController_1 = require("./timeEntryController");
-// Standard 5 fixed day types used in construction
+require("../middleware/tenantMiddleware");
+const tenantHelper_1 = require("../utils/tenantHelper");
+// Standard fixed day types used in construction
 const DEFAULT_DAY_TYPES = [
-    { name: 'Normal Day', code: 'normal', rateMultiplier: 1.0 },
-    { name: 'Saturday', code: 'saturday', rateMultiplier: 1.0 },
-    { name: 'Sunday', code: 'sunday', rateMultiplier: 1.5 },
-    { name: 'Shutdown', code: 'shutdown', rateMultiplier: 1.0 },
-    { name: 'Poya / Holiday', code: 'public_holiday', rateMultiplier: 2.0 },
+    { name: 'Normal Day', code: 'NORMAL', rateMultiplier: 1.0 },
+    { name: 'Saturday', code: 'SATURDAY', rateMultiplier: 1.0 },
+    { name: 'Sunday', code: 'SUNDAY', rateMultiplier: 1.5 },
+    { name: 'Shutdown', code: 'SHUTDOWN', rateMultiplier: 1.0 },
+    { name: 'Poya / Holiday', code: 'POYA', rateMultiplier: 2.0 },
 ];
-function deriveCode(name) {
-    const lower = name.toLowerCase();
+function deriveCode(codeOrName) {
+    const lower = codeOrName.toLowerCase();
     if (lower.includes('sunday'))
-        return 'sunday';
+        return 'SUNDAY';
     if (lower.includes('saturday'))
-        return 'saturday';
+        return 'SATURDAY';
     if (lower.includes('shutdown'))
-        return 'shutdown';
-    if (lower.includes('public holiday') || lower.includes('holiday') || lower.includes('poya'))
-        return 'public_holiday';
-    return 'normal';
+        return 'SHUTDOWN';
+    if (lower.includes('holiday') || lower.includes('poya'))
+        return 'POYA';
+    return 'NORMAL';
 }
-async function ensureSeedDayTypes(tenantId) {
+async function ensureSeedDayTypes() {
     for (const dt of DEFAULT_DAY_TYPES) {
-        const existing = await prisma_1.default.dayType.findFirst({
-            where: {
-                tenantId,
-                OR: [
-                    { name: { equals: dt.name, mode: 'insensitive' } },
-                    ...(dt.code === 'public_holiday' ? [{ name: { equals: 'Public Holiday', mode: 'insensitive' } }] : []),
-                ],
+        await prisma_1.default.mF_G_DayType.upsert({
+            where: { code: dt.code },
+            update: {
+                name: dt.name,
+                rateMultiplier: dt.rateMultiplier,
+            },
+            create: {
+                code: dt.code,
+                name: dt.name,
+                rateMultiplier: dt.rateMultiplier,
             },
         });
-        if (!existing) {
-            await prisma_1.default.dayType.create({
-                data: {
-                    tenantId,
-                    name: dt.name,
-                    rateMultiplier: dt.rateMultiplier,
-                },
-            });
-        }
     }
 }
 function parseCalendarDate(dateStr) {
@@ -56,17 +51,48 @@ function parseCalendarDate(dateStr) {
 function formatUtcDate(d) {
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
-/**
- * Helper: Recalculate hours and overtime for all open (draft/submitted) time entries
- * when the calendar Day Type for a date is changed by Admin.
- */
-async function recalculateUnapprovedEntriesForDate(tenantId, date) {
-    const rules = await (0, timeEntryController_1.getDayTypeRulesAndId)(tenantId, date);
-    const unapproved = await prisma_1.default.timeEntry.findMany({
+async function getDayTypeRulesAndId(projectId, date) {
+    const calDay = await prisma_1.default.mF_P_CalendarDay.findUnique({
         where: {
-            tenantId,
+            projectId_date: {
+                projectId,
+                date,
+            },
+        },
+        include: { dayType: true },
+    });
+    let dayType = calDay?.dayType;
+    if (!dayType) {
+        const dayOfWeek = date.getUTCDay(); // 0 = Sun, 6 = Sat
+        const defaultCode = dayOfWeek === 0 ? 'SUNDAY' : dayOfWeek === 6 ? 'SATURDAY' : 'NORMAL';
+        dayType = (await prisma_1.default.mF_G_DayType.findFirst({
+            where: { code: defaultCode },
+        })) || undefined;
+    }
+    const code = (dayType?.code || 'NORMAL').toUpperCase();
+    const mult = Number(dayType?.rateMultiplier ?? 1.0);
+    return {
+        effectiveDayTypeId: dayType?.id || '',
+        rateMultiplier: mult,
+        isAllOvertime: code === 'SUNDAY' || code === 'POYA',
+        standardHoursCap: code === 'SATURDAY' ? 6.5 : 8.0,
+    };
+}
+/**
+ * Helper: Recalculate hours and overtime for open (draft/submitted) time entries
+ * when the calendar Day Type for a date is altered by Admin.
+ */
+async function recalculateUnapprovedEntriesForDate(projectId, date) {
+    const rules = await getDayTypeRulesAndId(projectId, date);
+    const unapproved = await prisma_1.default.mF_OP_TimeEntry.findMany({
+        where: {
+            projectId,
             date,
             status: { in: ['draft', 'submitted'] },
+        },
+        select: {
+            id: true,
+            hours: true,
         },
     });
     if (unapproved.length > 0) {
@@ -82,7 +108,7 @@ async function recalculateUnapprovedEntriesForDate(tenantId, date) {
             else {
                 otHours = 0;
             }
-            await prisma_1.default.timeEntry.update({
+            await prisma_1.default.mF_OP_TimeEntry.update({
                 where: { id: entry.id },
                 data: {
                     effectiveDayTypeId: rules.effectiveDayTypeId,
@@ -91,54 +117,22 @@ async function recalculateUnapprovedEntriesForDate(tenantId, date) {
             });
         }
     }
-    // Also adjust unapproved OperatorTimeEntry records if any exist
-    const operatorAssignments = await prisma_1.default.dailyOperatorAssignment.findMany({
-        where: { tenantId, date },
-        include: { timeEntry: true },
-    });
-    for (const oa of operatorAssignments) {
-        if (oa.timeEntry && oa.timeEntry.status !== 'done') {
-            const shiftHours = Number(oa.timeEntry.shiftHours) || 0;
-            const totalHours = shiftHours + (Number(oa.timeEntry.otHours) || 0);
-            let newOt = 0;
-            let newShift = shiftHours;
-            if (rules.isAllOvertime) {
-                newOt = totalHours;
-                newShift = 0;
-            }
-            else if (totalHours > rules.standardHoursCap) {
-                newShift = rules.standardHoursCap;
-                newOt = Math.round((totalHours - rules.standardHoursCap) * 100) / 100;
-            }
-            else {
-                newShift = totalHours;
-                newOt = 0;
-            }
-            await prisma_1.default.operatorTimeEntry.update({
-                where: { id: oa.timeEntry.id },
-                data: {
-                    shiftHours: newShift,
-                    otHours: newOt,
-                },
-            });
-        }
-    }
     return unapproved.length;
 }
-// 1. GET /api/calendar/day-types
-const getDayTypes = async (req, res) => {
+// 1. GET /api/calendar/day-types — List all day types
+const getDayTypes = async (_req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        await ensureSeedDayTypes(tenantId);
-        const types = await prisma_1.default.dayType.findMany({
-            where: { tenantId },
-            orderBy: { createdAt: 'asc' },
+        await ensureSeedDayTypes();
+        const dayTypes = await prisma_1.default.mF_G_DayType.findMany({
+            orderBy: { rateMultiplier: 'asc' },
         });
-        const formatted = types.map((t) => ({
-            id: t.id,
-            name: t.name,
-            code: deriveCode(t.name),
-            rateMultiplier: Number(t.rateMultiplier) || 1.0,
+        const formatted = dayTypes.map((dt) => ({
+            id: dt.id,
+            name: dt.name,
+            code: dt.code.toLowerCase(),
+            rateMultiplier: Number(dt.rateMultiplier),
+            overtimeAllowed: true,
+            requiresApproval: dt.code === 'POYA' || dt.code === 'SUNDAY',
         }));
         res.json(formatted);
     }
@@ -148,26 +142,27 @@ const getDayTypes = async (req, res) => {
     }
 };
 exports.getDayTypes = getDayTypes;
-// 2. GET /api/calendar?year=&month=&tenantId=
+// 2. GET /api/calendar?year=&month= — Get full month calendar for site
 const getCalendarMonth = async (req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        await ensureSeedDayTypes(tenantId);
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        await ensureSeedDayTypes();
         const year = parseInt(req.query.year, 10) || new Date().getFullYear();
-        // month is 0-indexed (0..11) from frontend
         const month = parseInt(req.query.month, 10) ?? new Date().getMonth();
         const startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0));
         const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
         const endDate = new Date(Date.UTC(year, month, daysInMonth, 23, 59, 59));
-        // Get all day types for default mapping
-        const allTypes = await prisma_1.default.dayType.findMany({ where: { tenantId } });
-        const normalType = allTypes.find((t) => deriveCode(t.name) === 'normal') || allTypes[0];
-        const satType = allTypes.find((t) => deriveCode(t.name) === 'saturday') || normalType;
-        const sunType = allTypes.find((t) => deriveCode(t.name) === 'sunday') || normalType;
-        // Fetch explicitly marked calendar days
-        const savedDays = await prisma_1.default.calendarDay.findMany({
+        const allTypes = await prisma_1.default.mF_G_DayType.findMany();
+        const normalType = allTypes.find((t) => deriveCode(t.code) === 'NORMAL') || allTypes[0];
+        const satType = allTypes.find((t) => deriveCode(t.code) === 'SATURDAY') || normalType;
+        const sunType = allTypes.find((t) => deriveCode(t.code) === 'SUNDAY') || normalType;
+        const savedDays = await prisma_1.default.mF_P_CalendarDay.findMany({
             where: {
-                tenantId,
+                projectId,
                 date: {
                     gte: startDate,
                     lte: endDate,
@@ -182,12 +177,11 @@ const getCalendarMonth = async (req, res) => {
                 remarks: sd.remarks,
             });
         });
-        // Build complete month array
         const entries = [];
         for (let d = 1; d <= daysInMonth; d++) {
             const date = new Date(Date.UTC(year, month, d));
             const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const dow = date.getUTCDay(); // 0 = Sun, 6 = Sat
+            const dow = date.getUTCDay();
             const savedItem = savedMap.get(key);
             let dayTypeId = savedItem?.dayTypeId;
             if (!dayTypeId) {
@@ -208,35 +202,38 @@ const getCalendarMonth = async (req, res) => {
     }
 };
 exports.getCalendarMonth = getCalendarMonth;
-// 3. POST /api/calendar/set-day
+// 3. POST /api/calendar/set-day — Set day type for a date
 const setCalendarDay = async (req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const { date: dateStr, dayTypeId } = req.body;
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const { date: dateStr, dayTypeId } = req.body || {};
         if (!dateStr || !dayTypeId) {
             res.status(400).json({ error: 'date and dayTypeId are required' });
             return;
         }
         const date = parseCalendarDate(dateStr);
-        // Guard: Prevent day type alteration if entries are already approved by Admin
-        const approvedCount = await prisma_1.default.timeEntry.count({
+        const approvedCount = await prisma_1.default.mF_OP_TimeEntry.count({
             where: {
-                tenantId,
+                projectId,
                 date,
                 status: 'approved',
             },
         });
         if (approvedCount > 0) {
             res.status(400).json({
-                error: `Cannot change Day Type: ${approvedCount} time entry record(s) on ${dateStr} are already Approved by Admin. Please return records to draft in Approvals before changing calendar settings.`,
+                error: `Cannot change Day Type: ${approvedCount} time entry record(s) on ${dateStr} are already Approved.`,
                 isLocked: true,
             });
             return;
         }
-        const entry = await prisma_1.default.calendarDay.upsert({
+        const entry = await prisma_1.default.mF_P_CalendarDay.upsert({
             where: {
-                tenantId_date: {
-                    tenantId,
+                projectId_date: {
+                    projectId,
                     date,
                 },
             },
@@ -244,13 +241,12 @@ const setCalendarDay = async (req, res) => {
                 dayTypeId,
             },
             create: {
-                tenantId,
+                projectId,
                 date,
                 dayTypeId,
             },
         });
-        // Cascade: Automatically recalculate open (draft/submitted) time entries
-        const recalculatedCount = await recalculateUnapprovedEntriesForDate(tenantId, date);
+        const recalculatedCount = await recalculateUnapprovedEntriesForDate(projectId, date);
         res.json({
             date: formatUtcDate(new Date(entry.date)),
             dayTypeId: entry.dayTypeId,
@@ -266,11 +262,15 @@ const setCalendarDay = async (req, res) => {
     }
 };
 exports.setCalendarDay = setCalendarDay;
-// 4. POST /api/calendar/batch-set
+// 4. POST /api/calendar/batch-set — Batch set calendar days
 const batchSetCalendarDays = async (req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const { entries } = req.body; // Array of { date: string, dayTypeId: string }
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const { entries } = req.body || {};
         if (!Array.isArray(entries) || entries.length === 0) {
             res.status(400).json({ error: 'entries array is required' });
             return;
@@ -279,17 +279,16 @@ const batchSetCalendarDays = async (req, res) => {
         let totalRecalculated = 0;
         for (const item of entries) {
             const date = parseCalendarDate(item.date);
-            // Check if approved records exist; skip if approved
-            const approvedCount = await prisma_1.default.timeEntry.count({
-                where: { tenantId, date, status: 'approved' },
+            const approvedCount = await prisma_1.default.mF_OP_TimeEntry.count({
+                where: { projectId, date, status: 'approved' },
             });
             if (approvedCount > 0) {
                 continue;
             }
-            await prisma_1.default.calendarDay.upsert({
+            await prisma_1.default.mF_P_CalendarDay.upsert({
                 where: {
-                    tenantId_date: {
-                        tenantId,
+                    projectId_date: {
+                        projectId,
                         date,
                     },
                 },
@@ -297,12 +296,12 @@ const batchSetCalendarDays = async (req, res) => {
                     dayTypeId: item.dayTypeId,
                 },
                 create: {
-                    tenantId,
+                    projectId,
                     date,
                     dayTypeId: item.dayTypeId,
                 },
             });
-            const recCount = await recalculateUnapprovedEntriesForDate(tenantId, date);
+            const recCount = await recalculateUnapprovedEntriesForDate(projectId, date);
             totalRecalculated += recCount;
             updatedCount++;
         }
@@ -317,17 +316,21 @@ exports.batchSetCalendarDays = batchSetCalendarDays;
 // 5. GET /api/calendar/events?date=YYYY-MM-DD
 const getCalendarEvents = async (req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const dateStr = req.query.date;
         if (!dateStr) {
             res.status(400).json({ error: 'date query parameter is required' });
             return;
         }
         const date = parseCalendarDate(dateStr);
-        const day = await prisma_1.default.calendarDay.findUnique({
+        const day = await prisma_1.default.mF_P_CalendarDay.findUnique({
             where: {
-                tenantId_date: {
-                    tenantId,
+                projectId_date: {
+                    projectId,
                     date,
                 },
             },
@@ -354,29 +357,32 @@ exports.getCalendarEvents = getCalendarEvents;
 // 6. POST /api/calendar/events
 const setCalendarEvents = async (req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.body.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
-        const { date: dateStr, events } = req.body;
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.body.projectId ||
+            req.body.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
+        const { date: dateStr, events } = req.body || {};
         if (!dateStr || !Array.isArray(events)) {
             res.status(400).json({ error: 'date and events array are required' });
             return;
         }
         const date = parseCalendarDate(dateStr);
         const remarksJson = JSON.stringify(events);
-        // If day exists, update remarks. If not, determine default day type and create.
-        const allTypes = await prisma_1.default.dayType.findMany({ where: { tenantId } });
-        const normalType = allTypes.find((t) => deriveCode(t.name) === 'normal') || allTypes[0];
-        const satType = allTypes.find((t) => deriveCode(t.name) === 'saturday') || normalType;
-        const sunType = allTypes.find((t) => deriveCode(t.name) === 'sunday') || normalType;
+        const allTypes = await prisma_1.default.mF_G_DayType.findMany();
+        const normalType = allTypes.find((t) => deriveCode(t.code) === 'NORMAL') || allTypes[0];
+        const satType = allTypes.find((t) => deriveCode(t.code) === 'SATURDAY') || normalType;
+        const sunType = allTypes.find((t) => deriveCode(t.code) === 'SUNDAY') || normalType;
         const dow = date.getUTCDay();
         let defaultDayTypeId = normalType ? normalType.id : '';
         if (dow === 0 && sunType)
             defaultDayTypeId = sunType.id;
         else if (dow === 6 && satType)
             defaultDayTypeId = satType.id;
-        const entry = await prisma_1.default.calendarDay.upsert({
+        const entry = await prisma_1.default.mF_P_CalendarDay.upsert({
             where: {
-                tenantId_date: {
-                    tenantId,
+                projectId_date: {
+                    projectId,
                     date,
                 },
             },
@@ -384,7 +390,7 @@ const setCalendarEvents = async (req, res) => {
                 remarks: remarksJson,
             },
             create: {
-                tenantId,
+                projectId,
                 date,
                 dayTypeId: defaultDayTypeId,
                 remarks: remarksJson,
@@ -402,10 +408,14 @@ const setCalendarEvents = async (req, res) => {
     }
 };
 exports.setCalendarEvents = setCalendarEvents;
-// 7. GET /api/calendar/supervisor-reminders?supervisorId=...&date=...
+// 7. GET /api/calendar/supervisor-reminders
 const getSupervisorReminders = async (req, res) => {
     try {
-        const tenantId = req.resolvedTenantId || req.query.tenantId || (await (0, employeeController_1.getDefaultTenantId)());
+        const projectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            (await (0, tenantHelper_1.getDefaultTenantId)());
         const supervisorId = req.query.supervisorId;
         const dateStr = req.query.date;
         if (!dateStr) {
@@ -413,10 +423,10 @@ const getSupervisorReminders = async (req, res) => {
             return;
         }
         const date = parseCalendarDate(dateStr);
-        const day = await prisma_1.default.calendarDay.findUnique({
+        const day = await prisma_1.default.mF_P_CalendarDay.findUnique({
             where: {
-                tenantId_date: {
-                    tenantId,
+                projectId_date: {
+                    projectId,
                     date,
                 },
             },
@@ -432,7 +442,6 @@ const getSupervisorReminders = async (req, res) => {
                 allEvents = [];
             }
         }
-        // Filter events targeted for all supervisors or this specific supervisor
         const relevantReminders = allEvents.filter((evt) => {
             if (!evt.targetSupervisorId)
                 return false;

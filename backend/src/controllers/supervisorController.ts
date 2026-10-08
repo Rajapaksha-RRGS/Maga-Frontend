@@ -20,7 +20,7 @@ export const getSupervisorActiveSite = async (req: Request, res: Response): Prom
     let tenantId = (req.query.tenantId as string);
 
     if (!tenantId && supervisorId) {
-      const user = await prisma.user.findUnique({
+      const user = await prisma.mF_P_User.findUnique({
         where: { id: supervisorId },
         select: { projectId: true },
       });
@@ -34,7 +34,7 @@ export const getSupervisorActiveSite = async (req: Request, res: Response): Prom
     }
 
     // Direct indexed Project lookup — no secondary corporate catalog scans needed
-    const project = await prisma.project.findUnique({
+    const project = await prisma.mF_P_Project.findUnique({
       where: { id: tenantId },
       select: {
         id: true,
@@ -81,7 +81,7 @@ export const getAllSupervisors = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const supervisors = await prisma.user.findMany({
+    const supervisors = await prisma.mF_P_User.findMany({
       where: {
         projectId: tenantId,
         role: 'supervisor',
@@ -106,7 +106,7 @@ export const getAllSupervisors = async (req: Request, res: Response): Promise<vo
 
     const empMap = new Map<string, string>();
     if (employeeIds.length > 0) {
-      const employees = await prisma.employee.findMany({
+      const employees = await prisma.mF_P_Employee.findMany({
         where: { id: { in: employeeIds } },
         select: {
           id: true,
@@ -152,7 +152,7 @@ export const createSupervisor = async (req: Request, res: Response): Promise<voi
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     const resolvedEmployeeId = linkedEmployeeId || employeeId || null;
 
-    const newSupervisor = await prisma.user.create({
+    const newSupervisor = await prisma.mF_P_User.create({
       data: {
         projectId: tenantId,
         fullName: fullName.trim(),
@@ -167,7 +167,7 @@ export const createSupervisor = async (req: Request, res: Response): Promise<voi
 
     let linkedEmployeeName: string | null = null;
     if (resolvedEmployeeId) {
-      const emp = await prisma.employee.findUnique({
+      const emp = await prisma.mF_P_Employee.findUnique({
         where: { id: resolvedEmployeeId },
         select: {
           callingName: true,
@@ -210,7 +210,7 @@ export const resetSupervisorPassword = async (req: Request, res: Response): Prom
     const tempPassword = generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
-    const update = await prisma.user.update({
+    const update = await prisma.mF_P_User.update({
       where: { id },
       data: {
         passwordHash: hashedPassword,
@@ -239,7 +239,7 @@ export const updateSupervisorStatus = async (req: Request, res: Response): Promi
     const id = (req.params.id as string) || '';
     const { status } = req.body || {};
 
-    const update = await prisma.user.update({
+    const update = await prisma.mF_P_User.update({
       where: { id },
       data: { status: status || 'inactive' },
     });
@@ -260,7 +260,7 @@ export const deleteSupervisor = async (req: Request, res: Response): Promise<voi
   try {
     const id = (req.params.id as string) || '';
 
-    const supervisor = await prisma.user.findUnique({
+    const supervisor = await prisma.mF_P_User.findUnique({
       where: { id },
     });
 
@@ -270,12 +270,12 @@ export const deleteSupervisor = async (req: Request, res: Response): Promise<voi
     }
 
     // Check if supervisor has operational records (daily sheets or recorded time entries)
-    const sheetsCount = await prisma.dailySheet.count({ where: { supervisorId: id } });
-    const entriesCount = await prisma.timeEntry.count({ where: { recordedById: id } });
+    const sheetsCount = await prisma.mF_OP_DailySheet.count({ where: { supervisorId: id } });
+    const entriesCount = await prisma.mF_OP_TimeEntry.count({ where: { recordedById: id } });
 
     if (sheetsCount > 0 || entriesCount > 0) {
       // Soft-delete / deactivate to preserve audit trail and foreign key integrity
-      await prisma.user.update({
+      await prisma.mF_P_User.update({
         where: { id },
         data: { status: 'inactive' },
       });
@@ -283,7 +283,7 @@ export const deleteSupervisor = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    await prisma.user.delete({
+    await prisma.mF_P_User.delete({
       where: { id },
     });
 

@@ -23,7 +23,7 @@ function deriveCode(codeOrName: string): string {
 
 async function ensureSeedDayTypes(): Promise<void> {
   for (const dt of DEFAULT_DAY_TYPES) {
-    await prisma.dayType.upsert({
+    await prisma.mF_G_DayType.upsert({
       where: { code: dt.code },
       update: {
         name: dt.name,
@@ -48,7 +48,7 @@ function formatUtcDate(d: Date): string {
 }
 
 export async function getDayTypeRulesAndId(projectId: string, date: Date) {
-  const calDay = await prisma.calendarDay.findUnique({
+  const calDay = await prisma.mF_P_CalendarDay.findUnique({
     where: {
       projectId_date: {
         projectId,
@@ -62,7 +62,7 @@ export async function getDayTypeRulesAndId(projectId: string, date: Date) {
   if (!dayType) {
     const dayOfWeek = date.getUTCDay(); // 0 = Sun, 6 = Sat
     const defaultCode = dayOfWeek === 0 ? 'SUNDAY' : dayOfWeek === 6 ? 'SATURDAY' : 'NORMAL';
-    dayType = (await prisma.dayType.findFirst({
+    dayType = (await prisma.mF_G_DayType.findFirst({
       where: { code: defaultCode },
     })) || undefined;
   }
@@ -85,7 +85,7 @@ export async function getDayTypeRulesAndId(projectId: string, date: Date) {
 async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date): Promise<number> {
   const rules = await getDayTypeRulesAndId(projectId, date);
 
-  const unapproved = await prisma.timeEntry.findMany({
+  const unapproved = await prisma.mF_OP_TimeEntry.findMany({
     where: {
       projectId,
       date,
@@ -110,7 +110,7 @@ async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date
         otHours = 0;
       }
 
-      await prisma.timeEntry.update({
+      await prisma.mF_OP_TimeEntry.update({
         where: { id: entry.id },
         data: {
           effectiveDayTypeId: rules.effectiveDayTypeId,
@@ -127,7 +127,7 @@ async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date
 export const getDayTypes = async (_req: Request, res: Response): Promise<void> => {
   try {
     await ensureSeedDayTypes();
-    const dayTypes = await prisma.dayType.findMany({
+    const dayTypes = await prisma.mF_G_DayType.findMany({
       orderBy: { rateMultiplier: 'asc' },
     });
 
@@ -166,12 +166,12 @@ export const getCalendarMonth = async (req: Request, res: Response): Promise<voi
     const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
     const endDate = new Date(Date.UTC(year, month, daysInMonth, 23, 59, 59));
 
-    const allTypes = await prisma.dayType.findMany();
+    const allTypes = await prisma.mF_G_DayType.findMany();
     const normalType = allTypes.find((t) => deriveCode(t.code) === 'NORMAL') || allTypes[0];
     const satType = allTypes.find((t) => deriveCode(t.code) === 'SATURDAY') || normalType;
     const sunType = allTypes.find((t) => deriveCode(t.code) === 'SUNDAY') || normalType;
 
-    const savedDays = await prisma.calendarDay.findMany({
+    const savedDays = await prisma.mF_P_CalendarDay.findMany({
       where: {
         projectId,
         date: {
@@ -233,7 +233,7 @@ export const setCalendarDay = async (req: Request, res: Response): Promise<void>
 
     const date = parseCalendarDate(dateStr);
 
-    const approvedCount = await prisma.timeEntry.count({
+    const approvedCount = await prisma.mF_OP_TimeEntry.count({
       where: {
         projectId,
         date,
@@ -249,7 +249,7 @@ export const setCalendarDay = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const entry = await prisma.calendarDay.upsert({
+    const entry = await prisma.mF_P_CalendarDay.upsert({
       where: {
         projectId_date: {
           projectId,
@@ -306,14 +306,14 @@ export const batchSetCalendarDays = async (req: Request, res: Response): Promise
     for (const item of entries) {
       const date = parseCalendarDate(item.date);
 
-      const approvedCount = await prisma.timeEntry.count({
+      const approvedCount = await prisma.mF_OP_TimeEntry.count({
         where: { projectId, date, status: 'approved' },
       });
       if (approvedCount > 0) {
         continue;
       }
 
-      await prisma.calendarDay.upsert({
+      await prisma.mF_P_CalendarDay.upsert({
         where: {
           projectId_date: {
             projectId,
@@ -360,7 +360,7 @@ export const getCalendarEvents = async (req: Request, res: Response): Promise<vo
     }
 
     const date = parseCalendarDate(dateStr);
-    const day = await prisma.calendarDay.findUnique({
+    const day = await prisma.mF_P_CalendarDay.findUnique({
       where: {
         projectId_date: {
           projectId,
@@ -406,7 +406,7 @@ export const setCalendarEvents = async (req: Request, res: Response): Promise<vo
     const date = parseCalendarDate(dateStr);
     const remarksJson = JSON.stringify(events);
 
-    const allTypes = await prisma.dayType.findMany();
+    const allTypes = await prisma.mF_G_DayType.findMany();
     const normalType = allTypes.find((t) => deriveCode(t.code) === 'NORMAL') || allTypes[0];
     const satType = allTypes.find((t) => deriveCode(t.code) === 'SATURDAY') || normalType;
     const sunType = allTypes.find((t) => deriveCode(t.code) === 'SUNDAY') || normalType;
@@ -416,7 +416,7 @@ export const setCalendarEvents = async (req: Request, res: Response): Promise<vo
     if (dow === 0 && sunType) defaultDayTypeId = sunType.id;
     else if (dow === 6 && satType) defaultDayTypeId = satType.id;
 
-    const entry = await prisma.calendarDay.upsert({
+    const entry = await prisma.mF_P_CalendarDay.upsert({
       where: {
         projectId_date: {
           projectId,
@@ -464,7 +464,7 @@ export const getSupervisorReminders = async (req: Request, res: Response): Promi
     }
 
     const date = parseCalendarDate(dateStr);
-    const day = await prisma.calendarDay.findUnique({
+    const day = await prisma.mF_P_CalendarDay.findUnique({
       where: {
         projectId_date: {
           projectId,

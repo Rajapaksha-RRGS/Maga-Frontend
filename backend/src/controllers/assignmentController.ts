@@ -10,7 +10,7 @@ function parseDate(dateStr: string): Date {
 }
 
 async function getOrCreateDailySheet(projectId: string, supervisorId: string, date: Date) {
-  return await prisma.dailySheet.upsert({
+  return await prisma.mF_OP_DailySheet.upsert({
     where: {
       projectId_supervisorId_date: {
         projectId,
@@ -46,7 +46,7 @@ export const getAssignmentsForDate = async (req: Request, res: Response): Promis
 
     const targetDate = parseDate(dateStr);
 
-    const assignments = await prisma.dailyAssignment.findMany({
+    const assignments = await prisma.mF_OP_DailyAssignment.findMany({
       where: {
         dailySheet: {
           projectId,
@@ -119,7 +119,7 @@ export const getRecentGangSummaries = async (req: Request, res: Response): Promi
     const beforeDateStr = (req.query.before as string) || (req.query.targetDate as string);
     const beforeDate = beforeDateStr ? parseDate(beforeDateStr) : undefined;
 
-    const sheets = await prisma.dailySheet.findMany({
+    const sheets = await prisma.mF_OP_DailySheet.findMany({
       where: {
         projectId,
         ...(beforeDate ? { date: { lt: beforeDate } } : {}),
@@ -190,7 +190,7 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
     const targetDate = parseDate(date);
 
     // Verify supervisor belongs to project
-    const supervisor = await prisma.user.findFirst({
+    const supervisor = await prisma.mF_P_User.findFirst({
       where: { id: supervisorId, projectId },
     });
     if (!supervisor) {
@@ -204,7 +204,7 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
     const createdAssignments = [];
     for (const empId of employeeIds) {
       // Remove any existing assignment on the same date under other sheets
-      const otherSheets = await prisma.dailyAssignment.findMany({
+      const otherSheets = await prisma.mF_OP_DailyAssignment.findMany({
         where: {
           employeeId: empId,
           dailySheet: {
@@ -217,12 +217,12 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
       });
 
       if (otherSheets.length > 0) {
-        await prisma.dailyAssignment.deleteMany({
+        await prisma.mF_OP_DailyAssignment.deleteMany({
           where: { id: { in: otherSheets.map((o) => o.id) } },
         });
       }
 
-      const assignment = await prisma.dailyAssignment.upsert({
+      const assignment = await prisma.mF_OP_DailyAssignment.upsert({
         where: {
           dailySheetId_employeeId: {
             dailySheetId: dailySheet.id,
@@ -258,7 +258,7 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
 export const unassignEmployee = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    await prisma.dailyAssignment.delete({
+    await prisma.mF_OP_DailyAssignment.delete({
       where: { id },
     });
     res.json({ success: true, message: 'Employee unassigned successfully' });
@@ -291,7 +291,7 @@ export const copyGangsFromDate = async (req: Request, res: Response): Promise<vo
     const srcDateParsed = parseDate(sourceDate);
     const tgtDateParsed = parseDate(targetDate);
 
-    const sourceSheets = await prisma.dailySheet.findMany({
+    const sourceSheets = await prisma.mF_OP_DailySheet.findMany({
       where: {
         projectId,
         date: srcDateParsed,
@@ -312,13 +312,13 @@ export const copyGangsFromDate = async (req: Request, res: Response): Promise<vo
       const targetSheet = await getOrCreateDailySheet(projectId, srcSheet.supervisorId, tgtDateParsed);
 
       if (overwrite) {
-        await prisma.dailyAssignment.deleteMany({
+        await prisma.mF_OP_DailyAssignment.deleteMany({
           where: { dailySheetId: targetSheet.id },
         });
       }
 
       for (const assign of srcSheet.assignments) {
-        await prisma.dailyAssignment.upsert({
+        await prisma.mF_OP_DailyAssignment.upsert({
           where: {
             dailySheetId_employeeId: {
               dailySheetId: targetSheet.id,
@@ -366,7 +366,7 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
     const supervisorId = req.query.supervisorId as string;
     const targetDate = parseDate(dateStr);
 
-    const assignments = await prisma.dailyEquipmentAssignment.findMany({
+    const assignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
       where: {
         dailySheet: {
           projectId,
@@ -453,7 +453,7 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
     // Resolve an equipment ID: either provided or fallback to first active project equipment
     let targetEquipmentId = equipmentId;
     if (!targetEquipmentId) {
-      const firstEq = await prisma.equipment.findFirst({
+      const firstEq = await prisma.mF_P_Equipment.findFirst({
         where: { projectId, status: 'active' },
         select: { id: true },
       });
@@ -467,7 +467,7 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
 
     const created = [];
     for (const opId of operatorIds) {
-      const assignment = await prisma.dailyEquipmentAssignment.upsert({
+      const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
         where: {
           dailySheetId_operatorId_equipmentId: {
             dailySheetId: dailySheet.id,
@@ -500,7 +500,7 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
 export const unassignOperator = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    await prisma.dailyEquipmentAssignment.delete({
+    await prisma.mF_OP_DailyEquipmentAssignment.delete({
       where: { id },
     });
     res.json({ success: true, message: 'Operator unassigned successfully' });
@@ -533,7 +533,7 @@ export const copyOperatorGangsFromDate = async (req: Request, res: Response): Pr
     const srcDateParsed = parseDate(sourceDate);
     const tgtDateParsed = parseDate(targetDate);
 
-    const sourceSheets = await prisma.dailySheet.findMany({
+    const sourceSheets = await prisma.mF_OP_DailySheet.findMany({
       where: {
         projectId,
         date: srcDateParsed,
@@ -554,13 +554,13 @@ export const copyOperatorGangsFromDate = async (req: Request, res: Response): Pr
       const targetSheet = await getOrCreateDailySheet(projectId, srcSheet.supervisorId, tgtDateParsed);
 
       if (overwrite) {
-        await prisma.dailyEquipmentAssignment.deleteMany({
+        await prisma.mF_OP_DailyEquipmentAssignment.deleteMany({
           where: { dailySheetId: targetSheet.id },
         });
       }
 
       for (const eqAssign of srcSheet.equipmentAssignments) {
-        await prisma.dailyEquipmentAssignment.upsert({
+        await prisma.mF_OP_DailyEquipmentAssignment.upsert({
           where: {
             dailySheetId_operatorId_equipmentId: {
               dailySheetId: targetSheet.id,
@@ -609,7 +609,7 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
     const supervisorId = req.query.supervisorId as string;
     const targetDate = parseDate(dateStr);
 
-    const assignments = await prisma.dailyEquipmentAssignment.findMany({
+    const assignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
       where: {
         dailySheet: {
           projectId,
@@ -732,14 +732,14 @@ export const assignEquipment = async (req: Request, res: Response): Promise<void
     // Resolve an operator: either provided or fallback to first operator or employee
     let targetOperatorId = operatorId;
     if (!targetOperatorId) {
-      const firstOp = await prisma.employee.findFirst({
+      const firstOp = await prisma.mF_P_Employee.findFirst({
         where: { projectId, isOperator: true, status: 'active' },
         select: { id: true },
       });
       targetOperatorId = firstOp?.id;
     }
     if (!targetOperatorId) {
-      const anyEmp = await prisma.employee.findFirst({
+      const anyEmp = await prisma.mF_P_Employee.findFirst({
         where: { projectId, status: 'active' },
         select: { id: true },
       });
@@ -753,7 +753,7 @@ export const assignEquipment = async (req: Request, res: Response): Promise<void
 
     const created = [];
     for (const eqId of equipmentIds) {
-      const assignment = await prisma.dailyEquipmentAssignment.upsert({
+      const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
         where: {
           dailySheetId_operatorId_equipmentId: {
             dailySheetId: dailySheet.id,
@@ -786,7 +786,7 @@ export const assignEquipment = async (req: Request, res: Response): Promise<void
 export const unassignEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    await prisma.dailyEquipmentAssignment.delete({
+    await prisma.mF_OP_DailyEquipmentAssignment.delete({
       where: { id },
     });
     res.json({ success: true, message: 'Equipment unassigned successfully' });
@@ -814,7 +814,7 @@ export const getStandbyPoolForDate = async (req: Request, res: Response): Promis
       (req.query.tenantId as string) ||
       (await getDefaultTenantId());
 
-    const allEmployees = await prisma.employee.findMany({
+    const allEmployees = await prisma.mF_P_Employee.findMany({
       where: {
         projectId,
         status: 'active',
@@ -836,7 +836,7 @@ export const getStandbyPoolForDate = async (req: Request, res: Response): Promis
     const assignedIds = new Set<string>();
     if (dateStr) {
       const targetDate = parseDate(dateStr);
-      const assignments = await prisma.dailyAssignment.findMany({
+      const assignments = await prisma.mF_OP_DailyAssignment.findMany({
         where: {
           dailySheet: {
             projectId,

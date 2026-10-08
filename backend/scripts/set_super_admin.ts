@@ -2,17 +2,23 @@ import prisma from '../src/config/prisma';
 import bcrypt from 'bcrypt';
 
 async function setupSuperAdmin() {
-  console.log('👑 Setting up Super Admin for Head Office (maga tenant)...');
+  console.log('👑 Setting up Super Admin for Head Office (maga project)...');
 
-  // 1. Get or create maga tenant
-  let magaTenant = await prisma.tenant.findUnique({
-    where: { subdomain: 'maga' },
+  // 1. Get or create maga project
+  let magaProject = await prisma.mF_P_Project.findFirst({
+    where: {
+      OR: [
+        { subdomain: 'maga' },
+        { projectCode: 'PRJ001' },
+      ],
+    },
   });
 
-  if (!magaTenant) {
-    magaTenant = await prisma.tenant.create({
+  if (!magaProject) {
+    magaProject = await prisma.mF_P_Project.create({
       data: {
-        companyName: 'Mäga Engineering (Head Office)',
+        projectCode: 'PRJ001',
+        projectName: 'Mäga Engineering (Head Office)',
         subdomain: 'maga',
         addressLine1: '200, Nawala Road',
         addressLine2: 'Narahenpita, Colombo 05',
@@ -21,68 +27,68 @@ async function setupSuperAdmin() {
         status: 'active',
       },
     });
-    console.log('✅ Created maga tenant:', magaTenant.id);
+    console.log('✅ Created maga project:', magaProject.id);
   } else {
-    console.log('ℹ️ Found maga tenant:', magaTenant.id);
+    console.log('ℹ️ Found maga project:', magaProject.id);
   }
 
   const defaultPasswordHash = await bcrypt.hash('admin123', 10);
 
-  // 2. Upsert super_admin user under maga tenant
-  // Check if admin user already exists for maga
-  const existingUser = await prisma.user.findFirst({
+  // 2. Global Level 1 SuperAdmin
+  const superAdmin = await prisma.mF_G_SuperAdmin.upsert({
+    where: { username: 'superadmin' },
+    update: {
+      fullName: 'Head Office Central Super Admin',
+      passwordHash: defaultPasswordHash,
+      status: 'active',
+    },
+    create: {
+      username: 'superadmin',
+      email: 'admin@maga.lk',
+      fullName: 'Head Office Central Super Admin',
+      passwordHash: defaultPasswordHash,
+      status: 'active',
+    },
+  });
+  console.log(`✅ Global SuperAdmin record verified: ${superAdmin.username} (${superAdmin.fullName})`);
+
+  // 3. Upsert admin user under maga project
+  const existingUser = await prisma.mF_P_User.findFirst({
     where: {
-      tenantId: magaTenant.id,
+      projectId: magaProject.id,
       username: 'admin',
     },
   });
 
   if (existingUser) {
-    const updated = await prisma.user.update({
+    const updated = await prisma.mF_P_User.update({
       where: { id: existingUser.id },
       data: {
-        role: 'super_admin',
-        fullName: 'Head Office Super Admin',
+        role: 'admin',
+        fullName: 'Head Office Admin',
         status: 'active',
       },
     });
     console.log(`✅ Updated existing user "${updated.username}" under "maga" to role: ${updated.role}`);
   } else {
-    const created = await prisma.user.create({
+    const created = await prisma.mF_P_User.create({
       data: {
-        tenantId: magaTenant.id,
+        projectId: magaProject.id,
         username: 'admin',
-        fullName: 'Head Office Super Admin',
-        role: 'super_admin',
+        fullName: 'Head Office Admin',
+        role: 'admin',
         passwordHash: defaultPasswordHash,
         status: 'active',
         mustChangePassword: false,
       },
     });
-    console.log(`✅ Created Super Admin user "${created.username}" under "maga" with role: ${created.role}`);
+    console.log(`✅ Created user "${created.username}" under "maga" with role: ${created.role}`);
   }
 
-  // Also check all existing users across all tenants
-  const allUsers = await prisma.user.findMany({
-    select: {
-      username: true,
-      fullName: true,
-      role: true,
-      tenant: {
-        select: { subdomain: true, companyName: true },
-      },
-    },
-  });
-
-  console.log('\n📋 Current Users in System:');
-  console.table(
-    allUsers.map((u) => ({
-      Username: u.username,
-      Name: u.fullName,
-      Role: u.role,
-      Project: `${u.tenant.companyName} (${u.tenant.subdomain})`,
-    }))
-  );
+  console.log('\n--- CREDENTIALS ---');
+  console.log('Global SuperAdmin:  username = "superadmin", password = "admin123"');
+  console.log('Project Admin:      subdomain = "maga", username = "admin", password = "admin123"');
+  console.log('-------------------\n');
 }
 
 setupSuperAdmin()

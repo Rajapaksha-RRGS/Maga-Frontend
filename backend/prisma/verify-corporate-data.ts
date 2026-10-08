@@ -9,11 +9,11 @@ async function main() {
   console.log('Sample Corporate Equipment:');
   console.log(JSON.stringify(equips, null, 2));
 
-  const tenantEmps = await prisma.employee.count();
-  const tenantEqs = await prisma.equipment.count();
-  const tenantBps = await prisma.businessPartner.count();
+  const siteEmps = await prisma.employee.count();
+  const siteEqs = await prisma.equipment.count();
+  const corpBps = await prisma.corporateBusinessPartner.count();
 
-  console.log(`Tenant local records: Employees=${tenantEmps}, Equipment=${tenantEqs}, BPs=${tenantBps}`);
+  console.log(`Site operational records: Employees=${siteEmps}, Equipment=${siteEqs}, Corporate BPs=${corpBps}`);
 }
 
 main().finally(async () => {
