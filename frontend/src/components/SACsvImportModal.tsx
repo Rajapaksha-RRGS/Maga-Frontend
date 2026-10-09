@@ -108,12 +108,41 @@ function findCanonicalKey(rawHeader: string, targetKeys: string[]): string | nul
  * - Excel UTF-8 BOM (\uFEFF)
  * - Trailing blank rows
  */
+/**
+ * Auto-detects the delimiter used in the text (Comma ',', Pipe '|', Semicolon ';', or Tab '\t')
+ */
+function detectDelimiter(text: string): string {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return ',';
+  const firstLine = lines[0];
+
+  const counts: Record<string, number> = {
+    ',': (firstLine.match(/,/g) || []).length,
+    '|': (firstLine.match(/\|/g) || []).length,
+    ';': (firstLine.match(/;/g) || []).length,
+    '\t': (firstLine.match(/\t/g) || []).length,
+  };
+
+  let bestDelimiter = ',';
+  let maxCount = 0;
+  for (const [delim, count] of Object.entries(counts)) {
+    if (count > maxCount) {
+      maxCount = count;
+      bestDelimiter = delim;
+    }
+  }
+
+  return maxCount > 0 ? bestDelimiter : ',';
+}
+
 function parseCsvText(
   text: string,
   sampleHeaders: string[],
-): { headers: string[]; rows: Record<string, string>[] } {
+): { headers: string[]; rows: Record<string, string>[]; delimiter: string } {
   const cleanText = text.replace(/^\uFEFF/, '').trim();
-  if (!cleanText) return { headers: [], rows: [] };
+  if (!cleanText) return { headers: [], rows: [], delimiter: ',' };
+
+  const delimiter = detectDelimiter(cleanText);
 
   const parsedMatrix: string[][] = [];
   let currentRow: string[] = [];
@@ -131,7 +160,7 @@ function parseCsvText(
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (char === ',' && !inQuotes) {
+    } else if (char === delimiter && !inQuotes) {
       currentRow.push(currentVal.trim());
       currentVal = '';
     } else if ((char === '\r' || char === '\n') && !inQuotes) {
@@ -154,7 +183,7 @@ function parseCsvText(
     }
   }
 
-  if (parsedMatrix.length === 0) return { headers: [], rows: [] };
+  if (parsedMatrix.length === 0) return { headers: [], rows: [], delimiter };
 
   const rawHeaders = parsedMatrix[0].map((h) => h.replace(/^["']|["']$/g, '').trim());
 
@@ -183,7 +212,7 @@ function parseCsvText(
     rows.push(rowObj);
   }
 
-  return { headers: sampleHeaders, rows };
+  return { headers: sampleHeaders, rows, delimiter };
 }
 
 /**
@@ -223,9 +252,9 @@ export default function SACsvImportModal({
   title,
   entityName,
   endpoint,
-  sampleHeaders,
-  sampleData,
-  requiredFields,
+  sampleHeaders = [],
+  sampleData = [],
+  requiredFields = [],
   columnLabels = {},
   onSuccess,
 }: SACsvImportModalProps) {
@@ -236,6 +265,7 @@ export default function SACsvImportModal({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [parsedHeaders, setParsedHeaders] = useState<string[]>([]);
   const [parsedRows, setParsedRows] = useState<Record<string, string>[]>([]);
+  const [detectedDelimiter, setDetectedDelimiter] = useState<string>(',');
   const [parseError, setParseError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -251,67 +281,7 @@ export default function SACsvImportModal({
     errors: CsvImportErrorItem[];
   } | null>(null);
 
-  if (!isOpen) return null;
-
-  // ── 1. Reset state ──────────────────────────────────────────────────────────
-  const handleReset = () => {
-    setSelectedFile(null);
-    setParsedHeaders([]);
-    setParsedRows([]);
-    setParseError(null);
-    setImportResult(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  // ── 2. Handle File Processing ───────────────────────────────────────────────
-  const processFile = (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      setParseError('Please upload a valid .csv file format.');
-      return;
-    }
-
-    setParseError(null);
-    setImportResult(null);
-    setSelectedFile(file);
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = (e.target?.result as string) || '';
-        const { headers, rows } = parseCsvText(text, sampleHeaders);
-
-        if (rows.length === 0) {
-          setParseError('The uploaded CSV file is empty or contains only blank rows.');
-          setParsedRows([]);
-          setParsedHeaders([]);
-          return;
-        }
-
-        setParsedHeaders(headers);
-        setParsedRows(rows);
-      } catch (err: any) {
-        setParseError(`Failed to parse CSV file: ${err.message || 'Syntax error'}`);
-      }
-    };
-    reader.onerror = () => {
-      setParseError('Failed to read the file.');
-    };
-    reader.readAsText(file);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) processFile(file);
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) processFile(file);
-  };
-
-  // ── Pre-Validation Analysis ────────────────────────────────────────────────
+  // ── Pre-Validation Analysis (Unconditional Hook at Top-Level) ───────────────
   const validationSummary = useMemo(() => {
     if (parsedRows.length === 0) return { missingCount: 0, duplicateCount: 0, validCount: 0 };
 
@@ -342,6 +312,68 @@ export default function SACsvImportModal({
       validCount: parsedRows.length - missing,
     };
   }, [parsedRows, requiredFields]);
+
+  // ── 1. Reset state ──────────────────────────────────────────────────────────
+  const handleReset = () => {
+    setSelectedFile(null);
+    setParsedHeaders([]);
+    setParsedRows([]);
+    setDetectedDelimiter(',');
+    setParseError(null);
+    setImportResult(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // ── 2. Handle File Processing ───────────────────────────────────────────────
+  const processFile = (file: File) => {
+    const lower = file.name.toLowerCase();
+    const isAllowed = lower.endsWith('.csv') || lower.endsWith('.txt') || lower.endsWith('.tsv');
+    if (!isAllowed) {
+      setParseError('Please upload a valid spreadsheet file (.csv, .txt, or .tsv format).');
+      return;
+    }
+
+    setParseError(null);
+    setImportResult(null);
+    setSelectedFile(file);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string) || '';
+        const { headers, rows, delimiter } = parseCsvText(text, sampleHeaders);
+
+        if (rows.length === 0) {
+          setParseError('The uploaded file is empty or contains only blank rows.');
+          setParsedRows([]);
+          setParsedHeaders([]);
+          return;
+        }
+
+        setDetectedDelimiter(delimiter);
+        setParsedHeaders(headers);
+        setParsedRows(rows);
+      } catch (err: any) {
+        setParseError(`Failed to parse file: ${err.message || 'Syntax error'}`);
+      }
+    };
+    reader.onerror = () => {
+      setParseError('Failed to read the file.');
+    };
+    reader.readAsText(file);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
+  };
 
   // ── 3. Download Sample CSV Template ─────────────────────────────────────────
   const handleDownloadSample = () => {
@@ -415,6 +447,8 @@ export default function SACsvImportModal({
       setIsSubmitting(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -506,7 +540,7 @@ export default function SACsvImportModal({
                     id={fileInputId}
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv,text/csv"
+                    accept=".csv,text/csv,.txt,text/plain,.tsv"
                     onChange={handleFileChange}
                     className="hidden"
                   />
@@ -514,10 +548,10 @@ export default function SACsvImportModal({
                     <UploadCloud size={24} />
                   </div>
                   <h3 className="text-sm font-semibold text-slate-800">
-                    Click to browse or drag & drop your CSV file here
+                    Click to browse or drag & drop your data file here
                   </h3>
                   <p className="text-xs text-slate-400 mt-1">
-                    Supports .csv files exported from Excel, Google Sheets, or ERP systems
+                    Supports .csv, .txt, or .tsv files (Auto-detects Comma <span className="font-mono text-violet-600 font-bold">,</span> or Pipe <span className="font-mono text-violet-600 font-bold">|</span> or Semicolon <span className="font-mono text-violet-600 font-bold">;</span>)
                   </p>
                 </div>
               ) : (
@@ -528,6 +562,10 @@ export default function SACsvImportModal({
                       <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
                         <CheckCircle2 size={12} className="text-emerald-600" />
                         {parsedRows.length} total rows detected
+                      </span>
+
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-800 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full font-mono">
+                        Format: {detectedDelimiter === '|' ? 'Pipe (|)' : detectedDelimiter === ';' ? 'Semicolon (;)' : detectedDelimiter === '\t' ? 'Tab (\\t)' : 'Comma (,)'}
                       </span>
 
                       {validationSummary.missingCount > 0 && (

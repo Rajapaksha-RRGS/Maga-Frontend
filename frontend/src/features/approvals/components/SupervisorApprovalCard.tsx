@@ -44,11 +44,11 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const [editInTime, setEditInTime] = useState<string>('07:30');
   const [editOutTime, setEditOutTime] = useState<string>('17:00');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
-  const [localWorkers, setLocalWorkers] = useState<ApprovalWorkerItem[]>(group.workers);
+  const [localWorkers, setLocalWorkers] = useState<ApprovalWorkerItem[]>(group.workers || []);
 
   // Sync local workers when group prop changes
   React.useEffect(() => {
-    setLocalWorkers(group.workers);
+    setLocalWorkers(group.workers || []);
   }, [group.workers]);
 
   const isApproved = group.status === 'approved';
@@ -129,15 +129,15 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
     }
   };
 
-  const workersCount = group.counts?.laborWorked ?? group.workedCount;
-  const workersTotal = group.counts?.laborAssigned ?? group.assignedCount;
+  const workersCount = group.counts?.laborWorked ?? group.workedCount ?? 0;
+  const workersTotal = group.counts?.laborAssigned ?? group.assignedCount ?? 0;
   const operatorsCount = group.counts?.operatorsWorked ?? (group.operators?.length || 0);
   const operatorsTotal = group.counts?.operatorsAssigned ?? (group.operators?.length || 0);
   const equipmentCount = group.counts?.equipmentRunning ?? (group.equipment?.length || 0);
   const equipmentTotal = group.counts?.equipmentAssigned ?? (group.equipment?.length || 0);
 
-  const workerHours = (group.totals?.laborHours ?? group.totalHours).toFixed(1);
-  const workerOt = (group.totals?.laborOvertime ?? group.totalOvertime).toFixed(1);
+  const workerHours = (group.totals?.laborHours ?? group.totalHours ?? 0).toFixed(1);
+  const workerOt = (group.totals?.laborOvertime ?? group.totalOvertime ?? 0).toFixed(1);
   const equipmentFuel = group.totals?.equipmentFuel ?? 0;
 
   console.log("Current op data:", group.operators);
@@ -378,10 +378,10 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
                               {isEditingThis && preview ? (
                                 <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-bold font-mono">
-                                  {preview.hours.toFixed(1)}h
+                                  {(preview.hours ?? 0).toFixed(1)}h
                                 </span>
-                              ) : w.hours > 0 ? (
-                                `${w.hours.toFixed(1)}h`
+                              ) : (w.hours ?? 0) > 0 ? (
+                                `${(w.hours ?? 0).toFixed(1)}h`
                               ) : (
                                 '-'
                               )}
@@ -389,11 +389,11 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             <td className="py-2.5 px-3">
                               {isEditingThis && preview ? (
                                 <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold font-mono">
-                                  +{preview.otHours.toFixed(1)}h
+                                  +{(preview.otHours ?? 0).toFixed(1)}h
                                 </span>
-                              ) : w.otHours > 0 ? (
+                              ) : (w.otHours ?? 0) > 0 ? (
                                 <span className="font-bold text-amber-600">
-                                  +{w.otHours.toFixed(1)}h
+                                  +{(w.otHours ?? 0).toFixed(1)}h
                                 </span>
                               ) : (
                                 <span className="text-slate-400">0.0h</span>
@@ -561,12 +561,12 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               )}
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
-                              {op.hours > 0 ? `${op.hours.toFixed(1)}h` : '-'}
+                              {(op.hours ?? 0) > 0 ? `${(op.hours ?? 0).toFixed(1)}h` : '-'}
                             </td>
                             <td className="py-2.5 px-3">
-                              {op.otHours > 0 ? (
+                              {(op.otHours ?? 0) > 0 ? (
                                 <span className="font-bold text-amber-600">
-                                  +{op.otHours.toFixed(1)}h
+                                  +{(op.otHours ?? 0).toFixed(1)}h
                                 </span>
                               ) : (
                                 <span className="text-slate-400">0.0h</span>
@@ -655,11 +655,11 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             </td>
                             <td className="py-2.5 px-3">
                               <div className="font-semibold text-slate-900">
-                                {eq.primaryUnit.toUpperCase() === 'HRS'
-                                  ? `${eq.netHours} Hrs`
-                                  : `${eq.loggedQuantity} ${eq.primaryUnit.toUpperCase()}`}
+                                {(eq.primaryUnit || 'hrs').toUpperCase() === 'HRS'
+                                  ? `${eq.netHours ?? 0} Hrs`
+                                  : `${eq.loggedQuantity ?? 0} ${(eq.primaryUnit || 'hrs').toUpperCase()}`}
                               </div>
-                              <span className="text-[10px] text-slate-400 font-mono">Unit: {eq.primaryUnit.toUpperCase()}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">Unit: {(eq.primaryUnit || 'hrs').toUpperCase()}</span>
                             </td>
                             <td className="py-2.5 px-3 font-mono text-[11px]">
                               {eq.initialMeter > 0 || eq.finalMeter > 0 ? (

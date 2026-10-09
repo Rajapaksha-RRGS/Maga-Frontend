@@ -66,9 +66,19 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
               Direct (Internal)
             </span>
           ) : (
-            <span className="text-slate-700 font-medium text-xs">
-              {e.businessPartner}
-            </span>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-slate-800 font-medium text-xs leading-tight">
+                {e.businessPartner}
+              </span>
+              {e.businessPartnerCode && (
+                <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                  <span>{e.businessPartnerCode}</span>
+                  {e.businessPartnerStatus === 'pending_approval' && (
+                    <span className="text-amber-600 font-sans font-semibold text-[9px] bg-amber-50 border border-amber-200 px-1 rounded">Pending HO</span>
+                  )}
+                </span>
+              )}
+            </div>
           )
         ),
       },

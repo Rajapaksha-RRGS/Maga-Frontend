@@ -100,6 +100,9 @@ function formatEmployee(emp: any) {
     trade_group: emp.tradeGroup?.name || 'General Labour',
     employeeType: corp.employeeType || (emp.businessPartnerId ? 'external' : 'internal'),
     businessPartnerId: emp.businessPartner?.id || null,
+    businessPartnerCode: emp.businessPartner?.code || null,
+    businessPartnerName: emp.businessPartner?.name || null,
+    businessPartnerStatus: emp.businessPartner?.status || null,
     businessPartner: emp.businessPartner
       ? {
           id: emp.businessPartner.id,

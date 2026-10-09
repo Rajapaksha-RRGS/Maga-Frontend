@@ -50,7 +50,10 @@ export function getTenantHeaders(customHeaders: HeadersInit = {}): Headers {
  */
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const headers = getTenantHeaders(init?.headers);
-  if (init?.body && typeof init.body === 'string' && !headers.has('Content-Type')) {
+  const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData;
+  if (isFormData) {
+    headers.delete('Content-Type');
+  } else if (init?.body && typeof init.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
   return fetch(input, {
@@ -81,9 +84,10 @@ export const api = {
   },
   async post<T = any>(endpoint: string, body?: any, options?: RequestInit): Promise<ApiResponse<T>> {
     const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
     const res = await apiFetch(url, {
       method: 'POST',
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: isFormData ? body : (body !== undefined ? JSON.stringify(body) : undefined),
       ...options,
     });
     const data = await res.json().catch(() => null);
@@ -94,9 +98,10 @@ export const api = {
   },
   async put<T = any>(endpoint: string, body?: any, options?: RequestInit): Promise<ApiResponse<T>> {
     const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
     const res = await apiFetch(url, {
       method: 'PUT',
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: isFormData ? body : (body !== undefined ? JSON.stringify(body) : undefined),
       ...options,
     });
     const data = await res.json().catch(() => null);
@@ -107,9 +112,10 @@ export const api = {
   },
   async patch<T = any>(endpoint: string, body?: any, options?: RequestInit): Promise<ApiResponse<T>> {
     const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
     const res = await apiFetch(url, {
       method: 'PATCH',
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: isFormData ? body : (body !== undefined ? JSON.stringify(body) : undefined),
       ...options,
     });
     const data = await res.json().catch(() => null);

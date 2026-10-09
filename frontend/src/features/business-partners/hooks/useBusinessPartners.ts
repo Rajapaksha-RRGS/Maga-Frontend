@@ -21,6 +21,9 @@ export function useBusinessPartners() {
   const [statusFilter, setStatusFilter] = useState<PartnerStatusFilter>('all');
 
   const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh) {
+      cacheManager.invalidate('business-partners');
+    }
     if (forceRefresh || !cacheManager.get('business-partners:list')) {
       setIsLoading(true);
     }
@@ -91,6 +94,11 @@ export function useBusinessPartners() {
     return `BP1${String(max + 1).padStart(6, '0')}`;
   };
 
+  const addPartnerDirectly = (newPartner: BusinessPartner) => {
+    cacheManager.invalidate('business-partners');
+    setPartners((prev) => [newPartner, ...prev.filter((p) => p.id !== newPartner.id)]);
+  };
+
   return {
     partners,
     filteredPartners,
@@ -100,6 +108,7 @@ export function useBusinessPartners() {
     statusFilter,
     setStatusFilter,
     addPartner,
+    addPartnerDirectly,
     updatePartner,
     deletePartner,
     togglePartnerStatus,

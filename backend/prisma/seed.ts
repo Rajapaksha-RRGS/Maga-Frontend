@@ -851,13 +851,14 @@ async function main() {
   if (opEmpId && backhoeId) {
     const eqAssign = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
       where: {
-        dailySheetId_operatorId_equipmentId: {
+        dailySheetId_equipmentId: {
           dailySheetId: yesterdaySheet.id,
-          operatorId: opEmpId,
           equipmentId: backhoeId,
         },
       },
-      update: {},
+      update: {
+        operatorId: opEmpId,
+      },
       create: {
         dailySheetId: yesterdaySheet.id,
         operatorId: opEmpId,

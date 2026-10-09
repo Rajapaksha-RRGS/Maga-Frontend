@@ -25,6 +25,8 @@ export interface Employee {
   fullName: string;
   businessPartner: string;
   businessPartnerId?: string;
+  businessPartnerCode?: string;
+  businessPartnerStatus?: string;
   tradeGroup: string;
   tradeGroupId?: string;
   nicNo: string;
@@ -74,6 +76,12 @@ function mapEmployee(raw: any): Employee {
     callingName: raw.callingName || raw.calling_name || '',
     fullName: raw.fullName || raw.full_name || '',
     businessPartnerId: raw.businessPartnerId || raw.business_partner_id || (raw.businessPartner?.id ?? undefined),
+    businessPartnerCode: typeof raw.businessPartner === 'object' && raw.businessPartner !== null
+      ? raw.businessPartner.code
+      : raw.businessPartnerCode || undefined,
+    businessPartnerStatus: typeof raw.businessPartner === 'object' && raw.businessPartner !== null
+      ? raw.businessPartner.status
+      : undefined,
     // Backend returns nested businessPartner object OR just a string name
     businessPartner:
       typeof raw.businessPartner === 'object' && raw.businessPartner !== null

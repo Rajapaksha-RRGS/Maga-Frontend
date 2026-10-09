@@ -272,6 +272,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
 
       for (const op of opAssignments) {
         const emp = op.operator;
+        if (!emp) continue;
         const corp = emp.corporateEmployee;
         const empId = emp.id;
         const dateKey = op.dailySheet.date.toISOString().split('T')[0];
@@ -680,6 +681,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
       });
 
       for (const op of opAssignments) {
+        if (!op.operator) continue;
         const dateKey = op.dailySheet.date.toISOString().split('T')[0];
         const bpName = op.operator.businessPartner?.name || 'Direct / Maga';
         const empId = op.operator.id;
@@ -1263,6 +1265,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       });
 
       for (const op of opAssignments) {
+        if (!op.operator) continue;
         const dateKey = op.dailySheet.date.toISOString().split('T')[0];
         const key = `${op.operatorId}___${dateKey}`;
         if (!grouped.has(key)) {
@@ -1279,7 +1282,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
             id: `op-rc-${op.id}`,
             date: dateKey,
             supervisorName: op.dailySheet.supervisor?.fullName || (op.dailySheet.supervisor?.username ? `@${op.dailySheet.supervisor.username}` : 'Site Supervisor'),
-            employeeCode: op.operator.corporateEmployee.employeeCode || op.operatorId,
+            employeeCode: op.operator.corporateEmployee.employeeCode || op.operatorId || '—',
             callingName: op.operator.callingName || op.operator.corporateEmployee.fullName || '—',
             businessPartner: op.operator.businessPartner?.name || 'Direct / Maga',
             inTime: '—',

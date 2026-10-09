@@ -126,28 +126,29 @@ export default function ApprovalsPage() {
     const q = searchQuery.toLowerCase();
     return list.filter(
       (s) =>
-        s.supervisorName.toLowerCase().includes(q) ||
-        s.username.toLowerCase().includes(q) ||
-        s.workers.some(
-          (w) =>
-            w.callingName.toLowerCase().includes(q) ||
-            w.employeeCode.toLowerCase().includes(q) ||
-            w.tradeGroup.toLowerCase().includes(q)
-        ) ||
+        (s.supervisorName && s.supervisorName.toLowerCase().includes(q)) ||
+        (s.username && s.username.toLowerCase().includes(q)) ||
+        (s.workers &&
+          s.workers.some(
+            (w) =>
+              (w.callingName && w.callingName.toLowerCase().includes(q)) ||
+              (w.employeeCode && w.employeeCode.toLowerCase().includes(q)) ||
+              (w.tradeGroup && w.tradeGroup.toLowerCase().includes(q))
+          )) ||
         (s.operators &&
           s.operators.some(
             (o) =>
               (o.callingName && o.callingName.toLowerCase().includes(q)) ||
               (o.fullName && o.fullName.toLowerCase().includes(q)) ||
-              o.operatorCode.toLowerCase().includes(q) ||
+              (o.operatorCode && o.operatorCode.toLowerCase().includes(q)) ||
               (o.assignedEquipmentDisplay && o.assignedEquipmentDisplay.toLowerCase().includes(q))
           )) ||
         (s.equipment &&
           s.equipment.some(
             (e) =>
-              e.equipmentCode.toLowerCase().includes(q) ||
+              (e.equipmentCode && e.equipmentCode.toLowerCase().includes(q)) ||
               (e.magaNo && e.magaNo.toLowerCase().includes(q)) ||
-              e.equipmentName.toLowerCase().includes(q)
+              (e.equipmentName && e.equipmentName.toLowerCase().includes(q))
           ))
     );
   };

@@ -371,15 +371,15 @@ model MF_OP_DailyEquipmentAssignment {
   id           String   @id @default(uuid())
   dailySheetId String   @map("daily_sheet_id")
   equipmentId  String   @map("equipment_id")
-  operatorId   String   @map("operator_id")
+  operatorId   String?  @map("operator_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
   dailySheet MF_OP_DailySheet       @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
   equipment  MF_P_Equipment         @relation(fields: [equipmentId], references: [id])
-  operator   MF_P_Employee          @relation("OperatorAssigned", fields: [operatorId], references: [id])
+  operator   MF_P_Employee?         @relation("OperatorAssigned", fields: [operatorId], references: [id])
   dailyLog   MF_OP_EquipmentDailyLog?
 
-  @@unique([dailySheetId, operatorId, equipmentId])
+  @@unique([dailySheetId, equipmentId])
   @@index([dailySheetId])
   @@index([equipmentId])
   @@index([operatorId])

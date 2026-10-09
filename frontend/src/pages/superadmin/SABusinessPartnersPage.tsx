@@ -329,14 +329,12 @@ export default function SABusinessPartnersPage() {
     try {
       const formData = new FormData();
       formData.append('document', file);
-      const res = await api.post('/uploads/document', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post('/uploads/document', formData);
       if (res.data?.url) {
         setFormDocumentUrl(res.data.url);
       }
     } catch (err: any) {
-      setFormError(err.response?.data?.error || 'Failed to upload document file');
+      setFormError(err.message || 'Failed to upload document file');
     } finally {
       setIsUploadingDoc(false);
     }

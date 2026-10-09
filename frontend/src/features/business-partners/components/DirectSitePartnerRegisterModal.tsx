@@ -16,11 +16,11 @@ import {
   AlertTriangle,
   FileText,
   ExternalLink,
-  ShieldAlert,
   CheckCircle2,
   Briefcase,
 } from 'lucide-react';
 import api from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
 import type { BusinessPartner } from '../services/businessPartnerService';
 
 interface DirectSitePartnerRegisterModalProps {
@@ -87,12 +87,10 @@ export default function DirectSitePartnerRegisterModal({
     try {
       const formData = new FormData();
       formData.append('document', file);
-      const res = await api.post('/uploads/document', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post('/uploads/document', formData);
       setDocumentUrl(res.data.url || res.data.fileUrl);
     } catch (err: any) {
-      setErrorMessage(err.response?.data?.error || 'Failed to upload document dossier');
+      setErrorMessage(err.message || 'Failed to upload document dossier');
       setDocumentFile(null);
     } finally {
       setIsUploadingDoc(false);
@@ -139,13 +137,14 @@ export default function DirectSitePartnerRegisterModal({
       });
 
       const created = res.data as BusinessPartner;
+      cacheManager.invalidate('business-partners');
       resetForm();
       onSuccess(created);
       onClose();
     } catch (err: any) {
       console.error('Failed to register subcontractor:', err);
       setErrorMessage(
-        err.response?.data?.error || err.message || 'Failed to register subcontractor at site gate.',
+        err.message || 'Failed to register subcontractor at site gate.',
       );
     } finally {
       setIsSubmitting(false);

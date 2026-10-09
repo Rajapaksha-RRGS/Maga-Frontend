@@ -97,26 +97,18 @@ export const getBusinessPartnerById = async (req: Request, res: Response): Promi
 // 3. GET /api/business-partners/next-code — Get next available BP code
 export const getNextBusinessPartnerCode = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const latest = await prisma.mF_G_BusinessPartner.findFirst({
-      where: {
-        code: { startsWith: 'BP' },
-      },
+    const regularPartners = await prisma.mF_G_BusinessPartner.findMany({
+      where: { code: { startsWith: 'BP1' } },
       select: { code: true },
-      orderBy: { code: 'desc' },
     });
 
-    if (!latest) {
-      res.json({ nextCode: 'BP1001001' });
-      return;
+    let maxBp = 1001000;
+    for (const p of regularPartners) {
+      const num = parseInt(p.code.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(num) && num > maxBp) maxBp = num;
     }
 
-    const currentNum = parseInt(latest.code.replace(/[^0-9]/g, ''), 10);
-    if (isNaN(currentNum)) {
-      res.json({ nextCode: 'BP1001001' });
-      return;
-    }
-
-    const nextCode = `BP${currentNum + 1}`;
+    const nextCode = `BP${maxBp + 1}`;
     res.json({ nextCode });
   } catch (error) {
     console.error('Error getting next code:', error);
@@ -144,9 +136,31 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
       documentUrl,
     } = req.body || {};
 
-    if (!name || !String(name).trim()) {
-      res.status(400).json({ error: 'Partner Name is a required field' });
+    const cleanName = String(name || '').trim();
+    if (!cleanName) {
+      res.status(400).json({ error: 'Company or Subcontractor name is required' });
       return;
+    }
+
+    const cleanBr = brNumber?.trim();
+
+    // Check if partner with same BR Number already exists to prevent duplicate entries
+    if (cleanBr) {
+      const existingBr = await prisma.mF_G_BusinessPartner.findFirst({
+        where: { brNumber: { equals: cleanBr, mode: 'insensitive' } },
+        select: partnerSelectOptimized,
+      });
+      if (existingBr) {
+        res.status(409).json({
+          error: `A Business Partner with BR Number "${cleanBr}" is already enrolled (${existingBr.name} - ${existingBr.code}).`,
+          existingPartner: {
+            ...existingBr,
+            employeeCount: existingBr._count.employees,
+            equipmentCount: existingBr._count.equipment,
+          },
+        });
+        return;
+      }
     }
 
     const cleanStatus = status || 'active';
@@ -154,23 +168,44 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
 
     if (!cleanCode) {
       if (cleanStatus === 'pending_approval') {
-        const count = await prisma.mF_G_BusinessPartner.count();
-        cleanCode = `BP-TMP-${String(count + 1).padStart(4, '0')}`;
+        const tmpPartners = await prisma.mF_G_BusinessPartner.findMany({
+          where: { code: { startsWith: 'BP-TMP-' } },
+          select: { code: true },
+        });
+        let maxTmp = 0;
+        for (const p of tmpPartners) {
+          const num = parseInt(p.code.replace(/[^0-9]/g, ''), 10);
+          if (!isNaN(num) && num > maxTmp) maxTmp = num;
+        }
+        let nextTmpNum = maxTmp + 1;
+        cleanCode = `BP-TMP-${String(nextTmpNum).padStart(4, '0')}`;
+        while (await prisma.mF_G_BusinessPartner.findUnique({ where: { code: cleanCode } })) {
+          nextTmpNum++;
+          cleanCode = `BP-TMP-${String(nextTmpNum).padStart(4, '0')}`;
+        }
       } else {
-        const latest = await prisma.mF_G_BusinessPartner.findFirst({
+        const regularPartners = await prisma.mF_G_BusinessPartner.findMany({
           where: { code: { startsWith: 'BP1' } },
           select: { code: true },
-          orderBy: { code: 'desc' },
         });
-        const currentNum = latest ? parseInt(latest.code.replace(/[^0-9]/g, ''), 10) : 1001000;
-        cleanCode = `BP${(isNaN(currentNum) ? 1001000 : currentNum) + 1}`;
+        let maxBp = 1001000;
+        for (const p of regularPartners) {
+          const num = parseInt(p.code.replace(/[^0-9]/g, ''), 10);
+          if (!isNaN(num) && num > maxBp) maxBp = num;
+        }
+        let nextBpNum = maxBp + 1;
+        cleanCode = `BP${nextBpNum}`;
+        while (await prisma.mF_G_BusinessPartner.findUnique({ where: { code: cleanCode } })) {
+          nextBpNum++;
+          cleanCode = `BP${nextBpNum}`;
+        }
       }
     }
 
     const partner = await prisma.mF_G_BusinessPartner.create({
       data: {
         code: cleanCode,
-        name: String(name).trim(),
+        name: cleanName,
         type: type ? String(type).trim() : null,
         nicNo: (nicNo || businessEntityIdentifier)?.trim() || null,
         brNumber: brNumber?.trim() || null,
@@ -194,7 +229,7 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
   } catch (error: any) {
     console.error('Error creating business partner:', error);
     if (error.code === 'P2002') {
-      res.status(409).json({ error: `Business Partner with code ${req.body.code} already exists` });
+      res.status(409).json({ error: `Business Partner with code ${req.body?.code || 'specified'} already exists` });
       return;
     }
     res.status(500).json({ error: 'Failed to create business partner' });

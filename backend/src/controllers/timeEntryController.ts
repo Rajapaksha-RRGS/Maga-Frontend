@@ -1071,6 +1071,7 @@ export const getOperatorEntries = async (req: Request, res: Response): Promise<v
           date: targetDate,
           ...(supervisorId ? { supervisorId } : {}),
         },
+        operatorId: { not: null },
       },
       include: {
         operator: {
@@ -1091,18 +1092,20 @@ export const getOperatorEntries = async (req: Request, res: Response): Promise<v
       },
     });
 
-    const result = assignments.map((a) => ({
-      id: a.id,
-      operatorId: a.operator.id,
-      callingName: a.operator.callingName || a.operator.corporateEmployee.fullName,
-      employeeNumber: a.operator.corporateEmployee.employeeCode,
-      licenseNo: a.operator.corporateEmployee.nicNo || 'N/A',
-      designation: a.operator.tradeGroup?.name || 'Operator',
-      assignedEquipmentId: a.equipmentId,
-      assignedEquipmentCode: a.equipment.corporateEquipment.standardEquipmentNumber,
-      status: a.dailyLog?.status || 'draft',
-      notes: a.dailyLog?.remarks || '',
-    }));
+    const result = assignments
+      .filter((a) => Boolean(a.operator))
+      .map((a) => ({
+        id: a.id,
+        operatorId: a.operator!.id,
+        callingName: a.operator!.callingName || a.operator!.corporateEmployee.fullName,
+        employeeNumber: a.operator!.corporateEmployee.employeeCode,
+        licenseNo: a.operator!.corporateEmployee.nicNo || 'N/A',
+        designation: a.operator!.tradeGroup?.name || 'Operator',
+        assignedEquipmentId: a.equipmentId,
+        assignedEquipmentCode: a.equipment.corporateEquipment.standardEquipmentNumber,
+        status: a.dailyLog?.status || 'draft',
+        notes: a.dailyLog?.remarks || '',
+      }));
 
     res.json(result);
   } catch (error) {
@@ -1152,13 +1155,14 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
 
     const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
       where: {
-        dailySheetId_operatorId_equipmentId: {
+        dailySheetId_equipmentId: {
           dailySheetId: dailySheet.id,
-          operatorId,
           equipmentId: eqId,
         },
       },
-      update: {},
+      update: {
+        operatorId,
+      },
       create: {
         dailySheetId: dailySheet.id,
         operatorId,
@@ -1226,13 +1230,14 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
 
       const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
         where: {
-          dailySheetId_operatorId_equipmentId: {
+          dailySheetId_equipmentId: {
             dailySheetId: dailySheet.id,
-            operatorId: opId,
             equipmentId: eqId,
           },
         },
-        update: {},
+        update: {
+          operatorId: opId,
+        },
         create: {
           dailySheetId: dailySheet.id,
           operatorId: opId,
@@ -1295,32 +1300,25 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
       const eqId = item.id || item.equipmentId;
       if (!eqId) continue;
 
-      let opId = item.operatorId;
+      let opId = item.operatorId || null;
       if (!opId) {
         const firstOp = await prisma.mF_P_Employee.findFirst({
           where: { projectId, isOperator: true, status: 'active' },
           select: { id: true },
         });
-        opId = firstOp?.id;
+        opId = firstOp?.id || null;
       }
-      if (!opId) {
-        const anyEmp = await prisma.mF_P_Employee.findFirst({
-          where: { projectId, status: 'active' },
-          select: { id: true },
-        });
-        opId = anyEmp?.id;
-      }
-      if (!opId) continue;
 
       const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
         where: {
-          dailySheetId_operatorId_equipmentId: {
+          dailySheetId_equipmentId: {
             dailySheetId: dailySheet.id,
-            operatorId: opId,
             equipmentId: eqId,
           },
         },
-        update: {},
+        update: {
+          ...(opId ? { operatorId: opId } : {}),
+        },
         create: {
           dailySheetId: dailySheet.id,
           operatorId: opId,

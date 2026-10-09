@@ -373,6 +373,10 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
           date: targetDate,
           ...(supervisorId ? { supervisorId } : {}),
         },
+        operatorId: { not: null },
+        operator: {
+          isOperator: true,
+        },
       },
       include: {
         dailySheet: {
@@ -408,21 +412,31 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
       orderBy: { createdAt: 'asc' },
     });
 
-    const formatted = assignments.map((a) => ({
-      id: a.id,
-      date: dateStr,
-      supervisorId: a.dailySheet.supervisorId,
-      operatorId: a.operatorId,
-      equipmentId: a.equipmentId,
-      supervisorName: a.dailySheet.supervisor.fullName,
-      operatorName: a.operator.callingName || a.operator.corporateEmployee.fullName,
-      operatorCode: a.operator.corporateEmployee.employeeCode,
-      operatorTrade: a.operator.tradeGroup?.name || 'Operator',
-      equipmentCode: a.equipment.corporateEquipment.standardEquipmentNumber,
-      equipmentName: a.equipment.corporateEquipment.equipmentName,
-      vehicleNo: a.equipment.corporateEquipment.vehicleNo,
-      businessPartner: a.operator.businessPartner?.name || 'Direct',
-    }));
+    const seen = new Set<string>();
+    const formatted: any[] = [];
+
+    for (const a of assignments) {
+      if (!a.operator || !a.operatorId) continue;
+      const key = `${a.dailySheet.supervisorId}_${a.operatorId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      formatted.push({
+        id: a.id,
+        date: dateStr,
+        supervisorId: a.dailySheet.supervisorId,
+        operatorId: a.operatorId,
+        equipmentId: a.equipmentId,
+        supervisorName: a.dailySheet.supervisor.fullName,
+        operatorName: a.operator.callingName || a.operator.corporateEmployee.fullName,
+        operatorCode: a.operator.corporateEmployee.employeeCode,
+        operatorTrade: a.operator.tradeGroup?.name || 'Operator',
+        equipmentCode: a.equipment.corporateEquipment.standardEquipmentNumber,
+        equipmentName: a.equipment.corporateEquipment.equipmentName,
+        vehicleNo: a.equipment.corporateEquipment.vehicleNo,
+        businessPartner: a.operator.businessPartner?.name || 'Direct',
+      });
+    }
 
     res.json(formatted);
   } catch (error) {
@@ -469,13 +483,14 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
     for (const opId of operatorIds) {
       const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
         where: {
-          dailySheetId_operatorId_equipmentId: {
+          dailySheetId_equipmentId: {
             dailySheetId: dailySheet.id,
-            operatorId: opId,
             equipmentId: targetEquipmentId,
           },
         },
-        update: {},
+        update: {
+          operatorId: opId,
+        },
         create: {
           dailySheetId: dailySheet.id,
           operatorId: opId,
@@ -562,13 +577,14 @@ export const copyOperatorGangsFromDate = async (req: Request, res: Response): Pr
       for (const eqAssign of srcSheet.equipmentAssignments) {
         await prisma.mF_OP_DailyEquipmentAssignment.upsert({
           where: {
-            dailySheetId_operatorId_equipmentId: {
+            dailySheetId_equipmentId: {
               dailySheetId: targetSheet.id,
-              operatorId: eqAssign.operatorId,
               equipmentId: eqAssign.equipmentId,
             },
           },
-          update: {},
+          update: {
+            operatorId: eqAssign.operatorId,
+          },
           create: {
             dailySheetId: targetSheet.id,
             operatorId: eqAssign.operatorId,
@@ -670,7 +686,7 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
         supervisorId: a.dailySheet.supervisorId,
         equipmentId: a.equipmentId,
         operatorId: a.operatorId,
-        operatorName: a.operator.callingName || a.operator.corporateEmployee.fullName,
+        operatorName: a.operator?.callingName || a.operator?.corporateEmployee?.fullName || 'Unassigned',
         supervisorName: a.dailySheet.supervisor.fullName,
         equipmentName: corp.equipmentName,
         equipmentCode: corp.standardEquipmentNumber,
@@ -730,38 +746,20 @@ export const assignEquipment = async (req: Request, res: Response): Promise<void
     const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
 
     // Resolve an operator: either provided or fallback to first operator or employee
-    let targetOperatorId = operatorId;
-    if (!targetOperatorId) {
-      const firstOp = await prisma.mF_P_Employee.findFirst({
-        where: { projectId, isOperator: true, status: 'active' },
-        select: { id: true },
-      });
-      targetOperatorId = firstOp?.id;
-    }
-    if (!targetOperatorId) {
-      const anyEmp = await prisma.mF_P_Employee.findFirst({
-        where: { projectId, status: 'active' },
-        select: { id: true },
-      });
-      targetOperatorId = anyEmp?.id;
-    }
-
-    if (!targetOperatorId) {
-      res.status(400).json({ error: 'No operator or employee available to pair with equipment' });
-      return;
-    }
+    const targetOperatorId = operatorId || null;
 
     const created = [];
     for (const eqId of equipmentIds) {
       const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
         where: {
-          dailySheetId_operatorId_equipmentId: {
+          dailySheetId_equipmentId: {
             dailySheetId: dailySheet.id,
-            operatorId: targetOperatorId,
             equipmentId: eqId,
           },
         },
-        update: {},
+        update: {
+          ...(targetOperatorId ? { operatorId: targetOperatorId } : {}),
+        },
         create: {
           dailySheetId: dailySheet.id,
           operatorId: targetOperatorId,

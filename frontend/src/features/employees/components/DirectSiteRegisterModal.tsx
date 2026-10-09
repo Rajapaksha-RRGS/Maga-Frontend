@@ -22,9 +22,6 @@ import {
   AlertTriangle,
   Building2,
   HardHat,
-  ShieldCheck,
-  PlusCircle,
-  FileCheck2,
 } from 'lucide-react';
 import api from '../../../config/api';
 import type { BusinessPartner } from '../../business-partners/services/businessPartnerService';
@@ -66,19 +63,8 @@ export default function DirectSiteRegisterModal({
   const [empDocumentUrl, setEmpDocumentUrl] = useState<string | null>(null);
   const [isUploadingEmpDoc, setIsUploadingEmpDoc] = useState(false);
 
-  // Business Partner State (if External)
+  // Business Partner Selection (if External)
   const [selectedPartnerId, setSelectedPartnerId] = useState('');
-  const [isNewPartner, setIsNewPartner] = useState(false);
-  const [newPartnerName, setNewPartnerName] = useState('');
-  const [newPartnerBrNumber, setNewPartnerBrNumber] = useState('');
-  const [newPartnerNicNo, setNewPartnerNicNo] = useState('');
-  const [newPartnerContactPerson, setNewPartnerContactPerson] = useState('');
-  const [newPartnerPhone, setNewPartnerPhone] = useState('');
-
-  // Business Partner Dossier File
-  const [bpDocumentFile, setBpDocumentFile] = useState<File | null>(null);
-  const [bpDocumentUrl, setBpDocumentUrl] = useState<string | null>(null);
-  const [isUploadingBpDoc, setIsUploadingBpDoc] = useState(false);
 
   // Data Loading & State
   const [tradeGroups, setTradeGroups] = useState<TradeGroupOption[]>([]);
@@ -148,24 +134,6 @@ export default function DirectSiteRegisterModal({
     }
   };
 
-  // Handle Business Partner Dossier File Selection
-  const handleBpFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setBpDocumentFile(file);
-    setIsUploadingBpDoc(true);
-    setErrorMessage(null);
-    try {
-      const url = await uploadDocument(file);
-      setBpDocumentUrl(url);
-    } catch (err: any) {
-      setErrorMessage(err.response?.data?.error || 'Failed to upload business partner dossier PDF');
-      setBpDocumentFile(null);
-    } finally {
-      setIsUploadingBpDoc(false);
-    }
-  };
-
   // Reset form
   const resetForm = () => {
     setFullName('');
@@ -177,14 +145,6 @@ export default function DirectSiteRegisterModal({
     setEmpDocumentFile(null);
     setEmpDocumentUrl(null);
     setSelectedPartnerId('');
-    setIsNewPartner(false);
-    setNewPartnerName('');
-    setNewPartnerBrNumber('');
-    setNewPartnerNicNo('');
-    setNewPartnerContactPerson('');
-    setNewPartnerPhone('');
-    setBpDocumentFile(null);
-    setBpDocumentUrl(null);
     setErrorMessage(null);
   };
 
@@ -210,12 +170,8 @@ export default function DirectSiteRegisterModal({
     const tradeGroupName = selectedTg?.name || 'General Labour';
 
     if (workerType === 'external') {
-      if (!isNewPartner && !selectedPartnerId) {
-        setErrorMessage('Please select an existing Business Partner or enroll a new Subcontractor.');
-        return;
-      }
-      if (isNewPartner && (!newPartnerName.trim() || !newPartnerBrNumber.trim())) {
-        setErrorMessage('Subcontractor Name and Business Registration (BR) Number are mandatory.');
+      if (!selectedPartnerId) {
+        setErrorMessage('Please select a registered Business Partner.');
         return;
       }
     }
@@ -238,18 +194,11 @@ export default function DirectSiteRegisterModal({
       };
 
       if (workerType === 'external') {
-        if (isNewPartner) {
-          payload.businessPartnerName = newPartnerName.trim();
-          payload.businessPartnerBrNumber = newPartnerBrNumber.trim();
-          payload.businessPartnerNicNo = newPartnerNicNo.trim() || undefined;
-          payload.businessPartnerDocumentUrl = bpDocumentUrl || undefined;
-        } else {
-          payload.businessPartnerId = selectedPartnerId;
-          const matched = existingPartners.find((p) => p.id === selectedPartnerId);
-          if (matched) {
-            payload.businessPartner = matched.name;
-            payload.businessPartnerCode = matched.code;
-          }
+        payload.businessPartnerId = selectedPartnerId;
+        const matched = existingPartners.find((p) => p.id === selectedPartnerId);
+        if (matched) {
+          payload.businessPartner = matched.name;
+          payload.businessPartnerCode = matched.code;
         }
       }
 
@@ -316,10 +265,7 @@ export default function DirectSiteRegisterModal({
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  setWorkerType('internal');
-                  setIsNewPartner(false);
-                }}
+                onClick={() => setWorkerType('internal')}
                 className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
                   workerType === 'internal'
                     ? 'border-blue-600 bg-blue-50/80 text-blue-900 shadow-xs ring-2 ring-blue-500/20'
@@ -346,143 +292,43 @@ export default function DirectSiteRegisterModal({
 
           {/* Subcontractor / Business Partner Section (If External) */}
           {workerType === 'external' && (
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3.5">
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-800 flex items-center gap-2">
                   <Building2 size={15} className="text-indigo-600" />
                   <span>Subcontractor Details</span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setIsNewPartner(!isNewPartner)}
-                  className="text-xs font-medium text-blue-700 hover:text-blue-900 flex items-center gap-1 cursor-pointer"
-                >
-                  <PlusCircle size={13} />
-                  <span>{isNewPartner ? 'Select Existing Subcontractor' : '+ Register New Subcontractor'}</span>
-                </button>
+                <span className="text-[11px] text-slate-500">
+                  Register new subcontractors in{' '}
+                  <span className="font-semibold text-slate-700">Master Data &gt; Business Partners</span>
+                </span>
               </div>
 
-              {!isNewPartner ? (
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">
-                    Select Registered Business Partner <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={selectedPartnerId}
-                    onChange={(e) => setSelectedPartnerId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-hidden font-medium"
-                  >
-                    <option value="">-- Choose Subcontractor / Labour Supplier --</option>
-                    {existingPartners.map((bp) => (
-                      <option key={bp.id} value={bp.id}>
-                        {bp.code} — {bp.name} {bp.status === 'pending_approval' ? '⚠️ (Pending HO Approval)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {existingPartners.find((p) => p.id === selectedPartnerId)?.status === 'pending_approval' && (
-                    <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-[11px] flex items-start gap-1.5">
-                      <AlertTriangle size={13} className="shrink-0 mt-0.5 text-amber-600" />
-                      <div>
-                        <strong>Subcontractor Pending HO Approval:</strong> This partner is awaiting Super Admin verification. You can enroll this worker now, but payroll disbursement will be held until both the worker and subcontractor are approved.
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3 pt-1 border-t border-slate-200">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Select Registered Business Partner <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={selectedPartnerId}
+                  onChange={(e) => setSelectedPartnerId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-hidden font-medium"
+                >
+                  <option value="">-- Choose Subcontractor / Labour Supplier --</option>
+                  {existingPartners.map((bp) => (
+                    <option key={bp.id} value={bp.id}>
+                      {bp.code} — {bp.name} {bp.status === 'pending_approval' ? '⚠️ (Pending HO Approval)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {existingPartners.find((p) => p.id === selectedPartnerId)?.status === 'pending_approval' && (
+                  <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-[11px] flex items-start gap-1.5">
+                    <AlertTriangle size={13} className="shrink-0 mt-0.5 text-amber-600" />
                     <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Subcontractor Legal Name <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={newPartnerName}
-                        onChange={(e) => setNewPartnerName(e.target.value)}
-                        placeholder="e.g. Sierra Construction / Kandy Masons"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Business Reg (BR) Number <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={newPartnerBrNumber}
-                        onChange={(e) => setNewPartnerBrNumber(e.target.value)}
-                        placeholder="e.g. PV12345 or W/2021"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono uppercase"
-                      />
+                      <strong>Subcontractor Pending HO Approval:</strong> This partner is awaiting Super Admin verification. You can enroll this worker now, but payroll disbursement will be held until both the worker and subcontractor are approved.
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Owner NIC Number <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={newPartnerNicNo}
-                        onChange={(e) => setNewPartnerNicNo(e.target.value)}
-                        placeholder="e.g. 741230456V"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono uppercase"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">Contact Person</label>
-                      <input
-                        type="text"
-                        value={newPartnerContactPerson}
-                        onChange={(e) => setNewPartnerContactPerson(e.target.value)}
-                        placeholder="Name of owner/lead"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">Phone Number</label>
-                      <input
-                        type="tel"
-                        value={newPartnerPhone}
-                        onChange={(e) => setNewPartnerPhone(e.target.value)}
-                        placeholder="077-xxxxxxx"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Subcontractor Dossier Upload */}
-                  <div className="p-3 bg-white border border-indigo-200 rounded-lg">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-semibold text-indigo-900 flex items-center gap-1.5">
-                        <FileCheck2 size={14} className="text-indigo-600" />
-                        <span>Subcontractor Dossier (Combined PDF Scan)</span>
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-medium">BR Certificate + Owner NIC</span>
-                    </div>
-                    <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-indigo-200 rounded-lg hover:bg-indigo-50/50 cursor-pointer transition-colors text-xs text-indigo-700">
-                      <Upload size={14} />
-                      <span>{bpDocumentFile ? bpDocumentFile.name : 'Select Combined BR & NIC PDF'}</span>
-                      <input
-                        type="file"
-                        accept="application/pdf,image/*"
-                        onChange={handleBpFileChange}
-                        className="hidden"
-                      />
-                    </label>
-                    {isUploadingBpDoc && (
-                      <p className="text-[11px] text-blue-600 font-medium mt-1">Uploading subcontractor dossier...</p>
-                    )}
-                    {bpDocumentUrl && (
-                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 font-medium mt-1">
-                        <CheckCircle2 size={13} />
-                        <span>Subcontractor dossier attached successfully</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )} 
+                )}
+              </div>
             </div>
           )}  
 
@@ -662,7 +508,7 @@ export default function DirectSiteRegisterModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || isUploadingEmpDoc || isUploadingBpDoc}
+              disabled={isSubmitting || isUploadingEmpDoc}
               className="px-5 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 active:bg-blue-900 rounded-lg transition-colors cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-2"
             >
               {isSubmitting ? (

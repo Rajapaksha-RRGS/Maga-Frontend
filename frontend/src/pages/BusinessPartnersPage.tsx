@@ -26,6 +26,7 @@ export default function BusinessPartnersPage() {
     statusFilter,
     setStatusFilter,
     addPartner,
+    addPartnerDirectly,
     updatePartner,
     deletePartner,
     checkUniqueCode,
@@ -270,7 +271,8 @@ export default function BusinessPartnersPage() {
           <DirectSitePartnerRegisterModal
             isOpen={isDirectRegisterModalOpen}
             onClose={() => setIsDirectRegisterModalOpen(false)}
-            onSuccess={() => {
+            onSuccess={(newPartner) => {
+              addPartnerDirectly(newPartner);
               refresh(true);
             }}
           />

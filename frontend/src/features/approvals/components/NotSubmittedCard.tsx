@@ -12,12 +12,17 @@ export const NotSubmittedCard: React.FC<NotSubmittedCardProps> = ({ group }) => 
 
   const isDraftInProgress = group.status === 'draft';
 
-  const workersCount = group.counts?.laborWorked ?? group.workedCount;
-  const workersTotal = group.counts?.laborAssigned ?? group.assignedCount;
+  const workersCount = group.counts?.laborWorked ?? group.workedCount ?? 0;
+  const workersTotal = group.counts?.laborAssigned ?? group.assignedCount ?? 0;
   const operatorsCount = group.counts?.operatorsWorked ?? (group.operators?.length || 0);
   const operatorsTotal = group.counts?.operatorsAssigned ?? (group.operators?.length || 0);
   const equipmentCount = group.counts?.equipmentRunning ?? (group.equipment?.length || 0);
   const equipmentTotal = group.counts?.equipmentAssigned ?? (group.equipment?.length || 0);
+
+  const workersList = group.workers || [];
+  const operatorsList = group.operators || [];
+  const equipmentList = group.equipment || [];
+  const totalLaborHours = group.totalHours ?? group.totals?.laborHours ?? 0;
 
   return (
     <div className="bg-white rounded-2xl border border-amber-200 shadow-xs overflow-hidden transition-all hover:border-amber-300">
@@ -67,7 +72,7 @@ export const NotSubmittedCard: React.FC<NotSubmittedCardProps> = ({ group }) => 
                   <span>•</span>
                   <span className="text-blue-700 font-medium flex items-center gap-1">
                     <Clock size={12} />
-                    Labor Logged: {group.totalHours.toFixed(1)}h
+                    Labor Logged: {totalLaborHours.toFixed(1)}h
                   </span>
                 </>
               )}
@@ -111,7 +116,7 @@ export const NotSubmittedCard: React.FC<NotSubmittedCardProps> = ({ group }) => 
               }`}
             >
               <Users size={12} />
-              <span>Assigned Labor ({group.workers.length})</span>
+              <span>Assigned Labor ({workersList.length})</span>
             </button>
             <button
               type="button"
@@ -123,7 +128,7 @@ export const NotSubmittedCard: React.FC<NotSubmittedCardProps> = ({ group }) => 
               }`}
             >
               <HardHat size={12} />
-              <span>Assigned Operators ({group.operators?.length || 0})</span>
+              <span>Assigned Operators ({operatorsList.length})</span>
             </button>
             <button
               type="button"
@@ -135,18 +140,18 @@ export const NotSubmittedCard: React.FC<NotSubmittedCardProps> = ({ group }) => 
               }`}
             >
               <Truck size={12} />
-              <span>Assigned Equipment ({group.equipment?.length || 0})</span>
+              <span>Assigned Equipment ({equipmentList.length})</span>
             </button>
           </div>
 
           {subTab === 'labor' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-              {group.workers.length === 0 ? (
+              {workersList.length === 0 ? (
                 <div className="col-span-full py-4 text-center text-xs text-slate-400">
                   No workers assigned.
                 </div>
               ) : (
-                group.workers.map((w) => (
+                workersList.map((w) => (
                   <div
                     key={w.employeeId}
                     className="p-3 rounded-xl border border-slate-200 bg-white flex items-center justify-between text-xs shadow-2xs"
@@ -176,12 +181,12 @@ export const NotSubmittedCard: React.FC<NotSubmittedCardProps> = ({ group }) => 
 
           {subTab === 'operators' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-              {!group.operators || group.operators.length === 0 ? (
+              {operatorsList.length === 0 ? (
                 <div className="col-span-full py-4 text-center text-xs text-slate-400">
                   No machine operators assigned.
                 </div>
               ) : (
-                group.operators.map((op) => (
+                operatorsList.map((op) => (
                   <div
                     key={op.operatorId}
                     className="p-3 rounded-xl border border-slate-200 bg-white flex items-center justify-between text-xs shadow-2xs"
@@ -211,13 +216,13 @@ export const NotSubmittedCard: React.FC<NotSubmittedCardProps> = ({ group }) => 
 
           {subTab === 'equipment' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-              {!group.equipment || group.equipment.length === 0 ? (
+              {equipmentList.length === 0 ? (
                 <div className="col-span-full py-4 text-center text-xs text-slate-400">
                   No equipment assigned.
                 </div>
               ) : (
-                group.equipment.map((eq) => {
-                  const isLogged = eq.netHours > 0 || eq.loggedQuantity > 0;
+                equipmentList.map((eq) => {
+                  const isLogged = (eq.netHours || 0) > 0 || (eq.loggedQuantity || 0) > 0;
                   return (
                     <div
                       key={eq.equipmentId}
