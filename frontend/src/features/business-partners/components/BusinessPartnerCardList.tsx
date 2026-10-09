@@ -48,12 +48,18 @@ export default function BusinessPartnerCardList({ data, onCardClick }: Props) {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span
-              className={[
-                'w-2 h-2 rounded-full',
-                bp.status === 'active' ? 'bg-emerald-500' : 'bg-slate-400',
-              ].join(' ')}
-            />
+            {bp.status === 'pending_approval' ? (
+              <span className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-300 px-1.5 py-0.2 rounded-full">
+                Pending HO
+              </span>
+            ) : (
+              <span
+                className={[
+                  'w-2 h-2 rounded-full',
+                  bp.status === 'active' ? 'bg-emerald-500' : 'bg-slate-400',
+                ].join(' ')}
+              />
+            )}
             <ChevronRight size={16} className="text-slate-400" />
           </div>
         </div>

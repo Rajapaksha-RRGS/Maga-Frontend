@@ -7,7 +7,8 @@
  * Responsive: DataTable on md+, CardList below md.
  */
 import { useState, useEffect, useMemo } from 'react';
-import { Database } from 'lucide-react';
+import { ArrowRightLeft, Check, Clock, UserPlus } from 'lucide-react';
+import api from '../config/api';
 import { useEmployees } from '../features/employees/hooks/useEmployees';
 import EmployeeTable from '../features/employees/components/EmployeeTable';
 import EmployeeCardList from '../features/employees/components/EmployeeCardList';
@@ -17,12 +18,28 @@ import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
 import EmployeeImportView from '../features/employees/components/EmployeeImportView';
+import DirectSiteRegisterModal from '../features/employees/components/DirectSiteRegisterModal';
 import Breadcrumb from '../components/Breadcrumb';
 import type { CorporateEmployee } from '../features/master-import/services/corporateMasterService';
 import type { Employee } from '../features/employees/services/employeeService';
 import * as employeeService from '../features/employees/services/employeeService';
 import type { BusinessPartner } from '../features/business-partners/services/businessPartnerService';
 import * as businessPartnerService from '../features/business-partners/services/businessPartnerService';
+
+interface PendingTransferItem {
+  id: string;
+  corporateEmployee?: {
+    id: string;
+    employeeCode: string;
+    fullName: string;
+    nicNo: string;
+    tradeGroup?: { name: string };
+  };
+  fromProject?: { id: string; projectCode: string; projectName: string };
+  toProject?: { id: string; projectCode: string; projectName: string };
+  startDate: string;
+  remarks?: string;
+}
 
 export default function EmployeesPage() {
   const {
@@ -54,8 +71,49 @@ export default function EmployeesPage() {
   const [registeredPartners, setRegisteredPartners] = useState<BusinessPartner[]>([]);
   const [loadingPartners, setLoadingPartners] = useState(true);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [pendingTransfers, setPendingTransfers] = useState<PendingTransferItem[]>([]);
+  const [isProcessingTransfer, setIsProcessingTransfer] = useState(false);
+  const [isDirectRegisterModalOpen, setIsDirectRegisterModalOpen] = useState(false);
 
-  // Cross-tenant ground-truth status state removed from here
+  const fetchPendingTransfers = async () => {
+    try {
+      const res = await api.get('/corporate/transfers/pending');
+      setPendingTransfers(res.data?.items || []);
+    } catch (e) {
+      console.error('Failed to load pending transfers:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchPendingTransfers();
+  }, []);
+
+  const handleApproveRelease = async (transferId: string) => {
+    setIsProcessingTransfer(true);
+    try {
+      await api.post(`/corporate/transfers/${transferId}/approve`);
+      await refresh();
+      await fetchPendingTransfers();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to approve transfer');
+    } finally {
+      setIsProcessingTransfer(false);
+    }
+  };
+
+  const handleRejectRelease = async (transferId: string) => {
+    const reason = prompt('Please enter rejection reason:');
+    if (reason === null) return;
+    setIsProcessingTransfer(true);
+    try {
+      await api.post(`/corporate/transfers/${transferId}/reject`, { reason });
+      await fetchPendingTransfers();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to reject transfer');
+    } finally {
+      setIsProcessingTransfer(false);
+    }
+  };
 
   const existingCodes = useMemo(() => {
     return new Set(employees.map((e) => (e.employeeCode || e.id).toUpperCase()));
@@ -86,22 +144,35 @@ export default function EmployeesPage() {
     await fetchPartners();
   };
 
-  const handleTransferEmployee = async (item: CorporateEmployee) => {
-    await employeeService.transferEmployee({
-      employeeCode: item.employeeCode,
-      callingName: item.callingName,
-      fullName: item.fullName,
-      nicNo: item.nicNo,
-      businessPartnerName: item.businessPartner,
-      tradeGroup: item.tradeGroup,
-      dailyRate: item.dailyRate,
-      epfNo: item.epfNo,
-    });
+  const handleTransferEmployee = async (
+    item: CorporateEmployee,
+    _fromSiteName?: string,
+    startDate?: string,
+    remarks?: string
+  ) => {
+    try {
+      await api.post('/corporate/transfers/request', {
+        employeeCode: item.employeeCode,
+        startDate: startDate || new Date().toISOString().split('T')[0],
+        remarks: remarks || 'Transfer requested via Site Admin Portal',
+      });
+    } catch (err: any) {
+      console.warn('Fallback direct transfer notice:', err);
+      await employeeService.transferEmployee({
+        employeeCode: item.employeeCode,
+        callingName: item.callingName,
+        fullName: item.fullName,
+        nicNo: item.nicNo,
+        businessPartnerName: item.businessPartner,
+        tradeGroup: item.tradeGroup,
+        dailyRate: item.dailyRate,
+        epfNo: item.epfNo,
+      });
+    }
 
     // Refresh active employees in project view
     await refresh();
-
-    // The crossTenantStatusMap in EmployeeImportView will handle the update via its own loadCatalog
+    await fetchPendingTransfers();
   };
 
   const fetchPartners = async () => {
@@ -190,15 +261,95 @@ export default function EmployeesPage() {
             </div>
             <div className="flex items-center gap-2">
               <button
+                id="site-direct-register-btn"
+                onClick={() => setIsDirectRegisterModalOpen(true)}
+                title="Enroll walk-in personnel and subcontractors directly at site gate"
+                className="flex items-center gap-2 bg-emerald-700 text-white font-medium text-sm rounded-lg px-3.5 min-h-[44px] transition-colors hover:bg-emerald-800 active:bg-emerald-900 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 cursor-pointer shadow-xs"
+              >
+                <UserPlus size={16} />
+                <span>+ Direct Site Register</span>
+              </button>
+              <button
                 id="emp-import-btn"
                 onClick={() => setImportModalOpen(true)}
+                title="Mobilize new personnel from Central Depot or request transfers from other sites"
                 className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 cursor-pointer shadow-xs"
               >
-                <Database size={16} />
-                <span>Add from ERP Master</span>
+                <UserPlus size={16} />
+                <span>Mobilize from Corporate</span>
               </button>
             </div>
           </div>
+
+          {/* 2-Way Handshake: Pending Inter-Site Transfer Requests Banner */}
+          {pendingTransfers.length > 0 && (
+            <div className="mb-5 bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-xs animate-in fade-in">
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center gap-2 text-amber-900 font-bold text-xs sm:text-sm">
+                  <ArrowRightLeft size={16} className="text-amber-600" />
+                  <span>Pending Inter-Site Transfer Requests ({pendingTransfers.length})</span>
+                </div>
+                <span className="text-[11px] font-medium text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full border border-amber-300">
+                  2-Way Handshake Release Required
+                </span>
+              </div>
+              <div className="space-y-2">
+                {pendingTransfers.map((req) => (
+                  <div
+                    key={req.id}
+                    className="bg-white p-3 rounded-lg border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-slate-800">{req.corporateEmployee?.fullName}</span>
+                        <span className="font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                          {req.corporateEmployee?.employeeCode}
+                        </span>
+                        <span className="text-slate-500 font-medium">
+                          ({req.corporateEmployee?.tradeGroup?.name || 'General Labour'})
+                        </span>
+                      </div>
+                      <div className="text-slate-600 text-[11px] mt-1 flex items-center gap-1.5 flex-wrap">
+                        <span>Requested by Project:</span>
+                        <span className="font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                          {req.toProject?.projectName || req.toProject?.projectCode}
+                        </span>
+                        {req.startDate && (
+                          <span className="text-slate-500 flex items-center gap-1 ml-1">
+                            <Clock size={11} /> Effective: {new Date(req.startDate).toLocaleDateString()}
+                          </span>
+                        )}
+                        {req.remarks && (
+                          <span className="italic text-slate-600 ml-1">
+                            — "{req.remarks}"
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 self-end sm:self-auto flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleRejectRelease(req.id)}
+                        disabled={isProcessingTransfer}
+                        className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-medium cursor-pointer transition-colors"
+                      >
+                        Reject
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleApproveRelease(req.id)}
+                        disabled={isProcessingTransfer}
+                        className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+                      >
+                        <Check size={13} />
+                        <span>Approve & Release</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Prerequisite banner: If no business partners exist */}
           {!loadingPartners && registeredPartners.length === 0 && (
@@ -301,6 +452,14 @@ export default function EmployeesPage() {
           onCancel={closePanel}
         />
       </SlidePanel>
+
+      {/* Direct Site Registration Modal */}
+      <DirectSiteRegisterModal
+        isOpen={isDirectRegisterModalOpen}
+        onClose={() => setIsDirectRegisterModalOpen(false)}
+        onSuccess={refresh}
+        existingPartners={registeredPartners}
+      />
     </div>
   );
 }

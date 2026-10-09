@@ -1,4 +1,5 @@
 
+import { Lock, FileText } from 'lucide-react';
 import CardList from '../../../components/CardList';
 import StatusBadge from '../../../components/StatusBadge';
 import type { Employee } from '../services/employeeService';
@@ -36,20 +37,38 @@ export default function EmployeeCardList({ data, onCardClick, onToggleStatus }: 
             <p className="text-xs text-slate-500 truncate mt-0.5">
               NIC: {emp.nicNo || '—'} {emp.epfNo ? `· EPF: ${emp.epfNo}` : ''}
             </p>
-            <p className="text-xs text-slate-400 truncate">
-              {emp.businessPartner}
-            </p>
+            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+              <span className="text-xs text-slate-400 truncate">
+                {emp.businessPartner || 'Direct Mäga'}
+              </span>
+              {emp.documentUrl && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.2 rounded font-medium">
+                  <FileText size={10} /> PDF Attached
+                </span>
+              )}
+            </div>
           </div>
 
           <div
             className="flex flex-col items-end gap-1 flex-shrink-0"
             onClick={(e) => e.stopPropagation()}
           >
-            <StatusBadge status={emp.status} />
-            {onToggleStatus && (
+            {emp.status === 'pending_approval' ? (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full"
+                title={emp.lockReason || 'Pending Head Office Super Admin Approval'}
+              >
+                <Lock size={10} className="text-amber-600" />
+                <span>Pending HO</span>
+              </span>
+            ) : (
+              <StatusBadge status={emp.status === 'active' ? 'active' : 'inactive'} />
+            )}
+
+            {onToggleStatus && emp.status !== 'pending_approval' && (
               <button
                 type="button"
-                onClick={() => onToggleStatus(emp.id, emp.status)}
+                onClick={() => onToggleStatus(emp.id, emp.status as any)}
                 className={`text-[11px] px-2 py-0.5 rounded font-medium transition-colors ${
                   emp.status === 'active'
                     ? 'text-slate-500 hover:text-amber-700 hover:bg-amber-50 border border-slate-200'

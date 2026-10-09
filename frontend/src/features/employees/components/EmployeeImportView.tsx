@@ -31,6 +31,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  CheckCircle2,
 } from 'lucide-react';
 import { fetchCorporateEmployees, type CorporateEmployee } from '../../master-import/services/corporateMasterService';
 import type { CrossTenantStatus } from '../services/employeeService';
@@ -39,7 +40,7 @@ interface EmployeeImportViewProps {
   onBack: () => void;
   existingCodes: Set<string>;
   onImport: (items: CorporateEmployee[]) => Promise<void> | void;
-  onTransfer: (item: CorporateEmployee, targetSiteName?: string) => Promise<void> | void;
+  onTransfer: (item: CorporateEmployee, targetSiteName?: string, startDate?: string, remarks?: string) => Promise<void> | void;
 }
 
 // Helper to get registered BP Code or mark as Internal / none
@@ -57,6 +58,9 @@ export default function EmployeeImportView({
 }: EmployeeImportViewProps) {
   const [crossTenantStatusMap, setCrossTenantStatusMap] = useState<Record<string, CrossTenantStatus>>({});
   const [catalog, setCatalog] = useState<CorporateEmployee[]>([]);
+  const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [transferRemarks, setTransferRemarks] = useState('');
+  const [transferSuccessMessage, setTransferSuccessMessage] = useState<string | null>(null);
 
   const loadCatalog = async () => {
     setIsRefreshing(true);
@@ -123,7 +127,8 @@ export default function EmployeeImportView({
 
   // Determine status for each employee
   const getItemStatus = (item: CorporateEmployee) => {
-    if (existingCodes.has(item.employeeCode.toUpperCase())) {
+    const code = (item.employeeCode || '').toUpperCase();
+    if (code && existingCodes.has(code)) {
       return {
         type: 'IN_SITE' as const,
         label: 'in site',
@@ -131,7 +136,7 @@ export default function EmployeeImportView({
         siteName: '',
       };
     }
-    const crossStatus = crossTenantStatusMap[item.employeeCode.toUpperCase()];
+    const crossStatus = code ? crossTenantStatusMap[code] : undefined;
     if (crossStatus && crossStatus.status === 'in_other_site') {
       return {
         type: 'AT_OTHER_SITE' as const,
@@ -156,7 +161,7 @@ export default function EmployeeImportView({
       if (filterStatus === 'AT_OTHER_SITE' && status.type !== 'AT_OTHER_SITE') return false;
       if (filterStatus === 'IN_SITE' && status.type !== 'IN_SITE') return false;
       if (filterTrade === 'OPERATORS_ALL') {
-        const isOp = item.isOperator || ['operator', 'driver'].includes((item.tradeGroup || '').toLowerCase());
+        const isOp = item.isOperator || ['operator', 'driver'].some(t => (item.tradeGroup || '').toLowerCase().includes(t));
         if (!isOp) return false;
       } else if (filterTrade !== 'ALL' && item.tradeGroup !== filterTrade) {
         return false;
@@ -168,20 +173,20 @@ export default function EmployeeImportView({
       if (globalSearch.trim()) {
         const q = globalSearch.toLowerCase();
         if (
-          !item.employeeCode.toLowerCase().includes(q) &&
-          !item.callingName.toLowerCase().includes(q) &&
-          !item.fullName.toLowerCase().includes(q) &&
-          !item.tradeGroup.toLowerCase().includes(q) &&
-          !item.nicNo.toLowerCase().includes(q) &&
-          !partnerDisplay.toLowerCase().includes(q)
+          !(item.employeeCode || '').toLowerCase().includes(q) &&
+          !(item.callingName || '').toLowerCase().includes(q) &&
+          !(item.fullName || '').toLowerCase().includes(q) &&
+          !(item.tradeGroup || '').toLowerCase().includes(q) &&
+          !(item.nicNo || '').toLowerCase().includes(q) &&
+          !(partnerDisplay || '').toLowerCase().includes(q)
         ) return false;
       }
       return true;
     }).sort((a, b) => {
       let comp = 0;
-      if (sortField === 'employeeCode') comp = a.employeeCode.localeCompare(b.employeeCode);
-      else if (sortField === 'callingName') comp = a.callingName.localeCompare(b.callingName);
-      else if (sortField === 'tradeGroup') comp = a.tradeGroup.localeCompare(b.tradeGroup);
+      if (sortField === 'employeeCode') comp = (a.employeeCode || '').localeCompare(b.employeeCode || '');
+      else if (sortField === 'callingName') comp = (a.callingName || '').localeCompare(b.callingName || '');
+      else if (sortField === 'tradeGroup') comp = (a.tradeGroup || '').localeCompare(b.tradeGroup || '');
       return sortAsc ? comp : -comp;
     });
   }, [catalog, existingCodes, crossTenantStatusMap, globalSearch, filterStatus, filterTrade, filterBP, sortField, sortAsc]);
@@ -197,7 +202,7 @@ export default function EmployeeImportView({
 
   // Selectable items in current page
   const selectablePageItems = useMemo(() => {
-    return paginatedCatalog.filter((item) => !existingCodes.has(item.employeeCode.toUpperCase()));
+    return paginatedCatalog.filter((item) => !existingCodes.has((item.employeeCode || '').toUpperCase()));
   }, [paginatedCatalog, existingCodes]);
 
   const allPageSelectableChecked =
@@ -280,18 +285,23 @@ export default function EmployeeImportView({
     }
   };
 
-  // Transfer confirmation
+  // Transfer confirmation (2-Way Handshake Request)
   const handleConfirmTransfer = async () => {
     if (!transferTarget) return;
     setIsSubmitting(true);
     try {
-      await onTransfer(transferTarget.item, transferTarget.currentSiteName);
+      await onTransfer(transferTarget.item, transferTarget.currentSiteName, transferDate, transferRemarks);
       setSelectedCodes((prev) => {
         const next = new Set(prev);
         next.delete(transferTarget.item.employeeCode);
         return next;
       });
+      setTransferSuccessMessage(
+        `Transfer request for ${transferTarget.item.callingName} (${transferTarget.item.employeeCode}) submitted successfully. Awaiting release approval from ${transferTarget.currentSiteName}.`
+      );
       setTransferTarget(null);
+      setTransferRemarks('');
+      setTimeout(() => setTransferSuccessMessage(null), 7000);
     } finally {
       setIsSubmitting(false);
     }
@@ -307,6 +317,15 @@ export default function EmployeeImportView({
   return (
     <div className="bg-white border border-slate-300 rounded-lg shadow-sm overflow-hidden flex flex-col font-sans transition-colors animate-in fade-in duration-150">
       {/* ── 1. Tab Bar (Clean Light) ────────────────────────────────────────── */}
+      {transferSuccessMessage && (
+        <div className="bg-emerald-50 border-b border-emerald-200 px-4 py-2 flex items-center justify-between text-xs text-emerald-800 animate-in fade-in">
+          <span className="flex items-center gap-2">
+            <CheckCircle2 size={14} className="text-emerald-600 flex-shrink-0" />
+            <span>{transferSuccessMessage}</span>
+          </span>
+          <button onClick={() => setTransferSuccessMessage(null)} className="text-emerald-600 hover:text-emerald-900 font-bold ml-2">×</button>
+        </div>
+      )}
       <div className="bg-slate-50/80 border-b border-slate-300 px-2 pt-1.5 flex items-center justify-between select-none">
         <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
           {/* Back button */}
@@ -319,10 +338,10 @@ export default function EmployeeImportView({
             <ArrowLeft size={14} />
           </button>
 
-          {/* Active Tab: Employees (ERP Master) */}
+          {/* Active Tab: Corporate Personnel Directory */}
           <div className="bg-white text-slate-800 font-semibold text-xs px-3 py-1.5 border-t-2 border-t-blue-600 border-x border-slate-300 flex items-center gap-2 rounded-t-md shadow-xs">
             <HardHat size={13} className="text-blue-600" />
-            <span>Employees</span>
+            <span>Corporate Personnel Directory</span>
             <button
               type="button"
               onClick={onBack}
@@ -373,7 +392,7 @@ export default function EmployeeImportView({
                 : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
             }`}
           >
-            <span>🚜 Operators ({catalog.filter(c => c.isOperator || ['operator', 'driver'].includes((c.tradeGroup || '').toLowerCase())).length})</span>
+            <span>🚜 Operators ({catalog.filter(c => c.isOperator || ['operator', 'driver'].some(t => (c.tradeGroup || '').toLowerCase().includes(t))).length})</span>
           </button>
 
           {/* Filters Pill & Popover */}
@@ -702,7 +721,7 @@ export default function EmployeeImportView({
                         <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded text-[11px] font-medium text-slate-700">
                           {item.tradeGroup}
                         </span>
-                        {(item.isOperator || ['operator', 'driver'].includes((item.tradeGroup || '').toLowerCase())) && (
+                        {(item.isOperator || ['operator', 'driver'].some(t => (item.tradeGroup || '').toLowerCase().includes(t))) && (
                           <span className="bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-semibold px-1.5 py-0.2 rounded">
                             Operator
                           </span>
@@ -855,7 +874,7 @@ export default function EmployeeImportView({
         </div>
       </div>
 
-      {/* ── 1-Click Site Transfer Confirmation Modal ── */}
+      {/* ── 2-Way Handshake Site Transfer Request Modal ── */}
       {transferTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white rounded-xl max-w-md w-full p-5 shadow-xl border border-slate-300 space-y-4">
@@ -864,31 +883,59 @@ export default function EmployeeImportView({
                 <AlertTriangle size={18} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Transfer Employee to Site</h3>
-                <p className="text-[11px] text-slate-500">Cross-Tenant Project Re-assignment</p>
+                <h3 className="text-sm font-bold text-slate-900">Request Employee Transfer</h3>
+                <p className="text-[11px] text-slate-500">2-Way Inter-Site Handshake Approval</p>
               </div>
             </div>
 
             <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg space-y-2 text-xs">
               <p className="text-slate-800">
                 Employee <span className="font-bold">{transferTarget.item.callingName}</span> (
-                <span className="font-mono font-medium">{transferTarget.item.employeeCode}</span>) is currently active at:
+                <span className="font-mono font-medium">{transferTarget.item.employeeCode}</span>) is currently stationed at:
               </p>
               <p className="font-semibold text-amber-900 bg-white px-2.5 py-1.5 rounded border border-amber-200 flex items-center gap-1.5">
                 <Building2 size={13} className="text-amber-600 flex-shrink-0" />
                 <span>{transferTarget.currentSiteName}</span>
               </p>
-              <p className="text-slate-600 text-[11px] leading-relaxed">
-                Confirming transfer will deactivate them from their current project and enroll them into this project site.
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Required From Date (අවශ්‍ය දිනය):
+                </label>
+                <input
+                  type="date"
+                  value={transferDate}
+                  onChange={(e) => setTransferDate(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-1 focus:ring-blue-600 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Justification / Remarks (හේතුව):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Needed for urgent casting works"
+                  value={transferRemarks}
+                  onChange={(e) => setTransferRemarks(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-1 focus:ring-blue-600 bg-white"
+                />
+              </div>
+
+              <p className="text-[11px] text-slate-500 italic">
+                * Releasing project admin will review and release this employee before they are enrolled into your site active roster.
               </p>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-1">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
               <button
                 type="button"
                 disabled={isSubmitting}
                 onClick={() => setTransferTarget(null)}
-                className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
               >
                 Cancel
               </button>
@@ -896,10 +943,10 @@ export default function EmployeeImportView({
                 type="button"
                 disabled={isSubmitting}
                 onClick={handleConfirmTransfer}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium shadow-xs transition-all"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium shadow-xs transition-all cursor-pointer"
               >
                 {isSubmitting ? <Loader2 size={13} className="animate-spin" /> : <ArrowRight size={13} />}
-                <span>Confirm Transfer</span>
+                <span>Submit Transfer Request</span>
               </button>
             </div>
           </div>

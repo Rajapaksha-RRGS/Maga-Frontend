@@ -41,7 +41,7 @@ export default function EmployeeForm({
   const [nicNo, setNicNo] = useState('');
   const [dailyRate, setDailyRate] = useState('1400');
   const [epfNo, setEpfNo] = useState('');
-  const [status, setStatus] = useState<'active' | 'inactive'>('active');
+  const [status, setStatus] = useState<'active' | 'inactive' | 'pending_approval' | 'rejected'>('active');
   const [isSaving, setIsSaving] = useState(false);
   const [isStatusChanging, setIsStatusChanging] = useState(false);
 
@@ -76,7 +76,7 @@ export default function EmployeeForm({
       setEmployeeCode(employee.employeeCode || employee.id);
       setCallingName(employee.callingName || '');
       setFullName(employee.fullName || '');
-      setStatus(employee.status || 'active');
+      setStatus((employee.status as any) || 'active');
 
       // Resolve businessPartnerId if already present, or match by name
       if (employee.businessPartnerId) {
@@ -138,16 +138,23 @@ export default function EmployeeForm({
         <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50/80">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-slate-600">Employee Status:</span>
-            <StatusBadge status={status} />
+            {status === 'pending_approval' ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full">
+                Pending HO Approval
+              </span>
+            ) : (
+              <StatusBadge status={status === 'active' ? 'active' : 'inactive'} />
+            )}
           </div>
           <select
             id="emp-status-select"
             value={status}
-            onChange={(e) => setStatus(e.target.value as 'active' | 'inactive')}
+            onChange={(e) => setStatus(e.target.value as any)}
             className="text-xs font-medium bg-white border border-slate-300 rounded px-2.5 py-1 text-slate-700 focus:ring-1 focus:ring-blue-600 focus:outline-none"
           >
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
+            {status === 'pending_approval' && <option value="pending_approval">Pending Approval</option>}
           </select>
         </div>
       )}
@@ -167,10 +174,15 @@ export default function EmployeeForm({
           <option value="">🏢 Mäga Engineering (Direct / Internal)</option>
           {partners.map((bp) => (
             <option key={bp.id} value={bp.id}>
-              {bp.name} ({bp.code})
+              {bp.name} ({bp.code}) {bp.status === 'pending_approval' ? '⚠️ [Pending HO]' : ''}
             </option>
           ))}
         </select>
+        {partners.find((p) => p.id === businessPartnerId)?.status === 'pending_approval' && (
+          <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-1 font-medium leading-tight">
+            ⚠️ <strong>Subcontractor Pending HO:</strong> This subcontractor is awaiting Head Office approval. Daily site attendance can be recorded, but wage disbursement will be held until approved.
+          </p>
+        )}
       </div>
 
       {/* Trade Group */}

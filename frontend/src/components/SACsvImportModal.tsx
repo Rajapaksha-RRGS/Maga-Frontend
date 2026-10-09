@@ -60,6 +60,7 @@ const ALIAS_MAP: Record<string, string[]> = {
   minimumUtilization: ['minimum utilization', 'min utilization', 'min hours'],
   epfNo: ['epf no', 'epf', 'epf number'],
   employeeType: ['employee type', 'type', 'employment type'],
+  currentWorkingProject: ['current working project', 'project code', 'site', 'working project', 'project', 'site code', 'current project', 'working place'],
   businessPartnerCode: ['business partner code', 'bp code', 'business partner', 'bp', 'supplier', 'vendor'],
   businessPartner: ['business partner', 'bp code', 'bp', 'business partner code'],
   isOperator: ['operator (y/n)', 'is operator', 'operator', 'is_operator', 'machine operator'],

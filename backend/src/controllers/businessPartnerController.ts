@@ -17,6 +17,8 @@ const partnerSelectOptimized = {
   email: true,
   rating: true,
   nicNo: true,
+  brNumber: true,
+  documentUrl: true,
   address: true,
   city: true,
   country: true,
@@ -125,27 +127,61 @@ export const getNextBusinessPartnerCode = async (_req: Request, res: Response): 
 // 4. POST /api/business-partners — Create business partner
 export const createBusinessPartner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, name, contactPerson, phone, email, status, type, nicNo, businessEntityIdentifier, address, city, country } = req.body || {};
+    const {
+      code,
+      name,
+      contactPerson,
+      phone,
+      email,
+      status,
+      type,
+      nicNo,
+      businessEntityIdentifier,
+      address,
+      city,
+      country,
+      brNumber,
+      documentUrl,
+    } = req.body || {};
 
-    if (!code || !name) {
-      res.status(400).json({ error: 'Code and Name are required fields' });
+    if (!name || !String(name).trim()) {
+      res.status(400).json({ error: 'Partner Name is a required field' });
       return;
     }
 
-    const cleanCode = String(code).trim().toUpperCase();
+    const cleanStatus = status || 'active';
+    let cleanCode = code ? String(code).trim().toUpperCase() : '';
+
+    if (!cleanCode) {
+      if (cleanStatus === 'pending_approval') {
+        const count = await prisma.mF_G_BusinessPartner.count();
+        cleanCode = `BP-TMP-${String(count + 1).padStart(4, '0')}`;
+      } else {
+        const latest = await prisma.mF_G_BusinessPartner.findFirst({
+          where: { code: { startsWith: 'BP1' } },
+          select: { code: true },
+          orderBy: { code: 'desc' },
+        });
+        const currentNum = latest ? parseInt(latest.code.replace(/[^0-9]/g, ''), 10) : 1001000;
+        cleanCode = `BP${(isNaN(currentNum) ? 1001000 : currentNum) + 1}`;
+      }
+    }
+
     const partner = await prisma.mF_G_BusinessPartner.create({
       data: {
         code: cleanCode,
         name: String(name).trim(),
         type: type ? String(type).trim() : null,
         nicNo: (nicNo || businessEntityIdentifier)?.trim() || null,
+        brNumber: brNumber?.trim() || null,
+        documentUrl: documentUrl?.trim() || null,
         address: address?.trim() || null,
         city: city?.trim() || null,
         country: country?.trim() || 'Sri Lanka',
         contactPerson: contactPerson?.trim() || null,
         phone: phone?.trim() || null,
         email: email?.trim() || null,
-        status: status || 'active',
+        status: cleanStatus,
       },
       select: partnerSelectOptimized,
     });
@@ -169,7 +205,21 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
 export const updateBusinessPartner = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { name, contactPerson, phone, email, status, type, nicNo, businessEntityIdentifier, address, city, country } = req.body || {};
+    const {
+      name,
+      contactPerson,
+      phone,
+      email,
+      status,
+      type,
+      nicNo,
+      businessEntityIdentifier,
+      address,
+      city,
+      country,
+      brNumber,
+      documentUrl,
+    } = req.body || {};
 
     const partner = await prisma.mF_G_BusinessPartner.update({
       where: { id },
@@ -177,6 +227,8 @@ export const updateBusinessPartner = async (req: Request, res: Response): Promis
         name: name?.trim(),
         type: type !== undefined ? (type ? String(type).trim() : null) : undefined,
         nicNo: (nicNo !== undefined || businessEntityIdentifier !== undefined) ? ((nicNo || businessEntityIdentifier)?.trim() || null) : undefined,
+        brNumber: brNumber !== undefined ? (brNumber?.trim() || null) : undefined,
+        documentUrl: documentUrl !== undefined ? (documentUrl?.trim() || null) : undefined,
         address: address !== undefined ? (address?.trim() || null) : undefined,
         city: city !== undefined ? (city?.trim() || null) : undefined,
         country: country !== undefined ? (country?.trim() || 'Sri Lanka') : undefined,
@@ -296,3 +348,109 @@ export const getCorporateBusinessPartnersCatalog = async (_req: Request, res: Re
     res.status(500).json({ error: 'Failed to fetch corporate business partners catalog' });
   }
 };
+
+// 9. GET /api/business-partners/pending — List partners pending Super Admin approval
+export const getPendingBusinessPartners = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const list = await prisma.mF_G_BusinessPartner.findMany({
+      where: { status: 'pending_approval' },
+      select: partnerSelectOptimized,
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({
+      items: list.map((p) => ({
+        ...p,
+        employeeCount: p._count.employees,
+        equipmentCount: p._count.equipment,
+      })),
+      total: list.length,
+    });
+  } catch (error) {
+    console.error('Error fetching pending business partners:', error);
+    res.status(500).json({ error: 'Failed to fetch pending business partners' });
+  }
+};
+
+// 10. POST /api/business-partners/:id/approve — Super Admin approve partner & assign official code
+export const approveBusinessPartner = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = getParam(req.params.id);
+    const { officialCode } = req.body || {};
+
+    const existing = await prisma.mF_G_BusinessPartner.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      res.status(404).json({ error: 'Business partner not found' });
+      return;
+    }
+
+    let finalCode = officialCode ? String(officialCode).trim().toUpperCase() : '';
+    if (!finalCode || finalCode.startsWith('BP-TMP')) {
+      const latest = await prisma.mF_G_BusinessPartner.findFirst({
+        where: { code: { startsWith: 'BP1' } },
+        select: { code: true },
+        orderBy: { code: 'desc' },
+      });
+      const currentNum = latest ? parseInt(latest.code.replace(/[^0-9]/g, ''), 10) : 1001000;
+      finalCode = `BP${(isNaN(currentNum) ? 1001000 : currentNum) + 1}`;
+    }
+
+    const updated = await prisma.mF_G_BusinessPartner.update({
+      where: { id },
+      data: {
+        code: finalCode,
+        status: 'active',
+      },
+      select: partnerSelectOptimized,
+    });
+
+    res.json({
+      success: true,
+      message: `Business Partner approved successfully. Official Code: ${finalCode}`,
+      businessPartner: {
+        ...updated,
+        employeeCount: updated._count.employees,
+        equipmentCount: updated._count.equipment,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error approving business partner:', error);
+    res.status(500).json({ error: error.message || 'Failed to approve business partner' });
+  }
+};
+
+// 11. POST /api/business-partners/:id/reject — Super Admin reject business partner
+export const rejectBusinessPartner = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = getParam(req.params.id);
+    const { reason } = req.body || {};
+
+    const existing = await prisma.mF_G_BusinessPartner.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      res.status(404).json({ error: 'Business partner not found' });
+      return;
+    }
+
+    const updated = await prisma.mF_G_BusinessPartner.update({
+      where: { id },
+      data: {
+        status: 'rejected',
+      },
+      select: partnerSelectOptimized,
+    });
+
+    res.json({
+      success: true,
+      message: 'Business partner registration rejected',
+      reason: reason || null,
+      businessPartner: updated,
+    });
+  } catch (error: any) {
+    console.error('Error rejecting business partner:', error);
+    res.status(500).json({ error: error.message || 'Failed to reject business partner' });
+  }
+};
+

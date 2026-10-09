@@ -190,6 +190,18 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
       const emp = entry.employee;
       const corp = emp.corporateEmployee;
 
+      const isEmployeeActive = emp.status === 'active' && corp.status === 'active';
+      const isPartnerActive = !emp.businessPartner || emp.businessPartner.status === 'active';
+      const isPayable = isEmployeeActive && isPartnerActive;
+      const payrollStatus = isPayable ? 'PAYABLE' : 'HOLD_PENDING_HO_APPROVAL';
+      const lockReason = !isPayable
+        ? (!isEmployeeActive && !isPartnerActive
+            ? 'Both Employee and Business Partner pending Super Admin approval'
+            : !isEmployeeActive
+            ? 'Employee dossier pending Super Admin approval'
+            : 'Business Partner pending Super Admin approval')
+        : null;
+
       if (!empInfoMap.has(empId)) {
         empInfoMap.set(empId, {
           employeeId: empId,
@@ -198,6 +210,11 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
           employeeName: corp.fullName || emp.callingName || '',
           tradeGroup: emp.tradeGroup?.name || (emp.isOperator ? 'Operator' : 'Labor'),
           businessPartner: emp.businessPartner?.name || 'Direct / Maga',
+          isEmployeeApproved: isEmployeeActive,
+          isPartnerApproved: isPartnerActive,
+          isPayable,
+          payrollStatus,
+          lockReason,
         });
       }
 
@@ -259,6 +276,18 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
         const empId = emp.id;
         const dateKey = op.dailySheet.date.toISOString().split('T')[0];
 
+        const isEmployeeActive = emp.status === 'active' && corp.status === 'active';
+        const isPartnerActive = !emp.businessPartner || emp.businessPartner.status === 'active';
+        const isPayable = isEmployeeActive && isPartnerActive;
+        const payrollStatus = isPayable ? 'PAYABLE' : 'HOLD_PENDING_HO_APPROVAL';
+        const lockReason = !isPayable
+          ? (!isEmployeeActive && !isPartnerActive
+              ? 'Both Operator and Business Partner pending Super Admin approval'
+              : !isEmployeeActive
+              ? 'Operator dossier pending Super Admin approval'
+              : 'Business Partner pending Super Admin approval')
+          : null;
+
         if (!empInfoMap.has(empId)) {
           empInfoMap.set(empId, {
             employeeId: empId,
@@ -267,6 +296,11 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
             employeeName: corp.fullName || emp.callingName || '',
             tradeGroup: emp.tradeGroup?.name || 'Operator',
             businessPartner: emp.businessPartner?.name || 'Direct / Maga',
+            isEmployeeApproved: isEmployeeActive,
+            isPartnerApproved: isPartnerActive,
+            isPayable,
+            payrollStatus,
+            lockReason,
           });
         }
 
@@ -333,6 +367,11 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
         employeeIdentifier: empIdentifier,
         tradeGroup: empInfo?.tradeGroup || '',
         businessPartner: empInfo?.businessPartner || '',
+        isEmployeeApproved: empInfo?.isEmployeeApproved ?? true,
+        isPartnerApproved: empInfo?.isPartnerApproved ?? true,
+        isPayable: empInfo?.isPayable ?? true,
+        payrollStatus: empInfo?.payrollStatus || 'PAYABLE',
+        lockReason: empInfo?.lockReason || null,
         totalDays,
         totalNormalHours,
         totalOtHours,
@@ -551,10 +590,16 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     // Group by businessPartner -> employee
     type EmpData = {
       employeeId: string;
+      employeeCode: string;
       employeeName: string;
       tradeGroup: string;
       dailyHours: Record<string, number>;
       dailyRate: number;
+      isEmployeeApproved: boolean;
+      isPartnerApproved: boolean;
+      isPayable: boolean;
+      payrollStatus: string;
+      lockReason: string | null;
     };
     const bpMap = new Map<string, Map<string, EmpData>>();
 
@@ -564,16 +609,34 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
       const empId = entry.employeeId;
       const hours = Number(entry.hours) + Number(entry.overtimeHours);
 
+      const isEmployeeActive = entry.employee.status === 'active' && entry.employee.corporateEmployee.status === 'active';
+      const isPartnerActive = !entry.employee.businessPartner || entry.employee.businessPartner.status === 'active';
+      const isPayable = isEmployeeActive && isPartnerActive;
+      const payrollStatus = isPayable ? 'PAYABLE' : 'HOLD_PENDING_HO_APPROVAL';
+      const lockReason = !isPayable
+        ? (!isEmployeeActive && !isPartnerActive
+            ? 'Both Employee and Business Partner pending Super Admin approval'
+            : !isEmployeeActive
+            ? 'Employee dossier pending Super Admin approval'
+            : 'Business Partner pending Super Admin approval')
+        : null;
+
       if (!bpMap.has(bpName)) bpMap.set(bpName, new Map());
       const empMap = bpMap.get(bpName)!;
 
       if (!empMap.has(empId)) {
         empMap.set(empId, {
           employeeId: empId,
+          employeeCode: entry.employee.corporateEmployee.employeeCode || '',
           employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
           tradeGroup: entry.employee.tradeGroup?.name || '',
           dailyHours: {},
           dailyRate: Number(entry.employee.dailyRate) || 1400,
+          isEmployeeApproved: isEmployeeActive,
+          isPartnerApproved: isPartnerActive,
+          isPayable,
+          payrollStatus,
+          lockReason,
         });
       }
       const empData = empMap.get(empId)!;
@@ -622,16 +685,34 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
         const empId = op.operator.id;
         const hours = Number(op.dailyLog?.workingHours || op.dailyLog?.netRunningHours || 8);
 
+        const isEmployeeActive = op.operator.status === 'active' && op.operator.corporateEmployee.status === 'active';
+        const isPartnerActive = !op.operator.businessPartner || op.operator.businessPartner.status === 'active';
+        const isPayable = isEmployeeActive && isPartnerActive;
+        const payrollStatus = isPayable ? 'PAYABLE' : 'HOLD_PENDING_HO_APPROVAL';
+        const lockReason = !isPayable
+          ? (!isEmployeeActive && !isPartnerActive
+              ? 'Both Operator and Business Partner pending Super Admin approval'
+              : !isEmployeeActive
+              ? 'Operator dossier pending Super Admin approval'
+              : 'Business Partner pending Super Admin approval')
+          : null;
+
         if (!bpMap.has(bpName)) bpMap.set(bpName, new Map());
         const empMap = bpMap.get(bpName)!;
 
         if (!empMap.has(empId)) {
           empMap.set(empId, {
             employeeId: empId,
+            employeeCode: op.operator.corporateEmployee.employeeCode || '',
             employeeName: op.operator.corporateEmployee.fullName || op.operator.callingName || '',
             tradeGroup: op.operator.tradeGroup?.name || 'Operator',
             dailyHours: {},
             dailyRate: Number(op.operator.dailyRate) || 1600,
+            isEmployeeApproved: isEmployeeActive,
+            isPartnerApproved: isPartnerActive,
+            isPayable,
+            payrollStatus,
+            lockReason,
           });
         }
         const empData = empMap.get(empId)!;
@@ -655,12 +736,18 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     let grandTotalPayment = 0;
     let grandTotalOverhead = 0;
     let grandTotalCost = 0;
+    let grandTotalPayablePayment = 0;
+    let grandTotalLockedPayment = 0;
+    let grandTotalLockedCount = 0;
 
     const groups = Array.from(bpMap.entries()).map(([bpName, empMap]) => {
       let subtotalHours = 0;
       let subtotalPayment = 0;
       let subtotalOverhead = 0;
       let subtotalCost = 0;
+      let subtotalPayablePayment = 0;
+      let subtotalLockedPayment = 0;
+      let lockedCount = 0;
 
       const items = Array.from(empMap.values()).map((emp, idx) => {
         const totalHours = Object.values(emp.dailyHours).reduce((s, h) => s + h, 0);
@@ -675,9 +762,17 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
         subtotalOverhead += overhead;
         subtotalCost += totalCost;
 
+        if (emp.isPayable) {
+          subtotalPayablePayment += totalCost;
+        } else {
+          subtotalLockedPayment += totalCost;
+          lockedCount++;
+        }
+
         return {
           id: `bp-${idx}`,
           employeeId: emp.employeeId,
+          employeeCode: emp.employeeCode,
           employeeName: emp.employeeName,
           tradeGroup: emp.tradeGroup,
           dailyHours: emp.dailyHours,
@@ -686,6 +781,11 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
           totalHourlyPayment,
           overhead,
           totalCost,
+          isPayable: emp.isPayable,
+          payrollStatus: emp.payrollStatus,
+          lockReason: emp.lockReason,
+          isEmployeeApproved: emp.isEmployeeApproved,
+          isPartnerApproved: emp.isPartnerApproved,
         };
       });
 
@@ -693,6 +793,9 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
       grandTotalPayment += subtotalPayment;
       grandTotalOverhead += subtotalOverhead;
       grandTotalCost += subtotalCost;
+      grandTotalPayablePayment += subtotalPayablePayment;
+      grandTotalLockedPayment += subtotalLockedPayment;
+      grandTotalLockedCount += lockedCount;
 
       return {
         businessPartner: bpName,
@@ -701,6 +804,9 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
         subtotalPayment: Math.round(subtotalPayment * 100) / 100,
         subtotalOverhead: Math.round(subtotalOverhead * 100) / 100,
         subtotalCost: Math.round(subtotalCost * 100) / 100,
+        subtotalPayablePayment: Math.round(subtotalPayablePayment * 100) / 100,
+        subtotalLockedPayment: Math.round(subtotalLockedPayment * 100) / 100,
+        lockedCount,
       };
     });
 
@@ -711,6 +817,9 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
       grandTotalPayment: Math.round(grandTotalPayment * 100) / 100,
       grandTotalOverhead: Math.round(grandTotalOverhead * 100) / 100,
       grandTotalCost: Math.round(grandTotalCost * 100) / 100,
+      grandTotalPayablePayment: Math.round(grandTotalPayablePayment * 100) / 100,
+      grandTotalLockedPayment: Math.round(grandTotalLockedPayment * 100) / 100,
+      grandTotalLockedCount,
     });
   } catch (error) {
     console.error('Error fetching BP bill report:', error);

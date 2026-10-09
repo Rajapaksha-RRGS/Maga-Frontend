@@ -11,12 +11,14 @@ import type {
 import * as bpService from '../services/businessPartnerService';
 import { cacheManager } from '../../../utils/cacheManager';
 
+export type PartnerStatusFilter = 'all' | 'active' | 'inactive' | 'pending_approval';
+
 export function useBusinessPartners() {
   const cached = cacheManager.get<BusinessPartner[]>('business-partners:list');
   const [partners, setPartners] = useState<BusinessPartner[]>(() => cached || []);
   const [isLoading, setIsLoading] = useState<boolean>(() => !cached);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [statusFilter, setStatusFilter] = useState<PartnerStatusFilter>('all');
 
   const load = useCallback(async (forceRefresh = false) => {
     if (forceRefresh || !cacheManager.get('business-partners:list')) {

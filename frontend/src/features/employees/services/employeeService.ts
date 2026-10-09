@@ -26,13 +26,20 @@ export interface Employee {
   businessPartner: string;
   businessPartnerId?: string;
   tradeGroup: string;
+  tradeGroupId?: string;
   nicNo: string;
   dailyRate?: number;
   epfNo?: string;
   isOperator?: boolean;
   licenseNo?: string;
   employeeType?: 'internal' | 'external';
-  status: 'active' | 'inactive';
+  documentUrl?: string | null;
+  status: 'active' | 'inactive' | 'pending_approval' | 'rejected' | string;
+  corporateStatus?: string;
+  isApproved?: boolean;
+  isPayable?: boolean;
+  payrollStatus?: 'PAYABLE' | 'HOLD_PENDING_HO_APPROVAL' | string;
+  lockReason?: string | null;
 }
 
 export interface EmployeeFormData {
@@ -41,6 +48,9 @@ export interface EmployeeFormData {
   fullName?: string;
   businessPartnerId?: string;
   businessPartner?: string;
+  businessPartnerBrNumber?: string;
+  businessPartnerNicNo?: string;
+  businessPartnerDocumentUrl?: string;
   tradeGroup: string;
   nicNo: string;
   dailyRate: number;
@@ -48,7 +58,9 @@ export interface EmployeeFormData {
   isOperator?: boolean;
   licenseNo?: string;
   employeeType?: 'internal' | 'external';
-  status?: 'active' | 'inactive';
+  documentUrl?: string;
+  status?: string;
+  isSiteWalkIn?: boolean;
 }
 
 import { API_URL, apiFetch } from '../../../config/api';
@@ -68,13 +80,20 @@ function mapEmployee(raw: any): Employee {
         ? raw.businessPartner.name
         : (raw.businessPartner as string) || '',
     tradeGroup: raw.tradeGroup || raw.trade_group || '',
+    tradeGroupId: raw.tradeGroupId || raw.trade_group_id || undefined,
     nicNo: raw.nicNo || raw.nic_no || '',
     dailyRate: raw.dailyRate !== undefined ? Number(raw.dailyRate) : 1400,
     epfNo: raw.epfNo || raw.epf_no || '',
     isOperator: Boolean(raw.isOperator ?? raw.is_operator ?? (raw.tradeGroup?.toLowerCase() === 'operator')),
     licenseNo: raw.licenseNo || raw.license_no || undefined,
     employeeType: raw.employeeType || (raw.businessPartnerId || raw.businessPartner ? 'external' : 'internal'),
-    status: raw.status === 'inactive' ? 'inactive' : 'active',
+    documentUrl: raw.documentUrl || raw.document_url || null,
+    status: raw.status || 'active',
+    corporateStatus: raw.corporateStatus || raw.status || 'active',
+    isApproved: raw.isApproved ?? (raw.status === 'active'),
+    isPayable: raw.isPayable ?? (raw.status === 'active'),
+    payrollStatus: raw.payrollStatus || (raw.status === 'active' ? 'PAYABLE' : 'HOLD_PENDING_HO_APPROVAL'),
+    lockReason: raw.lockReason || null,
   };
 }
 

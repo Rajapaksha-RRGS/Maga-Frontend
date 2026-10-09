@@ -34,7 +34,7 @@ export default function BusinessPartnerForm({
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
-  const [status, setStatus] = useState<'active' | 'inactive'>('active');
+  const [status, setStatus] = useState<'active' | 'inactive' | 'pending_approval' | 'rejected'>('active');
 
   const [codeError, setCodeError] = useState('');
   const [nameError, setNameError] = useState('');
@@ -49,7 +49,7 @@ export default function BusinessPartnerForm({
       setPhone(partner.phone || '');
       setEmail(partner.email || '');
       setAddress(partner.address || '');
-      setStatus(partner.status);
+      setStatus((partner.status as any) || 'active');
     } else {
       const nextCode = suggestNextCode ? suggestNextCode() : 'BP1004094';
       setCode(nextCode);

@@ -19,7 +19,6 @@ model MF_G_SuperAdmin {
   fullName     String   @map("full_name")
   status       String   @default("active")
   createdAt    DateTime @default(now()) @map("created_at")
-
   @@map("MF_G_SUPER_ADMIN")
 }
 
@@ -36,13 +35,13 @@ model MF_G_BusinessPartner {
   phone                    String?
   email                    String?
   rating                   String?
+  brNumber                 String?  @map("br_number")
+  documentUrl              String?  @map("document_url")
   status                   String   @default("active")
   createdAt                DateTime @default(now()) @map("created_at")
-
   corporateEmployees MF_G_Employee[]
   employees          MF_P_Employee[]
   equipment          MF_P_Equipment[]
-
   @@map("MF_G_BUSINESS_PARTNER")
 }
 
@@ -67,7 +66,7 @@ model MF_G_UnitMaster {
   name      String
   category  String   @default("meter")
   createdAt DateTime @default(now()) @map("created_at")
-
+  
   equipmentMeterUnit MF_P_Equipment[]         @relation("EquipmentMeterUnit")
   equipmentDailyLogs MF_OP_EquipmentDailyLog[]
 
@@ -92,17 +91,18 @@ model MF_G_Employee {
   employeeCode               String   @unique @map("employee_code")
   fullName                   String   @map("full_name")
   nicNo                      String   @map("nic_no")
-  tradeGroupId               String?  @map("trade_group_id")
+  tradeGroupId               String   @map("trade_group_id")
   dailyRate                  Decimal? @map("daily_rate") @db.Decimal(12, 2)
   isOperator                 Boolean  @default(false) @map("is_operator")
   epfNo                      String?  @map("epf_no")
   employeeType               String   @map("employee_type") // "internal" | "external" - Strictly Mandatory
   corporateBusinessPartnerId String?  @map("corporate_business_partner_id")
   currentWorkingProject      String?  @map("current_working_project")
+  documentUrl                String?  @map("document_url")
   status                     String   @default("active")
   createdAt                  DateTime @default(now()) @map("created_at")
 
-  tradeGroup               MF_G_TradeGroup?       @relation(fields: [tradeGroupId], references: [id])
+  tradeGroup               MF_G_TradeGroup        @relation(fields: [tradeGroupId], references: [id])
   corporateBusinessPartner MF_G_BusinessPartner? @relation(fields: [corporateBusinessPartnerId], references: [id])
   projectEmployees         MF_P_Employee[]
   transfers                MF_G_EmployeeTransfer[]
@@ -131,9 +131,7 @@ model MF_G_Equipment {
   currentWorkingProject   String?  @map("current_working_project")
   status                  String   @default("active")
   createdAt               DateTime @default(now()) @map("created_at")
-
   projectEquipment MF_P_Equipment[]
-
   @@index([standardEquipmentNumber])
   @@index([vehicleNo])
   @@map("MF_G_EQUIPMENT")
@@ -165,7 +163,6 @@ model MF_G_EmployeeTransfer {
   corporateEmployee MF_G_Employee @relation(fields: [corporateEmployeeId], references: [id], onDelete: Cascade)
   fromProject       MF_P_Project? @relation("TransfersFrom", fields: [fromProjectId], references: [id])
   toProject         MF_P_Project  @relation("TransfersTo", fields: [toProjectId], references: [id])
-
   @@index([corporateEmployeeId])
   @@index([fromProjectId])
   @@index([toProjectId])

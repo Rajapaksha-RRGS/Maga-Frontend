@@ -12,9 +12,11 @@ import supervisorRoutes from './routes/supervisorRoutes';
 import assignmentRoutes from './routes/assignmentRoutes';
 import reportRoutes from './routes/reportRoutes';
 import equipmentRoutes from './routes/equipmentRoutes';
+import path from 'path';
 import calendarRoutes from './routes/calendarRoutes';
 import tenantRoutes from './routes/tenantRoutes';
 import corporateRoutes from './routes/corporateRoutes';
+import uploadRoutes from './routes/uploadRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -57,6 +59,10 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/equipment', equipmentRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/tenants', tenantRoutes);
+app.use('/api/uploads', uploadRoutes);
+
+// Static uploads serving for uploaded document scans and dossiers
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 app.get('/', (req, res) => {
   res.json({ status: "success", message: "Maga Backend API is running perfectly!" });

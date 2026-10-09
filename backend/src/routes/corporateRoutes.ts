@@ -3,32 +3,44 @@ import {
   getCorporateStats,
   getCorporateTransfers,
   createCorporateTransfer,
+  requestCorporateTransfer,
+  getPendingCorporateTransfers,
+  approveCorporateTransfer,
+  rejectCorporateTransfer,
   getCorporateEmployees,
   createCorporateEmployee,
   batchCreateCorporateEmployees,
+  bulkImportCorporateEmployees,
   getCorporateEquipment,
   createCorporateEquipment,
+  bulkImportCorporateEquipment,
   getCorporateTradeGroups,
   createCorporateTradeGroup,
+  bulkImportCorporateTradeGroups,
   getCorporateBusinessPartners,
   createCorporateBusinessPartner,
   updateCorporateBusinessPartner,
   deleteCorporateBusinessPartner,
+  bulkImportCorporateBusinessPartners,
   getCorporateActivityCodes,
   createCorporateActivityCode,
   updateCorporateActivityCode,
   deleteCorporateActivityCode,
-  bulkImportCorporateBusinessPartners,
-  bulkImportCorporateEmployees,
-  bulkImportCorporateEquipment,
   bulkImportCorporateActivityCodes,
-  bulkImportCorporateTradeGroups,
   getCorporateProjects,
   createCorporateProject,
   updateCorporateProject,
   updateCorporateProjectStatus,
   resetCorporateProjectAdminPassword,
+  getPendingCorporateEmployees,
+  approveCorporateEmployee,
+  rejectCorporateEmployee,
 } from '../controllers/corporateController';
+import {
+  getPendingBusinessPartners,
+  approveBusinessPartner,
+  rejectBusinessPartner,
+} from '../controllers/businessPartnerController';
 
 const router = Router();
 
@@ -42,11 +54,18 @@ router.put('/projects/:id', updateCorporateProject);
 router.patch('/projects/:id/status', updateCorporateProjectStatus);
 router.post('/projects/:id/reset-admin-password', resetCorporateProjectAdminPassword);
 
-// Inter-Project Transfers
+// Inter-Project Transfers (2-Way Handshake & Super Admin Mobilization)
 router.get('/transfers', getCorporateTransfers);
 router.post('/transfers', createCorporateTransfer);
+router.post('/transfers/request', requestCorporateTransfer);
+router.get('/transfers/pending', getPendingCorporateTransfers);
+router.post('/transfers/:id/approve', approveCorporateTransfer);
+router.post('/transfers/:id/reject', rejectCorporateTransfer);
 
 // Global Employees
+router.get('/employees/pending', getPendingCorporateEmployees);
+router.post('/employees/:id/approve', approveCorporateEmployee);
+router.post('/employees/:id/reject', rejectCorporateEmployee);
 router.get('/employees', getCorporateEmployees);
 router.post('/employees', createCorporateEmployee);
 router.post('/employees/batch', batchCreateCorporateEmployees);
@@ -63,6 +82,9 @@ router.post('/trade-groups', createCorporateTradeGroup);
 router.post('/trade-groups/bulk-import', bulkImportCorporateTradeGroups);
 
 // Global Business Partners
+router.get('/business-partners/pending', getPendingBusinessPartners);
+router.post('/business-partners/:id/approve', approveBusinessPartner);
+router.post('/business-partners/:id/reject', rejectBusinessPartner);
 router.get('/business-partners', getCorporateBusinessPartners);
 router.post('/business-partners', createCorporateBusinessPartner);
 router.post('/business-partners/bulk-import', bulkImportCorporateBusinessPartners);

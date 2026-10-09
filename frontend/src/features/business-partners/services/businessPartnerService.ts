@@ -23,19 +23,25 @@ export interface BusinessPartner {
   phone?: string;
   email?: string;
   address?: string;
-  status: 'active' | 'inactive';
+  nicNo?: string;
+  brNumber?: string;
+  documentUrl?: string;
+  status: 'active' | 'inactive' | 'pending_approval' | 'rejected' | string;
   createdAt?: string;
   employeeCount?: number;
 }
 
 export interface BusinessPartnerFormData {
-  code: string;
+  code?: string;
   name: string;
   contactPerson?: string;
   phone?: string;
   email?: string;
   address?: string;
-  status?: 'active' | 'inactive';
+  nicNo?: string;
+  brNumber?: string;
+  documentUrl?: string;
+  status?: string;
 }
 
 import { API_URL, apiFetch } from '../../../config/api';
@@ -51,7 +57,10 @@ function mapPartner(raw: any): BusinessPartner {
     phone: raw.phone || undefined,
     email: raw.email || undefined,
     address: raw.address || undefined,
-    status: raw.status === 'inactive' ? 'inactive' : 'active',
+    nicNo: raw.nicNo || raw.nic_no || undefined,
+    brNumber: raw.brNumber || raw.br_number || undefined,
+    documentUrl: raw.documentUrl || raw.document_url || undefined,
+    status: raw.status || 'active',
     createdAt: raw.createdAt || raw.created_at || undefined,
     employeeCount: raw.employeeCount ?? raw._count?.employees ?? undefined,
   };

@@ -1521,17 +1521,37 @@ export const fetchCorporateEquipment = async (): Promise<CorporateEquipment[]> =
 export const fetchCorporateEmployees = async (): Promise<CorporateEmployee[]> => {
   try {
     const res = await fetch(`${API_URL}/employees/corporate-master`, { headers: getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch');
+    if (!res.ok) throw new Error('Failed to fetch corporate employees');
     const data = await res.json();
     if (Array.isArray(data) && data.length > 0) {
-      return data.map((item: any) => ({
-        ...item,
-        isOperator: Boolean(
+      return data.map((item: any) => {
+        const tradeGroupName = typeof item.tradeGroup === 'string'
+          ? item.tradeGroup
+          : (item.tradeGroup?.name || 'General Labour');
+        const bpName = item.corporateBusinessPartner?.name || item.businessPartnerName || item.businessPartner || '';
+        const bpCode = item.corporateBusinessPartner?.code || item.businessPartnerCode || '';
+        const isOp = Boolean(
           item.isOperator ||
           item.is_operator ||
-          (item.tradeGroup && ['operator', 'driver', 'heavy operator'].some((t: string) => item.tradeGroup.toLowerCase().includes(t)))
-        ),
-      }));
+          (tradeGroupName && ['operator', 'driver', 'heavy operator'].some((t: string) => tradeGroupName.toLowerCase().includes(t)))
+        );
+
+        return {
+          ...item,
+          callingName: item.callingName || item.fullName?.split(' ')[0] || item.fullName || item.employeeCode || '',
+          fullName: item.fullName || '',
+          employeeCode: item.employeeCode || '',
+          nicNo: item.nicNo || '',
+          tradeGroup: tradeGroupName,
+          businessPartnerName: bpName,
+          businessPartner: bpName,
+          businessPartnerCode: bpCode,
+          dailyRate: item.dailyRate !== undefined && item.dailyRate !== null ? Number(item.dailyRate) : 1400,
+          isOperator: isOp,
+          employeeType: item.employeeType || (bpCode ? 'external' : 'internal'),
+          currentWorkingProject: item.currentWorkingProject || '',
+        };
+      });
     }
     return [];
   } catch (error) {

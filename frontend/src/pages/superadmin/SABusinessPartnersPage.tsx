@@ -24,6 +24,14 @@ import {
   X,
   UploadCloud,
   MapPin,
+  Clock,
+  ShieldCheck,
+  FileText,
+  ExternalLink,
+  Check,
+  AlertTriangle,
+  Lock,
+  Upload,
 } from 'lucide-react';
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
@@ -104,6 +112,8 @@ interface CorporateBusinessPartnerItem {
   type?: string | null;
   nicNo?: string | null;
   businessEntityIdentifier?: string | null;
+  brNumber?: string | null;
+  documentUrl?: string | null;
   address?: string | null;
   city?: string | null;
   country?: string | null;
@@ -119,12 +129,21 @@ interface CorporateBusinessPartnerItem {
 }
 
 export default function SABusinessPartnersPage() {
+  const [activeTab, setActiveTab] = useState<'partners' | 'pending'>('partners');
   const [partners, setPartners] = useState<CorporateBusinessPartnerItem[]>([]);
+  const [pendingPartners, setPendingPartners] = useState<CorporateBusinessPartnerItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingPending, setIsLoadingPending] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [error, setError] = useState<string | null>(null);
+
+  // Approval Modal State
+  const [approvalPartnerTarget, setApprovalPartnerTarget] = useState<CorporateBusinessPartnerItem | null>(null);
+  const [suggestedBpCode, setSuggestedBpCode] = useState('');
+  const [isApprovingPartner, setIsApprovingPartner] = useState(false);
+  const [approvalPartnerError, setApprovalPartnerError] = useState('');
 
   // Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -138,6 +157,9 @@ export default function SABusinessPartnersPage() {
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState(''); // Optional!
   const [formNicNo, setFormNicNo] = useState('');
+  const [formBrNumber, setFormBrNumber] = useState('');
+  const [formDocumentUrl, setFormDocumentUrl] = useState('');
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [formAddress, setFormAddress] = useState('');
   const [formCity, setFormCity] = useState('');
   const [formCountry, setFormCountry] = useState('Sri Lanka');
@@ -150,12 +172,28 @@ export default function SABusinessPartnersPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await api.get('/corporate/business-partners');
+      const [res, pendRes] = await Promise.all([
+        api.get('/corporate/business-partners'),
+        api.get('/corporate/business-partners/pending'),
+      ]);
       setPartners(res.data?.items ?? []);
+      setPendingPartners(pendRes.data?.items ?? []);
     } catch {
       setError('Failed to fetch corporate business partners.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchPendingPartners = async () => {
+    setIsLoadingPending(true);
+    try {
+      const res = await api.get('/corporate/business-partners/pending');
+      setPendingPartners(res.data?.items ?? []);
+    } catch (e) {
+      console.error('Failed to load pending business partners:', e);
+    } finally {
+      setIsLoadingPending(false);
     }
   };
 
@@ -204,6 +242,8 @@ export default function SABusinessPartnersPage() {
     setFormName('');
     setFormType('');
     setFormNicNo('');
+    setFormBrNumber('');
+    setFormDocumentUrl('');
     setFormAddress('');
     setFormCity('');
     setFormCountry('Sri Lanka');
@@ -221,6 +261,8 @@ export default function SABusinessPartnersPage() {
     setFormName(bp.name);
     setFormType(bp.type || '');
     setFormNicNo(bp.nicNo || bp.businessEntityIdentifier || '');
+    setFormBrNumber(bp.brNumber || '');
+    setFormDocumentUrl(bp.documentUrl || '');
     setFormAddress(bp.address || '');
     setFormCity(bp.city || '');
     setFormCountry(bp.country || 'Sri Lanka');
@@ -230,6 +272,74 @@ export default function SABusinessPartnersPage() {
     setFormRating(bp.rating || '');
     setFormError('');
     setIsAddModalOpen(true);
+  };
+
+  const openApprovePartnerModal = (bp: CorporateBusinessPartnerItem) => {
+    setApprovalPartnerTarget(bp);
+    setApprovalPartnerError('');
+    if (bp.code.startsWith('BP-TMP')) {
+      const matching = partners
+        .filter((p) => p.code.startsWith('BP1'))
+        .map((p) => parseInt(p.code.replace(/[^0-9]/g, ''), 10))
+        .filter((n) => !isNaN(n));
+      const nextNum = matching.length > 0 ? Math.max(...matching) + 1 : 1001001;
+      setSuggestedBpCode(`BP${nextNum}`);
+    } else {
+      setSuggestedBpCode(bp.code);
+    }
+  };
+
+  const handleApprovePartner = async () => {
+    if (!approvalPartnerTarget) return;
+    setIsApprovingPartner(true);
+    setApprovalPartnerError('');
+    try {
+      await api.post(`/corporate/business-partners/${approvalPartnerTarget.id}/approve`, {
+        officialCode: suggestedBpCode.trim() || undefined,
+      });
+      setApprovalPartnerTarget(null);
+      await fetchPartners();
+    } catch (err: any) {
+      setApprovalPartnerError(err.response?.data?.error || 'Failed to approve business partner');
+    } finally {
+      setIsApprovingPartner(false);
+    }
+  };
+
+  const handleRejectPartner = async (bp: CorporateBusinessPartnerItem) => {
+    const reason = prompt(`Enter rejection reason for ${bp.name} (${bp.code}):`);
+    if (reason === null) return;
+    try {
+      await api.post(`/corporate/business-partners/${bp.id}/reject`, { reason });
+      await fetchPartners();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to reject business partner');
+    }
+  };
+
+  const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.type !== 'application/pdf') {
+      setFormError('Only PDF document files are supported for registration dossier.');
+      return;
+    }
+    setIsUploadingDoc(true);
+    setFormError('');
+    try {
+      const formData = new FormData();
+      formData.append('document', file);
+      const res = await api.post('/uploads/document', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      if (res.data?.url) {
+        setFormDocumentUrl(res.data.url);
+      }
+    } catch (err: any) {
+      setFormError(err.response?.data?.error || 'Failed to upload document file');
+    } finally {
+      setIsUploadingDoc(false);
+    }
   };
 
   const handleSavePartner = async (e: React.FormEvent) => {
@@ -248,6 +358,8 @@ export default function SABusinessPartnersPage() {
         type: formType.trim() || undefined,
         nicNo: formNicNo.trim() || undefined,
         businessEntityIdentifier: formNicNo.trim() || undefined,
+        brNumber: formBrNumber.trim() || undefined,
+        documentUrl: formDocumentUrl.trim() || undefined,
         address: formAddress.trim() || undefined,
         city: formCity.trim() || undefined,
         country: formCountry.trim() || 'Sri Lanka',
@@ -418,80 +530,253 @@ export default function SABusinessPartnersPage() {
         </div>
       </div>
 
-      {/* ── Filter & Search Bar ───────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search
-            size={15}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-          />
-          <input
-            type="text"
-            placeholder="Search by code, company, contact person, phone…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 text-xs border border-violet-200 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400/50 placeholder:text-slate-400"
-          />
-        </div>
+      {/* Tab Switcher */}
+      <div className="flex items-center gap-2 border-b border-violet-100 pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('partners')}
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+            activeTab === 'partners'
+              ? 'bg-[#1A0A2E] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-violet-50'
+          }`}
+        >
+          <Building2 size={14} />
+          <span>Corporate Directory ({partners.length})</span>
+        </button>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Status Filter */}
-          <div className="flex items-center bg-violet-50/60 p-0.5 rounded-lg border border-violet-100 text-xs">
-            <button
-              type="button"
-              onClick={() => setStatusFilter('all')}
-              className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-                statusFilter === 'all'
-                  ? 'bg-white text-slate-800 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('pending');
+            fetchPendingPartners();
+          }}
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer relative ${
+            activeTab === 'pending'
+              ? 'bg-amber-600 text-white shadow-xs'
+              : 'text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200'
+          }`}
+        >
+          <Clock size={14} />
+          <span>Pending Subcontractor Approvals</span>
+          {pendingPartners.length > 0 && (
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                activeTab === 'pending' ? 'bg-white text-amber-700' : 'bg-amber-600 text-white'
               }`}
             >
-              All
-            </button>
-            <button
-              type="button"
-              onClick={() => setStatusFilter('active')}
-              className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-                statusFilter === 'active'
-                  ? 'bg-white text-emerald-700 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Active
-            </button>
-            <button
-              type="button"
-              onClick={() => setStatusFilter('inactive')}
-              className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-                statusFilter === 'inactive'
-                  ? 'bg-white text-slate-700 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Inactive
-            </button>
-          </div>
-
-          {/* Type Filter */}
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400/50"
-          >
-            <option value="all" className="bg-white text-slate-900">All Types</option>
-            <option value="subcontractor" className="bg-white text-slate-900">Subcontractor</option>
-            <option value="labour_supplier" className="bg-white text-slate-900">Labour Supplier</option>
-            <option value="equipment_supplier" className="bg-white text-slate-900">Equipment Supplier</option>
-            <option value="specialist" className="bg-white text-slate-900">Specialist Contractor</option>
-            <option value="unspecified" className="bg-white text-slate-900">Unspecified / Blank</option>
-          </select>
-        </div>
+              {pendingPartners.length}
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* ── Business Partner Data Table ───────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-violet-100 shadow-sm overflow-hidden flex flex-col">
-        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-340px)] min-h-[380px]">
-          <table className="w-full text-left text-xs">
+      {activeTab === 'pending' ? (
+        /* ── Pending Subcontractor Approvals Tab View ──────────────── */
+        <div className="flex flex-col gap-4">
+          <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 flex items-start gap-3">
+            <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
+            <div className="text-xs text-amber-900">
+              <span className="font-semibold">Subcontractor Business Partner Approval Required: </span>
+              Subcontractors registered at project sites operate under provisional codes (<code>BP-TMP-xxxx</code>).
+              Their associated workforce can record daily gate attendance, but <strong>subcontractor payroll billing & worker wage disbursement remain strictly locked</strong> until Head Office Super Admin reviews their Business Registration (BR) number, Owner NIC, and Scanned Document Dossier, and assigns an official permanent code (e.g. <code>BP102xxxx</code>).
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-violet-100 shadow-sm overflow-hidden flex flex-col">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] min-h-[380px]">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-violet-50/95 backdrop-blur-xs z-10">
+                  <tr className="border-b border-violet-100 bg-violet-50/90">
+                    <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">Provisional Code</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">Company / Partner Name</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">BR Number</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">Owner NIC / ID</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">Contact Person & Phone</th>
+                    <th className="px-4 py-3 text-center font-semibold text-slate-500 uppercase tracking-wide">Dossier (BR + NIC)</th>
+                    <th className="px-4 py-3 text-center font-semibold text-slate-500 uppercase tracking-wide">Payroll Status</th>
+                    <th className="px-4 py-3 text-right font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-violet-50">
+                  {isLoadingPending ? (
+                    [...Array(4)].map((_, i) => (
+                      <tr key={i} className="animate-pulse">
+                        <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-20" /></td>
+                        <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-36" /></td>
+                        <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-24" /></td>
+                        <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-24" /></td>
+                        <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-32" /></td>
+                        <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-20" /></td>
+                        <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-20" /></td>
+                        <td className="px-4 py-3" />
+                      </tr>
+                    ))
+                  ) : pendingPartners.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-400">
+                        <CheckCircle2 size={32} className="mx-auto text-emerald-500 mb-2 opacity-80" />
+                        No pending subcontractor approvals. All registered business partners are verified.
+                      </td>
+                    </tr>
+                  ) : (
+                    pendingPartners.map((bp) => {
+                      const docUrl = bp.documentUrl
+                        ? (bp.documentUrl.startsWith('http') ? bp.documentUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000'}${bp.documentUrl.startsWith('/') ? '' : '/'}${bp.documentUrl}`)
+                        : null;
+                      return (
+                        <tr key={bp.id} className="hover:bg-amber-50/40 transition-colors">
+                          <td className="px-4 py-3">
+                            <span className="font-mono font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded">
+                              {bp.code}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-slate-800 text-xs">{bp.name}</div>
+                            {bp.city && <div className="text-[10px] text-slate-400 mt-0.5">{bp.city}, {bp.country || 'Sri Lanka'}</div>}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-slate-700">
+                            {bp.brNumber ? (
+                              <span className="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-semibold text-[11px] border border-slate-200">
+                                {bp.brNumber}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 italic">Not specified</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-slate-700">
+                            {bp.nicNo || bp.businessEntityIdentifier || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            <div className="font-medium">{bp.contactPerson || '—'}</div>
+                            {bp.phone && <div className="text-[10px] text-slate-400">{bp.phone}</div>}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            {docUrl ? (
+                              <a
+                                href={docUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1 rounded-lg transition-colors"
+                              >
+                                <FileText size={12} className="text-rose-600" />
+                                <span>PDF Dossier</span>
+                                <ExternalLink size={10} className="text-rose-400" />
+                              </a>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">No PDF file</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+                              <Lock size={10} className="text-amber-600" /> Billing Held
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openApprovePartnerModal(bp)}
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <ShieldCheck size={12} />
+                                <span>Review & Approve</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRejectPartner(bp)}
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <XCircle size={12} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ── Active Corporate Directory Tab ────────────────────────── */
+        <>
+          {/* ── Filter & Search Bar ───────────────────────────────────────── */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-sm">
+              <Search
+                size={15}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+              />
+              <input
+                type="text"
+                placeholder="Search by code, company, contact person, phone…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-2 text-xs border border-violet-200 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400/50 placeholder:text-slate-400"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Status Filter */}
+              <div className="flex items-center bg-violet-50/60 p-0.5 rounded-lg border border-violet-100 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('all')}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                    statusFilter === 'all'
+                      ? 'bg-white text-slate-800 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('active')}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                    statusFilter === 'active'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Active
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('inactive')}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                    statusFilter === 'inactive'
+                      ? 'bg-white text-slate-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Inactive
+                </button>
+              </div>
+
+              {/* Type Filter */}
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+              >
+                <option value="all" className="bg-white text-slate-900">All Types</option>
+                <option value="subcontractor" className="bg-white text-slate-900">Subcontractor</option>
+                <option value="labour_supplier" className="bg-white text-slate-900">Labour Supplier</option>
+                <option value="equipment_supplier" className="bg-white text-slate-900">Equipment Supplier</option>
+                <option value="specialist" className="bg-white text-slate-900">Specialist Contractor</option>
+                <option value="unspecified" className="bg-white text-slate-900">Unspecified / Blank</option>
+              </select>
+            </div>
+          </div>
+
+          {/* ── Business Partner Data Table ───────────────────────────────── */}
+          <div className="bg-white rounded-2xl border border-violet-100 shadow-sm overflow-hidden flex flex-col">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-340px)] min-h-[380px]">
+              <table className="w-full text-left text-xs">
             <thead className="sticky top-0 bg-violet-50/95 backdrop-blur-xs z-10">
               <tr className="border-b border-violet-100 bg-violet-50/90">
                 <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">
@@ -575,11 +860,37 @@ export default function SABusinessPartnersPage() {
                     {/* Name */}
                     <td className="px-4 py-3">
                       <div className="font-semibold text-slate-800">{bp.name}</div>
-                      {(bp.nicNo || bp.businessEntityIdentifier) && (
-                        <div className="text-[11px] text-violet-700 font-mono font-medium">
-                          NIC / BR: {bp.nicNo || bp.businessEntityIdentifier}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                        {bp.brNumber && (
+                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-800 px-1.5 py-0.2 rounded border border-slate-200">
+                            BR: {bp.brNumber}
+                          </span>
+                        )}
+                        {(bp.nicNo || bp.businessEntityIdentifier) && (
+                          <span className="text-[10px] text-violet-700 font-mono font-medium">
+                            NIC: {bp.nicNo || bp.businessEntityIdentifier}
+                          </span>
+                        )}
+                        {bp.documentUrl && (
+                          <a
+                            href={
+                              bp.documentUrl.startsWith('http')
+                                ? bp.documentUrl
+                                : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000'}${
+                                    bp.documentUrl.startsWith('/') ? '' : '/'
+                                  }${bp.documentUrl}`
+                            }
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded hover:bg-rose-100"
+                            title="View Scanned Dossier (BR / Owner NIC)"
+                          >
+                            <FileText size={10} />
+                            <span>PDF</span>
+                            <ExternalLink size={8} />
+                          </a>
+                        )}
+                      </div>
                       {bp.email && (
                         <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                           <Mail size={11} /> {bp.email}
@@ -700,6 +1011,141 @@ export default function SABusinessPartnersPage() {
           </div>
         )}
       </div>
+    </>
+  )}
+
+  {/* ── Super Admin Partner Approval Modal ──────────────────────── */}
+  {approvalPartnerTarget && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200 sa-modal"
+      style={{ colorScheme: 'light' }}
+    >
+      <div
+        className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-violet-100 max-h-[90vh] overflow-y-auto text-slate-900"
+        style={{ colorScheme: 'light' }}
+      >
+        <div className="flex items-center gap-2 mb-1">
+          <ShieldCheck className="text-emerald-600" size={20} />
+          <h2 className="text-base font-bold text-slate-900">Approve Business Partner & Issue Official Code</h2>
+        </div>
+        <p className="text-xs text-slate-500 mb-4">
+          Verify legal Business Registration (BR) and Owner NIC dossier, and assign an official permanent code (BP102xxxx series).
+        </p>
+
+        {approvalPartnerError && (
+          <div className="mb-4 text-xs text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-200">
+            {approvalPartnerError}
+          </div>
+        )}
+
+        {/* Subcontractor Summary Card */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 space-y-2 text-xs">
+          <div className="flex justify-between items-center pb-2 border-b border-slate-200">
+            <div>
+              <span className="text-slate-400 text-[10px] uppercase font-semibold">Provisional Code</span>
+              <div className="font-mono font-bold text-amber-800">{approvalPartnerTarget.code}</div>
+            </div>
+            <div className="text-right">
+              <span className="text-slate-400 text-[10px] uppercase font-semibold">Status</span>
+              <div className="font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px]">
+                Pending Approval
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <div>
+              <span className="text-slate-400 text-[10px]">Company / Entity Name</span>
+              <div className="font-semibold text-slate-800">{approvalPartnerTarget.name}</div>
+            </div>
+            <div>
+              <span className="text-slate-400 text-[10px]">BR Number</span>
+              <div className="font-mono font-bold text-slate-800">{approvalPartnerTarget.brNumber || 'Not provided'}</div>
+            </div>
+            <div>
+              <span className="text-slate-400 text-[10px]">Owner NIC / Identifier</span>
+              <div className="font-mono text-slate-800">{approvalPartnerTarget.nicNo || approvalPartnerTarget.businessEntityIdentifier || 'Not provided'}</div>
+            </div>
+            <div>
+              <span className="text-slate-400 text-[10px]">Contact Person</span>
+              <div className="font-medium text-slate-700">{approvalPartnerTarget.contactPerson || '—'} ({approvalPartnerTarget.phone || 'No phone'})</div>
+            </div>
+          </div>
+
+          {/* PDF Scanned Document View Button */}
+          {approvalPartnerTarget.documentUrl ? (
+            <div className="mt-2 pt-2 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500 font-medium">Scanned Partner Dossier (BR + Owner NIC):</span>
+              <a
+                href={
+                  approvalPartnerTarget.documentUrl.startsWith('http')
+                    ? approvalPartnerTarget.documentUrl
+                    : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000'}${
+                        approvalPartnerTarget.documentUrl.startsWith('/') ? '' : '/'
+                      }${approvalPartnerTarget.documentUrl}`
+                }
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-1 rounded-lg transition-colors"
+              >
+                <FileText size={13} className="text-rose-600" />
+                <span>Open Scanned PDF</span>
+                <ExternalLink size={11} className="text-rose-400" />
+              </a>
+            </div>
+          ) : (
+            <div className="mt-2 pt-2 border-t border-slate-200 text-[11px] text-slate-400 italic">
+              No scanned document attached to this business partner.
+            </div>
+          )}
+        </div>
+
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-4 text-xs text-emerald-800 flex items-start gap-2">
+          <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+          <div>
+            <strong>Automatic Payroll Unlock:</strong> Approving this subcontractor will immediately unlock payment billing and payroll disbursement for all attached employees whose individual registrations are approved.
+          </div>
+        </div>
+
+        {/* Official Code Assignment */}
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-slate-700 mb-1">
+            Official Corporate Partner Code <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={suggestedBpCode}
+            onChange={(e) => setSuggestedBpCode(e.target.value.toUpperCase())}
+            placeholder="e.g. BP1020470"
+            className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-emerald-400 focus:outline-none"
+            required
+          />
+          <p className="text-[11px] text-slate-500 mt-1">
+            Replacing provisional code ({approvalPartnerTarget.code}) will automatically sync across all sites and attach to corporate directory.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={() => setApprovalPartnerTarget(null)}
+            className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleApprovePartner}
+            disabled={isApprovingPartner || !suggestedBpCode.trim()}
+            className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-xs"
+          >
+            <Check size={14} />
+            {isApprovingPartner ? 'Approving…' : 'Confirm Approval & Issue Permanent BP Code'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
 
       {/* ── Add / Edit Business Partner Modal ──────────────────────────── */}
       {isAddModalOpen && (
@@ -792,21 +1238,81 @@ export default function SABusinessPartnersPage() {
                 />
               </div>
 
-              {/* NIC / Business Registration (BR / Reg) No */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-[11px] font-semibold text-slate-700 uppercase tracking-wide">
-                    NIC / Business Registration (BR) No
-                  </label>
-                  <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+              {/* BR & NIC Numbers */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-700 uppercase tracking-wide">
+                      Business Registration (BR) No
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="e.g. PV-12345 or BR-88214"
+                    value={formBrNumber}
+                    onChange={(e) => setFormBrNumber(e.target.value.toUpperCase())}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400 font-mono"
+                  />
                 </div>
-                <input
-                  type="text"
-                  placeholder="e.g. 198512345678, PV-12345, or BR-88214"
-                  value={formNicNo}
-                  onChange={(e) => setFormNicNo(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400 font-mono"
-                />
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-700 uppercase tracking-wide">
+                      Owner NIC / Identifier
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="e.g. 198512345678 or 851234567V"
+                    value={formNicNo}
+                    onChange={(e) => setFormNicNo(e.target.value.toUpperCase())}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400 font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Scanned Dossier PDF Upload */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase tracking-wide mb-1">
+                  Scanned Verification Dossier (Combined PDF)
+                </label>
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-violet-50 text-violet-800 border border-violet-200 hover:bg-violet-100 transition-colors">
+                    <Upload size={13} />
+                    <span>{isUploadingDoc ? 'Uploading…' : formDocumentUrl ? 'Replace PDF' : 'Upload PDF Dossier'}</span>
+                    <input
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      onChange={handleDocumentUpload}
+                      disabled={isUploadingDoc}
+                      className="hidden"
+                    />
+                  </label>
+                  {formDocumentUrl && (
+                    <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 rounded-lg flex-1 min-w-0">
+                      <FileText size={13} className="shrink-0 text-emerald-600" />
+                      <span className="truncate flex-1">Dossier PDF Attached</span>
+                      <a
+                        href={
+                          formDocumentUrl.startsWith('http')
+                            ? formDocumentUrl
+                            : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000'}${
+                                formDocumentUrl.startsWith('/') ? '' : '/'
+                              }${formDocumentUrl}`
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-violet-700 hover:underline inline-flex items-center gap-0.5 shrink-0"
+                      >
+                        <ExternalLink size={11} />
+                      </a>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Single combined PDF scan containing Business Registration (BR) certificate and Owner NIC copy.
+                </p>
               </div>
 
               {/* Physical Address */}

@@ -1,15 +1,11 @@
-/**
- * BusinessPartnersPage.tsx — Admin Business Partners CRUD page.
- *
- * Follows design-system.json & dev-system-spec patterns.
- */
 import { useState, useMemo } from 'react';
-import { Building2, CheckCircle2, XCircle, Database } from 'lucide-react';
+import { Building2, CheckCircle2, XCircle, Database, Plus, Clock } from 'lucide-react';
 import { useBusinessPartners } from '../features/business-partners/hooks/useBusinessPartners';
 import BusinessPartnerTable from '../features/business-partners/components/BusinessPartnerTable';
 import BusinessPartnerCardList from '../features/business-partners/components/BusinessPartnerCardList';
 import BusinessPartnerForm from '../features/business-partners/components/BusinessPartnerForm';
 import BusinessPartnerErpMasterView from '../features/business-partners/components/BusinessPartnerErpMasterView';
+import DirectSitePartnerRegisterModal from '../features/business-partners/components/DirectSitePartnerRegisterModal';
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
@@ -34,11 +30,13 @@ export default function BusinessPartnersPage() {
     deletePartner,
     checkUniqueCode,
     suggestNextCode,
+    refresh,
   } = useBusinessPartners();
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingPartner, setEditingPartner] = useState<BusinessPartner | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'erp-master'>('list');
+  const [isDirectRegisterModalOpen, setIsDirectRegisterModalOpen] = useState(false);
 
   const existingCodes = useMemo(() => {
     return new Set(partners.map((p) => p.code.toUpperCase()));
@@ -82,6 +80,7 @@ export default function BusinessPartnersPage() {
   };
 
   const activeCount = partners.filter((bp) => bp.status === 'active').length;
+  const pendingCount = partners.filter((bp) => bp.status === 'pending_approval').length;
   const inactiveCount = partners.filter((bp) => bp.status === 'inactive').length;
 
   return (
@@ -110,17 +109,18 @@ export default function BusinessPartnersPage() {
             existingCodes={existingCodes}
             onImport={handleBatchImport}
             onClose={() => setViewMode('list')}
+            onOpenDirectRegister={() => setIsDirectRegisterModalOpen(true)}
           />
         </div>
       ) : (
         /* ── Regular Project Business Partners View ────────────────────────── */
         <>
           {/* Header */}
-          <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
             <div>
               <h1 className="text-base font-semibold text-slate-900 tracking-tight flex items-center gap-2">
                 <Building2 size={20} className="text-blue-700" />
-                Business partners
+                Business Partners & Subcontractors
               </h1>
               <Breadcrumb items={[{ label: 'Master Data' }, { label: 'Business Partners' }]} className="mt-1" />
             </div>
@@ -128,17 +128,28 @@ export default function BusinessPartnersPage() {
             <div className="flex items-center gap-2">
               <button
                 id="bp-import-btn"
+                type="button"
                 onClick={() => setViewMode('erp-master')}
-                className="flex items-center gap-2 bg-blue-700 text-white font-medium text-sm rounded-lg px-4 min-h-[44px] transition-colors hover:bg-blue-800 active:bg-blue-900 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 cursor-pointer shadow-xs"
+                className="flex items-center gap-1.5 bg-white border border-slate-300 hover:border-slate-400 hover:bg-slate-50 text-slate-700 font-semibold text-xs rounded-lg px-3.5 py-2.5 transition-colors cursor-pointer shadow-2xs"
               >
-                <Database size={16} />
+                <Database size={15} className="text-[#C9A84C]" />
                 <span>Add from ERP Master</span>
+              </button>
+
+              <button
+                id="bp-direct-register-btn"
+                type="button"
+                onClick={() => setIsDirectRegisterModalOpen(true)}
+                className="flex items-center gap-1.5 bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] text-white font-semibold text-xs rounded-lg px-4 py-2.5 hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
+              >
+                <Plus size={15} />
+                <span>+ Direct Site Register Subcontractor</span>
               </button>
             </div>
           </div>
 
           {/* Metric Cards */}
-          <div className="grid grid-cols-3 gap-3 mb-5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
             <div className="bg-white rounded-lg border border-slate-200 p-3 flex flex-col gap-0.5 shadow-2xs">
               <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                 Total Partners
@@ -154,6 +165,15 @@ export default function BusinessPartnersPage() {
               </span>
               <span className="text-lg font-semibold text-emerald-800 tabular-nums">
                 {activeCount}
+              </span>
+            </div>
+
+            <div className="bg-white rounded-lg border border-amber-200 bg-amber-50/30 p-3 flex flex-col gap-0.5 shadow-2xs">
+              <span className="text-[11px] font-medium text-amber-700 uppercase tracking-wide flex items-center gap-1">
+                <Clock size={12} /> Pending HO
+              </span>
+              <span className="text-lg font-semibold text-amber-800 tabular-nums">
+                {pendingCount}
               </span>
             </div>
 
@@ -179,19 +199,24 @@ export default function BusinessPartnersPage() {
 
             {/* Status Filter Tabs */}
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg self-start sm:self-auto border border-slate-200">
-              {(['all', 'active', 'inactive'] as const).map((s) => (
+              {[
+                { key: 'all', label: 'All' },
+                { key: 'active', label: 'Active' },
+                { key: 'pending_approval', label: `Pending HO (${pendingCount})` },
+                { key: 'inactive', label: 'Inactive' },
+              ].map(({ key, label }) => (
                 <button
-                  key={s}
+                  key={key}
                   type="button"
-                  onClick={() => setStatusFilter(s)}
+                  onClick={() => setStatusFilter(key as any)}
                   className={[
-                    'px-3 py-1 text-xs font-medium rounded-md capitalize transition-all',
-                    statusFilter === s
+                    'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer',
+                    statusFilter === key
                       ? 'bg-white text-slate-800 shadow-2xs font-semibold'
                       : 'text-slate-600 hover:text-slate-900',
                   ].join(' ')}
                 >
-                  {s}
+                  {label}
                 </button>
               ))}
             </div>
@@ -240,6 +265,15 @@ export default function BusinessPartnersPage() {
               suggestNextCode={suggestNextCode}
             />
           </SlidePanel>
+
+          {/* Direct Site Subcontractor Walk-In Registration Modal */}
+          <DirectSitePartnerRegisterModal
+            isOpen={isDirectRegisterModalOpen}
+            onClose={() => setIsDirectRegisterModalOpen(false)}
+            onSuccess={() => {
+              refresh(true);
+            }}
+          />
         </>
       )}
     </div>

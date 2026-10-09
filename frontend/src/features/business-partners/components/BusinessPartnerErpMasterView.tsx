@@ -1,20 +1,4 @@
-/**
- * BusinessPartnerErpMasterView.tsx
- *
- * Dedicated ERP Master directory view for Business Partners,
- * styled to match Prisma Studio UI aesthetics.
- *
- * Implemented locally inside features/business-partners (not using shared modal components).
- * Renders directly on the page in place of the standard list view.
- *
- * Features:
- *   - Prisma Studio Tab Bar (active tab with close button, inactive tabs, gear icon)
- *   - Studio Control Toolbar: [↻] Refresh, Filters, Fields, Showing X of Y, Add record / Import button
- *   - Specific columns: Code, Business Partner Name, Contact Person, Phone / Email, Status
- *   - Prisma Studio data-type indicators (A, A?) on column headers
- *   - Grid lines with subtle cell borders and monospace data
- *   - Multi-row selection & batch import to current project
- */
+
 import { useState, useMemo, useEffect } from 'react';
 import { 
   RotateCw, 
@@ -23,7 +7,8 @@ import {
   Check, 
   ArrowLeft,
   SlidersHorizontal,
-  Table as TableIcon
+  Table as TableIcon,
+  Plus
 } from 'lucide-react';
 import { type CorporateBusinessPartner, fetchCorporateBusinessPartners } from '../../master-import/services/corporateMasterService';
 
@@ -31,12 +16,14 @@ interface BusinessPartnerErpMasterViewProps {
   existingCodes: Set<string>;
   onImport: (items: CorporateBusinessPartner[]) => Promise<void>;
   onClose: () => void;
+  onOpenDirectRegister?: () => void;
 }
 
 export default function BusinessPartnerErpMasterView({
   existingCodes,
   onImport,
   onClose,
+  onOpenDirectRegister,
 }: BusinessPartnerErpMasterViewProps) {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState<string>('all');
@@ -283,12 +270,24 @@ export default function BusinessPartnerErpMasterView({
           </div>
         </div>
 
-        {/* Right Action: Button ("Add record" / "Import Selected") */}
+        {/* Right Action: Button ("Add record" / "Import Selected") & Direct Register */}
         <div className="flex items-center gap-2">
           {selectedCodes.size > 0 && (
             <span className="text-xs text-blue-700 font-semibold">
               {selectedCodes.size} selected
             </span>
+          )}
+
+          {onOpenDirectRegister && (
+            <button
+              type="button"
+              onClick={onOpenDirectRegister}
+              title="Directly register a new site subcontractor with BR and combined PDF"
+              className="flex items-center gap-1.5 bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] text-white font-medium text-xs rounded px-3 py-1.5 hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+            >
+              <Plus size={13} />
+              <span>+ Direct Site Register</span>
+            </button>
           )}
 
           <button
@@ -406,8 +405,22 @@ export default function BusinessPartnerErpMasterView({
               </tr>
             ) : filteredCatalog.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-slate-400 text-xs bg-white">
-                  No ERP business partners found matching &quot;{search}&quot;.
+                <td colSpan={7} className="py-12 text-center text-slate-500 text-xs bg-white">
+                  <div className="flex flex-col items-center justify-center max-w-sm mx-auto space-y-2">
+                    <p className="text-slate-600">
+                      No corporate ERP partners found matching &quot;{search}&quot;.
+                    </p>
+                    {onOpenDirectRegister && (
+                      <button
+                        type="button"
+                        onClick={onOpenDirectRegister}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] text-white font-medium text-xs rounded shadow-xs hover:opacity-90 transition-opacity cursor-pointer mt-1"
+                      >
+                        <Plus size={13} />
+                        <span>Direct Site Register Subcontractor</span>
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ) : (

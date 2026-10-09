@@ -10,9 +10,19 @@ import {
   transferEmployee,
   getCorporateEmployeesCatalog,
 } from '../controllers/employeeController';
+import {
+  getPendingCorporateEmployees,
+  approveCorporateEmployee,
+  rejectCorporateEmployee,
+} from '../controllers/corporateController';
 import { requireAdmin } from '../middleware/authMiddleware';
 
 const router = Router();
+
+// Pending & Approvals
+router.get('/pending', getPendingCorporateEmployees);
+router.post('/:id/approve', approveCorporateEmployee);
+router.post('/:id/reject', rejectCorporateEmployee);
 
 // Cross-tenant & Transfer routes (protected with authorization)
 router.get('/corporate-master', getCorporateEmployeesCatalog);
