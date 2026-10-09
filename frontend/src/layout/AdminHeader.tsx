@@ -26,6 +26,7 @@ import {
   Sunset,
   Moon,
   HardHat,
+  Crown,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications, type NotificationItem } from '../context/NotificationContext';
@@ -88,7 +89,6 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
     if (path.includes('/admin/reports')) return 'Reports & Analytics';
     if (path.includes('/admin/supervisors')) return 'Supervisors';
     if (path.includes('/admin/calendar')) return 'Working Calendar';
-    if (path.includes('/admin/tenants')) return 'Project Tenants';
     return null;
   };
 
@@ -182,6 +182,19 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
           <Calendar size={13} className="text-slate-400" />
           <span>{todayFormatted}</span>
         </div>
+
+        {/* Quick Switch to Super Admin Portal (If Super Admin) */}
+        {user?.role === 'super_admin' && (
+          <button
+            type="button"
+            onClick={() => navigate('/super-admin')}
+            className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
+            title="Switch to Head Office Super Admin Portal"
+          >
+            <Crown size={13} className="text-amber-600" />
+            <span>HQ Portal</span>
+          </button>
+        )}
 
         {/* ── Notification Bell Center ─────────────────────────────────── */}
         <div className="relative" ref={notifRef}>
@@ -357,12 +370,13 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
                   <button
                     type="button"
                     onClick={() => {
-                      navigate('/admin/tenants');
+                      navigate('/super-admin');
                       setUserMenuOpen(false);
                     }}
-                    className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                    className="w-full text-left px-4 py-2 text-xs text-amber-800 hover:bg-amber-50 transition-colors cursor-pointer flex items-center gap-2 font-medium"
                   >
-                    Tenant & Admin Management
+                    <Crown size={14} className="text-amber-600" />
+                    <span>Head Office Super Admin</span>
                   </button>
                 )}
                 <button

@@ -143,14 +143,18 @@ export async function bulkAssign(
   return matching.length;
 }
 
-/** Helper: get all employees and supervisors for the assignment UI */
-export async function getAssignmentContext(forceRefresh: boolean = false): Promise<{
+/** Helper: get all employees and supervisors for the assignment UI, scoped to the selected date */
+export async function getAssignmentContext(date?: string, forceRefresh: boolean = false): Promise<{
   employees: Employee[];
   supervisors: Supervisor[];
 }> {
-  return cacheManager.fetchWithCache('assignments:context', async () => {
-    const [employees, supervisors] = await Promise.all([empSvc.getAll(undefined, forceRefresh), supSvc.getAll(forceRefresh)]);
-    const nonOperators = employees.filter((e) => e.status === 'active' && !e.isOperator && !['operator', 'driver'].includes((e.tradeGroup || '').toLowerCase()));
+  const cacheKey = date ? `assignments:context:${date}` : 'assignments:context';
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    const [employees, supervisors] = await Promise.all([
+      empSvc.getAll(date ? { date } : undefined, forceRefresh),
+      supSvc.getAll(forceRefresh),
+    ]);
+    const nonOperators = employees.filter((e) => !e.isOperator && !['operator', 'driver'].includes((e.tradeGroup || '').toLowerCase()));
     return {
       employees: nonOperators,
       supervisors: supervisors.filter((s) => s.status === 'active'),

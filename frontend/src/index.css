@@ -96,20 +96,38 @@ label {
   outline-offset: 2px;
 }
 
-/* ── Scrollbar hide utility & global sleek scrollbars ─────────────────────── */
-.scrollbar-none::-webkit-scrollbar,
-html::-webkit-scrollbar,
-body::-webkit-scrollbar,
-*::-webkit-scrollbar {
+/* ── Global sleek scrollbars & scrollbar-none utility ───────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.7);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+}
+
+/* Hide scrollbar ONLY when explicitly requested */
+.scrollbar-none::-webkit-scrollbar {
   display: none !important;
   width: 0 !important;
   height: 0 !important;
 }
 
-.scrollbar-none,
-html,
-body,
-* {
+.scrollbar-none {
   -ms-overflow-style: none !important;
   scrollbar-width: none !important;
 }
@@ -209,3 +227,43 @@ code {
 .animate-splash-progress-indeterminate {
   animation: splashProgressIndeterminate 1.4s infinite cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* ── Super Admin Form Controls & Modals Styling Fix ─────────────────────────
+   Guarantees that all inputs, selects, textareas, and options inside the
+   Super Admin portal or any modal maintain crisp white backgrounds with
+   slate-900 readable text, overriding browser-enforced dark mode heuristics.
+─────────────────────────────────────────────────────────────────────────── */
+.sa-portal,
+.sa-portal input,
+.sa-portal select,
+.sa-portal textarea,
+.sa-modal,
+.sa-modal input,
+.sa-modal select,
+.sa-modal textarea {
+  color-scheme: light !important;
+}
+
+.sa-portal input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+.sa-portal select,
+.sa-portal textarea,
+.sa-modal input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+.sa-modal select,
+.sa-modal textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important; /* slate-900 */
+}
+
+.sa-portal input::placeholder,
+.sa-modal input::placeholder,
+.sa-portal textarea::placeholder,
+.sa-modal textarea::placeholder {
+  color: #94a3b8 !important; /* slate-400 */
+}
+
+.sa-portal select option,
+.sa-modal select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important; /* slate-900 */
+}
+

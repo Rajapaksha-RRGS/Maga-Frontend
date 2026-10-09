@@ -108,7 +108,7 @@ export default function EmployeeForm({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!tradeGroup.trim() || !businessPartnerId) return;
+    if (!tradeGroup.trim()) return;
     const selectedPartner = partners.find((p) => p.id === businessPartnerId);
 
     setIsSaving(true);
@@ -117,8 +117,9 @@ export default function EmployeeForm({
         employeeCode: employeeCode.trim() || undefined,
         callingName: callingName.trim() || employeeCode.trim() || 'Worker',
         fullName: fullName.trim() || callingName.trim() || employeeCode.trim() || 'Worker',
-        businessPartnerId: businessPartnerId,
-        businessPartner: selectedPartner?.name || '',
+        businessPartnerId: businessPartnerId || undefined,
+        businessPartner: selectedPartner?.name || 'Mäga Engineering (Direct)',
+        employeeType: businessPartnerId ? 'external' : 'internal',
         tradeGroup: tradeGroup.trim(),
         nicNo: nicNo.trim(),
         dailyRate: parseFloat(dailyRate) || 1400,
@@ -154,40 +155,22 @@ export default function EmployeeForm({
       {/* Business Partner selection */}
       <div className="flex flex-col gap-1">
         <label htmlFor="emp-bp" className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-          Business partner *
+          Business partner / Employment
         </label>
-        {partners.length === 0 && !loadingPartners ? (
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex flex-col gap-2">
-            <p className="font-semibold">
-              No registered business partners found!
-            </p>
-            <p className="text-amber-700">
-              An employee must belong to a registered business partner. Please register a business partner before adding employees.
-            </p>
-            <a
-              href="/admin/business-partners"
-              className="inline-flex items-center justify-center font-medium bg-amber-600 hover:bg-amber-700 text-white rounded px-3 py-1.5 transition-colors self-start"
-            >
-              Register Business Partner
-            </a>
-          </div>
-        ) : (
-          <select
-            id="emp-bp"
-            value={businessPartnerId}
-            onChange={(e) => setBusinessPartnerId(e.target.value)}
-            className={INPUT_CLASS}
-            required
-            disabled={loadingPartners}
-          >
-            <option value="">{loadingPartners ? 'Loading business partners…' : 'Select a business partner *'}</option>
-            {partners.map((bp) => (
-              <option key={bp.id} value={bp.id}>
-                {bp.name} ({bp.code})
-              </option>
-            ))}
-          </select>
-        )}
+        <select
+          id="emp-bp"
+          value={businessPartnerId}
+          onChange={(e) => setBusinessPartnerId(e.target.value)}
+          className={INPUT_CLASS}
+          disabled={loadingPartners}
+        >
+          <option value="">🏢 Mäga Engineering (Direct / Internal)</option>
+          {partners.map((bp) => (
+            <option key={bp.id} value={bp.id}>
+              {bp.name} ({bp.code})
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Trade Group */}

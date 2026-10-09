@@ -103,9 +103,6 @@ export const getAssignedEmployees = async (req: Request, res: Response): Promise
           supervisorId,
           date: targetDate,
         },
-        employee: {
-          status: 'active',
-        },
       },
       select: {
         id: true,

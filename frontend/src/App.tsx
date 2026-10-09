@@ -4,22 +4,29 @@
  * Root router. Sets up all application routes with role-based protection.
  *
  * Route structure:
- *   /login              → LoginPage            (public)
- *   /admin/*            → AdminLayout          (protected, role=admin)
- *     /admin            → AdminDashboardPage
- *     /admin/employees  → EmployeesPage
- *     /admin/equipment  → EquipmentPage
+ *   /login                  → LoginPage            (public)
+ *   /super-admin/*          → SuperAdminLayout     (protected, role=super_admin)
+ *     /super-admin          → SADashboardPage      (Executive HQ Dashboard)
+ *     /super-admin/projects → SAProjectsPage       (Projects & Site Admins)
+ *     /super-admin/employees → SAEmployeesPage     (Global Employee Master)
+ *     /super-admin/business-partners → SABusinessPartnersPage
+ *     /super-admin/equipment → SAEquipmentPage     (Global Equipment Master)
+ *     /super-admin/trade-groups → SATradeGroupsPage
+ *     /super-admin/activity-codes → SAActivityCodesPage
+ *     /super-admin/transfers → SATransfersPage     (Inter-project transfers)
+ *     /super-admin/settings → SASettingsPage
+ *   /admin/*                → AdminLayout          (protected, role=admin|super_admin)
+ *     /admin                → AdminDashboardPage
+ *     /admin/employees      → EmployeesPage
+ *     /admin/equipment      → EquipmentPage
  *     /admin/activity-codes → ActivityCodesPage
  *     /admin/supervisors    → SupervisorsPage
  *     /admin/calendar       → CalendarPage
  *     /admin/assignments    → AssignmentsPage
  *     /admin/reports        → ReportsPage
- *   /supervisor         → SupervisorLayout     (protected, role=supervisor)
- *     index             → SupervisorFlowPage (4-step daily flow)
- *   *                   → redirect to /login
- *
- * Note: the existing SupervisorFlowPage.tsx is preserved in src/ — it will be
- * integrated under SupervisorLayout in Master Prompt 3.
+ *   /supervisor             → SupervisorLayout     (protected, role=supervisor)
+ *     index                 → SupervisorFlowPage (4-step daily flow)
+ *   *                       → redirect to /login
  */
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Analytics } from "@vercel/analytics/react";
@@ -32,13 +39,24 @@ import LoginPage from './features/auth/pages/LoginPage';
 // Layouts
 import AdminLayout from './layout/AdminLayout';
 import SupervisorLayout from './layout/SupervisorLayout';
+import SuperAdminLayout from './layout/SuperAdminLayout';
+
+// Super Admin pages
+import SADashboardPage from './pages/superadmin/SADashboardPage';
+import SAProjectsPage from './pages/superadmin/SAProjectsPage';
+import SAEmployeesPage from './pages/superadmin/SAEmployeesPage';
+import SABusinessPartnersPage from './pages/superadmin/SABusinessPartnersPage';
+import SAEquipmentPage from './pages/superadmin/SAEquipmentPage';
+import SATradeGroupsPage from './pages/superadmin/SATradeGroupsPage';
+import SAActivityCodesPage from './pages/superadmin/SAActivityCodesPage';
+import SATransfersPage from './pages/superadmin/SATransfersPage';
+import SASettingsPage from './pages/superadmin/SASettingsPage';
 
 //usertable 
 import UseTable from './components/user';
 
 // Admin pages
 import AdminDashboardPage from './pages/AdminDashboardPage';
-import TenantsPage from './pages/TenantsPage';
 import EmployeesPage from './pages/EmployeesPage';
 import BusinessPartnersPage from './pages/BusinessPartnersPage';
 import EquipmentPage from './pages/EquipmentPage';
@@ -97,10 +115,8 @@ export default function App() {
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<AdminDashboardPage />} />
 
-              {/* Only super_admin can access the Tenants / Projects & Admins page */}
-              <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
-                <Route path="tenants" element={<TenantsPage />} />
-              </Route>
+              {/* Legacy redirect: Projects & Admins is now exclusively in Super Admin portal */}
+              <Route path="tenants" element={<Navigate to="/super-admin/projects" replace />} />
 
               <Route path="employees"         element={<EmployeesPage />} />
               <Route path="business-partners" element={<BusinessPartnersPage />} />
@@ -114,6 +130,22 @@ export default function App() {
               <Route path="assignments/equipment"  element={<AssignmentsHubPage defaultTab="equipment" />} />
               <Route path="approvals"     element={<ApprovalsPage />} />
               <Route path="reports"       element={<ReportsPage />} />
+            </Route>
+          </Route>
+
+          {/* ── Super Admin (protected, role=super_admin only) ──────────────── */}
+          <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
+            <Route path="/super-admin" element={<SuperAdminLayout />}>
+              <Route index                  element={<SADashboardPage />} />
+              <Route path="dashboard"       element={<SADashboardPage />} />
+              <Route path="projects"        element={<SAProjectsPage />} />
+              <Route path="employees"       element={<SAEmployeesPage />} />
+              <Route path="business-partners" element={<SABusinessPartnersPage />} />
+              <Route path="equipment"       element={<SAEquipmentPage />} />
+              <Route path="trade-groups"    element={<SATradeGroupsPage />} />
+              <Route path="activity-codes"  element={<SAActivityCodesPage />} />
+              <Route path="transfers"       element={<SATransfersPage />} />
+              <Route path="settings"        element={<SASettingsPage />} />
             </Route>
           </Route>
 

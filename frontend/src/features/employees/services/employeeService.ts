@@ -31,6 +31,7 @@ export interface Employee {
   epfNo?: string;
   isOperator?: boolean;
   licenseNo?: string;
+  employeeType?: 'internal' | 'external';
   status: 'active' | 'inactive';
 }
 
@@ -38,7 +39,7 @@ export interface EmployeeFormData {
   employeeCode?: string;
   callingName?: string;
   fullName?: string;
-  businessPartnerId: string;
+  businessPartnerId?: string;
   businessPartner?: string;
   tradeGroup: string;
   nicNo: string;
@@ -46,6 +47,7 @@ export interface EmployeeFormData {
   epfNo?: string;
   isOperator?: boolean;
   licenseNo?: string;
+  employeeType?: 'internal' | 'external';
   status?: 'active' | 'inactive';
 }
 
@@ -71,6 +73,7 @@ function mapEmployee(raw: any): Employee {
     epfNo: raw.epfNo || raw.epf_no || '',
     isOperator: Boolean(raw.isOperator ?? raw.is_operator ?? (raw.tradeGroup?.toLowerCase() === 'operator')),
     licenseNo: raw.licenseNo || raw.license_no || undefined,
+    employeeType: raw.employeeType || (raw.businessPartnerId || raw.businessPartner ? 'external' : 'internal'),
     status: raw.status === 'inactive' ? 'inactive' : 'active',
   };
 }
@@ -81,6 +84,7 @@ export interface EmployeeQueryFilters {
   status?: string;
   tradeGroup?: string;
   businessPartner?: string;
+  date?: string;
 }
 
 /** Fetch all employees from backend with optional filters (Cached for session) */
@@ -94,6 +98,7 @@ export async function getAll(filters?: EmployeeQueryFilters, forceRefresh: boole
       if (filters?.status) params.append('status', filters.status);
       if (filters?.tradeGroup) params.append('tradeGroup', filters.tradeGroup);
       if (filters?.businessPartner) params.append('businessPartner', filters.businessPartner);
+      if (filters?.date) params.append('date', filters.date);
 
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await apiFetch(`${API_URL}/employees${query}`);

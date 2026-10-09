@@ -16,7 +16,10 @@ const partnerSelectOptimized = {
   phone: true,
   email: true,
   rating: true,
-  currentWorkingProject: true,
+  nicNo: true,
+  address: true,
+  city: true,
+  country: true,
   status: true,
   createdAt: true,
   _count: {
@@ -122,7 +125,7 @@ export const getNextBusinessPartnerCode = async (_req: Request, res: Response): 
 // 4. POST /api/business-partners — Create business partner
 export const createBusinessPartner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, name, contactPerson, phone, email, status, type } = req.body || {};
+    const { code, name, contactPerson, phone, email, status, type, nicNo, businessEntityIdentifier, address, city, country } = req.body || {};
 
     if (!code || !name) {
       res.status(400).json({ error: 'Code and Name are required fields' });
@@ -134,7 +137,11 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
       data: {
         code: cleanCode,
         name: String(name).trim(),
-        type: type || 'subcontractor',
+        type: type ? String(type).trim() : null,
+        nicNo: (nicNo || businessEntityIdentifier)?.trim() || null,
+        address: address?.trim() || null,
+        city: city?.trim() || null,
+        country: country?.trim() || 'Sri Lanka',
         contactPerson: contactPerson?.trim() || null,
         phone: phone?.trim() || null,
         email: email?.trim() || null,
@@ -162,13 +169,17 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
 export const updateBusinessPartner = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { name, contactPerson, phone, email, status, type } = req.body || {};
+    const { name, contactPerson, phone, email, status, type, nicNo, businessEntityIdentifier, address, city, country } = req.body || {};
 
     const partner = await prisma.mF_G_BusinessPartner.update({
       where: { id },
       data: {
         name: name?.trim(),
-        type: type || undefined,
+        type: type !== undefined ? (type ? String(type).trim() : null) : undefined,
+        nicNo: (nicNo !== undefined || businessEntityIdentifier !== undefined) ? ((nicNo || businessEntityIdentifier)?.trim() || null) : undefined,
+        address: address !== undefined ? (address?.trim() || null) : undefined,
+        city: city !== undefined ? (city?.trim() || null) : undefined,
+        country: country !== undefined ? (country?.trim() || 'Sri Lanka') : undefined,
         contactPerson: contactPerson?.trim() || null,
         phone: phone?.trim() || null,
         email: email?.trim() || null,

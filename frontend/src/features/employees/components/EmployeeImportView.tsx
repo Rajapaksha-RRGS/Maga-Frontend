@@ -42,23 +42,11 @@ interface EmployeeImportViewProps {
   onTransfer: (item: CorporateEmployee, targetSiteName?: string) => Promise<void> | void;
 }
 
-// Helper to derive BP Code from Partner Name if not explicitly provided
+// Helper to get registered BP Code or mark as Internal / none
 function getBPCode(item: CorporateEmployee): string {
   if (item.businessPartnerCode) return item.businessPartnerCode;
-  const name = item.businessPartner || '';
-  if (name.toLowerCase().includes('direct') || name.toLowerCase().includes('mäga')) return 'BP-DIR';
-  if (name.toLowerCase().includes('sierra')) return 'BP-SC01';
-  if (name.toLowerCase().includes('access')) return 'BP-AE02';
-  if (name.toLowerCase().includes('tudawe')) return 'BP-TB03';
-  if (name.toLowerCase().includes('icc') || name.toLowerCase().includes('international')) return 'BP-ICC04';
-  
-  const initials = name
-    .split(' ')
-    .filter((w) => w.length > 0 && !['pvt', 'ltd', 'plc', '&'].includes(w.toLowerCase()))
-    .map((w) => w[0].toUpperCase())
-    .slice(0, 3)
-    .join('');
-  return initials ? `BP-${initials}` : 'BP-SUB';
+  if (item.employeeType === 'internal') return 'Internal';
+  return '—';
 }
 
 export default function EmployeeImportView({
@@ -737,9 +725,9 @@ export default function EmployeeImportView({
                     <td className="px-3.5 py-2 text-slate-700 border-r border-slate-200 whitespace-nowrap">
                       <span
                         className="truncate max-w-[190px] block"
-                        title={item.businessPartner || item.businessPartnerName || item.businessPartnerCode || 'Mäga Engineering (Pvt) Ltd'}
+                        title={item.businessPartner || item.businessPartnerName || (item.employeeType === 'internal' ? 'Mäga Engineering (Internal)' : '—')}
                       >
-                        {item.businessPartner || item.businessPartnerName || item.businessPartnerCode || 'Mäga Engineering (Pvt) Ltd'}
+                        {item.businessPartner || item.businessPartnerName || (item.employeeType === 'internal' ? 'Mäga Engineering (Internal)' : '—')}
                       </span>
                     </td>
 

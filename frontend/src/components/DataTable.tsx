@@ -32,10 +32,10 @@ export default function DataTable<T>({
   onRowClick,
 }: DataTableProps<T>) {
   return (
-    <div className="hidden md:block bg-white rounded-lg border border-slate-200 overflow-x-auto">
+    <div className="hidden md:block bg-white rounded-lg border border-slate-200 overflow-x-auto overflow-y-auto max-h-[calc(100vh-270px)]">
       <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-slate-50 border-b border-slate-200">
+        <thead className="sticky top-0 bg-slate-50/95 backdrop-blur-xs z-10">
+          <tr className="bg-slate-50/90 border-b border-slate-200">
             {columns.map((col) => (
               <th
                 key={String(col.accessor)}

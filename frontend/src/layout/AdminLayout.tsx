@@ -32,7 +32,7 @@ import {
   CheckCircle2,
   BarChart3,
   Building2,
-  Layers,
+  Crown,
   X,
   ChevronDown,
   ChevronLeft,
@@ -60,7 +60,6 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard',         to: '/admin',                   icon: <LayoutDashboard size={18} /> },
-  { label: 'Projects & Admins', to: '/admin/tenants',           icon: <Layers size={18} /> },
   { label: 'Employees',         to: '/admin/employees',         icon: <Users size={18} /> },
   { label: 'Business partners', to: '/admin/business-partners', icon: <Building2 size={18} /> },
   { label: 'Equipment',         to: '/admin/equipment',         icon: <Wrench size={18} /> },
@@ -113,12 +112,7 @@ function SidebarContent({ tenantName, onNavClick, isCollapsed = false, onToggleC
     });
   };
 
-  const visibleNavItems = NAV_ITEMS.filter((item) => {
-    if (item.to === '/admin/tenants') {
-      return user?.role === 'super_admin';
-    }
-    return true;
-  });
+  const visibleNavItems = NAV_ITEMS;
 
   // Shared class builder for nav links
   const navLinkClass = (isActive: boolean) =>
@@ -268,6 +262,23 @@ function SidebarContent({ tenantName, onNavClick, isCollapsed = false, onToggleC
         })}
       </nav>
 
+      {/* ── Switch to Super Admin Portal (If Super Admin role) ── */}
+      {user?.role === 'super_admin' && (
+        <div className="p-2 border-t border-amber-500/20 bg-amber-950/20">
+          <NavLink
+            to="/super-admin"
+            title={isCollapsed ? 'HQ Super Admin Portal' : undefined}
+            className={[
+              'flex items-center rounded-lg text-xs font-semibold py-2 transition-all border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 hover:text-white',
+              isCollapsed ? 'justify-center px-0 w-10 mx-auto' : 'gap-2.5 px-3 w-full',
+            ].join(' ')}
+          >
+            <Crown size={15} className="text-amber-400 flex-shrink-0" />
+            {!isCollapsed && <span className="truncate">HQ Super Admin</span>}
+          </NavLink>
+        </div>
+      )}
+
       {/* ── Footer toggle button (Desktop only) ── */}
       {onToggleCollapse && (
         <div className="p-2 border-t border-blue-500/15 bg-[#07172B]/60">
@@ -397,10 +408,7 @@ export default function AdminLayout() {
         <AdminHeader onOpenMobileNav={() => setDrawerOpen(true)} />
 
         {/* Page content from nested routes */}
-        <main
-          className="flex-1 h-full min-h-0 overflow-y-auto scrollbar-none focus:outline-none flex flex-col overscroll-contain"
-          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-        >
+        <main className="flex-1 h-full min-h-0 overflow-y-auto focus:outline-none flex flex-col overscroll-contain">
           <Outlet />
         </main>
       </div>

@@ -14,6 +14,7 @@ import reportRoutes from './routes/reportRoutes';
 import equipmentRoutes from './routes/equipmentRoutes';
 import calendarRoutes from './routes/calendarRoutes';
 import tenantRoutes from './routes/tenantRoutes';
+import corporateRoutes from './routes/corporateRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -45,6 +46,7 @@ app.use(resolveTenantMiddleware);
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/corporate', corporateRoutes);
 app.use('/api/supervisors', supervisorRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/employees', employeeRoutes);

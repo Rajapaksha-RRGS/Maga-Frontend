@@ -27,14 +27,17 @@ model MF_G_BusinessPartner {
   id                    String   @id @default(uuid())
   code                  String   @unique
   name                  String
-  type                  String   @default("subcontractor")
-  contactPerson         String?  @map("contact_person")
-  phone                 String?
-  email                 String?
-  rating                String?
-  currentWorkingProject String?  @map("current_working_project")
-  status                String   @default("active")
-  createdAt             DateTime @default(now()) @map("created_at")
+  type          String?
+  nicNo         String?  @map("nic_no")
+  address       String?
+  city          String?
+  country       String?  @default("Sri Lanka")
+  contactPerson String?  @map("contact_person")
+  phone                    String?
+  email                    String?
+  rating                   String?
+  status                   String   @default("active")
+  createdAt                DateTime @default(now()) @map("created_at")
 
   corporateEmployees MF_G_Employee[]
   employees          MF_P_Employee[]
@@ -93,6 +96,7 @@ model MF_G_Employee {
   dailyRate                  Decimal? @map("daily_rate") @db.Decimal(12, 2)
   isOperator                 Boolean  @default(false) @map("is_operator")
   epfNo                      String?  @map("epf_no")
+  employeeType               String   @map("employee_type") // "internal" | "external" - Strictly Mandatory
   corporateBusinessPartnerId String?  @map("corporate_business_partner_id")
   currentWorkingProject      String?  @map("current_working_project")
   status                     String   @default("active")
@@ -105,6 +109,7 @@ model MF_G_Employee {
 
   @@index([tradeGroupId])
   @@index([corporateBusinessPartnerId])
+  @@index([employeeType])
   @@map("MF_G_EMPLOYEE")
 }
 
@@ -115,12 +120,12 @@ model MF_G_Equipment {
   condition               String   @default("DRY")
   unit                    String   @default("hrs")
   minimumUtilization      Decimal? @map("minimum_utilization") @db.Decimal(10, 2)
-  dailyRate               Decimal  @default(0.00) @map("daily_rate") @db.Decimal(12, 2)
+  dailyRate               Decimal? @default(0.00) @map("daily_rate") @db.Decimal(12, 2)
   businessPartner         String?  @map("business_partner")
   vehicleNo               String?  @map("vehicle_no")
   description             String?
   searchKey               String?  @map("search_key")
-  costRate                Decimal  @default(0.00) @map("cost_rate") @db.Decimal(12, 2)
+  costRate                Decimal? @default(0.00) @map("cost_rate") @db.Decimal(12, 2)
   currency                String   @default("LKR")
   type                    String?
   currentWorkingProject   String?  @map("current_working_project")

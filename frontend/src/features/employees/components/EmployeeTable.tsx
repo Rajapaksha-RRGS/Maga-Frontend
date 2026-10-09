@@ -57,9 +57,19 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
         ),
       },
       {
-        header: 'Business Partner',
+        header: 'Business Partner / Type',
         accessor: 'businessPartner',
-        render: (e) => <span className="text-slate-700">{e.businessPartner || 'Direct'}</span>,
+        render: (e) => (
+          e.employeeType === 'internal' || !e.businessPartnerId || !e.businessPartner || e.businessPartner.toLowerCase().includes('direct') ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+              Direct (Internal)
+            </span>
+          ) : (
+            <span className="text-slate-700 font-medium text-xs">
+              {e.businessPartner}
+            </span>
+          )
+        ),
       },
      
       

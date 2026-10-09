@@ -24,10 +24,10 @@ export default function TenantTable({
   onToggleStatus,
 }: TenantTableProps) {
   return (
-    <div className="hidden md:block overflow-x-auto rounded-lg border border-slate-200 bg-white">
+    <div className="hidden md:block overflow-x-auto overflow-y-auto max-h-[calc(100vh-270px)] min-h-[350px] rounded-lg border border-slate-200 bg-white">
       <table className="w-full text-left border-collapse" aria-label="Projects">
-        <thead>
-          <tr className="border-b border-slate-200 bg-slate-50/70 text-slate-500 text-xs font-medium uppercase tracking-wide">
+        <thead className="sticky top-0 bg-slate-50/95 backdrop-blur-xs z-10">
+          <tr className="border-b border-slate-200 bg-slate-50/90 text-slate-500 text-xs font-medium uppercase tracking-wide">
             <th className="py-3 px-4">Project</th>
             <th className="py-3 px-4">Site Admin</th>
             <th className="py-3 px-4">Contact Info</th>

@@ -30,8 +30,13 @@ export default function LoginPage() {
       const stored = localStorage.getItem('les_auth_user');
       if (stored) {
         const u = JSON.parse(stored) as { role?: string };
-        const isAdmin = u.role === 'admin' || u.role === 'super_admin';
-        navigate(isAdmin ? '/admin' : '/supervisor', { replace: true });
+        if (u.role === 'super_admin') {
+          navigate('/super-admin', { replace: true });
+        } else if (u.role === 'admin') {
+          navigate('/admin', { replace: true });
+        } else {
+          navigate('/supervisor', { replace: true });
+        }
       }
     } catch (err: unknown) {
       const message =

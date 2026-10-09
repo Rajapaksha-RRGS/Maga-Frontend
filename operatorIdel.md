@@ -1,1 +1,2 @@
 operator idel wenne
+thawa deyak api meke plan kra ganna one senior SE kenke wididyata hithala den me thiyena deta flow ekata anuwa site admin kenek ADD from master deta kiyana tabale eka click kralamad employee thamange ekata ganne neththm auto synck wenawad ekata hodama option eka mokadda mata hithenawa aththatama pisycal gihin head office eken danne ne ethakota e site adminta awathawak thiyennna one me kenaw requwest karanna ahemad hoda kohomada meka weda karanne standed system wala olan ekak denna

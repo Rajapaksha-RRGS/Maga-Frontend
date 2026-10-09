@@ -29,6 +29,7 @@ const employeeSelectOptimized = {
       epfNo: true,
       dailyRate: true,
       isOperator: true,
+      employeeType: true,
       status: true,
     },
   },
@@ -73,6 +74,7 @@ function formatEmployee(emp: any) {
     tradeGroupId: emp.tradeGroup?.id || null,
     tradeGroup: emp.tradeGroup?.name || 'General Labour',
     trade_group: emp.tradeGroup?.name || 'General Labour',
+    employeeType: corp.employeeType || (emp.businessPartnerId ? 'external' : 'internal'),
     businessPartnerId: emp.businessPartner?.id || null,
     businessPartner: emp.businessPartner
       ? {
@@ -85,10 +87,15 @@ function formatEmployee(emp: any) {
   };
 }
 
+function parseDate(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
 // 1. GET /api/employees — List all employees scoped to project
 export const getAllEmployees = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { status, tradeGroup, businessPartner } = req.query;
+    const { status, tradeGroup, businessPartner, date } = req.query;
     const projectId =
       req.resolvedProjectId ||
       req.resolvedTenantId ||
@@ -97,9 +104,51 @@ export const getAllEmployees = async (req: Request, res: Response): Promise<void
       (await getDefaultTenantId());
 
     const where: Record<string, any> = { projectId };
-    if (status && typeof status === 'string' && status !== 'all') {
+
+    // Date-effective filtering for transfer boundaries
+    if (date && typeof date === 'string') {
+      const targetDate = parseDate(date);
+
+      // Find employees who were transferred AWAY from this project on or before targetDate
+      const transferredAway = await prisma.mF_G_EmployeeTransfer.findMany({
+        where: {
+          fromProjectId: projectId,
+          startDate: { lte: targetDate },
+          OR: [
+            { endDate: null },
+            { endDate: { gt: targetDate } },
+          ],
+        },
+        select: { corporateEmployeeId: true },
+      });
+      const excludedCorpIds = new Set(transferredAway.map((t) => t.corporateEmployeeId));
+
+      // Re-include any employees transferred back into this project covering targetDate
+      const transferredBack = await prisma.mF_G_EmployeeTransfer.findMany({
+        where: {
+          toProjectId: projectId,
+          startDate: { lte: targetDate },
+          OR: [
+            { endDate: null },
+            { endDate: { gte: targetDate } },
+          ],
+        },
+        select: { corporateEmployeeId: true },
+      });
+      transferredBack.forEach((t) => excludedCorpIds.delete(t.corporateEmployeeId));
+
+      if (excludedCorpIds.size > 0) {
+        where.corporateEmployeeId = { notIn: Array.from(excludedCorpIds) };
+      }
+
+      // If status filter is passed with date, allow active or transferred employees who were valid on that date
+      if (status && status !== 'all') {
+        where.status = { in: ['active', 'transferred', 'inactive'] };
+      }
+    } else if (status && typeof status === 'string' && status !== 'all') {
       where.status = status;
     }
+
     if (tradeGroup && typeof tradeGroup === 'string') {
       where.tradeGroup = {
         name: { contains: tradeGroup, mode: 'insensitive' },
@@ -221,17 +270,8 @@ export const resolveOrCreateBusinessPartner = async (
     return created.id;
   }
 
-  // Default partner
-  let defaultPartner = await prisma.mF_G_BusinessPartner.findFirst({
-    where: { code: 'BP1002885' },
-    select: { id: true },
-  });
-  if (!defaultPartner) {
-    defaultPartner = await prisma.mF_G_BusinessPartner.findFirst({
-      select: { id: true },
-    });
-  }
-  return defaultPartner?.id || null;
+  // If no partner was specified, this is an internal / direct employee
+  return null;
 };
 
 // 3. POST /api/employees — Create employee
@@ -274,6 +314,9 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
       name: businessPartnerName || (typeof businessPartner === 'string' ? businessPartner : undefined),
     });
 
+    const resolvedType = (req.body.employeeType === 'external' || (!req.body.employeeType && resolvedBpId)) ? 'external' : 'internal';
+    const finalBpId = resolvedType === 'external' ? resolvedBpId : null;
+
     const resolvedTradeGroupId = await resolveTradeGroup(tradeGroup);
 
     const isOperatorBool = Boolean(
@@ -299,8 +342,9 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
             epfNo: epfNo?.trim() || null,
             dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
             isOperator: isOperatorBool,
+            employeeType: resolvedType,
             tradeGroupId: resolvedTradeGroupId,
-            corporateBusinessPartnerId: resolvedBpId,
+            corporateBusinessPartnerId: finalBpId,
             status: 'active',
           },
         });
@@ -315,7 +359,7 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
           dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : (corpEmp.dailyRate ?? 1400.0),
           isOperator: isOperatorBool,
           tradeGroupId: resolvedTradeGroupId,
-          businessPartnerId: resolvedBpId,
+          businessPartnerId: finalBpId,
           status: status || 'active',
         },
         select: employeeSelectOptimized,
@@ -604,6 +648,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
           fullName: fullName?.trim() || callingName.trim(),
           nicNo: cleanNic,
           epfNo: epfNo?.trim() || null,
+          employeeType: 'internal',
           status: 'active',
         },
       });
@@ -630,15 +675,38 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
         });
       }
 
+      const transferDate = req.body.startDate ? new Date(req.body.startDate) : new Date();
+
+      // Close any previous open transfers for this employee
+      await tx.mF_G_EmployeeTransfer.updateMany({
+        where: {
+          corporateEmployeeId: corpEmp.id,
+          status: 'active',
+          endDate: null,
+        },
+        data: {
+          status: 'transferred',
+          endDate: transferDate,
+        },
+      });
+
       // Record transfer in ledger
       await tx.mF_G_EmployeeTransfer.create({
         data: {
           corporateEmployeeId: corpEmp.id,
           fromProjectId,
           toProjectId: targetProjectId,
-          startDate: new Date(),
+          startDate: transferDate,
           status: 'active',
           remarks: remarks || `Transferred to site ${targetProjectId}`,
+        },
+      });
+
+      // Keep corporate employee currentWorkingProject in sync
+      await tx.mF_G_Employee.update({
+        where: { id: corpEmp.id },
+        data: {
+          currentWorkingProject: targetProjectId,
         },
       });
 
@@ -701,6 +769,7 @@ export const getCorporateEmployeesCatalog = async (_req: Request, res: Response)
         epfNo: true,
         dailyRate: true,
         isOperator: true,
+        employeeType: true,
         status: true,
         currentWorkingProject: true,
         tradeGroup: {

@@ -58,3 +58,75 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
     headers,
   });
 }
+
+export interface ApiResponse<T = any> {
+  data: T;
+  status: number;
+  ok: boolean;
+}
+
+/**
+ * Standard API client for REST requests with built-in auth, tenant scoping,
+ * and JSON parsing. Provides an axios-compatible response shape ({ data, status, ok }).
+ */
+export const api = {
+  async get<T = any>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
+    const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const res = await apiFetch(url, { method: 'GET', ...options });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.message || data?.error || `Request failed with status ${res.status}`);
+    }
+    return { data, status: res.status, ok: res.ok };
+  },
+  async post<T = any>(endpoint: string, body?: any, options?: RequestInit): Promise<ApiResponse<T>> {
+    const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const res = await apiFetch(url, {
+      method: 'POST',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...options,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.message || data?.error || `Request failed with status ${res.status}`);
+    }
+    return { data, status: res.status, ok: res.ok };
+  },
+  async put<T = any>(endpoint: string, body?: any, options?: RequestInit): Promise<ApiResponse<T>> {
+    const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const res = await apiFetch(url, {
+      method: 'PUT',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...options,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.message || data?.error || `Request failed with status ${res.status}`);
+    }
+    return { data, status: res.status, ok: res.ok };
+  },
+  async patch<T = any>(endpoint: string, body?: any, options?: RequestInit): Promise<ApiResponse<T>> {
+    const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const res = await apiFetch(url, {
+      method: 'PATCH',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...options,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.message || data?.error || `Request failed with status ${res.status}`);
+    }
+    return { data, status: res.status, ok: res.ok };
+  },
+  async delete<T = any>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
+    const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const res = await apiFetch(url, { method: 'DELETE', ...options });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.message || data?.error || `Request failed with status ${res.status}`);
+    }
+    return { data, status: res.status, ok: res.ok };
+  },
+};
+
+export default api;
