@@ -22,6 +22,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import api from '../../config/api';
 
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface DashboardStats {
   totalProjects: number;
@@ -152,6 +153,7 @@ export default function SADashboardPage() {
 
   return (
     <div className="px-4 md:px-6 py-5 flex flex-col gap-6 min-h-0">
+      
 
       {/*
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1A0A2E] via-[#2D1055] to-[#1A0A2E] px-6 py-5 shadow-lg border border-violet-500/20">
@@ -207,14 +209,14 @@ export default function SADashboardPage() {
               onClick={() => navigate('/super-admin/projects')}
             />
             <KpiCard
-              label="Global Employees"
+              label="All Employees"
               value={stats?.totalEmployees ?? 0}
               icon={<Users size={22} className="text-white" />}
               gradient="bg-gradient-to-br from-blue-500 to-blue-700"
               onClick={() => navigate('/super-admin/employees')}
             />
             <KpiCard
-              label="Global Equipment"
+              label="All Equipment"
               value={stats?.totalEquipment ?? 0}
               icon={<Wrench size={22} className="text-white" />}
               gradient="bg-gradient-to-br from-slate-600 to-slate-800"

@@ -213,11 +213,11 @@ export default function SATransfersPage() {
               </div>
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <span className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 font-mono">
-                  {t.fromProjectId ?? 'HQ'}
+                  {t.fromProject?.projectCode ?? 'HQ'}
                 </span>
                 <ArrowRight size={12} className="text-[#C9A84C]" />
                 <span className="bg-violet-50 border border-violet-200 text-violet-700 rounded px-1.5 py-0.5 font-mono">
-                  {t.toProjectId}
+                  {t.toProject?.projectCode}
                 </span>
               </div>
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50">

@@ -39,6 +39,7 @@ model MF_G_BusinessPartner {
   documentUrl              String?  @map("document_url")
   status                   String   @default("active")
   createdAt                DateTime @default(now()) @map("created_at")
+  corporateEquipment MF_G_Equipment[]
   corporateEmployees MF_G_Employee[]
   employees          MF_P_Employee[]
   equipment          MF_P_Equipment[]
@@ -67,6 +68,7 @@ model MF_G_UnitMaster {
   category  String   @default("meter")
   createdAt DateTime @default(now()) @map("created_at")
   
+  corporateEquipment MF_G_Equipment[]         @relation("CorporateEquipmentUnit")
   equipmentMeterUnit MF_P_Equipment[]         @relation("EquipmentMeterUnit")
   equipmentDailyLogs MF_OP_EquipmentDailyLog[]
 
@@ -118,10 +120,10 @@ model MF_G_Equipment {
   standardEquipmentNumber String   @map("standard_equipment_number")
   equipmentName           String   @map("equipment_name")
   condition               String   @default("DRY")
-  unit                    String   @default("hrs")
+  unit                    String?  @default("hrs")
   minimumUtilization      Decimal? @map("minimum_utilization") @db.Decimal(10, 2)
   dailyRate               Decimal? @default(0.00) @map("daily_rate") @db.Decimal(12, 2)
-  businessPartner         String?  @map("business_partner")
+  businessPartnerId       String?  @map("business_partner")
   vehicleNo               String?  @map("vehicle_no")
   description             String?
   searchKey               String?  @map("search_key")
@@ -131,7 +133,13 @@ model MF_G_Equipment {
   currentWorkingProject   String?  @map("current_working_project")
   status                  String   @default("active")
   createdAt               DateTime @default(now()) @map("created_at")
-  projectEquipment MF_P_Equipment[]
+
+  unitMaster              MF_G_UnitMaster?      @relation("CorporateEquipmentUnit", fields: [unit], references: [code])
+  businesspartner         MF_G_BusinessPartner? @relation(fields: [businessPartnerId], references: [id])
+  projectEquipment        MF_P_Equipment[]
+
+  @@index([unit])
+  @@index([businessPartnerId])
   @@index([standardEquipmentNumber])
   @@index([vehicleNo])
   @@map("MF_G_EQUIPMENT")

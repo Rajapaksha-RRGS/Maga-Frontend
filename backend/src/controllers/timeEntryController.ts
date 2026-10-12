@@ -774,13 +774,28 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
                 callingName: true,
                 corporateEmployee: { select: { employeeCode: true, fullName: true } },
                 tradeGroup: { select: { name: true } },
+                businessPartner: { select: { name: true } },
               },
             },
           },
         },
         timeEntries: {
           include: {
+            employee: {
+              select: {
+                id: true,
+                callingName: true,
+                corporateEmployee: { select: { employeeCode: true, fullName: true } },
+                tradeGroup: { select: { name: true } },
+                businessPartner: { select: { name: true } },
+              },
+            },
             activity: { select: { code: true, description: true } },
+            activitySplits: {
+              include: {
+                activityCode: { select: { code: true, description: true } },
+              },
+            },
           },
         },
         equipmentAssignments: {
@@ -788,10 +803,36 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
             equipment: {
               select: {
                 id: true,
-                corporateEquipment: { select: { standardEquipmentNumber: true, equipmentName: true } },
+                condition: true,
+                meterUnitCode: true,
+                corporateEquipment: {
+                  select: {
+                    standardEquipmentNumber: true,
+                    equipmentName: true,
+                    vehicleNo: true,
+                    condition: true,
+                    unit: true,
+                  },
+                },
               },
             },
-            dailyLog: true,
+            operator: {
+              select: {
+                id: true,
+                callingName: true,
+                corporateEmployee: { select: { employeeCode: true, fullName: true } },
+                tradeGroup: { select: { name: true } },
+              },
+            },
+            dailyLog: {
+              include: {
+                activities: {
+                  include: {
+                    activityCode: { select: { code: true, description: true, unit: true } },
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -803,8 +844,164 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
 
     for (const sheet of dailySheets) {
       const sup = sheet.supervisor;
-      const totalHours = sheet.timeEntries.reduce((sum, te) => sum + Number(te.hours || 0), 0);
-      const totalOt = sheet.timeEntries.reduce((sum, te) => sum + Number(te.overtimeHours || 0), 0);
+
+      // 1. Worker details
+      const empMap = new Map<string, any>();
+      for (const a of sheet.assignments) {
+        if (a.employee) {
+          empMap.set(a.employee.id, {
+            employee: a.employee,
+            timeEntry: null,
+          });
+        }
+      }
+      for (const te of sheet.timeEntries) {
+        if (te.employee) {
+          if (!empMap.has(te.employee.id)) {
+            empMap.set(te.employee.id, {
+              employee: te.employee,
+              timeEntry: te,
+            });
+          } else {
+            empMap.get(te.employee.id)!.timeEntry = te;
+          }
+        }
+      }
+
+      const workerDetails = Array.from(empMap.values()).map(({ employee: emp, timeEntry: te }) => {
+        const inTime = te?.inTime || '';
+        const outTime = te?.outTime || '';
+        const hours = te ? Number(te.hours || 0) : 0;
+        const otHours = te ? Number(te.overtimeHours || 0) : 0;
+
+        let activities: any[] = [];
+        if (te?.activitySplits && te.activitySplits.length > 0) {
+          activities = te.activitySplits.map((s: any) => ({
+            code: s.activityCode?.code || 'N/A',
+            description: s.activityCode?.description || '',
+            hours: Number(s.hours || 0),
+          }));
+        } else if (te?.activity) {
+          activities = [
+            {
+              code: te.activity.code,
+              description: te.activity.description || '',
+              hours,
+            },
+          ];
+        }
+
+        return {
+          employeeId: emp.id,
+          employeeCode: emp.corporateEmployee?.employeeCode || 'N/A',
+          callingName: emp.callingName || emp.corporateEmployee?.fullName || 'Worker',
+          fullName: emp.corporateEmployee?.fullName || emp.callingName || '',
+          tradeGroup: emp.tradeGroup?.name || 'General',
+          businessPartner: emp.businessPartner?.name || 'Direct / Maga',
+          inTime,
+          outTime,
+          hours,
+          otHours,
+          activities,
+          status: te?.status || (inTime ? 'draft' : 'pending'),
+        };
+      });
+
+      // 2. Operator details
+      const operatorDetails = sheet.equipmentAssignments
+        .filter((ea) => ea.operator && ea.operatorId)
+        .map((ea) => {
+          const op = ea.operator!;
+          const opTe = sheet.timeEntries.find((t) => t.employeeId === op.id);
+          const inTime = opTe?.inTime || '';
+          const outTime = opTe?.outTime || '';
+          const hours = opTe ? Number(opTe.hours || 0) : 0;
+          const otHours = opTe ? Number(opTe.overtimeHours || 0) : 0;
+          const eqDisplay =
+            ea.equipment?.corporateEquipment?.standardEquipmentNumber ||
+            ea.equipment?.corporateEquipment?.vehicleNo ||
+            ea.equipment?.corporateEquipment?.equipmentName ||
+            '—';
+
+          return {
+            operatorId: op.id,
+            operatorCode: op.corporateEmployee?.employeeCode || 'N/A',
+            callingName: op.callingName || op.corporateEmployee?.fullName || 'Operator',
+            fullName: op.corporateEmployee?.fullName || op.callingName || '',
+            tradeGroup: op.tradeGroup?.name || 'Machine Operator',
+            inTime,
+            outTime,
+            hours,
+            otHours,
+            assignedEquipmentId: ea.equipmentId || null,
+            assignedEquipmentDisplay: eqDisplay,
+            status: opTe?.status || (inTime ? 'draft' : 'pending'),
+            notes: opTe?.remarks || '',
+          };
+        });
+
+      // 3. Equipment details
+      const equipmentDetails = sheet.equipmentAssignments.map((ea) => {
+        const eq = ea.equipment;
+        const corp = eq?.corporateEquipment;
+        const log = ea.dailyLog;
+        const primaryUnit = (eq?.meterUnitCode || corp?.unit || 'hrs').toLowerCase();
+        const condition = eq?.condition || corp?.condition || 'DRY';
+        const initialMeter = Number(log?.initialMeter || 0);
+        const finalMeter = Number(log?.finalMeter || 0);
+        const netHours = Number(log?.netRunningHours || 0);
+        const workingHours = Number(log?.workingHours || 0);
+        const idleHours = Number(log?.idleHours || 0);
+        const fuelLiters = Number(log?.fuelLiters || 0);
+        const totalMileage = Number(log?.totalMileage || 0);
+        const loggedQuantity = Number(log?.totalUtilization || 0);
+
+        const splits = (log?.activities || []).map((act) => ({
+          activityCode: act.activityCode?.code || 'N/A',
+          activityDesc: act.activityCode?.description || '',
+          unit: act.activityCode?.unit || primaryUnit,
+          utilization: Number(act.utilization || 0),
+        }));
+
+        return {
+          equipmentId: ea.equipmentId,
+          equipmentCode: corp?.standardEquipmentNumber || corp?.vehicleNo || '—',
+          equipmentName: corp?.equipmentName || '',
+          vehicleNo: corp?.vehicleNo || '—',
+          magaNo: corp?.standardEquipmentNumber || '—',
+          condition,
+          primaryUnit,
+          loggedQuantity,
+          initialMeter,
+          finalMeter,
+          netHours,
+          workingHours,
+          idleHours,
+          fuelLiters,
+          totalMileage,
+          remarks: log?.remarks || '',
+          status: log?.status || (netHours > 0 || loggedQuantity > 0 ? 'draft' : 'pending'),
+          splits,
+        };
+      });
+
+      const laborHours = workerDetails.reduce((sum, w) => sum + Number(w.hours || 0), 0);
+      const laborOvertime = workerDetails.reduce((sum, w) => sum + Number(w.otHours || 0), 0);
+      const equipmentFuel = equipmentDetails.reduce((sum, e) => sum + Number(e.fuelLiters || 0), 0);
+      const equipmentDays = equipmentDetails.reduce(
+        (sum, e) =>
+          sum +
+          (e.primaryUnit === 'mth' || e.primaryUnit === 'day' || e.primaryUnit === 'days'
+            ? e.loggedQuantity > 0
+              ? e.loggedQuantity
+              : 1
+            : 0),
+        0
+      );
+
+      const laborWorkedCount = workerDetails.filter((w) => w.inTime || w.hours > 0).length;
+      const operatorsWorkedCount = operatorDetails.filter((o) => o.inTime || o.hours > 0).length;
+      const equipmentRunningCount = equipmentDetails.filter((e) => e.netHours > 0 || e.loggedQuantity > 0).length;
 
       const groupData = {
         supervisorId: sup.id,
@@ -813,16 +1010,27 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         status: sheet.status,
         submittedAt: sheet.submittedAt,
         approvedAt: sheet.approvedAt,
+        assignedCount: sheet.assignments.length,
+        workedCount: laborWorkedCount,
+        totalHours: laborHours,
+        totalOvertime: laborOvertime,
         counts: {
           laborAssigned: sheet.assignments.length,
-          laborWorked: sheet.timeEntries.filter((t) => t.inTime || Number(t.hours) > 0).length,
-          equipmentAssigned: sheet.equipmentAssignments.length,
-          equipmentRunning: sheet.equipmentAssignments.filter((e) => e.dailyLog && Number(e.dailyLog.netRunningHours) > 0).length,
+          laborWorked: laborWorkedCount,
+          operatorsAssigned: operatorDetails.length,
+          operatorsWorked: operatorsWorkedCount,
+          equipmentAssigned: equipmentDetails.length,
+          equipmentRunning: equipmentRunningCount,
         },
         totals: {
-          laborHours: totalHours,
-          laborOvertime: totalOt,
+          laborHours,
+          laborOvertime,
+          equipmentFuel,
+          equipmentDays,
         },
+        workers: workerDetails,
+        operators: operatorDetails,
+        equipment: equipmentDetails,
       };
 
       if (sheet.status === 'approved') {
@@ -833,6 +1041,8 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         notSubmitted.push(groupData);
       }
     }
+
+    const allGroups = [...submitted, ...notSubmitted, ...approved];
 
     res.json({
       date: dateStr,
@@ -849,6 +1059,25 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         submittedCount: submitted.length,
         notSubmittedCount: notSubmitted.length,
         approvedCount: approved.length,
+        totalWorkers: dailySheets.reduce((sum, s) => sum + s.assignments.length, 0),
+        labor: {
+          totalAssigned: dailySheets.reduce((sum, s) => sum + s.assignments.length, 0),
+          attendedCount: allGroups.reduce((sum, g) => sum + (g.counts?.laborWorked || 0), 0),
+          totalNormalHours: allGroups.reduce((sum, g) => sum + (g.totals?.laborHours || 0), 0),
+          totalOtHours: allGroups.reduce((sum, g) => sum + (g.totals?.laborOvertime || 0), 0),
+        },
+        operators: {
+          totalAssigned: allGroups.reduce((sum, g) => sum + (g.counts?.operatorsAssigned || 0), 0),
+          deployedCount: allGroups.reduce((sum, g) => sum + (g.counts?.operatorsWorked || 0), 0),
+          mappedCount: allGroups.reduce((sum, g) => sum + (g.counts?.operatorsWorked || 0), 0),
+        },
+        equipment: {
+          totalAssigned: allGroups.reduce((sum, g) => sum + (g.counts?.equipmentAssigned || 0), 0),
+          runningCount: allGroups.reduce((sum, g) => sum + (g.counts?.equipmentRunning || 0), 0),
+          totalDays: allGroups.reduce((sum, g) => sum + (g.totals?.equipmentDays || 0), 0),
+          totalHours: 0,
+          totalFuelLiters: allGroups.reduce((sum, g) => sum + (g.totals?.equipmentFuel || 0), 0),
+        },
       },
     });
   } catch (error) {
