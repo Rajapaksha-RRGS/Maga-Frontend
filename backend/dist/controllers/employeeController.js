@@ -31,6 +31,8 @@ const employeeSelectOptimized = {
             epfNo: true,
             dailyRate: true,
             isOperator: true,
+            employeeType: true,
+            documentUrl: true,
             status: true,
         },
     },
@@ -48,11 +50,31 @@ const employeeSelectOptimized = {
             code: true,
             name: true,
             type: true,
+            brNumber: true,
+            documentUrl: true,
+            status: true,
         },
     },
 };
 function formatEmployee(emp) {
     const corp = emp.corporateEmployee || {};
+    const isEmployeeActive = emp.status === 'active' && corp.status === 'active';
+    const isPartnerActive = !emp.businessPartner || emp.businessPartner.status === 'active';
+    const isPayable = isEmployeeActive && isPartnerActive;
+    let payrollStatus = 'PAYABLE';
+    let lockReason = null;
+    if (!isPayable) {
+        payrollStatus = 'HOLD_PENDING_HO_APPROVAL';
+        if (!isEmployeeActive && !isPartnerActive) {
+            lockReason = 'Both Employee and Business Partner are pending Head Office Super Admin approval';
+        }
+        else if (!isEmployeeActive) {
+            lockReason = 'Employee dossier is pending Head Office Super Admin approval';
+        }
+        else {
+            lockReason = 'Business Partner BR & Dossier is pending Head Office Super Admin approval';
+        }
+    }
     return {
         id: emp.id,
         projectId: emp.projectId,
@@ -71,31 +93,86 @@ function formatEmployee(emp) {
         dailyRate: Number(emp.dailyRate ?? corp.dailyRate ?? 1400.0),
         isOperator: Boolean(emp.isOperator ?? corp.isOperator ?? false),
         status: emp.status || 'active',
+        corporateStatus: corp.status || 'active',
+        documentUrl: corp.documentUrl || null,
+        document_url: corp.documentUrl || null,
         tradeGroupId: emp.tradeGroup?.id || null,
         tradeGroup: emp.tradeGroup?.name || 'General Labour',
         trade_group: emp.tradeGroup?.name || 'General Labour',
+        employeeType: corp.employeeType || (emp.businessPartnerId ? 'external' : 'internal'),
         businessPartnerId: emp.businessPartner?.id || null,
+        businessPartnerCode: emp.businessPartner?.code || null,
+        businessPartnerName: emp.businessPartner?.name || null,
+        businessPartnerStatus: emp.businessPartner?.status || null,
         businessPartner: emp.businessPartner
             ? {
                 id: emp.businessPartner.id,
                 code: emp.businessPartner.code,
                 name: emp.businessPartner.name,
+                status: emp.businessPartner.status,
+                brNumber: emp.businessPartner.brNumber,
+                documentUrl: emp.businessPartner.documentUrl,
             }
             : null,
+        isApproved: isEmployeeActive && isPartnerActive,
+        isPayable,
+        payrollStatus,
+        lockReason,
         createdAt: emp.createdAt,
     };
+}
+function parseDate(dateStr) {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day));
 }
 // 1. GET /api/employees — List all employees scoped to project
 const getAllEmployees = async (req, res) => {
     try {
-        const { status, tradeGroup, businessPartner } = req.query;
+        const { status, tradeGroup, businessPartner, date } = req.query;
         const projectId = req.resolvedProjectId ||
             req.resolvedTenantId ||
             req.query.projectId ||
             req.query.tenantId ||
             (await (0, tenantHelper_1.getDefaultTenantId)());
         const where = { projectId };
-        if (status && typeof status === 'string' && status !== 'all') {
+        // Date-effective filtering for transfer boundaries
+        if (date && typeof date === 'string') {
+            const targetDate = parseDate(date);
+            // Find employees who were transferred AWAY from this project on or before targetDate
+            const transferredAway = await prisma_1.default.mF_G_EmployeeTransfer.findMany({
+                where: {
+                    fromProjectId: projectId,
+                    startDate: { lte: targetDate },
+                    OR: [
+                        { endDate: null },
+                        { endDate: { gt: targetDate } },
+                    ],
+                },
+                select: { corporateEmployeeId: true },
+            });
+            const excludedCorpIds = new Set(transferredAway.map((t) => t.corporateEmployeeId));
+            // Re-include any employees transferred back into this project covering targetDate
+            const transferredBack = await prisma_1.default.mF_G_EmployeeTransfer.findMany({
+                where: {
+                    toProjectId: projectId,
+                    startDate: { lte: targetDate },
+                    OR: [
+                        { endDate: null },
+                        { endDate: { gte: targetDate } },
+                    ],
+                },
+                select: { corporateEmployeeId: true },
+            });
+            transferredBack.forEach((t) => excludedCorpIds.delete(t.corporateEmployeeId));
+            if (excludedCorpIds.size > 0) {
+                where.corporateEmployeeId = { notIn: Array.from(excludedCorpIds) };
+            }
+            // If status filter is passed with date, allow active or transferred employees who were valid on that date
+            if (status && status !== 'all') {
+                where.status = { in: ['active', 'transferred', 'inactive'] };
+            }
+        }
+        else if (status && typeof status === 'string' && status !== 'all') {
             where.status = status;
         }
         if (tradeGroup && typeof tradeGroup === 'string') {
@@ -146,7 +223,15 @@ const getEmployeeById = async (req, res) => {
 };
 exports.getEmployeeById = getEmployeeById;
 // Helper: Resolve or create a Corporate Trade Group
-async function resolveTradeGroup(tradeGroupName) {
+async function resolveTradeGroup(tradeGroupName, tradeGroupId) {
+    if (tradeGroupId && tradeGroupId.length > 20) {
+        const foundById = await prisma_1.default.mF_G_TradeGroup.findUnique({
+            where: { id: tradeGroupId },
+            select: { id: true },
+        });
+        if (foundById)
+            return foundById.id;
+    }
     if (!tradeGroupName || !tradeGroupName.trim())
         return null;
     const cleanName = tradeGroupName.trim();
@@ -199,35 +284,30 @@ const resolveOrCreateBusinessPartner = async (_projectId, input) => {
         if (existing)
             return existing.id;
         const count = await prisma_1.default.mF_G_BusinessPartner.count();
-        const bpCode = searchCode || `BP1${String(count + 1).padStart(6, '0')}`;
+        const isPending = input?.status === 'pending_approval';
+        const bpCode = searchCode || (isPending ? `BP-TMP-${String(count + 1).padStart(4, '0')}` : `BP1${String(count + 1).padStart(6, '0')}`);
         const created = await prisma_1.default.mF_G_BusinessPartner.create({
             data: {
                 code: bpCode,
-                name: searchName || searchCode || 'Mäga Engineering (Pvt) Ltd',
+                name: searchName || searchCode || 'Subcontractor Partner',
                 type: (searchName || '').toLowerCase().includes('maga') ? 'internal' : 'subcontractor',
-                status: 'active',
+                brNumber: input?.brNumber?.trim() || null,
+                nicNo: input?.nicNo?.trim() || null,
+                documentUrl: input?.documentUrl?.trim() || null,
+                status: input?.status || 'active',
             },
             select: { id: true },
         });
         return created.id;
     }
-    // Default partner
-    let defaultPartner = await prisma_1.default.mF_G_BusinessPartner.findFirst({
-        where: { code: 'BP1002885' },
-        select: { id: true },
-    });
-    if (!defaultPartner) {
-        defaultPartner = await prisma_1.default.mF_G_BusinessPartner.findFirst({
-            select: { id: true },
-        });
-    }
-    return defaultPartner?.id || null;
+    // If no partner was specified, this is an internal / direct employee
+    return null;
 };
 exports.resolveOrCreateBusinessPartner = resolveOrCreateBusinessPartner;
 // 3. POST /api/employees — Create employee
 const createEmployee = async (req, res) => {
     try {
-        const { employeeCode, callingName, fullName, businessPartnerId, businessPartnerCode, businessPartnerName, businessPartner, tradeGroup, nicNo, dailyRate, epfNo, status, isOperator, } = req.body || {};
+        const { employeeCode, callingName, fullName, businessPartnerId, businessPartnerCode, businessPartnerName, businessPartner, businessPartnerBrNumber, businessPartnerNicNo, businessPartnerDocumentUrl, tradeGroup, nicNo, dailyRate, epfNo, status, isOperator, documentUrl, isSiteWalkIn, } = req.body || {};
         if (!callingName || !nicNo) {
             res.status(400).json({ error: 'Calling name and NIC number are required' });
             return;
@@ -237,14 +317,45 @@ const createEmployee = async (req, res) => {
             req.body.projectId ||
             req.body.tenantId ||
             (await (0, tenantHelper_1.getDefaultTenantId)());
-        const cleanCode = employeeCode?.trim() || `EMP${Date.now().toString().slice(-4)}`;
-        const cleanNic = String(nicNo).trim();
+        const targetStatus = status || (isSiteWalkIn ? 'pending_approval' : 'active');
+        // Retrieve Project Code for provisional sequence prefix
+        const projRecord = await prisma_1.default.mF_P_Project.findUnique({
+            where: { id: projectId },
+            select: { projectCode: true },
+        });
+        const projCode = projRecord?.projectCode || 'SITE';
+        let cleanCode = employeeCode?.trim();
+        if (!cleanCode) {
+            if (targetStatus === 'pending_approval') {
+                const empCount = await prisma_1.default.mF_G_Employee.count();
+                cleanCode = `${projCode}-TMP-${String(empCount + 1).padStart(3, '0')}`;
+            }
+            else {
+                cleanCode = `EMP${Date.now().toString().slice(-4)}`;
+            }
+        }
+        const cleanNic = String(nicNo).trim().toUpperCase();
         const resolvedBpId = await (0, exports.resolveOrCreateBusinessPartner)(projectId, {
             id: businessPartnerId,
             code: businessPartnerCode || (typeof businessPartner === 'string' && businessPartner.startsWith('BP') ? businessPartner : undefined),
             name: businessPartnerName || (typeof businessPartner === 'string' ? businessPartner : undefined),
+            brNumber: businessPartnerBrNumber,
+            nicNo: businessPartnerNicNo,
+            documentUrl: businessPartnerDocumentUrl,
+            status: targetStatus === 'pending_approval' ? 'pending_approval' : undefined,
         });
-        const resolvedTradeGroupId = await resolveTradeGroup(tradeGroup);
+        const resolvedType = (req.body.employeeType === 'external' || (!req.body.employeeType && resolvedBpId)) ? 'external' : 'internal';
+        const finalBpId = resolvedType === 'external' ? resolvedBpId : null;
+        const tgInput = tradeGroup || req.body.tradeGroupId || req.body.tradeGroupName;
+        if (!tgInput || !String(tgInput).trim()) {
+            res.status(400).json({ error: 'Trade Group is strictly required. An employee must belong to a Trade Group.' });
+            return;
+        }
+        const resolvedTradeGroupId = await resolveTradeGroup(tradeGroup, req.body.tradeGroupId);
+        if (!resolvedTradeGroupId) {
+            res.status(400).json({ error: 'Failed to resolve Trade Group. Please select a valid registered Trade Group.' });
+            return;
+        }
         const isOperatorBool = Boolean(isOperator === true ||
             isOperator === 'true' ||
             (tradeGroup && ['operator', 'driver', 'heavy operator'].some((t) => tradeGroup.toLowerCase().includes(t))));
@@ -264,10 +375,18 @@ const createEmployee = async (req, res) => {
                         epfNo: epfNo?.trim() || null,
                         dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
                         isOperator: isOperatorBool,
+                        employeeType: resolvedType,
                         tradeGroupId: resolvedTradeGroupId,
-                        corporateBusinessPartnerId: resolvedBpId,
-                        status: 'active',
+                        corporateBusinessPartnerId: finalBpId,
+                        documentUrl: documentUrl?.trim() || null,
+                        status: targetStatus,
                     },
+                });
+            }
+            else if (documentUrl) {
+                corpEmp = await tx.mF_G_Employee.update({
+                    where: { id: corpEmp.id },
+                    data: { documentUrl: documentUrl.trim() },
                 });
             }
             // 2. Create Site Employee enrollment
@@ -279,8 +398,8 @@ const createEmployee = async (req, res) => {
                     dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : (corpEmp.dailyRate ?? 1400.0),
                     isOperator: isOperatorBool,
                     tradeGroupId: resolvedTradeGroupId,
-                    businessPartnerId: resolvedBpId,
-                    status: status || 'active',
+                    businessPartnerId: finalBpId,
+                    status: targetStatus,
                 },
                 select: employeeSelectOptimized,
             });
@@ -510,12 +629,21 @@ const transferEmployee = async (req, res) => {
             },
         });
         if (!corpEmp) {
+            const resolvedTgId = await resolveTradeGroup(tradeGroup);
+            const defaultTg = resolvedTgId ? null : await prisma_1.default.mF_G_TradeGroup.findFirst({ where: { code: 'MUS' } });
+            const finalTgId = resolvedTgId || defaultTg?.id;
+            if (!finalTgId) {
+                res.status(400).json({ error: 'Trade Group is required to register corporate employee' });
+                return;
+            }
             corpEmp = await prisma_1.default.mF_G_Employee.create({
                 data: {
                     employeeCode: cleanCode || `EMP${Date.now().toString().slice(-4)}`,
                     fullName: fullName?.trim() || callingName.trim(),
                     nicNo: cleanNic,
                     epfNo: epfNo?.trim() || null,
+                    employeeType: 'internal',
+                    tradeGroupId: finalTgId,
                     status: 'active',
                 },
             });
@@ -538,15 +666,35 @@ const transferEmployee = async (req, res) => {
                     data: { status: 'inactive' },
                 });
             }
+            const transferDate = req.body.startDate ? new Date(req.body.startDate) : new Date();
+            // Close any previous open transfers for this employee
+            await tx.mF_G_EmployeeTransfer.updateMany({
+                where: {
+                    corporateEmployeeId: corpEmp.id,
+                    status: 'active',
+                    endDate: null,
+                },
+                data: {
+                    status: 'transferred',
+                    endDate: transferDate,
+                },
+            });
             // Record transfer in ledger
             await tx.mF_G_EmployeeTransfer.create({
                 data: {
                     corporateEmployeeId: corpEmp.id,
                     fromProjectId,
                     toProjectId: targetProjectId,
-                    startDate: new Date(),
+                    startDate: transferDate,
                     status: 'active',
                     remarks: remarks || `Transferred to site ${targetProjectId}`,
+                },
+            });
+            // Keep corporate employee currentWorkingProject in sync
+            await tx.mF_G_Employee.update({
+                where: { id: corpEmp.id },
+                data: {
+                    currentWorkingProject: targetProjectId,
                 },
             });
             // Resolve business partner and trade group for target site
@@ -606,6 +754,7 @@ const getCorporateEmployeesCatalog = async (_req, res) => {
                 epfNo: true,
                 dailyRate: true,
                 isOperator: true,
+                employeeType: true,
                 status: true,
                 currentWorkingProject: true,
                 tradeGroup: {

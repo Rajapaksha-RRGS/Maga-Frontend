@@ -38,7 +38,18 @@ export function getTenantHeaders(customHeaders: HeadersInit = {}): Headers {
   if (tenantId && !headers.has('x-tenant-id')) {
     headers.set('x-tenant-id', tenantId);
   }
-  const token = localStorage.getItem('token');
+  let token = localStorage.getItem('token');
+  if (!token) {
+    try {
+      const raw = localStorage.getItem('les_auth_user');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        token = parsed.token || null;
+      }
+    } catch {
+      // Ignore
+    }
+  }
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }

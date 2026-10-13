@@ -984,7 +984,13 @@ export const supervisorStorage = {
         );
       }
 
-      await Promise.all(syncTasks);
+      const responses = await Promise.all(syncTasks);
+      for (const res of responses) {
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          throw new Error(errData?.error || `Sync failed with HTTP status ${res.status}`);
+        }
+      }
 
       this.resetPendingSync();
       return true;

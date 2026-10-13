@@ -75,7 +75,8 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
     const netMins = Math.max(0, diff - breakMins);
     const net = netMins > 0 ? parseFloat((netMins / 60).toFixed(2)) : 0;
     const ot = net > 8.0 ? parseFloat((net - 8.0).toFixed(2)) : 0;
-    return { hours: net, otHours: ot };
+    const reg = Math.max(0, parseFloat((net - ot).toFixed(2)));
+    return { hours: reg, otHours: ot };
   };
 
   const startEditing = (w: ApprovalWorkerItem) => {

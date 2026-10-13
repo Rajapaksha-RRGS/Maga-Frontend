@@ -27,7 +27,13 @@ const equipmentSelectOptimized = {
       unit: true,
       minimumUtilization: true,
       dailyRate: true,
-      businessPartner: true,
+      businesspartner: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+        },
+      },
       vehicleNo: true,
       costRate: true,
       type: true,
@@ -85,7 +91,7 @@ function formatEquipment(item: any) {
     ],
     status: item.status || 'active',
     ownerPartnerId: item.ownerPartnerId || null,
-    businessPartner: item.ownerPartner ? item.ownerPartner.name : corp.businessPartner || null,
+    businessPartner: item.ownerPartner ? item.ownerPartner.name : corp.businesspartner?.name || null,
     createdAt: item.createdAt,
   };
 }

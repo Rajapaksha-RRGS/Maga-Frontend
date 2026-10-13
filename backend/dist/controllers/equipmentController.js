@@ -31,7 +31,13 @@ const equipmentSelectOptimized = {
             unit: true,
             minimumUtilization: true,
             dailyRate: true,
-            businessPartner: true,
+            businesspartner: {
+                select: {
+                    id: true,
+                    name: true,
+                    code: true,
+                },
+            },
             vehicleNo: true,
             costRate: true,
             type: true,
@@ -72,7 +78,10 @@ function formatEquipment(item) {
         cost_rate: costRateNum,
         primaryUnit: primaryUnitStr,
         primary_unit: primaryUnitStr,
-        availableUnits: [primaryUnitStr],
+        availableUnits: [
+            primaryUnitStr,
+            ...['mth', 'Hrs', 'Days', 'EX.hrs', 'km', 'm2'].filter((u) => u.toLowerCase() !== primaryUnitStr.toLowerCase()),
+        ],
         unitRates: [
             {
                 unit: primaryUnitStr,
@@ -82,7 +91,7 @@ function formatEquipment(item) {
         ],
         status: item.status || 'active',
         ownerPartnerId: item.ownerPartnerId || null,
-        businessPartner: item.ownerPartner ? item.ownerPartner.name : corp.businessPartner || null,
+        businessPartner: item.ownerPartner ? item.ownerPartner.name : corp.businesspartner?.name || null,
         createdAt: item.createdAt,
     };
 }

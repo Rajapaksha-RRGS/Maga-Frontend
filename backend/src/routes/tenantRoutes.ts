@@ -9,13 +9,13 @@ import {
   resetTenantAdminPassword,
   getCorporateProjectsCatalog,
 } from '../controllers/tenantController';
-import { requireAdmin } from '../middleware/authMiddleware';
+import { requireAdmin, requireSuperAdmin } from '../middleware/authMiddleware';
 
 const router = Router();
 
 router.get('/corporate-projects', getCorporateProjectsCatalog);
-router.get('/', getAllTenants);
-router.post('/register', requireAdmin, registerTenant);
+router.get('/', requireSuperAdmin, getAllTenants);
+router.post('/register', requireSuperAdmin, registerTenant);
 router.get('/:id', getTenantById);
 router.put('/:id', updateTenant);
 router.patch('/:id/status', requireAdmin, updateTenantStatus);

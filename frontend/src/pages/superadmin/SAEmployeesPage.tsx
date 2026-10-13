@@ -198,6 +198,7 @@ export default function SAEmployeesPage() {
 
   const loadData = async () => {
     setIsLoading(true);
+    setError('');
     try {
       const [empRes, tgRes, bpRes, projRes, pendRes] = await Promise.all([
         api.get('/corporate/employees'),
@@ -211,8 +212,9 @@ export default function SAEmployeesPage() {
       setPartners(bpRes.data?.items ?? []);
       setProjects(projRes.data ?? []);
       setPendingEmployees(pendRes.data?.items ?? []);
-    } catch {
-      setError('Failed to load global employees.');
+    } catch (err: any) {
+      console.error('Failed to load global employees:', err);
+      setError(err?.message || 'Failed to load global employees.');
     } finally {
       setIsLoading(false);
     }

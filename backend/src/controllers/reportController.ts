@@ -1512,14 +1512,14 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
           let sumShiftHours = 0;
           let sumOtHours = 0;
           for (const e of dayEntries) {
-            sumShiftHours += Number(e.hours || 0);
+            sumShiftHours += Number(e.shiftHours ?? e.hours ?? 0);
             sumOtHours += Number(e.overtimeHours || 0);
           }
 
-          // Compute Days worked: 8h = 1.0 day, 4h = 0.5 day
-          if (sumShiftHours >= 7.5) {
+          // Compute Days worked: >= 7.0h = 1.0 day (e.g. 09:00-17:00, Saturday 6.5h+), >= 3.5h = 0.5 day
+          if (sumShiftHours >= 7.0 || (sumShiftHours + sumOtHours) >= 7.0) {
             dayWorked = 1.0;
-          } else if (sumShiftHours >= 3.5) {
+          } else if (sumShiftHours >= 3.5 || (sumShiftHours + sumOtHours) >= 3.5) {
             dayWorked = 0.5;
           } else if (sumShiftHours > 0) {
             dayWorked = Math.round((sumShiftHours / 8) * 100) / 100;

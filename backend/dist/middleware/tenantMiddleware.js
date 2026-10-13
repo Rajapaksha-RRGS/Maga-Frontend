@@ -23,8 +23,9 @@ const resolveTenantMiddleware = async (req, res, next) => {
                 where: {
                     OR: [
                         { id: clean },
-                        { projectCode: { equals: clean, mode: 'insensitive' } },
                         { subdomain: { equals: clean, mode: 'insensitive' } },
+                        { projectCode: { equals: clean, mode: 'insensitive' } },
+                        { projectCode: { equals: `PRJ${clean}`, mode: 'insensitive' } },
                     ],
                 },
                 select: { id: true },

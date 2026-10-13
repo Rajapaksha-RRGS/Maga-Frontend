@@ -64,16 +64,14 @@ const login = async (req, res) => {
                 }
             }
         }
-        // 1. Optimized Project/Tenant lookup with selective projection
-        const project = await prisma_1.default.mF_P_Project.findFirst({
+        // 1. Optimized Project/Tenant lookup with priority for exact match
+        let project = await prisma_1.default.mF_P_Project.findFirst({
             where: {
                 OR: [
                     { id: cleanTenant },
-                    { projectCode: { equals: cleanTenant, mode: 'insensitive' } },
                     { subdomain: { equals: cleanTenant, mode: 'insensitive' } },
-                    { subdomain: { equals: `${cleanTenant}M`, mode: 'insensitive' } },
-                    { subdomain: { equals: cleanTenant.replace(/M$/i, ''), mode: 'insensitive' } },
-                    { projectName: { contains: cleanTenant, mode: 'insensitive' } },
+                    { projectCode: { equals: cleanTenant, mode: 'insensitive' } },
+                    { projectCode: { equals: `PRJ${cleanTenant}`, mode: 'insensitive' } },
                 ],
             },
             select: {
@@ -84,6 +82,26 @@ const login = async (req, res) => {
                 status: true,
             },
         });
+        // Fallback to broader match if no exact match found
+        if (!project) {
+            project = await prisma_1.default.mF_P_Project.findFirst({
+                where: {
+                    OR: [
+                        { subdomain: { equals: `${cleanTenant}M`, mode: 'insensitive' } },
+                        { subdomain: { equals: cleanTenant.replace(/M$/i, ''), mode: 'insensitive' } },
+                        { projectCode: { contains: cleanTenant, mode: 'insensitive' } },
+                        { projectName: { contains: cleanTenant, mode: 'insensitive' } },
+                    ],
+                },
+                select: {
+                    id: true,
+                    projectCode: true,
+                    projectName: true,
+                    subdomain: true,
+                    status: true,
+                },
+            });
+        }
         if (!project || project.status !== 'active') {
             res.status(400).json({ error: 'Invalid or inactive project/tenant' });
             return;

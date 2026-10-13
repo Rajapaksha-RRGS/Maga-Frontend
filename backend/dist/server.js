@@ -16,8 +16,11 @@ const supervisorRoutes_1 = __importDefault(require("./routes/supervisorRoutes"))
 const assignmentRoutes_1 = __importDefault(require("./routes/assignmentRoutes"));
 const reportRoutes_1 = __importDefault(require("./routes/reportRoutes"));
 const equipmentRoutes_1 = __importDefault(require("./routes/equipmentRoutes"));
+const path_1 = __importDefault(require("path"));
 const calendarRoutes_1 = __importDefault(require("./routes/calendarRoutes"));
 const tenantRoutes_1 = __importDefault(require("./routes/tenantRoutes"));
+const corporateRoutes_1 = __importDefault(require("./routes/corporateRoutes"));
+const uploadRoutes_1 = __importDefault(require("./routes/uploadRoutes"));
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5000;
 // 1. Crash-proof CORS Middleware
@@ -43,6 +46,7 @@ const tenantMiddleware_1 = require("./middleware/tenantMiddleware");
 app.use(tenantMiddleware_1.resolveTenantMiddleware);
 // API Routes
 app.use('/api/auth', authRoutes_1.default);
+app.use('/api/corporate', corporateRoutes_1.default);
 app.use('/api/supervisors', supervisorRoutes_1.default);
 app.use('/api/assignments', assignmentRoutes_1.default);
 app.use('/api/employees', employeeRoutes_1.default);
@@ -53,6 +57,9 @@ app.use('/api/reports', reportRoutes_1.default);
 app.use('/api/equipment', equipmentRoutes_1.default);
 app.use('/api/calendar', calendarRoutes_1.default);
 app.use('/api/tenants', tenantRoutes_1.default);
+app.use('/api/uploads', uploadRoutes_1.default);
+// Static uploads serving for uploaded document scans and dossiers
+app.use('/uploads', express_1.default.static(path_1.default.join(__dirname, '../uploads')));
 app.get('/', (req, res) => {
     res.json({ status: "success", message: "Maga Backend API is running perfectly!" });
 });

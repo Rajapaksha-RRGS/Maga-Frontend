@@ -102,10 +102,15 @@ export default function App() {
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/splash" element={<SplashShowcasePage />} />
-            <Route path="/users" element={<UseTable />} />
-            {/* ── Public direct supervisor mobile preview ─────────────────────── */}
-            <Route path="/labour" element={<SupervisorMobileApp />} />
-            <Route path="/supervisor-preview" element={<SupervisorMobileApp />} />
+
+            {/* ── Protected User & Supervisor Mobile Previews ──────────────────── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'super_admin']} />}>
+              <Route path="/users" element={<UseTable />} />
+            </Route>
+            <Route element={<ProtectedRoute allowedRoles={['supervisor', 'admin', 'super_admin']} />}>
+              <Route path="/labour" element={<SupervisorMobileApp />} />
+              <Route path="/supervisor-preview" element={<SupervisorMobileApp />} />
+            </Route>
           
 
 

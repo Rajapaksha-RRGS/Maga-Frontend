@@ -77,6 +77,143 @@ async function getOrCreateDailySheet(projectId: string, supervisorId: string, da
   });
 }
 
+async function getOrCreateDefaultActivityId(projectId: string): Promise<string> {
+  const existing = await prisma.mF_P_ActivityCode.findFirst({
+    where: { projectId },
+    orderBy: { code: 'asc' },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await prisma.mF_P_ActivityCode.create({
+    data: {
+      projectId,
+      code: 'GEN-01',
+      description: 'General Site Works',
+    },
+    select: { id: true },
+  });
+  return created.id;
+}
+
+async function resolveProjectActivityId(
+  rawActivityId: string,
+  projectId: string,
+  cache?: Map<string, string>
+): Promise<string> {
+  if (!rawActivityId || !rawActivityId.trim()) {
+    return await getOrCreateDefaultActivityId(projectId);
+  }
+
+  const clean = rawActivityId.trim();
+  const cacheKey = `${projectId}_${clean}`;
+  if (cache && cache.has(cacheKey)) {
+    return cache.get(cacheKey)!;
+  }
+
+  // 1. Direct match by id in MF_P_ActivityCode for this project
+  const directMatch = await prisma.mF_P_ActivityCode.findFirst({
+    where: { id: clean, projectId },
+    select: { id: true },
+  });
+  if (directMatch) {
+    if (cache) cache.set(cacheKey, directMatch.id);
+    return directMatch.id;
+  }
+
+  // 2. Check if clean matches code in MF_P_ActivityCode for this project
+  const codeMatch = await prisma.mF_P_ActivityCode.findFirst({
+    where: { projectId, code: clean },
+    select: { id: true },
+  });
+  if (codeMatch) {
+    if (cache) cache.set(cacheKey, codeMatch.id);
+    return codeMatch.id;
+  }
+
+  // 3. Check if clean is a corporate activity code ID (MF_G_ActivityCode)
+  const corpById = await prisma.mF_G_ActivityCode.findUnique({
+    where: { id: clean },
+    select: { id: true, code: true, description: true, unit: true },
+  });
+  if (corpById) {
+    let projectAct = await prisma.mF_P_ActivityCode.findFirst({
+      where: { projectId, code: corpById.code },
+      select: { id: true },
+    });
+    if (!projectAct) {
+      projectAct = await prisma.mF_P_ActivityCode.create({
+        data: {
+          projectId,
+          code: corpById.code,
+          description: corpById.description,
+          unit: corpById.unit,
+          corporateActivityCodeId: corpById.id,
+        },
+        select: { id: true },
+      });
+    }
+    if (cache) cache.set(cacheKey, projectAct.id);
+    return projectAct.id;
+  }
+
+  // 4. Check if clean matches a code in corporate activity catalog (MF_G_ActivityCode)
+  const corpByCode = await prisma.mF_G_ActivityCode.findUnique({
+    where: { code: clean },
+    select: { id: true, code: true, description: true, unit: true },
+  });
+  if (corpByCode) {
+    let projectAct = await prisma.mF_P_ActivityCode.findFirst({
+      where: { projectId, code: corpByCode.code },
+      select: { id: true },
+    });
+    if (!projectAct) {
+      projectAct = await prisma.mF_P_ActivityCode.create({
+        data: {
+          projectId,
+          code: corpByCode.code,
+          description: corpByCode.description,
+          unit: corpByCode.unit,
+          corporateActivityCodeId: corpByCode.id,
+        },
+        select: { id: true },
+      });
+    }
+    if (cache) cache.set(cacheKey, projectAct.id);
+    return projectAct.id;
+  }
+
+  // 5. Check if it matches an MF_P_ActivityCode ID in another project
+  const anyProjectMatch = await prisma.mF_P_ActivityCode.findUnique({
+    where: { id: clean },
+    select: { id: true, code: true, description: true, unit: true },
+  });
+  if (anyProjectMatch) {
+    let localAct = await prisma.mF_P_ActivityCode.findFirst({
+      where: { projectId, code: anyProjectMatch.code },
+      select: { id: true },
+    });
+    if (!localAct) {
+      localAct = await prisma.mF_P_ActivityCode.create({
+        data: {
+          projectId,
+          code: anyProjectMatch.code,
+          description: anyProjectMatch.description,
+          unit: anyProjectMatch.unit,
+        },
+        select: { id: true },
+      });
+    }
+    if (cache) cache.set(cacheKey, localAct.id);
+    return localAct.id;
+  }
+
+  // 6. Fallback: default activity for this project
+  const defId = await getOrCreateDefaultActivityId(projectId);
+  if (cache) cache.set(cacheKey, defId);
+  return defId;
+}
+
 // 1. GET /api/time-entries/assigned — Get assigned employees for supervisor & date
 export const getAssignedEmployees = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -343,6 +480,17 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
     const targetDate = parseDate(date);
     const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
 
+    const resolvedActivityId = await resolveProjectActivityId(activityId, projectId);
+
+    let validEquipmentId: string | null = null;
+    if (equipmentId) {
+      const eq = await prisma.mF_P_Equipment.findUnique({
+        where: { id: equipmentId },
+        select: { id: true },
+      });
+      validEquipmentId = eq ? eq.id : null;
+    }
+
     let effectiveSupId = supervisorId;
     if (!effectiveSupId) {
       const supUser = await prisma.mF_P_User.findFirst({
@@ -378,7 +526,7 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
         }
       }
 
-      const existingActivityEntry = existingEntries.find((e) => e.activityId === activityId);
+      const existingActivityEntry = existingEntries.find((e) => e.activityId === resolvedActivityId);
 
       if (existingActivityEntry) {
         const updated = await prisma.mF_OP_TimeEntry.update({
@@ -389,24 +537,24 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
             breakHours,
             inTime: existingActivityEntry.inTime || preservedInTime,
             outTime: existingActivityEntry.outTime || preservedOutTime,
-            equipmentId: equipmentId || existingActivityEntry.equipmentId,
+            equipmentId: validEquipmentId || existingActivityEntry.equipmentId,
             remarks: remarks || existingActivityEntry.remarks,
           },
         });
         createdEntries.push(updated);
       } else {
-        const placeholder = existingEntries.find((e) => Number(e.hours) === 0 && e.activityId !== activityId);
+        const placeholder = existingEntries.find((e) => Number(e.hours) === 0 && e.activityId !== resolvedActivityId);
         if (placeholder) {
           const updated = await prisma.mF_OP_TimeEntry.update({
             where: { id: placeholder.id },
             data: {
-              activityId,
+              activityId: resolvedActivityId,
               hours: numHours,
               overtimeHours,
               breakHours,
               inTime: placeholder.inTime || preservedInTime,
               outTime: placeholder.outTime || preservedOutTime,
-              equipmentId: equipmentId || placeholder.equipmentId,
+              equipmentId: validEquipmentId || placeholder.equipmentId,
               remarks: remarks || placeholder.remarks,
             },
           });
@@ -418,8 +566,8 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
               dailySheetId: dailySheet?.id || null,
               employeeId: empId,
               recordedById: effectiveSupId || null,
-              activityId,
-              equipmentId: equipmentId || null,
+              activityId: resolvedActivityId,
+              equipmentId: validEquipmentId,
               effectiveDayTypeId,
               date: targetDate,
               inTime: preservedInTime,
@@ -472,13 +620,24 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
       effectiveSupId = supUser?.id || '';
     }
 
+    const resolvedActivityId = await resolveProjectActivityId(activityId, projectId);
+
+    let validEquipmentId: string | null = null;
+    if (equipmentId) {
+      const eq = await prisma.mF_P_Equipment.findUnique({
+        where: { id: equipmentId },
+        select: { id: true },
+      });
+      validEquipmentId = eq ? eq.id : null;
+    }
+
     const dailySheet = effectiveSupId ? await getOrCreateDailySheet(projectId, effectiveSupId, targetDate) : null;
 
     const existing = await prisma.mF_OP_TimeEntry.findFirst({
       where: {
         projectId,
         employeeId,
-        activityId,
+        activityId: resolvedActivityId,
         date: targetDate,
       },
     });
@@ -510,7 +669,7 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
           breakHours,
           inTime: finalInTime,
           outTime: finalOutTime,
-          equipmentId: equipmentId ?? existing.equipmentId,
+          equipmentId: validEquipmentId ?? existing.equipmentId,
           remarks: remarks ?? existing.remarks,
         },
       });
@@ -521,8 +680,8 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
           dailySheetId: dailySheet?.id || null,
           employeeId,
           recordedById: effectiveSupId || null,
-          activityId,
-          equipmentId: equipmentId || null,
+          activityId: resolvedActivityId,
+          equipmentId: validEquipmentId,
           effectiveDayTypeId,
           date: targetDate,
           inTime: finalInTime,
@@ -846,12 +1005,12 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
       const sup = sheet.supervisor;
 
       // 1. Worker details
-      const empMap = new Map<string, any>();
+      const empMap = new Map<string, { employee: any; timeEntries: any[] }>();
       for (const a of sheet.assignments) {
         if (a.employee) {
           empMap.set(a.employee.id, {
             employee: a.employee,
-            timeEntry: null,
+            timeEntries: [],
           });
         }
       }
@@ -860,36 +1019,63 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           if (!empMap.has(te.employee.id)) {
             empMap.set(te.employee.id, {
               employee: te.employee,
-              timeEntry: te,
+              timeEntries: [te],
             });
           } else {
-            empMap.get(te.employee.id)!.timeEntry = te;
+            empMap.get(te.employee.id)!.timeEntries.push(te);
           }
         }
       }
 
-      const workerDetails = Array.from(empMap.values()).map(({ employee: emp, timeEntry: te }) => {
-        const inTime = te?.inTime || '';
-        const outTime = te?.outTime || '';
-        const hours = te ? Number(te.hours || 0) : 0;
-        const otHours = te ? Number(te.overtimeHours || 0) : 0;
+      const workerDetails = Array.from(empMap.values()).map(({ employee: emp, timeEntries: entries }) => {
+        const firstWithTimes = entries.find((e: any) => e.inTime && e.outTime) || entries[0];
+        const inTime = firstWithTimes?.inTime || '';
+        const outTime = firstWithTimes?.outTime || '';
 
-        let activities: any[] = [];
-        if (te?.activitySplits && te.activitySplits.length > 0) {
-          activities = te.activitySplits.map((s: any) => ({
-            code: s.activityCode?.code || 'N/A',
-            description: s.activityCode?.description || '',
-            hours: Number(s.hours || 0),
-          }));
-        } else if (te?.activity) {
-          activities = [
-            {
-              code: te.activity.code,
-              description: te.activity.description || '',
-              hours,
-            },
-          ];
+        // Calculate shift hours, overtime, and regular hours
+        let shiftHours = 0;
+        let otHours = 0;
+        let regularHours = 0;
+
+        if (inTime && outTime) {
+          const calc = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
+          shiftHours = calc.shiftHours;
+          otHours = calc.otHours;
+          regularHours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((shiftHours - otHours) * 100) / 100);
+        } else if (entries.length > 0) {
+          shiftHours = entries.reduce((sum: number, e: any) => sum + Number(e.shiftHours ?? e.hours ?? 0), 0);
+          otHours = entries.reduce((sum: number, e: any) => sum + Number(e.overtimeHours || 0), 0);
+          regularHours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((shiftHours - otHours) * 100) / 100);
         }
+
+        // Collect all activities worked across all entries
+        const seenActivities = new Map<string, { code: string; description: string; hours: number }>();
+        for (const te of entries) {
+          if (te.activitySplits && te.activitySplits.length > 0) {
+            for (const s of te.activitySplits) {
+              const code = s.activityCode?.code || 'N/A';
+              const description = s.activityCode?.description || '';
+              const h = Number(s.hours || 0);
+              if (seenActivities.has(code)) {
+                seenActivities.get(code)!.hours += h;
+              } else {
+                seenActivities.set(code, { code, description, hours: h });
+              }
+            }
+          } else if (te.activity) {
+            const code = te.activity.code || 'N/A';
+            const description = te.activity.description || '';
+            const h = Number(te.hours || 0);
+            if (seenActivities.has(code)) {
+              seenActivities.get(code)!.hours += h;
+            } else {
+              seenActivities.set(code, { code, description, hours: h });
+            }
+          }
+        }
+
+        const activities = Array.from(seenActivities.values());
+        const primaryStatus = entries.find((e: any) => e.status)?.status || (inTime ? 'draft' : 'pending');
 
         return {
           employeeId: emp.id,
@@ -900,10 +1086,11 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           businessPartner: emp.businessPartner?.name || 'Direct / Maga',
           inTime,
           outTime,
-          hours,
+          hours: regularHours,
           otHours,
+          shiftHours,
           activities,
-          status: te?.status || (inTime ? 'draft' : 'pending'),
+          status: primaryStatus,
         };
       });
 
@@ -912,11 +1099,21 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         .filter((ea) => ea.operator && ea.operatorId)
         .map((ea) => {
           const op = ea.operator!;
-          const opTe = sheet.timeEntries.find((t) => t.employeeId === op.id);
-          const inTime = opTe?.inTime || '';
-          const outTime = opTe?.outTime || '';
-          const hours = opTe ? Number(opTe.hours || 0) : 0;
-          const otHours = opTe ? Number(opTe.overtimeHours || 0) : 0;
+          const opTeList = sheet.timeEntries.filter((t) => t.employeeId === op.id);
+          const firstOpTe = opTeList.find((t) => t.inTime && t.outTime) || opTeList[0];
+          const inTime = firstOpTe?.inTime || '';
+          const outTime = firstOpTe?.outTime || '';
+          let hours = 0;
+          let otHours = 0;
+          if (inTime && outTime) {
+            const calc = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
+            otHours = calc.otHours;
+            hours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((calc.shiftHours - calc.otHours) * 100) / 100);
+          } else if (opTeList.length > 0) {
+            const shiftH = opTeList.reduce((sum, t) => sum + Number(t.shiftHours ?? t.hours ?? 0), 0);
+            otHours = opTeList.reduce((sum, t) => sum + Number(t.overtimeHours || 0), 0);
+            hours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((shiftH - otHours) * 100) / 100);
+          }
           const eqDisplay =
             ea.equipment?.corporateEquipment?.standardEquipmentNumber ||
             ea.equipment?.corporateEquipment?.vehicleNo ||
@@ -935,8 +1132,8 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
             otHours,
             assignedEquipmentId: ea.equipmentId || null,
             assignedEquipmentDisplay: eqDisplay,
-            status: opTe?.status || (inTime ? 'draft' : 'pending'),
-            notes: opTe?.remarks || '',
+            status: firstOpTe?.status || (inTime ? 'draft' : 'pending'),
+            notes: firstOpTe?.remarks || '',
           };
         });
 
@@ -1259,12 +1456,18 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
       });
     }
 
+    let regularHours = calculatedHours;
+    if (inTime && outTime) {
+      regularHours = isAllOvertime ? 0 : Math.max(0, Math.round((calculatedHours - calculatedOt) * 100) / 100);
+    }
+
     res.json({
       success: true,
       employeeId,
       inTime,
       outTime,
-      hours: calculatedHours,
+      hours: regularHours,
+      shiftHours: calculatedHours,
       overtimeHours: calculatedOt,
       message: 'Worker entry adjusted successfully by Admin.',
     });
@@ -1658,10 +1861,28 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
     }
 
     const dailySheet = effectiveSupId ? await getOrCreateDailySheet(projectId, effectiveSupId, targetDate) : null;
+    const activityResolutionCache = new Map<string, string>();
+    const equipmentValidationCache = new Map<string, string | null>();
 
     for (const item of entries) {
       const { employeeId, activityId, hours, inTime, outTime, remarks, equipmentId } = item;
       if (!employeeId || !activityId) continue;
+
+      const resolvedActivityId = await resolveProjectActivityId(activityId, projectId, activityResolutionCache);
+
+      let validEquipmentId: string | null = null;
+      if (equipmentId) {
+        if (equipmentValidationCache.has(equipmentId)) {
+          validEquipmentId = equipmentValidationCache.get(equipmentId)!;
+        } else {
+          const eqExists = await prisma.mF_P_Equipment.findUnique({
+            where: { id: equipmentId },
+            select: { id: true },
+          });
+          validEquipmentId = eqExists ? eqExists.id : null;
+          equipmentValidationCache.set(equipmentId, validEquipmentId);
+        }
+      }
 
       const numHours = hours !== undefined ? parseFloat(hours) : 0;
       const finalInTime = inTime ?? null;
@@ -1685,7 +1906,7 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         where: {
           projectId,
           employeeId,
-          activityId,
+          activityId: resolvedActivityId,
           date: targetDate,
         },
       });
@@ -1701,7 +1922,7 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
               breakHours,
               inTime: finalInTime,
               outTime: finalOutTime,
-              equipmentId: equipmentId ?? existing.equipmentId,
+              equipmentId: validEquipmentId ?? existing.equipmentId,
               remarks: remarks ?? existing.remarks,
             },
           });
@@ -1714,8 +1935,8 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
             employeeId,
             recordedById: effectiveSupId || null,
             date: targetDate,
-            activityId,
-            equipmentId: equipmentId || null,
+            activityId: resolvedActivityId,
+            equipmentId: validEquipmentId,
             effectiveDayTypeId,
             inTime: finalInTime,
             outTime: finalOutTime,

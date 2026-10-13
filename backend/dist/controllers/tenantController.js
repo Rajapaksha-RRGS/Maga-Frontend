@@ -123,6 +123,7 @@ const getTenantBySubdomain = async (req, res) => {
                 OR: [
                     { subdomain: { equals: subdomain, mode: 'insensitive' } },
                     { projectCode: { equals: subdomain, mode: 'insensitive' } },
+                    { projectCode: { equals: `PRJ${subdomain}`, mode: 'insensitive' } },
                 ],
             },
             select: projectSelectOptimized,

@@ -35,6 +35,9 @@ export async function login(
 
     if (res.ok) {
       const data = await res.json();
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+      }
       if (data.user) {
         return {
           id: data.user.id,
@@ -43,6 +46,7 @@ export async function login(
           role: data.user.role,
           tenantId: data.user.tenantId,
           tenantName: data.user.companyName,
+          token: data.token,
         };
       }
     } else {

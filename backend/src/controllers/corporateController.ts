@@ -1844,7 +1844,7 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
               dailyRate: dailyRate !== null ? dailyRate : existing.dailyRate,
               costRate: costRate !== null ? costRate : existing.costRate,
               vehicleNo: vehicleNo || existing.vehicleNo,
-              businessPartner: bp || existing.businessPartner,
+              businessPartnerId: bp || existing.businessPartnerId,
               status: 'active',
             },
           });
@@ -1860,7 +1860,7 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
               dailyRate,
               costRate,
               vehicleNo,
-              businessPartner: bp,
+              businessPartnerId: bp,
               currency: 'LKR',
               status: 'active',
             },
