@@ -13,7 +13,7 @@ datasource db {
 // ═════════════════════════════════════════════════════════════════════════════
 
 model MF_G_SuperAdmin {
-  id           String   @id @default(uuid())
+  id           String   @id @default(uuid()) @map("super_admin_id")
   username     String   @unique
   email        String?  @unique
   passwordHash String   @map("password_hash")
@@ -24,7 +24,7 @@ model MF_G_SuperAdmin {
 }
 
 model MF_G_BusinessPartner {
-  id                    String   @id @default(uuid())
+  id                    String   @id @default(uuid()) @map("business_partner_id")
   code                  String   @unique
   name                  String
   type          String?
@@ -48,7 +48,7 @@ model MF_G_BusinessPartner {
 }
 
 model MF_G_TradeGroup {
-  id                String   @id @default(uuid())
+  id                String   @id @default(uuid()) @map("trade_group_id")
   code              String   @unique
   name              String
   standardDailyRate Decimal  @default(1400.00) @map("standard_daily_rate") @db.Decimal(10, 2)
@@ -63,7 +63,7 @@ model MF_G_TradeGroup {
 }
 
 model MF_G_UnitMaster {
-  id        String   @id @default(uuid())
+  id        String   @id @default(uuid()) @map("unit_master_id")
   code      String   @unique // "Days", "Hrs", "EX.hrs", "mth", "m2", "km"
   name      String
   category  String   @default("meter")
@@ -77,7 +77,7 @@ model MF_G_UnitMaster {
 }
 
 model MF_G_DayType {
-  id             String   @id @default(uuid())
+  id             String   @id @default(uuid()) @map("day_type_id")
   code           String   @unique // "NORMAL", "POYA", "SUNDAY", "SPECIAL"
   name           String
   rateMultiplier Decimal  @default(1.00) @map("rate_multiplier") @db.Decimal(3, 2)
@@ -90,7 +90,7 @@ model MF_G_DayType {
 }
 
 model MF_G_Employee {
-  id                         String   @id @default(uuid())
+  id                         String   @id @default(uuid()) @map("corporate_employee_id")
   employeeCode               String   @unique @map("employee_code")
   fullName                   String   @map("full_name")
   nicNo                      String   @map("nic_no")
@@ -99,7 +99,7 @@ model MF_G_Employee {
   isOperator                 Boolean  @default(false) @map("is_operator")
   epfNo                      String?  @map("epf_no")
   employeeType               String   @map("employee_type") // "internal" | "external" - Strictly Mandatory
-  corporateBusinessPartnerId String?  @map("corporate_business_partner_id")
+  corporateBusinessPartnerId String?  @map("business_partner_id")
   currentWorkingProject      String?  @map("current_working_project")
   documentUrl                String?  @map("document_url")
   status                     String   @default("active")
@@ -117,14 +117,14 @@ model MF_G_Employee {
 }
 
 model MF_G_Equipment {
-  id                      String   @id @default(uuid())
+  id                      String   @id @default(uuid()) @map("corporate_equipment_id")
   standardEquipmentNumber String   @map("standard_equipment_number")
   equipmentName           String   @map("equipment_name")
   condition               String   @default("DRY")
   unit                    String?  @default("hrs")
   minimumUtilization      Decimal? @map("minimum_utilization") @db.Decimal(10, 2)
   dailyRate               Decimal? @default(0.00) @map("daily_rate") @db.Decimal(12, 2)
-  businessPartnerId       String?  @map("business_partner")
+  businessPartnerId       String?  @map("business_partner_id")
   vehicleNo               String?  @map("vehicle_no")
   description             String?
   searchKey               String?  @map("search_key")
@@ -147,7 +147,7 @@ model MF_G_Equipment {
 }
 
 model MF_G_ActivityCode {
-  id          String   @id @default(uuid())
+  id          String   @id @default(uuid()) @map("corporate_activity_code_id")
   code        String   @unique
   description String
   unit        String?
@@ -159,7 +159,7 @@ model MF_G_ActivityCode {
 }
 
 model MF_G_EmployeeTransfer {
-  id                  String    @id @default(uuid())
+  id                  String    @id @default(uuid()) @map("employee_transfer_id")
   corporateEmployeeId String    @map("corporate_employee_id")
   fromProjectId       String?   @map("from_project_id")
   toProjectId         String    @map("to_project_id")
@@ -184,7 +184,7 @@ model MF_G_EmployeeTransfer {
 // ═════════════════════════════════════════════════════════════════════════════
 
 model MF_P_Project {
-  id             String   @id @default(uuid())
+  id             String   @id @default(uuid()) @map("project_id")
   projectCode    String   @unique @map("project_code") // e.g. "PRJ530", "550", "570"
   projectName    String   @map("project_name")        // e.g. "Kandy Highway Project"
   subdomain      String   @unique                     // e.g. "530" (for site-specific URL/routing)
@@ -217,7 +217,7 @@ model MF_P_Project {
 }
 
 model MF_P_User {
-  id                 String   @id @default(uuid())
+  id                 String   @id @default(uuid()) @map("user_id")
   projectId          String   @map("project_id")
   username           String
   passwordHash       String   @map("password_hash")
@@ -239,7 +239,7 @@ model MF_P_User {
 }
 
 model MF_P_Employee {
-  id                  String   @id @default(uuid())
+  id                  String   @id @default(uuid()) @map("employee_id")
   projectId           String   @map("project_id")
   corporateEmployeeId String   @map("corporate_employee_id")
   callingName         String?  @map("calling_name")
@@ -268,14 +268,14 @@ model MF_P_Employee {
 }
 
 model MF_P_Equipment {
-  id                   String   @id @default(uuid())
+  id                   String   @id @default(uuid()) @map("equipment_id")
   projectId            String   @map("project_id")
   corporateEquipmentId String   @map("corporate_equipment_id")
   condition            String   @default("DRY")
   costRate             Decimal? @default(0.00) @map("cost_rate") @db.Decimal(10, 2)
   status               String   @default("active")
   meterUnitCode        String?  @map("meter_unit_code")
-  ownerPartnerId       String?  @map("owner_partner_id")
+  ownerPartnerId       String?  @map("business_partner_id")
   createdAt            DateTime @default(now()) @map("created_at")
 
   project            MF_P_Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -294,7 +294,7 @@ model MF_P_Equipment {
 }
 
 model MF_P_ActivityCode {
-  id                      String   @id @default(uuid())
+  id                      String   @id @default(uuid()) @map("activity_code_id")
   projectId               String   @map("project_id")
   corporateActivityCodeId String?  @map("corporate_activity_code_id")
   code                    String
@@ -334,7 +334,7 @@ model MF_P_CalendarDay {
 // ═════════════════════════════════════════════════════════════════════════════
 
 model MF_OP_DailySheet {
-  id           String    @id @default(uuid())
+  id           String    @id @default(uuid()) @map("daily_sheet_id")
   projectId    String    @map("project_id")
   date         DateTime  @db.Date
   supervisorId String    @map("supervisor_id")
@@ -361,7 +361,7 @@ model MF_OP_DailySheet {
 }
 
 model MF_OP_DailyAssignment {
-  id           String   @id @default(uuid())
+  id           String   @id @default(uuid()) @map("daily_assignment_id")
   dailySheetId String   @map("daily_sheet_id")
   employeeId   String   @map("employee_id")
   isStandby    Boolean  @default(false) @map("is_standby")
@@ -377,7 +377,7 @@ model MF_OP_DailyAssignment {
 }
 
 model MF_OP_DailyEquipmentAssignment {
-  id           String   @id @default(uuid())
+  id           String   @id @default(uuid()) @map("equipment_assignment_id")
   dailySheetId String   @map("daily_sheet_id")
   equipmentId  String   @map("equipment_id")
   operatorId   String?  @map("operator_id")
@@ -396,8 +396,8 @@ model MF_OP_DailyEquipmentAssignment {
 }
 
 model MF_OP_EquipmentDailyLog {
-  id               String   @id @default(uuid())
-  assignmentId     String   @unique @map("assignment_id")
+  id               String   @id @default(uuid()) @map("daily_log_id")
+  assignmentId     String   @unique @map("equipment_assignment_id")
   
   // Dynamic Units & Total Utilization
   unitCode         String?  @map("unit_code")
@@ -432,7 +432,7 @@ model MF_OP_EquipmentDailyLog {
 }
 
 model MF_OP_EquipmentDailyLogActivity {
-  id             String   @id @default(uuid())
+  id             String   @id @default(uuid()) @map("daily_log_activity_id")
   dailyLogId     String   @map("daily_log_id")
   activityCodeId String   @map("activity_code_id")
   utilization    Decimal  @default(0.00) @map("utilization") @db.Decimal(8, 2)
@@ -448,14 +448,14 @@ model MF_OP_EquipmentDailyLogActivity {
 }
 
 model MF_OP_TimeEntry {
-  id                 String    @id @default(uuid())
+  id                 String    @id @default(uuid()) @map("time_entry_id")
   projectId          String    @map("project_id")
   dailySheetId       String?   @map("daily_sheet_id")
   employeeId         String    @map("employee_id")
   date               DateTime  @db.Date
-  activityId         String    @map("activity_id")
+  activityId         String    @map("activity_code_id")
   equipmentId        String?   @map("equipment_id")
-  effectiveDayTypeId String    @map("effective_day_type_id")
+  effectiveDayTypeId String    @map("day_type_id")
   inTime             String?   @map("in_time")
   outTime            String?   @map("out_time")
   hours              Decimal   @default(0.00) @db.Decimal(5, 2)
@@ -489,7 +489,7 @@ model MF_OP_TimeEntry {
 }
 
 model MF_OP_LaborActivitySplit {
-  id             String   @id @default(uuid())
+  id             String   @id @default(uuid()) @map("labor_activity_split_id")
   timeEntryId    String   @map("time_entry_id")
   activityCodeId String   @map("activity_code_id")
   hours          Decimal  @default(0.00) @db.Decimal(5, 2)
