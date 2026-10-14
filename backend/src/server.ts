@@ -82,10 +82,12 @@ app.use((req: Request, res: Response) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Mäga Backend server running on http://localhost:${PORT}`);
-  console.log(`📋 Health Check: http://localhost:${PORT}/api/health`);
-  console.log(`👥 Employees API: http://localhost:${PORT}/api/employees`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Mäga Backend server running on http://localhost:${PORT}`);
+    console.log(`📋 Health Check: http://localhost:${PORT}/api/health`);
+    console.log(`👥 Employees API: http://localhost:${PORT}/api/employees`);
+  });
+}
 
 export default app;

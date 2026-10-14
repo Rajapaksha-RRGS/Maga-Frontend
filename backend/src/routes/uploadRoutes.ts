@@ -5,15 +5,29 @@ import fs from 'fs';
 
 const router = Router();
 
-// Ensure upload directory exists
-const uploadDir = path.join(__dirname, '../../uploads/documents');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+// Ensure upload directory exists safely (works in both local and Vercel serverless /tmp)
+const uploadDir = process.env.VERCEL
+  ? path.join('/tmp', 'uploads', 'documents')
+  : path.join(__dirname, '../../uploads/documents');
+
+try {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+} catch (err) {
+  console.warn('Warning: Could not create upload directory:', err);
 }
 
 // Multer storage configuration
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
+    try {
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+    } catch {
+      // Ignore
+    }
     cb(null, uploadDir);
   },
   filename: (_req, file, cb) => {
