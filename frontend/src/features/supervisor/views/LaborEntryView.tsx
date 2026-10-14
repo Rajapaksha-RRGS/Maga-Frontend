@@ -18,7 +18,8 @@ import {
   Clock,
   Lock,
   PauseCircle,
-  UserX
+  UserX,
+  RotateCcw
 } from 'lucide-react';
 import { SearchableActivitySelect } from '../components/SearchableActivitySelect';
 import { 
@@ -84,6 +85,10 @@ export function LaborEntryView({
 
   // Expanded card state for individual inspection
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Micro-feedback: toast banner and recently updated worker highlight
+  const [toastMessage, setToastMessage] = useState<{ id: string; name: string; isDone: boolean } | null>(null);
+  const [recentlyUpdatedId, setRecentlyUpdatedId] = useState<string | null>(null);
 
   // Dynamic real activity codes from Backend
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
@@ -522,6 +527,7 @@ export function LaborEntryView({
   };
 
   const handleMarkIndividualDone = (id: string) => {
+    const laborer = laborers.find((l) => l.id === id);
     const updated = laborers.map((l) => {
       if (l.id !== id) return l;
       const inTime = l.inTime || batchInTime || '07:00';
@@ -542,6 +548,10 @@ export function LaborEntryView({
     });
     onSaveLaborers(updated);
     setExpandedId(null);
+    setRecentlyUpdatedId(id);
+    setTimeout(() => setRecentlyUpdatedId(null), 1800);
+    setToastMessage({ id, name: laborer?.callingName || 'Worker', isDone: true });
+    setTimeout(() => setToastMessage(null), 2500);
   };
 
   const handleToggleIndividualDone = (id: string) => {
@@ -553,6 +563,10 @@ export function LaborEntryView({
         l.id === id ? { ...l, status: 'draft' as const, lastSavedAt: 'Reverted to Draft' } : l
       );
       onSaveLaborers(updated);
+      setRecentlyUpdatedId(id);
+      setTimeout(() => setRecentlyUpdatedId(null), 1200);
+      setToastMessage({ id, name: laborer.callingName || 'Worker', isDone: false });
+      setTimeout(() => setToastMessage(null), 2500);
     } else {
       handleMarkIndividualDone(id);
     }
@@ -1059,11 +1073,8 @@ export function LaborEntryView({
           filteredLaborers.map((worker) => {
             const isSelected = selectedWorkerIds.includes(worker.id);
             const isExpanded = expandedId === worker.id;
-            const isDone = tabMode === 'out' && 
-              !worker.isAbsent && 
-              Boolean(worker.inTime) && 
-              Boolean(worker.outTime) && 
-              worker.status === 'done';
+            const isDone = !worker.isAbsent && worker.status === 'done';
+            const isRecentlyUpdated = recentlyUpdatedId === worker.id;
             const activitySum = sumHhmm(worker.activities.map((a) => a.hours));
             void activitySum; // consumed if needed
 
@@ -1071,13 +1082,15 @@ export function LaborEntryView({
               <div
                 key={worker.id}
                 className={[
-                  'rounded-2xl border transition-all duration-150 overflow-hidden shadow-2xs',
-                  isSelected
+                  'rounded-2xl border transition-all duration-200 overflow-hidden shadow-2xs',
+                  isRecentlyUpdated
+                    ? 'ring-2 ring-emerald-500 scale-[1.01] border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/40 shadow-emerald-500/10'
+                    : isSelected
                     ? 'border-blue-500 bg-blue-50/20 dark:bg-blue-950/40 ring-1 ring-blue-500/20'
                     : worker.isAbsent
                     ? 'border-rose-300 dark:border-rose-900/60 bg-rose-50/25 dark:bg-rose-950/20'
                     : isDone
-                    ? 'border-emerald-500 dark:border-emerald-500 bg-emerald-50/15 dark:bg-emerald-950/20 ring-1 ring-emerald-500/30 shadow-emerald-500/5'
+                    ? 'border-emerald-500 dark:border-emerald-500 bg-emerald-50/20 dark:bg-emerald-950/30 ring-1 ring-emerald-500/30 shadow-emerald-500/5'
                     : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
                 ].join(' ')}
               >
@@ -1115,6 +1128,12 @@ export function LaborEntryView({
                         {worker.isStandbyAssigned && (
                           <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200">
                             Standby
+                          </span>
+                        )}
+                        {isDone && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-0.5 shadow-2xs">
+                            <CheckCircle2 size={10} className="text-emerald-600 dark:text-emerald-400" />
+                            Done
                           </span>
                         )}
                       </div>
@@ -1220,35 +1239,47 @@ export function LaborEntryView({
                               Absent
                             </span>
                           ) : isDone ? (
-                            <button
-                              type="button"
-                              disabled={isDayLocked}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleToggleIndividualDone(worker.id);
-                              }}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 hover:bg-emerald-200 dark:hover:bg-emerald-800/80 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-700 shadow-2xs transition-colors cursor-pointer"
-                              title="Click to revert back to Draft"
-                            >
-                              <Check size={11} className="stroke-[3]" /> Done
-                            </button>
+                            <div className="flex flex-col items-end">
+                              <button
+                                type="button"
+                                disabled={isDayLocked}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleIndividualDone(worker.id);
+                                }}
+                                className="inline-flex items-center gap-1.5 text-xs font-extrabold text-emerald-800 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-900/80 hover:bg-emerald-200 dark:hover:bg-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-400 dark:border-emerald-600 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                                title="Worker marked as Done! Click to revert back to Draft"
+                              >
+                                <CheckCircle2 size={13} className="text-emerald-600 dark:text-emerald-400" />
+                                <span>Done</span>
+                              </button>
+                              <div className="text-[10px] mt-0.5 text-emerald-700 dark:text-emerald-400 font-medium font-mono">
+                                {worker.inTime} – {worker.outTime || batchOutTime || '17:00'}
+                              </div>
+                            </div>
                           ) : worker.inTime ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
-                              In: {worker.inTime}
-                            </span>
+                            <div>
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-700/80 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-600">
+                                In: {worker.inTime}
+                              </span>
+                              <div className="text-[10px] mt-0.5 text-slate-400">
+                                {worker.outTime ? (
+                                  <span className="font-medium text-slate-700 dark:text-slate-300">Out: {worker.outTime}</span>
+                                ) : (
+                                  <span>Pending Out</span>
+                                )}
+                              </div>
+                            </div>
                           ) : (
-                            <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
-                              Pending In
-                            </span>
+                            <div>
+                              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                                Pending In
+                              </span>
+                              <div className="text-[10px] mt-0.5 text-slate-400">
+                                <span>Pending Out</span>
+                              </div>
+                            </div>
                           )}
-
-                          <div className="text-[10px] mt-0.5 text-slate-400">
-                            {worker.isAbsent ? null : worker.outTime ? (
-                              <span className="font-medium text-slate-700 dark:text-slate-300">Out: {worker.outTime}</span>
-                            ) : (
-                              <span>Pending Out</span>
-                            )}
-                          </div>
                         </div>
 
                         {/* Quick Done button in header if not already done and not absent */}
@@ -1259,10 +1290,10 @@ export function LaborEntryView({
                               e.stopPropagation();
                               handleMarkIndividualDone(worker.id);
                             }}
-                            className="flex items-center gap-1 text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 px-2 py-1 rounded-lg shadow-2xs transition-all cursor-pointer"
+                            className="flex items-center gap-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 px-3 py-1 rounded-xl shadow-xs transition-all cursor-pointer"
                             title="Quick mark Done"
                           >
-                            <Check size={11} className="stroke-[3]" />
+                            <Check size={12} className="stroke-[3]" />
                             <span>Done</span>
                           </button>
                         )}
@@ -1509,7 +1540,7 @@ export function LaborEntryView({
                           ].join(' ')}
                           title={isDone ? 'Click to revert card back to Draft' : 'Save and mark card as completed'}
                         >
-                          <CheckCircle2 size={14} />
+                          {isDone ? <RotateCcw size={14} /> : <CheckCircle2 size={14} />}
                           <span>{isDone ? 'Revert to Draft' : 'Done'}</span>
                         </button>
                       )}
@@ -1595,6 +1626,24 @@ export function LaborEntryView({
               Close & Adjust Selection
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── 8. Floating Feedback Toast ── */}
+      {toastMessage && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-slate-900/95 dark:bg-slate-800/95 text-white text-xs font-semibold shadow-2xl border border-slate-700 backdrop-blur-xs animate-in fade-in slide-in-from-bottom-3 duration-200 pointer-events-none">
+          {toastMessage.isDone ? (
+            <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
+              <Check size={12} className="stroke-[3.5]" />
+            </div>
+          ) : (
+            <div className="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
+              <RotateCcw size={11} />
+            </div>
+          )}
+          <span>
+            {toastMessage.isDone ? `${toastMessage.name} marked as Done!` : `${toastMessage.name} reverted to Draft`}
+          </span>
         </div>
       )}
     </div>

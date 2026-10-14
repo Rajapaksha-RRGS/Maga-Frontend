@@ -14,6 +14,8 @@ interface Transfer {
   corporateEmployee?: { fullName: string; employeeCode: string };
   fromProjectId?: string;
   toProjectId: string;
+  fromProject?: { projectCode: string; name?: string };
+  toProject?: { projectCode: string; name?: string };
   startDate: string;
   endDate?: string;
   status: string;

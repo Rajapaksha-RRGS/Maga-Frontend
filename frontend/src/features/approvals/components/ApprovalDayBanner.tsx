@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, AlertCircle, Info } from 'lucide-react';
+import { Calendar, AlertCircle } from 'lucide-react';
 import type { ApprovalDayTypeInfo } from '../services/approvalService';
 
 interface ApprovalDayBannerProps {
@@ -41,7 +41,7 @@ export const ApprovalDayBanner: React.FC<ApprovalDayBannerProps> = ({ date, dayT
                 : 'bg-emerald-100 text-emerald-700'
             }`}
           >
-            {isHolidayOrSunday ? <AlertCircle size={20} /> : <Calendar size={20} />}
+            {isHolidayOrSunday ? <AlertCircle size={15} /> : <Calendar size={15} />}
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -58,7 +58,7 @@ export const ApprovalDayBanner: React.FC<ApprovalDayBannerProps> = ({ date, dayT
                 Day Type: {dayType.name}
               </span>
             </div>
-            <p className="text-xs mt-1 text-slate-600">
+            {/* <p className="text-xs mt-1 text-slate-600">
               {isHolidayOrSunday ? (
                 <span>
                   ⚠️ <strong>Notice for Admin Approval:</strong> This day is configured as{' '}
@@ -73,14 +73,14 @@ export const ApprovalDayBanner: React.FC<ApprovalDayBannerProps> = ({ date, dayT
                   ✓ <strong>Normal Day Rule:</strong> Standard 8.0 hours cap applies. Hours exceeding 8.0h are calculated as Overtime.
                 </span>
               )}
-            </p>
+            </p> */}    
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-end sm:self-center text-xs font-medium px-3 py-1.5 rounded-xl bg-white border border-slate-200 shadow-xs text-slate-600">
+        {/* <div className="flex items-center gap-2 self-end sm:self-center text-xs font-medium px-3 py-1.5 rounded-xl bg-white border border-slate-200 shadow-xs text-slate-600">
           <Info size={14} className="text-slate-400" />
           <span>Rules auto-applied per Calendar</span>
-        </div>
+        </div> */}
       </div>
     </div>
   );

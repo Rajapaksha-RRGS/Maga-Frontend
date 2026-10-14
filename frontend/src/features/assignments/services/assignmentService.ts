@@ -154,7 +154,11 @@ export async function getAssignmentContext(date?: string, forceRefresh: boolean 
       empSvc.getAll(date ? { date } : undefined, forceRefresh),
       supSvc.getAll(forceRefresh),
     ]);
-    const nonOperators = employees.filter((e) => !e.isOperator && !['operator', 'driver'].includes((e.tradeGroup || '').toLowerCase()));
+    const nonOperators = employees.filter((e) =>
+      ['active', 'pending_approval', 'pending'].includes(e.status) &&
+      !e.isOperator &&
+      !['operator', 'driver', 'heavy operator'].some((t) => (e.tradeGroup || '').toLowerCase().includes(t))
+    );
     return {
       employees: nonOperators,
       supervisors: supervisors.filter((s) => s.status === 'active'),
@@ -249,7 +253,10 @@ export async function getOperatorAssignmentContext(forceRefresh: boolean = false
       empSvc.getAll(undefined, forceRefresh),
       supSvc.getAll(forceRefresh),
     ]);
-    const operators = employees.filter((e) => e.status === 'active' && Boolean(e.isOperator || ['operator', 'driver'].includes((e.tradeGroup || '').toLowerCase())));
+    const operators = employees.filter((e) =>
+      ['active', 'pending_approval', 'pending'].includes(e.status) &&
+      Boolean(e.isOperator || ['operator', 'driver', 'heavy operator'].some((t) => (e.tradeGroup || '').toLowerCase().includes(t)))
+    );
     return {
       operators,
       supervisors: supervisors.filter((s) => s.status === 'active'),

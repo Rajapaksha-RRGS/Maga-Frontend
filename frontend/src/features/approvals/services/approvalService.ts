@@ -34,6 +34,9 @@ export interface ApprovalWorkerItem {
   outTime: string;
   hours: number;
   otHours: number;
+  shiftHours?: number;
+  effectiveHours?: number;
+  idleHours?: number;
   activities: ApprovalWorkerActivity[];
   status: string;
 }
@@ -48,6 +51,9 @@ export interface ApprovalOperatorItem {
   outTime: string;
   hours: number;
   otHours: number;
+  shiftHours?: number;
+  effectiveHours?: number;
+  idleHours?: number;
   assignedEquipmentId: string | null;
   assignedEquipmentDisplay: string;
   status: string;
@@ -231,6 +237,8 @@ export async function adminAdjustWorker(payload: {
   outTime: string;
   hours: number;
   overtimeHours: number;
+  shiftHours?: number;
+  effectiveHours?: number;
 }> {
   const res = await apiFetch(`${API_URL}/time-entries/admin-adjust`, {
     method: 'POST',

@@ -54,29 +54,31 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const isApproved = group.status === 'approved';
   const isSubmitted = group.status === 'submitted';
 
-  // Preview hours calculation (1-hr lunch deduction if >= 5 hours, + 1-hr late night break if out-time passes 11:00 PM)
+  // Preview hours calculation (1-hr standard break deduction; 2-hr deduction if shift passes 11:00 PM / 23:00)
   const computePreviewHours = (inTime: string, outTime: string) => {
-    if (!inTime || !outTime) return { hours: 0, otHours: 0 };
+    if (!inTime || !outTime) return { hours: 0, otHours: 0, effectiveHours: 0 };
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
     const inMins = inH * 60 + (inM || 0);
     const outMins = outH * 60 + (outM || 0);
     let diff = outMins - inMins;
     if (diff < 0) diff += 24 * 60;
-    if (diff <= 0) return { hours: 0, otHours: 0 };
+    if (diff <= 0) return { hours: 0, otHours: 0, effectiveHours: 0 };
 
-    let breakMins = 0;
-    if (diff >= 300) breakMins += 60; // 1-hour lunch break deduction
+    // Standard 1 hour break deduction
+    let breakMins = 60;
     const isPast11PM = (outMins >= inMins)
       ? (outMins >= 23 * 60)
       : (inMins <= 23 * 60 || outMins >= 23 * 60);
-    if (isPast11PM) breakMins += 60; // 1-hour late night break deduction
+    if (isPast11PM) {
+      breakMins = 120; // 2 hours break if passes 11:00 PM
+    }
 
     const netMins = Math.max(0, diff - breakMins);
-    const net = netMins > 0 ? parseFloat((netMins / 60).toFixed(2)) : 0;
-    const ot = net > 8.0 ? parseFloat((net - 8.0).toFixed(2)) : 0;
-    const reg = Math.max(0, parseFloat((net - ot).toFixed(2)));
-    return { hours: reg, otHours: ot };
+    const effectiveHours = netMins > 0 ? parseFloat((netMins / 60).toFixed(2)) : 0;
+    const ot = effectiveHours > 8.0 ? parseFloat((effectiveHours - 8.0).toFixed(2)) : 0;
+    const reg = Math.max(0, parseFloat((effectiveHours - ot).toFixed(2)));
+    return { hours: reg, otHours: ot, effectiveHours };
   };
 
   const startEditing = (w: ApprovalWorkerItem) => {
@@ -92,7 +94,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const handleSaveEdit = async (employeeId: string) => {
     setIsSavingEdit(true);
     try {
-      const { hours, otHours } = computePreviewHours(editInTime, editOutTime);
+      const { hours, otHours, effectiveHours } = computePreviewHours(editInTime, editOutTime);
       const res = await adminAdjustWorker({
         supervisorId: group.supervisorId,
         employeeId,
@@ -111,8 +113,10 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                 ...w,
                 inTime: editInTime,
                 outTime: editOutTime,
-                hours: res.hours,
-                otHours: res.overtimeHours,
+                hours: res.hours ?? hours,
+                otHours: res.overtimeHours ?? otHours,
+                shiftHours: res.shiftHours ?? effectiveHours,
+                effectiveHours: res.effectiveHours ?? res.shiftHours ?? effectiveHours,
                 status: 'submitted',
               }
             : w
@@ -308,7 +312,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                       <th className="py-2.5 px-3.5">Worker</th>
                       <th className="py-2.5 px-3">Trade & Partner</th>
                       <th className="py-2.5 px-3 min-w-[140px]">In / Out Time</th>
-                      <th className="py-2.5 px-3">Regular Hrs</th>
+                      <th className="py-2.5 px-3">Effective Hours</th>
                       <th className="py-2.5 px-3">OT Hrs</th>
                       <th className="py-2.5 px-3">Activities Worked</th>
                       <th className="py-2.5 px-3 text-right">Status</th>
@@ -327,6 +331,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                         const isEditingThis = editingEmployeeId === w.employeeId;
                         const hasAttendance = Boolean(w.inTime && w.outTime);
                         const preview = isEditingThis ? computePreviewHours(editInTime, editOutTime) : null;
+                        const effectiveVal = w.effectiveHours ?? w.shiftHours ?? ((w.hours ?? 0) + (w.otHours ?? 0));
 
                         return (
                           <tr
@@ -379,10 +384,10 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
                               {isEditingThis && preview ? (
                                 <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-bold font-mono">
-                                  {(preview.hours ?? 0).toFixed(1)}h
+                                  {(preview.effectiveHours ?? 0).toFixed(1)}h
                                 </span>
-                              ) : (w.hours ?? 0) > 0 ? (
-                                `${(w.hours ?? 0).toFixed(1)}h`
+                              ) : effectiveVal > 0 ? (
+                                `${effectiveVal.toFixed(1)}h`
                               ) : (
                                 '-'
                               )}
@@ -401,22 +406,65 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               )}
                             </td>
                             <td className="py-2.5 px-3">
-                              {w.activities.length > 0 ? (
-                                <div className="flex flex-wrap gap-1 max-w-xs">
-                                  {w.activities.map((act, i) => (
-                                    <span
-                                      key={i}
-                                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200"
-                                      title={act.description}
-                                    >
-                                      <Tag size={10} />
-                                      {act.code}: {act.hours}h
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : (
-                                <span className="text-slate-400 text-[11px]">-</span>
-                              )}
+                              {(() => {
+                                const acts = w.activities || [];
+                                const hasZidleInActs = acts.some((a) => a.code === 'ZIDLE' || a.code.toLowerCase().includes('idle'));
+                                const effHours = w.effectiveHours ?? w.shiftHours ?? ((w.hours ?? 0) + (w.otHours ?? 0));
+                                const totalAllocated = acts.reduce((s, a) => s + (a.hours || 0), 0);
+                                const fallbackIdle = !hasZidleInActs && effHours > totalAllocated
+                                  ? Math.max(0, parseFloat((effHours - totalAllocated).toFixed(2)))
+                                  : (w.idleHours || 0);
+
+                                if (acts.length === 0 && fallbackIdle === 0 && !hasAttendance) {
+                                  return <span className="text-slate-400 text-[11px]">-</span>;
+                                }
+
+                                if (acts.length === 0 && (fallbackIdle > 0 || effHours > 0)) {
+                                  const idleAmount = fallbackIdle > 0 ? fallbackIdle : effHours;
+                                  return (
+                                    <div className="flex flex-wrap gap-1 max-w-xs">
+                                      <span
+                                        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 font-semibold"
+                                        title="Idle / Unallocated Shift Hours"
+                                      >
+                                        <Tag size={10} className="text-amber-600" />
+                                        Idle (ZIDLE): {idleAmount.toFixed(1)}h
+                                      </span>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div className="flex flex-wrap gap-1 max-w-xs">
+                                    {acts.map((act, i) => {
+                                      const isIdle = act.code === 'ZIDLE' || act.code.toLowerCase().includes('idle');
+                                      return (
+                                        <span
+                                          key={i}
+                                          className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium border ${
+                                            isIdle
+                                              ? 'bg-amber-50 text-amber-800 border-amber-300 font-semibold'
+                                              : 'bg-blue-50 text-blue-700 border-blue-200'
+                                          }`}
+                                          title={act.description || (isIdle ? 'Idle / Unallocated Hours' : '')}
+                                        >
+                                          <Tag size={10} className={isIdle ? 'text-amber-600' : 'text-blue-500'} />
+                                          {isIdle ? `Idle (${act.code}): ${act.hours}h` : `${act.code}: ${act.hours}h`}
+                                        </span>
+                                      );
+                                    })}
+                                    {!hasZidleInActs && fallbackIdle > 0 && (
+                                      <span
+                                        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 font-semibold"
+                                        title="Idle / Unallocated Shift Hours"
+                                      >
+                                        <Tag size={10} className="text-amber-600" />
+                                        Idle (ZIDLE): {fallbackIdle.toFixed(1)}h
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td className="py-2.5 px-3 text-right">
                               <span
@@ -499,7 +547,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                       <th className="py-2.5 px-3.5">Operator</th>
                       <th className="py-2.5 px-3">Assigned Machine</th>
                       <th className="py-2.5 px-3 min-w-[130px]">In / Out Time</th>
-                      <th className="py-2.5 px-3">Regular Hrs</th>
+                      <th className="py-2.5 px-3">Effective Hours</th>
                       <th className="py-2.5 px-3">OT Hrs</th>
                       <th className="py-2.5 px-3 text-right">Status</th>
                     </tr>
@@ -514,6 +562,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                     ) : (
                       group.operators.map((op) => {
                         const hasAttendance = Boolean(op.inTime && op.outTime);
+                        const effectiveVal = op.effectiveHours ?? op.shiftHours ?? ((op.hours ?? 0) + (op.otHours ?? 0));
                         return (
                           <tr key={op.operatorId} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-2.5 px-3.5">
@@ -562,7 +611,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               )}
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
-                              {(op.hours ?? 0) > 0 ? `${(op.hours ?? 0).toFixed(1)}h` : '-'}
+                              {effectiveVal > 0 ? `${effectiveVal.toFixed(1)}h` : '-'}
                             </td>
                             <td className="py-2.5 px-3">
                               {(op.otHours ?? 0) > 0 ? (

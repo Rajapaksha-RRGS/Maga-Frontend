@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { 
   supervisorStorage,
+  normalizeRatingUnit,
   type ActivityCodeItem,
   type EquipmentLogEntry, 
   type OperatorEntry,
@@ -38,14 +39,15 @@ const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon:
   'km': { label: 'km', sub: 'Mileage / Kilometers', icon: '🚗' },
 };
 
-function getUnitValueInfo(eq: EquipmentLogEntry, unit: EquipmentRatingUnit): { value: number; label: string; display: string } {
+function getUnitValueInfo(eq: EquipmentLogEntry, rawUnit: EquipmentRatingUnit | string | undefined): { value: number; label: string; display: string } {
+  const unit = normalizeRatingUnit(rawUnit);
   switch (unit) {
     case 'Days': {
       const v = eq.daysValue ?? 0;
       return { value: v, label: 'Days', display: `${v} Day${v === 1 ? '' : 's'}` };
     }
     case 'Hrs': {
-      const v = eq.hoursValue ?? 0;
+      const v = (eq.hoursValue !== undefined && eq.hoursValue > 0) ? eq.hoursValue : (eq.netHours ?? 0);
       return { value: v, label: 'Hrs', display: `${v.toFixed(1)} Hrs` };
     }
     case 'EX.hrs': {
@@ -53,7 +55,7 @@ function getUnitValueInfo(eq: EquipmentLogEntry, unit: EquipmentRatingUnit): { v
       return { value: v, label: 'EX.hrs', display: `${v.toFixed(1)} EX.hrs` };
     }
     case 'mth': {
-      const v = eq.daysValue ?? 0;
+      const v = eq.daysValue ?? (eq.netHours && eq.netHours > 0 ? eq.netHours : 0);
       return { value: v, label: 'Days (Mth)', display: `${v} Day${v === 1 ? '' : 's'}` };
     }
     case 'm2': {
@@ -65,14 +67,14 @@ function getUnitValueInfo(eq: EquipmentLogEntry, unit: EquipmentRatingUnit): { v
       return { value: v, label: 'km', display: `${v.toFixed(1)} km` };
     }
     default:
-      return { value: eq.netHours ?? 0, label: 'mth', display: `${eq.netHours ?? 0} mth` };
+      return { value: eq.daysValue ?? eq.hoursValue ?? eq.netHours ?? 0, label: unit, display: `${eq.daysValue ?? eq.hoursValue ?? eq.netHours ?? 0} ${unit}` };
   }
 }
 
 function getEquipmentSummary(eq: EquipmentLogEntry): { isDone: boolean; display: string; subText?: string } {
-  const pUnit: EquipmentRatingUnit = eq.primaryUnit || eq.activeUnit || 'mth';
+  const pUnit: EquipmentRatingUnit = normalizeRatingUnit(eq.primaryUnit || eq.activeUnit);
   const pInfo = getUnitValueInfo(eq, pUnit);
-  const aUnit = eq.additionalUnit;
+  const aUnit = eq.additionalUnit ? normalizeRatingUnit(eq.additionalUnit) : null;
   const aInfo = aUnit ? getUnitValueInfo(eq, aUnit) : null;
 
   const hasPrimary = pInfo.value > 0;
@@ -89,7 +91,7 @@ function getEquipmentSummary(eq: EquipmentLogEntry): { isDone: boolean; display:
       isDone: true,
       display: pInfo.display,
       subText: pUnit === 'mth' 
-        ? (eq.endMeter > eq.startMeter ? `${eq.startMeter} → ${eq.endMeter} Meter` : 'Monthly Contract (Hrs)')
+        ? (eq.endMeter > eq.startMeter ? `${eq.startMeter} → ${eq.endMeter} Meter` : 'Monthly Contract (Days)')
         : `Unit: ${pUnit}`,
     };
   } else if (hasAdditional) {
@@ -155,16 +157,16 @@ export function EquipmentLogsView({
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
 
-      const pUnit = eq.primaryUnit || 'mth';
+      const pUnit = normalizeRatingUnit(eq.primaryUnit || eq.activeUnit);
       const isDayOrMth = pUnit === 'Days' || pUnit === 'mth';
       let splits = eq.activitySplits || [];
-      const daySplits = splits.filter((s) => s.unit === pUnit || s.unit === 'Days' || s.unit === 'mth');
+      const daySplits = splits.filter((s) => normalizeRatingUnit(s.unit) === pUnit || normalizeRatingUnit(s.unit) === 'Days' || normalizeRatingUnit(s.unit) === 'mth');
 
       // If only 1 activity split exists, keep it equal to safeDays (e.g. 1.0 Day)
       if (isDayOrMth) {
         if (daySplits.length === 1) {
           splits = splits.map((s) =>
-            (s.unit === pUnit || s.unit === 'Days' || s.unit === 'mth')
+            (normalizeRatingUnit(s.unit) === pUnit || normalizeRatingUnit(s.unit) === 'Days' || normalizeRatingUnit(s.unit) === 'mth')
               ? { ...s, utilization: safeDays, unit: pUnit }
               : s
           );
@@ -281,23 +283,6 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
-  // ── Add Additional Unit Handler ──
-  const handleAddAdditionalUnit = (id: string, unit: EquipmentRatingUnit) => {
-    const updated = equipment.map((eq) => {
-      if (eq.id !== id) return eq;
-      let daysVal = eq.daysValue;
-      if (unit === 'Days' && (daysVal === undefined || daysVal === 0)) {
-        daysVal = 1; // 1-click default for 1 Day
-      }
-      return {
-        ...eq,
-        additionalUnit: unit,
-        daysValue: daysVal,
-        status: 'draft' as const,
-      };
-    });
-    onSaveEquipment(updated);
-  };
 
   // ── Remove Additional Unit Handler ──
   const handleRemoveAdditionalUnit = (id: string) => {
@@ -313,16 +298,17 @@ export function EquipmentLogsView({
   };
 
   // ── Unit-Specific Activity Split Handlers ──
-  const handleAddActivitySplit = (eqId: string, unit: EquipmentRatingUnit) => {
+  const handleAddActivitySplit = (eqId: string, rawUnit: EquipmentRatingUnit | string) => {
     const eq = equipment.find((e) => e.id === eqId);
     if (!eq) return;
 
+    const unit = normalizeRatingUnit(rawUnit);
     const isDayUnit = unit === 'Days' || unit === 'mth';
     const totalTarget = isDayUnit
       ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? Math.min(1.0, eq.daysValue) : 1.0)
       : getUnitValueInfo(eq, unit).value;
 
-    const existingSplits = (eq.activitySplits || []).filter((s) => s.unit === unit);
+    const existingSplits = (eq.activitySplits || []).filter((s) => normalizeRatingUnit(s.unit) === unit);
     const allocated = existingSplits.reduce((sum, s) => sum + (Number(s.utilization) || 0), 0);
     let remaining = Math.max(0, parseFloat((totalTarget - allocated).toFixed(2)));
 
@@ -330,7 +316,6 @@ export function EquipmentLogsView({
 
     // If first activity took the full amount (e.g. 1.0 Day) and supervisor adds 2nd activity,
     // split 50/50 so first becomes 0.5 and new gets remaining 0.5!
-    // Or if supervisor already set the first activity to e.g. 0.7, remaining is 0.3 and will be given to new activity!
     if (isDayUnit && existingSplits.length === 1 && remaining <= 0.001 && existingSplits[0].utilization >= totalTarget) {
       const half = parseFloat((totalTarget / 2).toFixed(2));
       const balance = parseFloat((totalTarget - half).toFixed(2));
@@ -421,12 +406,13 @@ export function EquipmentLogsView({
   // ── Render Input Box for Specific Unit ──
   const renderUnitInputs = (
     eq: EquipmentLogEntry,
-    unit: EquipmentRatingUnit,
+    rawUnit: EquipmentRatingUnit | string,
     isAdditional: boolean
   ) => {
+    const unit = normalizeRatingUnit(rawUnit);
     const isMeterInvalid = unit === 'mth' && eq.endMeter < eq.startMeter;
     const unitInfo = getUnitValueInfo(eq, unit);
-    const unitSplits = (eq.activitySplits || []).filter((s) => s.unit === unit);
+    const unitSplits = (eq.activitySplits || []).filter((s) => normalizeRatingUnit(s.unit) === unit);
     const allocatedSum = unitSplits.reduce((sum, s) => sum + (Number(s.utilization) || 0), 0);
     const meterKey = `${eq.id}-${unit}`;
     const showMeter = !!showMeterMap[meterKey];
@@ -1074,15 +1060,10 @@ export function EquipmentLogsView({
           filteredEquipment.map((eq) => {
             const isExpanded = expandedId === eq.id;
             const mappedOp = operators.find((o) => o.id === eq.operatorId);
-            const primaryUnit: EquipmentRatingUnit = eq.primaryUnit || 'mth';
-            const additionalUnit = eq.additionalUnit;
+            const primaryUnit: EquipmentRatingUnit = normalizeRatingUnit(eq.primaryUnit || eq.activeUnit);
+            const additionalUnit = eq.additionalUnit ? normalizeRatingUnit(eq.additionalUnit) : null;
             const summary = getEquipmentSummary(eq);
 
-            // Compute available additional units (all allowed units excluding primary)
-            const allAllowedUnits: EquipmentRatingUnit[] = eq.availableUnits && eq.availableUnits.length > 0
-              ? eq.availableUnits
-              : ['mth', 'Hrs', 'Days', 'EX.hrs', 'm2'];
-            const availableAdditionalUnits = allAllowedUnits.filter((u) => u !== primaryUnit);
 
             return (
               <div
@@ -1211,10 +1192,10 @@ export function EquipmentLogsView({
                     {renderUnitInputs(eq, primaryUnit, false)}
 
                     {/* ── 2. ADDITIONAL UNIT SECTION (Optional) ── */}
-                    {additionalUnit ? (
+                    {/* {additionalUnit ? (
                       renderUnitInputs(eq, additionalUnit, true)
                     ) : (
-                      /* "+ Add Additional Unit" Quick Buttons */
+                      
                       availableAdditionalUnits.length > 0 && (
                         <div className="p-2.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 space-y-1.5">
                           <div className="flex items-center justify-between">
@@ -1241,7 +1222,7 @@ export function EquipmentLogsView({
                           </div>
                         </div>
                       )
-                    )}
+                    )} */}
 
                     {/* ── Summary of Activities Allocated Across All Units ── */}
                     {Array.isArray(eq.activitySplits) && eq.activitySplits.length > 0 && (

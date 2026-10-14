@@ -80,6 +80,19 @@ export interface OperatorEntry {
 
 export type EquipmentRatingUnit = 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2' | 'km';
 
+export function normalizeRatingUnit(raw: string | undefined | null): EquipmentRatingUnit {
+  if (!raw) return 'mth';
+  const lower = raw.trim().toLowerCase();
+  if (lower === 'day' || lower === 'days') return 'Days';
+  if (lower === 'hr' || lower === 'hrs' || lower === 'hours' || lower === 'hour') return 'Hrs';
+  if (lower === 'ex.hrs' || lower === 'ex.hr' || lower === 'extra hours' || lower === 'ot.hrs') return 'EX.hrs';
+  if (lower === 'mth' || lower === 'month' || lower === 'months') return 'mth';
+  if (lower === 'm2' || lower === 'm²' || lower === 'sqm') return 'm2';
+  if (lower === 'km' || lower === 'kms' || lower === 'mileage') return 'km';
+  if (lower === 'ton' || lower === 'tons') return 'Days';
+  return 'Hrs';
+}
+
 export interface EquipmentActivitySplit {
   id: string;
   activityCode: string;
@@ -328,19 +341,17 @@ export const supervisorStorage = {
 
           const mapped: EquipmentLogEntry[] = (assignedData || []).map((asgn: any) => {
             const existing = localMap.get(asgn.equipmentId) || localMap.get(asgn.id);
-            // Determine the list of units this equipment supports from DB
-            const ALL_UNITS: EquipmentRatingUnit[] = ['Hrs', 'Days', 'EX.hrs', 'mth', 'm2'];
-            const dbPrimaryUnit: EquipmentRatingUnit = (asgn.primaryUnit as EquipmentRatingUnit) || 'mth';
-            // DB `availableUnits` stores ADDITIONAL units (not including primary by convention)
-            // If empty → show all 5; otherwise: primary + additional
-            const dbAvailableUnits: EquipmentRatingUnit[] =
-              Array.isArray(asgn.availableUnits) && asgn.availableUnits.length > 0
-                ? [dbPrimaryUnit, ...asgn.availableUnits.filter((u: string) => u !== dbPrimaryUnit)] as EquipmentRatingUnit[]
-                : ALL_UNITS; // empty = all units shown
-            // Prefer supervisor's already-chosen unit (local draft) over DB default
-            const resolvedActiveUnit: EquipmentRatingUnit = existing?.activeUnit ?? dbPrimaryUnit;
-            // Backend dailyLog (returned after previous sync) used as fallback when there is no local draft
+            const dbPrimaryUnit: EquipmentRatingUnit = normalizeRatingUnit(asgn.primaryUnit);
+            const dbAvailableUnits: EquipmentRatingUnit[] = [dbPrimaryUnit];
+            const resolvedActiveUnit: EquipmentRatingUnit = existing?.activeUnit ? normalizeRatingUnit(existing.activeUnit) : dbPrimaryUnit;
             const log = asgn.dailyLog;
+            const logDays = (dbPrimaryUnit === 'Days' || dbPrimaryUnit === 'mth')
+              ? Number(log?.daysValue ?? log?.totalUtilization ?? 0)
+              : undefined;
+            const logHours = (dbPrimaryUnit === 'Hrs')
+              ? Number(log?.hoursValue ?? log?.totalUtilization ?? log?.workingHours ?? 0)
+              : undefined;
+
             return {
               id: asgn.equipmentId,
               code: asgn.equipmentCode || asgn.equipmentName,
@@ -352,10 +363,10 @@ export const supervisorStorage = {
               primaryUnit: dbPrimaryUnit,
               availableUnits: dbAvailableUnits,
               activeUnit: resolvedActiveUnit,
-              additionalUnit: existing?.additionalUnit ?? null,
+              additionalUnit: existing?.additionalUnit ? normalizeRatingUnit(existing.additionalUnit) : null,
               // Local draft takes priority; fallback to backend dailyLog if no local draft
-              daysValue: existing?.daysValue ?? log?.daysValue,
-              hoursValue: existing?.hoursValue ?? log?.hoursValue,
+              daysValue: existing?.daysValue !== undefined ? existing.daysValue : (logDays && logDays > 0 ? logDays : undefined),
+              hoursValue: existing?.hoursValue !== undefined ? existing.hoursValue : (logHours && logHours > 0 ? logHours : undefined),
               extraHoursValue: existing?.extraHoursValue,
               areaValue: existing?.areaValue,
               startMeter: existing?.startMeter ?? log?.startMeter ?? 0,
@@ -911,31 +922,47 @@ export const supervisorStorage = {
       // 3. Prepare Equipment with default activity code ZOTHE
       let payloadEq: any[] = [];
       if (equipment.length > 0) {
-        const validEq = equipment.filter((e: any) => (e.netHours && e.netHours > 0) || (e.daysValue && e.daysValue > 0) || (e.hoursValue && e.hoursValue > 0) || (e.totalMileage && e.totalMileage > 0) || e.startMeter > 0);
+        const validEq = equipment.filter((e: any) =>
+          (Number(e.daysValue) || 0) > 0 ||
+          (Number(e.hoursValue) || 0) > 0 ||
+          (Number(e.netHours) || 0) > 0 ||
+          (Number(e.extraHoursValue) || 0) > 0 ||
+          (Number(e.areaValue) || 0) > 0 ||
+          (Number(e.totalMileage) || 0) > 0 ||
+          Number(e.startMeter) > 0
+        );
         if (validEq.length > 0) {
-          payloadEq = validEq.map((eq: any) => ({
-            id: eq.id,
-            condition: eq.condition || 'DRY',
-            startMeter: eq.startMeter || 0,
-            endMeter: eq.endMeter || 0,
-            netHours: eq.netHours || 0,
-            daysValue: eq.daysValue,
-            hoursValue: eq.hoursValue,
-            workingHours: eq.workingHours || 0,
-            idleHours: eq.idleHours || 0,
-            breakdownHours: eq.breakdownHours || 0,
-            fuelLiters: eq.fuelIssuedLiters || 0,
-            totalMileage: eq.totalMileage || 0,
-            startMileage: eq.startMileage || 0,
-            endMileage: eq.endMileage || 0,
-            totalUtilization: eq.totalUtilization,
-            remarks: eq.remarks,
-            status: eq.status,
-            activityCode: eq.activityCode || 'ZOTHE',
-            activitySplits: eq.activitySplits && eq.activitySplits.length > 0
-              ? eq.activitySplits.map((s: any) => ({ ...s, activityCode: s.activityCode || 'ZOTHE' }))
-              : [{ activityCode: eq.activityCode || 'ZOTHE', unit: eq.primaryUnit || 'Hrs', utilization: eq.workingHours || eq.netHours || eq.hoursValue || 0 }],
-          }));
+          payloadEq = validEq.map((eq: any) => {
+            const normPrimary = normalizeRatingUnit(eq.primaryUnit);
+            const isDayRate = normPrimary === 'Days' || normPrimary === 'mth';
+            const defaultQty = isDayRate
+              ? (Number(eq.daysValue) || 1)
+              : (Number(eq.hoursValue) || Number(eq.workingHours) || Number(eq.netHours) || 0);
+
+            return {
+              id: eq.id,
+              condition: eq.condition || 'DRY',
+              startMeter: eq.startMeter || 0,
+              endMeter: eq.endMeter || 0,
+              netHours: eq.netHours || 0,
+              daysValue: eq.daysValue,
+              hoursValue: eq.hoursValue,
+              workingHours: eq.workingHours || 0,
+              idleHours: eq.idleHours || 0,
+              breakdownHours: eq.breakdownHours || 0,
+              fuelLiters: eq.fuelIssuedLiters || 0,
+              totalMileage: eq.totalMileage || 0,
+              startMileage: eq.startMileage || 0,
+              endMileage: eq.endMileage || 0,
+              totalUtilization: defaultQty,
+              remarks: eq.remarks,
+              status: eq.status,
+              activityCode: eq.activityCode || 'ZOTHE',
+              activitySplits: eq.activitySplits && eq.activitySplits.length > 0
+                ? eq.activitySplits.map((s: any) => ({ ...s, activityCode: s.activityCode || 'ZOTHE', unit: normalizeRatingUnit(s.unit) }))
+                : [{ activityCode: eq.activityCode || 'ZOTHE', unit: normPrimary, utilization: defaultQty }],
+            };
+          });
         }
       }
 

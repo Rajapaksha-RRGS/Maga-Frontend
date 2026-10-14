@@ -13,23 +13,32 @@ function parseDate(dateStr: string): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
-// Helper: compute lunch break hours between 12:00 and 13:00
+// Helper: compute break hours (1 hr standard break; 2 hrs if shift passes 11:00 PM / 23:00)
 function computeBreakHours(inTime?: string | null, outTime?: string | null): number {
   if (!inTime || !outTime) return 0;
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
-  const inMins = inH * 60 + inM;
-  const outMins = outH * 60 + outM;
+  const inMins = inH * 60 + (inM || 0);
+  const outMins = outH * 60 + (outM || 0);
 
-  const lunchStart = 12 * 60;
-  const lunchEnd = 13 * 60;
+  let diff = outMins - inMins;
+  if (diff < 0) diff += 24 * 60;
+  if (diff <= 0) return 0;
 
-  if (inMins < lunchEnd && outMins > lunchStart) {
-    const overlapStart = Math.max(inMins, lunchStart);
-    const overlapEnd = Math.min(outMins, lunchEnd);
-    return Math.round(((overlapEnd - overlapStart) / 60) * 100) / 100;
+  // Standard 1 hour break deduction
+  let breakHours = 1.0;
+
+  // If shift passes 11:00 PM (23:00), 2 hours break deduction in total
+  const isPast11PM = (outMins >= inMins)
+    ? (outMins >= 23 * 60)
+    : (inMins <= 23 * 60 || outMins >= 23 * 60);
+
+  if (isPast11PM) {
+    breakHours = 2.0;
   }
-  return 0;
+
+  const grossHours = diff / 60;
+  return Math.min(breakHours, grossHours);
 }
 
 // Helper: calculate gross shift hours, break hours, and overtime
@@ -42,7 +51,7 @@ function calculateShiftAndOvertime(
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
 
-  let diff = outH * 60 + outM - (inH * 60 + inM);
+  let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
   if (diff < 0) diff += 24 * 60;
 
   const grossHours = Math.round((diff / 60) * 100) / 100;
@@ -944,6 +953,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
               select: {
                 id: true,
                 callingName: true,
+                isOperator: true,
                 corporateEmployee: { select: { employeeCode: true, fullName: true } },
                 tradeGroup: { select: { name: true } },
                 businessPartner: { select: { name: true } },
@@ -1004,10 +1014,24 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
     for (const sheet of dailySheets) {
       const sup = sheet.supervisor;
 
-      // 1. Worker details
+      // Collect all operator employee IDs so they don't get mixed into Laborers list
+      const operatorEmpIds = new Set<string>();
+      for (const ea of sheet.equipmentAssignments) {
+        if (ea.operatorId) operatorEmpIds.add(ea.operatorId);
+      }
+      for (const te of sheet.timeEntries) {
+        if (te.employee) {
+          const isOp = (te.employee as any).isOperator || 
+            te.employee.tradeGroup?.name?.toLowerCase().includes('operator') ||
+            te.employee.tradeGroup?.name?.toLowerCase().includes('driver');
+          if (isOp) operatorEmpIds.add(te.employee.id);
+        }
+      }
+
+      // 1. Worker details (Laborers ONLY, excluding operators)
       const empMap = new Map<string, { employee: any; timeEntries: any[] }>();
       for (const a of sheet.assignments) {
-        if (a.employee) {
+        if (a.employee && !operatorEmpIds.has(a.employee.id)) {
           empMap.set(a.employee.id, {
             employee: a.employee,
             timeEntries: [],
@@ -1015,7 +1039,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         }
       }
       for (const te of sheet.timeEntries) {
-        if (te.employee) {
+        if (te.employee && !operatorEmpIds.has(te.employee.id)) {
           if (!empMap.has(te.employee.id)) {
             empMap.set(te.employee.id, {
               employee: te.employee,
@@ -1050,12 +1074,14 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
 
         // Collect all activities worked across all entries
         const seenActivities = new Map<string, { code: string; description: string; hours: number }>();
+        let totalAllocatedHours = 0;
         for (const te of entries) {
           if (te.activitySplits && te.activitySplits.length > 0) {
             for (const s of te.activitySplits) {
               const code = s.activityCode?.code || 'N/A';
               const description = s.activityCode?.description || '';
               const h = Number(s.hours || 0);
+              totalAllocatedHours += h;
               if (seenActivities.has(code)) {
                 seenActivities.get(code)!.hours += h;
               } else {
@@ -1066,11 +1092,27 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
             const code = te.activity.code || 'N/A';
             const description = te.activity.description || '';
             const h = Number(te.hours || 0);
+            totalAllocatedHours += h;
             if (seenActivities.has(code)) {
               seenActivities.get(code)!.hours += h;
             } else {
               seenActivities.set(code, { code, description, hours: h });
             }
+          }
+        }
+
+        // Calculate idle hours: effective shiftHours - totalAllocatedHours
+        let idleHours = 0;
+        if (seenActivities.has('ZIDLE')) {
+          idleHours = seenActivities.get('ZIDLE')!.hours;
+        } else if (shiftHours > 0) {
+          idleHours = Math.max(0, Math.round((shiftHours - totalAllocatedHours) * 100) / 100);
+          if (idleHours > 0) {
+            seenActivities.set('ZIDLE', {
+              code: 'ZIDLE',
+              description: 'Idle / Unallocated Hours',
+              hours: idleHours,
+            });
           }
         }
 
@@ -1089,53 +1131,95 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           hours: regularHours,
           otHours,
           shiftHours,
+          effectiveHours: shiftHours,
+          idleHours,
           activities,
           status: primaryStatus,
         };
       });
 
-      // 2. Operator details
-      const operatorDetails = sheet.equipmentAssignments
-        .filter((ea) => ea.operator && ea.operatorId)
-        .map((ea) => {
-          const op = ea.operator!;
-          const opTeList = sheet.timeEntries.filter((t) => t.employeeId === op.id);
-          const firstOpTe = opTeList.find((t) => t.inTime && t.outTime) || opTeList[0];
-          const inTime = firstOpTe?.inTime || '';
-          const outTime = firstOpTe?.outTime || '';
-          let hours = 0;
-          let otHours = 0;
-          if (inTime && outTime) {
-            const calc = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
-            otHours = calc.otHours;
-            hours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((calc.shiftHours - calc.otHours) * 100) / 100);
-          } else if (opTeList.length > 0) {
-            const shiftH = opTeList.reduce((sum, t) => sum + Number(t.shiftHours ?? t.hours ?? 0), 0);
-            otHours = opTeList.reduce((sum, t) => sum + Number(t.overtimeHours || 0), 0);
-            hours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((shiftH - otHours) * 100) / 100);
-          }
+      // 2. Operator details (Grouped by unique operator)
+      const opMap = new Map<string, {
+        operator: any;
+        equipmentDisplays: string[];
+        equipmentIds: string[];
+      }>();
+
+      for (const ea of sheet.equipmentAssignments) {
+        if (ea.operator && ea.operatorId) {
           const eqDisplay =
             ea.equipment?.corporateEquipment?.standardEquipmentNumber ||
             ea.equipment?.corporateEquipment?.vehicleNo ||
             ea.equipment?.corporateEquipment?.equipmentName ||
             '—';
+          if (!opMap.has(ea.operatorId)) {
+            opMap.set(ea.operatorId, {
+              operator: ea.operator,
+              equipmentDisplays: eqDisplay !== '—' ? [eqDisplay] : [],
+              equipmentIds: ea.equipmentId ? [ea.equipmentId] : [],
+            });
+          } else {
+            const existing = opMap.get(ea.operatorId)!;
+            if (eqDisplay !== '—' && !existing.equipmentDisplays.includes(eqDisplay)) {
+              existing.equipmentDisplays.push(eqDisplay);
+            }
+            if (ea.equipmentId && !existing.equipmentIds.includes(ea.equipmentId)) {
+              existing.equipmentIds.push(ea.equipmentId);
+            }
+          }
+        }
+      }
 
-          return {
-            operatorId: op.id,
-            operatorCode: op.corporateEmployee?.employeeCode || 'N/A',
-            callingName: op.callingName || op.corporateEmployee?.fullName || 'Operator',
-            fullName: op.corporateEmployee?.fullName || op.callingName || '',
-            tradeGroup: op.tradeGroup?.name || 'Machine Operator',
-            inTime,
-            outTime,
-            hours,
-            otHours,
-            assignedEquipmentId: ea.equipmentId || null,
-            assignedEquipmentDisplay: eqDisplay,
-            status: firstOpTe?.status || (inTime ? 'draft' : 'pending'),
-            notes: firstOpTe?.remarks || '',
-          };
-        });
+      for (const te of sheet.timeEntries) {
+        if (te.employee && operatorEmpIds.has(te.employee.id)) {
+          if (!opMap.has(te.employee.id)) {
+            opMap.set(te.employee.id, {
+              operator: te.employee,
+              equipmentDisplays: [],
+              equipmentIds: te.equipmentId ? [te.equipmentId] : [],
+            });
+          }
+        }
+      }
+
+      const operatorDetails = Array.from(opMap.values()).map(({ operator: op, equipmentDisplays, equipmentIds }) => {
+        const opTeList = sheet.timeEntries.filter((t) => t.employeeId === op.id);
+        const firstOpTe = opTeList.find((t) => t.inTime && t.outTime) || opTeList[0];
+        const inTime = firstOpTe?.inTime || '';
+        const outTime = firstOpTe?.outTime || '';
+        let shiftHours = 0;
+        let hours = 0;
+        let otHours = 0;
+        if (inTime && outTime) {
+          const calc = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
+          shiftHours = calc.shiftHours;
+          otHours = calc.otHours;
+          hours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((calc.shiftHours - calc.otHours) * 100) / 100);
+        } else if (opTeList.length > 0) {
+          shiftHours = opTeList.reduce((sum, t) => sum + Number(t.shiftHours ?? t.hours ?? 0), 0);
+          otHours = opTeList.reduce((sum, t) => sum + Number(t.overtimeHours || 0), 0);
+          hours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((shiftHours - otHours) * 100) / 100);
+        }
+        const eqDisplay = equipmentDisplays.length > 0 ? equipmentDisplays.join(', ') : '—';
+
+        return {
+          operatorId: op.id,
+          operatorCode: op.corporateEmployee?.employeeCode || 'N/A',
+          callingName: op.callingName || op.corporateEmployee?.fullName || 'Operator',
+          fullName: op.corporateEmployee?.fullName || op.callingName || '',
+          tradeGroup: op.tradeGroup?.name || 'Machine Operator',
+          inTime,
+          outTime,
+          hours,
+          otHours,
+          shiftHours,
+          effectiveHours: shiftHours,
+          assignedEquipmentId: equipmentIds[0] || null,
+          assignedEquipmentDisplay: eqDisplay,
+          status: firstOpTe?.status || (inTime ? 'draft' : 'pending'),
+          notes: firstOpTe?.remarks || '',
+        };
+      });
 
       // 3. Equipment details
       const equipmentDetails = sheet.equipmentAssignments.map((ea) => {
@@ -1468,6 +1552,7 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
       outTime,
       hours: regularHours,
       shiftHours: calculatedHours,
+      effectiveHours: calculatedHours,
       overtimeHours: calculatedOt,
       message: 'Worker entry adjusted successfully by Admin.',
     });
@@ -1549,7 +1634,7 @@ export const getOperatorEntries = async (req: Request, res: Response): Promise<v
 // 9. POST /api/time-entries/operators — Save single operator entry
 export const saveOperatorEntry = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { operatorId, supervisorId, date, inTime, outTime, assignedEquipmentId, notes, status } = req.body || {};
+    const { operatorId, supervisorId, date, inTime, outTime, assignedEquipmentId, notes, status, shiftHours, hours, otHours } = req.body || {};
 
     const projectId =
       req.resolvedProjectId ||
@@ -1559,6 +1644,9 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
+    const defaultActivityId = await getOrCreateDefaultActivityId(projectId);
+
     let effectiveSupId = supervisorId;
     if (!effectiveSupId) {
       const supUser = await prisma.mF_P_User.findFirst({
@@ -1571,55 +1659,112 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
     const dailySheet = await getOrCreateDailySheet(projectId, effectiveSupId, targetDate);
 
     // Resolve an equipment
-    let eqId = assignedEquipmentId;
-    if (!eqId) {
-      const firstEq = await prisma.mF_P_Equipment.findFirst({
-        where: { projectId, status: 'active' },
+    let rawEqId = assignedEquipmentId;
+    let validEquipmentId: string | null = null;
+    if (rawEqId && rawEqId !== 'ZXQOPRIDLE') {
+      const eqExists = await prisma.mF_P_Equipment.findUnique({
+        where: { id: rawEqId },
         select: { id: true },
       });
-      eqId = firstEq?.id;
+      validEquipmentId = eqExists ? eqExists.id : null;
     }
 
-    if (!eqId) {
-      res.status(400).json({ error: 'Equipment ID is required for operator assignment' });
-      return;
-    }
-
-    const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
-      where: {
-        dailySheetId_equipmentId: {
-          dailySheetId: dailySheet.id,
-          equipmentId: eqId,
+    let assignmentId: string | undefined;
+    if (validEquipmentId) {
+      const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
+        where: {
+          dailySheetId_equipmentId: {
+            dailySheetId: dailySheet.id,
+            equipmentId: validEquipmentId,
+          },
         },
-      },
-      update: {
-        operatorId,
-      },
-      create: {
-        dailySheetId: dailySheet.id,
-        operatorId,
-        equipmentId: eqId,
-      },
-    });
-
-    if (notes || status) {
-      await prisma.mF_OP_EquipmentDailyLog.upsert({
-        where: { assignmentId: assignment.id },
         update: {
-          remarks: notes || undefined,
-          status: status || undefined,
+          operatorId,
         },
         create: {
-          assignmentId: assignment.id,
-          remarks: notes || null,
-          status: status || 'draft',
+          dailySheetId: dailySheet.id,
+          operatorId,
+          equipmentId: validEquipmentId,
         },
       });
+      assignmentId = assignment.id;
+
+      if (notes || status) {
+        await prisma.mF_OP_EquipmentDailyLog.upsert({
+          where: { assignmentId: assignment.id },
+          update: {
+            remarks: notes || undefined,
+            status: status || undefined,
+          },
+          create: {
+            assignmentId: assignment.id,
+            remarks: notes || null,
+            status: status || 'draft',
+          },
+        });
+      }
+    }
+
+    // Save/update operator shift time entry
+    if (operatorId && (inTime || outTime || shiftHours)) {
+      let shiftHoursVal = Number(shiftHours || 0);
+      let overtimeHours = Number(otHours || 0);
+      let breakHours = 0;
+      let regularHours = Number(hours || 0);
+
+      if (inTime && outTime) {
+        const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime);
+        shiftHoursVal = calc.shiftHours;
+        overtimeHours = calc.otHours;
+        breakHours = calc.breakHours;
+        regularHours = isAllOvertime ? 0 : Math.max(0, Math.round((shiftHoursVal - overtimeHours) * 100) / 100);
+      }
+
+      const teStatus = (dailySheet.status === 'submitted' || dailySheet.status === 'approved')
+        ? dailySheet.status
+        : (status === 'done' ? 'draft' : (status || 'draft'));
+
+      const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
+        where: {
+          projectId,
+          employeeId: operatorId,
+          date: targetDate,
+        },
+      });
+
+      const teData = {
+        projectId,
+        dailySheetId: dailySheet.id,
+        employeeId: operatorId,
+        date: targetDate,
+        activityId: defaultActivityId,
+        equipmentId: validEquipmentId,
+        effectiveDayTypeId,
+        inTime: inTime || null,
+        outTime: outTime || null,
+        shiftHours: shiftHoursVal,
+        hours: regularHours,
+        overtimeHours,
+        breakHours,
+        remarks: notes || null,
+        status: teStatus,
+      };
+
+      if (existingTe) {
+        await prisma.mF_OP_TimeEntry.update({
+          where: { id: existingTe.id },
+          data: teData,
+        });
+      } else {
+        await prisma.mF_OP_TimeEntry.create({
+          data: teData,
+        });
+      }
     }
 
     res.json({
       success: true,
-      assignmentId: assignment.id,
+      assignmentId,
     });
   } catch (error) {
     console.error('Error saving operator entry:', error);
@@ -1644,6 +1789,9 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
+    const defaultActivityId = await getOrCreateDefaultActivityId(projectId);
+
     let effectiveSupId = supervisorId;
     if (!effectiveSupId) {
       const supUser = await prisma.mF_P_User.findFirst({
@@ -1657,39 +1805,108 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
 
     for (const item of entries) {
       const opId = item.operatorId || item.id;
-      const eqId = item.assignedEquipmentId || item.equipmentId;
-      if (!opId || !eqId) continue;
+      if (!opId) continue;
 
-      const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
-        where: {
-          dailySheetId_equipmentId: {
-            dailySheetId: dailySheet.id,
-            equipmentId: eqId,
+      const rawEqId = item.assignedEquipmentId || item.equipmentId;
+      let validEquipmentId: string | null = null;
+      if (rawEqId && rawEqId !== 'ZXQOPRIDLE') {
+        const eqExists = await prisma.mF_P_Equipment.findUnique({
+          where: { id: rawEqId },
+          select: { id: true },
+        });
+        validEquipmentId = eqExists ? eqExists.id : null;
+      }
+
+      // 1. Upsert Equipment Assignment if equipment is valid
+      if (validEquipmentId) {
+        const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
+          where: {
+            dailySheetId_equipmentId: {
+              dailySheetId: dailySheet.id,
+              equipmentId: validEquipmentId,
+            },
           },
-        },
-        update: {
-          operatorId: opId,
-        },
-        create: {
-          dailySheetId: dailySheet.id,
-          operatorId: opId,
-          equipmentId: eqId,
-        },
-      });
-
-      if (item.notes || item.status) {
-        await prisma.mF_OP_EquipmentDailyLog.upsert({
-          where: { assignmentId: assignment.id },
           update: {
-            remarks: item.notes || undefined,
-            status: item.status || undefined,
+            operatorId: opId,
           },
           create: {
-            assignmentId: assignment.id,
-            remarks: item.notes || null,
-            status: item.status || 'draft',
+            dailySheetId: dailySheet.id,
+            operatorId: opId,
+            equipmentId: validEquipmentId,
           },
         });
+
+        if (item.notes || item.status) {
+          await prisma.mF_OP_EquipmentDailyLog.upsert({
+            where: { assignmentId: assignment.id },
+            update: {
+              remarks: item.notes || undefined,
+              status: item.status || undefined,
+            },
+            create: {
+              assignmentId: assignment.id,
+              remarks: item.notes || null,
+              status: item.status || 'draft',
+            },
+          });
+        }
+      }
+
+      // 2. Upsert Operator Shift Time Entry with In/Out Times
+      if (item.inTime || item.outTime || item.shiftHours) {
+        let shiftHoursVal: number = Number(item.shiftHours || 0);
+        let overtimeHours: number = Number(item.otHours || item.overtimeHours || 0);
+        let breakHours: number = 0;
+        let regularHours: number = Number(item.hours || 0);
+
+        if (item.inTime && item.outTime) {
+          const calc = calculateShiftAndOvertime(item.inTime, item.outTime, standardHoursCap, isAllOvertime);
+          shiftHoursVal = calc.shiftHours;
+          overtimeHours = calc.otHours;
+          breakHours = calc.breakHours;
+          regularHours = isAllOvertime ? 0 : Math.max(0, Math.round((shiftHoursVal - overtimeHours) * 100) / 100);
+        }
+
+        const teStatus = (dailySheet.status === 'submitted' || dailySheet.status === 'approved')
+          ? dailySheet.status
+          : (item.status === 'done' ? 'draft' : (item.status || 'draft'));
+
+        const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
+          where: {
+            projectId,
+            employeeId: opId,
+            date: targetDate,
+          },
+        });
+
+        const teData = {
+          projectId,
+          dailySheetId: dailySheet.id,
+          employeeId: opId,
+          date: targetDate,
+          activityId: defaultActivityId,
+          equipmentId: validEquipmentId,
+          effectiveDayTypeId,
+          inTime: item.inTime || null,
+          outTime: item.outTime || null,
+          shiftHours: shiftHoursVal,
+          hours: regularHours,
+          overtimeHours,
+          breakHours,
+          remarks: item.notes || null,
+          status: teStatus,
+        };
+
+        if (existingTe) {
+          await prisma.mF_OP_TimeEntry.update({
+            where: { id: existingTe.id },
+            data: teData,
+          });
+        } else {
+          await prisma.mF_OP_TimeEntry.create({
+            data: teData,
+          });
+        }
       }
     }
 

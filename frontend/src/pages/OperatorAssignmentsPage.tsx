@@ -352,13 +352,18 @@ export default function OperatorAssignmentsPage({
                           className="rounded border-slate-300 text-blue-600 focus:ring-1 focus:ring-blue-500 cursor-pointer"
                         />
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-mono text-xs font-semibold text-slate-900">
                               {op.employeeCode || op.callingName}
                             </span>
                             <span className="text-xs font-medium text-slate-700 truncate">
                               {op.fullName}
                             </span>
+                            {op.status && op.status !== 'active' && (
+                              <span className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.2 rounded font-semibold border border-amber-300">
+                                Pending Approval
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-500">
                             <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded font-medium text-slate-600">
@@ -476,13 +481,18 @@ export default function OperatorAssignmentsPage({
                               key={assignment.id}
                               className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-slate-50 rounded-lg border border-slate-150 text-xs"
                             >
-                              <div className="flex items-center gap-2 min-w-0">
+                              <div className="flex items-center gap-2 min-w-0 flex-wrap">
                                 <span className="font-mono font-semibold text-slate-800 text-[11px]">
                                   {op.employeeCode || op.callingName}
                                 </span>
                                 <span className="font-medium text-slate-700 truncate max-w-[140px]">
                                   {op.fullName || op.callingName}
                                 </span>
+                                {op.status && op.status !== 'active' && (
+                                  <span className="bg-amber-100 text-amber-800 text-[9px] px-1 py-0.2 rounded font-semibold border border-amber-300">
+                                    Pending
+                                  </span>
+                                )}
                                 {op.licenseNo && (
                                   <span className="text-[10px] text-blue-600 font-mono bg-blue-50 border border-blue-200 px-1 rounded hidden sm:inline-block">
                                     {op.licenseNo}

@@ -18,6 +18,7 @@ export interface AuthUser {
   role: Role;
   tenantId: string;
   tenantName: string;
+  token?: string;
 }
 
 interface AuthContextValue {
