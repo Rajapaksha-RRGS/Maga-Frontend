@@ -14,12 +14,14 @@ import MasterImportModal from '../features/master-import/components/MasterImport
 import Breadcrumb from '../components/Breadcrumb';
 import { fetchCorporateActivityCodes, type CorporateActivityCode } from '../features/master-import/services/corporateMasterService';
 import type { ActivityCode } from '../features/activity-codes/services/activityCodeService';
+import DeriveSubActivityModal from '../features/activity-codes/components/DeriveSubActivityModal';
 
 export default function ActivityCodesPage() {
   const { filtered, isLoading, search, setSearch, add, edit, del, checkUnique } = useActivityCodes();
   const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<ActivityCode | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [deriveParent, setDeriveParent] = useState<ActivityCode | null>(null);
 
   const openEdit = (c: ActivityCode) => { setEditing(c); setPanelOpen(true); };
   const close = () => { setPanelOpen(false); setEditing(null); };
@@ -125,11 +127,30 @@ export default function ActivityCodesPage() {
       {!isLoading && filtered.length === 0 && <EmptyState message="No activity codes found in this project." />}
       {!isLoading && filtered.length > 0 && (
         <>
-          <ActivityCodeTable data={filtered} onRowClick={openEdit} />
-          <ActivityCodeCardList data={filtered} onCardClick={openEdit} />
+          <ActivityCodeTable
+            data={filtered}
+            onRowClick={openEdit}
+            onDerive={(parent) => setDeriveParent(parent)}
+          />
+          <ActivityCodeCardList
+            data={filtered}
+            onCardClick={openEdit}
+            onDerive={(parent) => setDeriveParent(parent)}
+          />
           <p className="text-xs text-slate-400 mt-3">{filtered.length} code{filtered.length !== 1 ? 's' : ''}</p>
         </>
       )}
+
+      {/* Derive Site Sub-Activity Modal */}
+      <DeriveSubActivityModal
+        isOpen={Boolean(deriveParent)}
+        onClose={() => setDeriveParent(null)}
+        parentActivity={deriveParent}
+        existingActivities={filtered}
+        onSubmit={async (data) => {
+          await add(data);
+        }}
+      />
 
       {/* Corporate ERP Master Import Modal */}
       <MasterImportModal<CorporateActivityCode>

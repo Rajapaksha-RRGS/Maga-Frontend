@@ -5,7 +5,7 @@
  */
 import DataTable, { type Column } from '../../../components/DataTable';
 import type { BusinessPartner } from '../services/businessPartnerService';
-import { Building2, Phone, Mail, Clock, FileText, ExternalLink } from 'lucide-react';
+import { Building2, Phone, Mail, Clock, HardHat } from 'lucide-react';
 
 interface Props {
   data: BusinessPartner[];
@@ -33,7 +33,7 @@ const columns: Column<BusinessPartner>[] = [
         </div>
         <div>
           <span className="font-medium text-slate-800 block text-sm">{bp.name}</span>
-          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+          {/* <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
             {bp.brNumber && (
               <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded border border-slate-200 font-mono">
                 BR: {bp.brNumber}
@@ -41,13 +41,7 @@ const columns: Column<BusinessPartner>[] = [
             )}
             {bp.documentUrl && (
               <a
-                href={
-                  bp.documentUrl.startsWith('http')
-                    ? bp.documentUrl
-                    : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000'}${
-                        bp.documentUrl.startsWith('/') ? '' : '/'
-                      }${bp.documentUrl}`
-                }
+                href={getFileUrl(bp.documentUrl)}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
@@ -64,7 +58,7 @@ const columns: Column<BusinessPartner>[] = [
                 {bp.address}
               </span>
             )}
-          </div>
+          </div> */}
         </div>
       </div>
     ),
@@ -100,6 +94,21 @@ const columns: Column<BusinessPartner>[] = [
     ),
   },
   {
+    header: 'Workers on Site',
+    accessor: 'siteWorkerCount',
+    className: 'w-[130px] text-center',
+    render: (bp) => (
+      (bp.siteWorkerCount && bp.siteWorkerCount > 0) ? (
+        <span className="inline-flex items-center gap-1 font-semibold text-xs px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+          <HardHat size={12} className="text-blue-600" />
+          <span>{bp.siteWorkerCount} active</span>
+        </span>
+      ) : (
+        <span className="text-slate-400 text-xs font-mono">—</span>
+      )
+    ),
+  },
+  {
     header: 'Status',
     accessor: 'status',
     className: 'w-[120px] text-center',
@@ -107,7 +116,7 @@ const columns: Column<BusinessPartner>[] = [
       bp.status === 'pending_approval' ? (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300" title="Pending HO Super Admin Approval — Payroll Locked">
           <Clock size={11} className="text-amber-600" />
-          <span>Pending HO</span>
+          <span>Pending</span>
         </span>
       ) : (
         <span

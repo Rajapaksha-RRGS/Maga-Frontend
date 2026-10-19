@@ -228,11 +228,103 @@ code {
   animation: splashProgressIndeterminate 1.4s infinite cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ── Super Admin Form Controls & Modals Styling Fix ─────────────────────────
-   Guarantees that all inputs, selects, textareas, and options inside the
-   Super Admin portal or any modal maintain crisp white backgrounds with
-   slate-900 readable text, overriding browser-enforced dark mode heuristics.
+/* ── Global Form Elements, Inputs, Selects & Standard Typography ────────────
+   Guarantees that ALL inputs, selects, textareas, and dropdown options across
+   the entire application maintain crisp, high-contrast text (#0f172a / slate-900)
+   on white backgrounds with standard Inter typography.
+
+   Prevents browser/OS dark-mode heuristics from rendering white text on white
+   dropdowns, options, or faint unreadable letters.
 ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+}
+
+/* Universal standard font and dark text color for all form controls */
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):not([type="range"]),
+select,
+textarea {
+  color-scheme: light !important;
+  font-family: var(--font-sans) !important;
+  color: #0f172a !important;
+  -webkit-text-fill-color: #0f172a;
+}
+
+/* Base backgrounds for text inputs & selects (unless overridden by explicit dark mode classes) */
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):not([type="range"]):not([class*="dark:"]):not(.bg-transparent),
+select:not([class*="dark:"]):not(.bg-transparent),
+textarea:not([class*="dark:"]):not(.bg-transparent) {
+  background-color: #ffffff;
+}
+
+/* Select dropdowns and options across all browsers */
+select {
+  color-scheme: light !important;
+  color: #0f172a !important;
+  -webkit-text-fill-color: #0f172a;
+  background-color: #ffffff;
+}
+
+select option,
+select optgroup {
+  color-scheme: light !important;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  -webkit-text-fill-color: #0f172a !important;
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 8px 12px !important;
+}
+
+select option:checked,
+select option:hover {
+  background-color: #eff6ff !important;
+  color: #1d4ed8 !important;
+  -webkit-text-fill-color: #1d4ed8 !important;
+}
+
+/* Standardized, legible placeholder text */
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8 !important; /* slate-400 */
+  -webkit-text-fill-color: #94a3b8 !important;
+  font-family: var(--font-sans) !important;
+  font-weight: 400;
+  opacity: 1 !important;
+}
+
+/* Disabled input state */
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background-color: #f8fafc !important; /* slate-50 */
+  color: #64748b !important; /* slate-500 */
+  -webkit-text-fill-color: #64748b !important;
+  border-color: #cbd5e1 !important;
+  cursor: not-allowed;
+}
+
+/* Support for intentional supervisor dark mode inputs */
+.dark input[class*="dark:text-"],
+.dark select[class*="dark:text-"],
+.dark textarea[class*="dark:text-"] {
+  color-scheme: dark !important;
+  -webkit-text-fill-color: initial !important;
+}
+.dark input[class*="dark:text-slate-100"],
+.dark input[class*="dark:text-white"] {
+  color: #f1f5f9 !important;
+  -webkit-text-fill-color: #f1f5f9 !important;
+}
+.dark select[class*="dark:text-slate-100"] option {
+  background-color: #1e293b !important;
+  color: #f1f5f9 !important;
+  -webkit-text-fill-color: #f1f5f9 !important;
+}
+
+/* Super Admin & Modal legacy class compatibility */
 .sa-portal,
 .sa-portal input,
 .sa-portal select,
@@ -244,26 +336,4 @@ code {
   color-scheme: light !important;
 }
 
-.sa-portal input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
-.sa-portal select,
-.sa-portal textarea,
-.sa-modal input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
-.sa-modal select,
-.sa-modal textarea {
-  background-color: #ffffff !important;
-  color: #0f172a !important; /* slate-900 */
-}
-
-.sa-portal input::placeholder,
-.sa-modal input::placeholder,
-.sa-portal textarea::placeholder,
-.sa-modal textarea::placeholder {
-  color: #94a3b8 !important; /* slate-400 */
-}
-
-.sa-portal select option,
-.sa-modal select option {
-  background-color: #ffffff !important;
-  color: #0f172a !important; /* slate-900 */
-}
 

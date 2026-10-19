@@ -23,7 +23,7 @@ interface EmployeeFormProps {
 }
 
 const INPUT_CLASS =
-  'w-full px-4 py-3 rounded-lg border border-slate-200 bg-white text-slate-800 text-sm min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-colors placeholder:text-slate-400';
+  'w-full px-4 py-3 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-colors placeholder:text-slate-400 font-medium';
 
 export default function EmployeeForm({
   employee,

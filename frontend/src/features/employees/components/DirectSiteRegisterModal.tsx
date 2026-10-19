@@ -22,8 +22,9 @@ import {
   AlertTriangle,
   Building2,
   HardHat,
+  ExternalLink,
 } from 'lucide-react';
-import api from '../../../config/api';
+import api, { getFileUrl } from '../../../config/api';
 import type { BusinessPartner } from '../../business-partners/services/businessPartnerService';
 
 interface TradeGroupOption {
@@ -110,10 +111,8 @@ export default function DirectSiteRegisterModal({
   const uploadDocument = async (file: File): Promise<string> => {
     const formData = new FormData();
     formData.append('document', file);
-    const res = await api.post('/uploads/document', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return res.data.fileUrl;
+    const res = await api.post('/uploads/document', formData);
+    return res.data.fileUrl || res.data.url;
   };
 
   // Handle Worker Dossier File Selection
@@ -127,8 +126,9 @@ export default function DirectSiteRegisterModal({
       const url = await uploadDocument(file);
       setEmpDocumentUrl(url);
     } catch (err: any) {
-      setErrorMessage(err.response?.data?.error || 'Failed to upload worker dossier PDF');
+      setErrorMessage(err.message || 'Failed to upload worker dossier PDF');
       setEmpDocumentFile(null);
+      setEmpDocumentUrl(null);
     } finally {
       setIsUploadingEmpDoc(false);
     }
@@ -222,8 +222,11 @@ export default function DirectSiteRegisterModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto" style={{ colorScheme: 'light' }}>
+      <div 
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-900 font-sans"
+        style={{ colorScheme: 'light' }}
+      >
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 p-5 text-white flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -249,7 +252,7 @@ export default function DirectSiteRegisterModal({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-5 max-h-[75vh] overflow-y-auto text-slate-900">
           {errorMessage && (
             <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-start gap-2.5">
               <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
@@ -305,17 +308,18 @@ export default function DirectSiteRegisterModal({
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Select Registered Business Partner <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={selectedPartnerId}
                   onChange={(e) => setSelectedPartnerId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-hidden font-medium"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-hidden font-medium"
+                  style={{ colorScheme: 'light' }}
                 >
-                  <option value="">-- Choose Subcontractor / Labour Supplier --</option>
+                  <option value="" className="text-slate-900 bg-white font-medium">-- Choose Subcontractor / Labour Supplier --</option>
                   {existingPartners.map((bp) => (
-                    <option key={bp.id} value={bp.id}>
+                    <option key={bp.id} value={bp.id} className="text-slate-900 bg-white font-medium">
                       {bp.code} — {bp.name} {bp.status === 'pending_approval' ? '⚠️ (Pending HO Approval)' : ''}
                     </option>
                   ))}
@@ -340,7 +344,7 @@ export default function DirectSiteRegisterModal({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Full Name <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -349,11 +353,11 @@ export default function DirectSiteRegisterModal({
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="e.g. Kamal Piyasena Weerasinghe"
-                  className="w-full px-3 py-2 text-xs text-black bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-medium placeholder:text-slate-400"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Calling Name / Short Name <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -362,14 +366,14 @@ export default function DirectSiteRegisterModal({
                   value={callingName}
                   onChange={(e) => setCallingName(e.target.value)}
                   placeholder="e.g. Kamal"
-                  className="w-full px-3 py-2 text-xs text-black bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-medium"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-medium placeholder:text-slate-400"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   National ID Card (NIC) <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -378,24 +382,24 @@ export default function DirectSiteRegisterModal({
                   value={nicNo}
                   onChange={(e) => setNicNo(e.target.value)}
                   placeholder="e.g. 199120405123 or 882103412V"
-                  className="w-full px-3 py-2 text-xs text-black bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono uppercase"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono uppercase font-semibold placeholder:text-slate-400"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">EPF No (Optional)</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">EPF No (Optional)</label>
                 <input
                   type="text"
                   value={epfNo}
                   onChange={(e) => setEpfNo(e.target.value)}
                   placeholder="e.g. 89201"
-                  className="w-full px-3 py-2 text-xs text-black bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono font-medium placeholder:text-slate-400"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Trade Group <span className="text-red-500">*</span>
                 </label>
                 <select
@@ -403,13 +407,14 @@ export default function DirectSiteRegisterModal({
                   value={tradeGroupId}
                   onChange={(e) => handleTradeGroupChange(e.target.value)}
                   disabled={isLoadingTradeGroups}
-                  className="w-full px-3 py-2 text-xs text-red border  rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-medium"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-medium"
+                  style={{ colorScheme: 'light' }}
                 >
                   {isLoadingTradeGroups ? (
-                    <option value="">Loading Trade Groups from Master...</option>
+                    <option value="" className="text-slate-900 bg-white font-medium">Loading Trade Groups from Master...</option>
                   ) : (
                     tradeGroups.map((tg) => (
-                      <option key={tg.id} value={tg.id}>
+                      <option key={tg.id} value={tg.id} className="text-slate-900 bg-white font-medium">
                         {tg.code} — {tg.name} (Std LKR {tg.standardDailyRate})
                       </option>
                     ))
@@ -418,18 +423,18 @@ export default function DirectSiteRegisterModal({
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Daily Rate (LKR) <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-2 text-xs text-slate-400 font-mono">LKR</span>
+                  <span className="absolute left-3 top-2 text-xs text-slate-500 font-mono font-semibold">LKR</span>
                   <input
                     type="number"
                     step="50"
                     required
                     value={dailyRate}
                     onChange={(e) => setDailyRate(e.target.value)}
-                    className="w-full pl-12 pr-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono font-semibold text-slate-800"
+                    className="w-full pl-12 pr-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono font-semibold text-slate-900 placeholder:text-slate-400"
                   />
                 </div>
               </div>
@@ -477,9 +482,34 @@ export default function DirectSiteRegisterModal({
               <p className="text-[11px] text-blue-700 font-medium">Uploading worker dossier scan...</p>
             )}
             {empDocumentUrl && (
-              <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 font-semibold mt-1">
-                <CheckCircle2 size={13} />
-                <span>Worker dossier uploaded & ready for verification</span>
+              <div className="flex items-center justify-between text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl mt-1">
+                <div className="flex items-center gap-1.5 truncate">
+                  <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                  <span className="truncate font-semibold">{empDocumentFile?.name || 'Worker Identity Dossier PDF Attached'}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <a
+                    href={getFileUrl(empDocumentUrl)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-blue-700 hover:text-blue-900 hover:underline font-semibold text-[11px] bg-blue-100/60 px-2.5 py-1 rounded-md transition-colors"
+                  >
+                    <FileText size={12} />
+                    <span>View</span>
+                    <ExternalLink size={10} />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmpDocumentFile(null);
+                      setEmpDocumentUrl(null);
+                    }}
+                    className="text-slate-400 hover:text-red-600 p-1 rounded-md hover:bg-red-50 transition-colors"
+                    title="Remove dossier"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
               </div>
             )}
           </div>

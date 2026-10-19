@@ -297,6 +297,8 @@ model MF_P_ActivityCode {
   id                      String   @id @default(uuid()) @map("activity_code_id")
   projectId               String   @map("project_id")
   corporateActivityCodeId String?  @map("corporate_activity_code_id")
+  parentActivityId        String?  @map("parent_activity_id")
+  isDerived               Boolean  @default(false) @map("is_derived")
   code                    String
   description             String?
   unit                    String?
@@ -304,6 +306,8 @@ model MF_P_ActivityCode {
 
   project                     MF_P_Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   corporateActivityCode       MF_G_ActivityCode?               @relation(fields: [corporateActivityCodeId], references: [id])
+  parentActivity              MF_P_ActivityCode?               @relation("DerivedActivities", fields: [parentActivityId], references: [id], onDelete: SetNull)
+  derivedActivities           MF_P_ActivityCode[]              @relation("DerivedActivities")
   timeEntries                 MF_OP_TimeEntry[]
   activitySplits              MF_OP_LaborActivitySplit[]
   equipmentDailyLogActivities MF_OP_EquipmentDailyLogActivity[]
@@ -311,6 +315,7 @@ model MF_P_ActivityCode {
   @@unique([projectId, code])
   @@index([projectId])
   @@index([corporateActivityCodeId])
+  @@index([parentActivityId])
   @@map("MF_L_ACTIVITY_CODE")
 }
 

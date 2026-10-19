@@ -11,7 +11,7 @@ import type {
 import * as bpService from '../services/businessPartnerService';
 import { cacheManager } from '../../../utils/cacheManager';
 
-export type PartnerStatusFilter = 'all' | 'active' | 'inactive' | 'pending_approval';
+export type PartnerStatusFilter = 'all' | 'active_on_site' | 'active' | 'inactive' | 'pending_approval';
 
 export function useBusinessPartners() {
   const cached = cacheManager.get<BusinessPartner[]>('business-partners:list');
@@ -50,7 +50,11 @@ export function useBusinessPartners() {
       (bp.phone && bp.phone.toLowerCase().includes(q));
 
     const matchesStatus =
-      statusFilter === 'all' || bp.status === statusFilter;
+      statusFilter === 'all'
+        ? true
+        : statusFilter === 'active_on_site'
+        ? Boolean(bp.isActiveOnSite || (bp.siteWorkerCount && bp.siteWorkerCount > 0))
+        : bp.status === statusFilter;
 
     return matchesSearch && matchesStatus;
   });

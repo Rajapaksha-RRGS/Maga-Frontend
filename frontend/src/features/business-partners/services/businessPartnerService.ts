@@ -29,6 +29,8 @@ export interface BusinessPartner {
   status: 'active' | 'inactive' | 'pending_approval' | 'rejected' | string;
   createdAt?: string;
   employeeCount?: number;
+  siteWorkerCount?: number;
+  isActiveOnSite?: boolean;
 }
 
 export interface BusinessPartnerFormData {
@@ -63,6 +65,8 @@ function mapPartner(raw: any): BusinessPartner {
     status: raw.status || 'active',
     createdAt: raw.createdAt || raw.created_at || undefined,
     employeeCount: raw.employeeCount ?? raw._count?.employees ?? undefined,
+    siteWorkerCount: raw.siteWorkerCount ?? 0,
+    isActiveOnSite: raw.isActiveOnSite ?? false,
   };
 }
 

@@ -85,12 +85,12 @@ const ENTERPRISE_UNITS = [
 ];
 
 export default function SAProjectsPage() {
-  const [projects, setProjects] = useState<CorporateProjectItem[]>([]);
+  const [projects, setProjects] = useState<CorporateProjectItem[]>([]); // deta base eken gena project methana save kara gannawa arry ekak haraha 
+  const [search, setSearch] = useState(''); // search input eka 
   const [isLoading, setIsLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'on_hold' | 'completed' | 'suspended'>('all');
-  const [unitFilter, setUnitFilter] = useState<string>('all');
-  const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'on_hold' | 'completed' | 'suspended'>('all'); // status filter eka 
+  const [unitFilter, setUnitFilter] = useState<string>('all'); // unit filter eka
+  const [error, setError] = useState<string | null>(null); // error state eka
 
   // Temporary password banner state (after creating project with admin or resetting admin password)
   const [tempPasswordResult, setTempPasswordResult] = useState<{
@@ -127,44 +127,39 @@ export default function SAProjectsPage() {
   const [formAdminUsername, setFormAdminUsername] = useState('');
   const [formAdminPassword, setFormAdminPassword] = useState('');
 
-  const fetchProjects = async () => {
-    setIsLoading(true);
+  const fetchProjects = async () => { // API eken data gena function eka 
+    setIsLoading(true); // data enakan loading state eka true wenawa 
     setError(null);
     try {
       const res = await api.get('/corporate/projects');
-      setProjects(res.data?.items ?? []);
+      setProjects(res.data?.items ?? []); // [] eka dala thiyenne API eken data na enakan array eka empty thiyan inna kiyala
     } catch (err: any) {
       setError(err.message || 'Failed to fetch corporate project master data.');
     } finally {
-      setIsLoading(false);
+      setIsLoading(false); // data awama loading state eka false wenawa 
     }
   };
 
-  useEffect(() => {
+  useEffect(() => { // first time page load wanakot data load karagannawa 
     fetchProjects();
-  }, []);
+  }, []);// [] eka dala thiyenne first time page load wanakot data load karagannawa kiyala dewani wathawata function eka call wen naha 
 
   // Filtered projects
   const filtered = useMemo(() => {
     return projects.filter((p) => {
-      const q = search.toLowerCase().trim();
-      const matchSearch =
-        !q ||
-        p.projectCode.toLowerCase().includes(q) ||
-        p.projectName.toLowerCase().includes(q) ||
-        (p.subdomain && p.subdomain.toLowerCase().includes(q)) ||
-        (p.projectManager && p.projectManager.toLowerCase().includes(q)) ||
-        (p.enterpriseUnit && p.enterpriseUnit.toLowerCase().includes(q)) ||
-        (p.searchKey && p.searchKey.toLowerCase().includes(q)) ||
-        (p.addressLine1 && p.addressLine1.toLowerCase().includes(q)) ||
-        (p.addressLine2 && p.addressLine2.toLowerCase().includes(q));
+      const searchItem = search.toLowerCase().trim();
+      const matchSearch = !searchItem || p.projectCode.toLowerCase().includes(searchItem) || p.projectName.toLowerCase().includes(searchItem) ||
+        (p.subdomain && p.subdomain.toLowerCase().includes(searchItem)) ||
+        (p.projectManager && p.projectManager.toLowerCase().includes(searchItem)) ||
+        (p.enterpriseUnit && p.enterpriseUnit.toLowerCase().includes(searchItem)) ||
+        (p.searchKey && p.searchKey.toLowerCase().includes(searchItem)) ||
+        (p.addressLine1 && p.addressLine1.toLowerCase().includes(searchItem)) ||
+        (p.addressLine2 && p.addressLine2.toLowerCase().includes(searchItem));// 
 
-      const matchStatus = statusFilter === 'all' || p.status === statusFilter;
-      const matchUnit =
-        unitFilter === 'all' ||
-        (p.enterpriseUnit ? p.enterpriseUnit.toLowerCase() === unitFilter.toLowerCase() : unitFilter === 'none');
+      const matchStatus = statusFilter === 'all' || p.status === statusFilter; // methana mtch status eka all wenawa 
+      const matchUnit = unitFilter === 'all' || (p.enterpriseUnit ? p.enterpriseUnit.toLowerCase() === unitFilter.toLowerCase() : unitFilter === 'none');
 
-      return matchSearch && matchStatus && matchUnit;
+      return matchSearch && matchStatus && matchUnit; // search, status, unit filter eka 3 ekena match wena projects tikak thiyan ena function eka  
     });
   }, [projects, search, statusFilter, unitFilter]);
 

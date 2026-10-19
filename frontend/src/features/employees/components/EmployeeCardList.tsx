@@ -28,14 +28,17 @@ export default function EmployeeCardList({ data, onCardClick, onToggleStatus }: 
           {/* Info */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold text-slate-800 truncate">{emp.tradeGroup}</p>
+              <p className="text-sm font-bold text-slate-900 truncate">
+                {emp.callingName || emp.fullName || emp.tradeGroup}
+              </p>
               <span className="text-xs text-slate-400">·</span>
-              <span className="text-xs font-mono font-medium text-slate-700">
-                {emp.dailyRate != null ? `Rs. ${Number(emp.dailyRate).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : ''}
-              </span>
+              <span className="text-xs font-medium text-slate-600">{emp.tradeGroup}</span>
             </div>
+            {emp.fullName && emp.fullName !== emp.callingName && (
+              <p className="text-xs text-slate-600 truncate">{emp.fullName}</p>
+            )}
             <p className="text-xs text-slate-500 truncate mt-0.5">
-              NIC: {emp.nicNo || '—'} {emp.epfNo ? `· EPF: ${emp.epfNo}` : ''}
+              NIC: {emp.nicNo || '—'} {emp.dailyRate != null ? `· Rs. ${Number(emp.dailyRate).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : ''}
             </p>
             <div className="flex items-center gap-2 flex-wrap mt-0.5">
               <span className="text-xs text-slate-400 truncate">

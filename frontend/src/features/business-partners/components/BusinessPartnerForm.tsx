@@ -150,7 +150,7 @@ export default function BusinessPartnerForm({
               }}
               placeholder="e.g. BP1004093"
               className={[
-                'w-full px-3 py-2 text-sm font-mono uppercase rounded-lg border focus:outline-none focus:ring-2 transition-colors tracking-wide',
+                'w-full px-3 py-2 text-sm font-mono uppercase rounded-lg border bg-white text-slate-900 focus:outline-none focus:ring-2 transition-colors tracking-wide placeholder:text-slate-400 font-semibold',
                 codeError
                   ? 'border-red-300 focus:ring-red-400 bg-red-50/20'
                   : 'border-slate-300 focus:ring-blue-600 focus:border-blue-600',
@@ -192,7 +192,7 @@ export default function BusinessPartnerForm({
           }}
           placeholder="e.g. Mäga Engineering (Pvt) Ltd"
           className={[
-            'w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 transition-colors',
+            'w-full px-3 py-2 text-sm rounded-lg border bg-white text-slate-900 focus:outline-none focus:ring-2 transition-colors placeholder:text-slate-400 font-medium',
             nameError
               ? 'border-red-300 focus:ring-red-400 bg-red-50/20'
               : 'border-slate-300 focus:ring-blue-600 focus:border-blue-600',
@@ -215,7 +215,7 @@ export default function BusinessPartnerForm({
           value={contactPerson}
           onChange={(e) => setContactPerson(e.target.value)}
           placeholder="e.g. Mr. Kamal Perera"
-          className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600"
+          className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 placeholder:text-slate-400 font-medium"
         />
       </div>
 
@@ -230,7 +230,7 @@ export default function BusinessPartnerForm({
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+94 11 2808835"
-            className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600"
+            className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 placeholder:text-slate-400"
           />
         </div>
 
@@ -243,7 +243,7 @@ export default function BusinessPartnerForm({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="info@company.lk"
-            className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600"
+            className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 placeholder:text-slate-400 font-medium"
           />
         </div>
       </div>
@@ -258,7 +258,7 @@ export default function BusinessPartnerForm({
           onChange={(e) => setAddress(e.target.value)}
           placeholder="e.g. 200, Nawala Road, Narahenpita, Colombo 05"
           rows={2}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 resize-none"
+          className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 resize-none placeholder:text-slate-400 font-medium"
         />
       </div>
 

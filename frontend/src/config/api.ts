@@ -14,6 +14,24 @@ export function getApiBaseUrl(): string {
 export const API_URL = getApiBaseUrl();
 
 /**
+ * Returns the backend root origin (e.g. https://magaone-api-zeta.vercel.app or http://localhost:5000)
+ * with /api removed, useful for static assets and uploaded documents.
+ */
+export function getBackendOrigin(): string {
+  return getApiBaseUrl().replace(/\/api\/?$/, '');
+}
+
+/**
+ * Converts a relative uploaded file path (/uploads/...) to a full accessible URL.
+ */
+export function getFileUrl(path?: string | null): string {
+  if (!path) return '';
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  const origin = getBackendOrigin();
+  return `${origin}${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
+/**
  * Returns the currently active tenant ID / subdomain from localStorage.
  */
 export function getCurrentTenantId(): string {

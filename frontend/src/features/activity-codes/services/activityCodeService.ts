@@ -15,10 +15,32 @@ export interface ActivityCode {
   id: string;
   code: string;
   description: string;
+  unit?: string | null;
   projectCode?: string;
+  parentActivityId?: string | null;
+  isDerived?: boolean;
+  corporateActivityCodeId?: string | null;
+  corporateActivityCode?: {
+    id: string;
+    code: string;
+    description: string;
+  } | null;
+  parentActivity?: {
+    id: string;
+    code: string;
+    description: string;
+  } | null;
+  derivedCount?: number;
 }
 
-export type ActivityCodeFormData = Omit<ActivityCode, 'id'>;
+export interface ActivityCodeFormData {
+  code: string;
+  description: string;
+  unit?: string | null;
+  projectCode?: string;
+  parentActivityId?: string | null;
+  isDerived?: boolean;
+}
 
 import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
@@ -38,7 +60,14 @@ export async function getAll(projectCode?: string): Promise<ActivityCode[]> {
         id: item.id,
         code: item.code,
         description: item.description || item.code,
+        unit: item.unit || null,
         projectCode: item.projectCode || undefined,
+        parentActivityId: item.parentActivityId || null,
+        isDerived: Boolean(item.isDerived),
+        corporateActivityCodeId: item.corporateActivityCodeId || null,
+        corporateActivityCode: item.corporateActivityCode || null,
+        parentActivity: item.parentActivity || null,
+        derivedCount: item._count?.derivedActivities ?? 0,
       }));
     }
     return [];
@@ -63,7 +92,17 @@ export async function create(data: ActivityCodeFormData): Promise<ActivityCode> 
   const item = await res.json();
   cacheManager.invalidate('activity-codes');
   cacheManager.invalidate('reports');
-  return { id: item.id, code: item.code, description: item.description || item.code, projectCode: item.projectCode };
+  return {
+    id: item.id,
+    code: item.code,
+    description: item.description || item.code,
+    unit: item.unit || null,
+    projectCode: item.projectCode,
+    parentActivityId: item.parentActivityId || null,
+    isDerived: Boolean(item.isDerived),
+    parentActivity: item.parentActivity || null,
+    corporateActivityCode: item.corporateActivityCode || null,
+  };
 }
 
 export async function importFromCorporate(

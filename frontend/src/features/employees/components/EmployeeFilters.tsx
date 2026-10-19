@@ -16,7 +16,7 @@ interface EmployeeFiltersProps {
 }
 
 const SELECT_CLASS =
-  'px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-800 min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-colors';
+  'px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 font-medium min-h-[44px] focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-colors';
 
 export default function EmployeeFilters({
   businessPartners,

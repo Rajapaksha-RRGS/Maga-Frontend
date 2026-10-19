@@ -50,6 +50,35 @@ export const getAllBusinessPartners = async (req: Request, res: Response): Promi
       ];
     }
 
+    const currentProjectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (req.headers['x-tenant-id'] as string);
+
+    let siteWorkerCounts: Record<string, number> = {};
+    if (currentProjectId && currentProjectId !== 'superadmin' && currentProjectId !== 'GLOBAL') {
+      try {
+        const siteCounts = await prisma.mF_P_Employee.groupBy({
+          by: ['businessPartnerId'],
+          where: {
+            projectId: currentProjectId,
+            status: 'active',
+            businessPartnerId: { not: null },
+          },
+          _count: { id: true },
+        });
+        siteCounts.forEach((sc) => {
+          if (sc.businessPartnerId) {
+            siteWorkerCounts[sc.businessPartnerId] = sc._count.id;
+          }
+        });
+      } catch (err) {
+        console.warn('Could not compute siteWorkerCounts:', err);
+      }
+    }
+
     const partners = await prisma.mF_G_BusinessPartner.findMany({
       where,
       select: partnerSelectOptimized,
@@ -60,6 +89,8 @@ export const getAllBusinessPartners = async (req: Request, res: Response): Promi
       ...p,
       employeeCount: p._count.employees,
       equipmentCount: p._count.equipment,
+      siteWorkerCount: siteWorkerCounts[p.id] || 0,
+      isActiveOnSite: Boolean(siteWorkerCounts[p.id] && siteWorkerCounts[p.id] > 0),
     }));
 
     res.json(formatted);

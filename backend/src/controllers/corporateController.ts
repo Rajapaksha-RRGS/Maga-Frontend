@@ -370,27 +370,66 @@ export const requestCorporateTransfer = async (req: Request, res: Response): Pro
 // ── 3C. GET /api/corporate/transfers/pending (Pending requests for project) ───
 export const getPendingCorporateTransfers = async (req: Request, res: Response): Promise<void> => {
   try {
-    const rawProjectId = req.query.projectId as string;
-    let targetProjectId: string | undefined = undefined;
+    const rawProjectId =
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.headers['x-tenant-id'] as string) ||
+      (req.headers['x-project-id'] as string);
 
-    if (rawProjectId) {
-      const allProjects = await prisma.mF_P_Project.findMany({
-        select: { id: true, projectCode: true, projectName: true, subdomain: true },
-      });
+    const isSuperAdmin =
+      req.user?.role === 'super_admin' ||
+      rawProjectId === 'GLOBAL' ||
+      rawProjectId === 'superadmin' ||
+      (req.headers['x-tenant-id'] === 'superadmin');
+
+    const allProjects = await prisma.mF_P_Project.findMany({
+      select: { id: true, projectCode: true, projectName: true, subdomain: true },
+    });
+
+    let targetProjectId: string | undefined = undefined;
+    if (rawProjectId && !isSuperAdmin) {
       const resolved = resolveProjectByCode(rawProjectId, allProjects);
       targetProjectId = resolved?.id || rawProjectId;
     }
 
-    const where: any = { status: 'pending_approval' };
-    if (targetProjectId) {
-      where.OR = [
-        { fromProjectId: targetProjectId }, // Outbound requests (people others want to take from this site)
-        { toProjectId: targetProjectId },   // Inbound requests (requests this site made)
-      ];
+    const direction = (req.query.direction as string) || (req.query.type as string);
+
+    // If super admin without specific target project, return all pending transfers
+    if (isSuperAdmin && !req.query.projectId && !targetProjectId) {
+      const allPending = await prisma.mF_G_EmployeeTransfer.findMany({
+        where: { status: 'pending_approval' },
+        include: {
+          corporateEmployee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              fullName: true,
+              nicNo: true,
+              tradeGroup: { select: { name: true } },
+            },
+          },
+          fromProject: { select: { id: true, projectCode: true, projectName: true } },
+          toProject: { select: { id: true, projectCode: true, projectName: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      res.json({ items: allPending, inboundItems: allPending, outboundItems: [] });
+      return;
     }
 
-    const items = await prisma.mF_G_EmployeeTransfer.findMany({
-      where,
+    if (!targetProjectId) {
+      res.json({ items: [], inboundItems: [], outboundItems: [] });
+      return;
+    }
+
+    // Inbound: other sites requesting OUR employees (requires this site to Approve & Release)
+    const inboundTransfers = await prisma.mF_G_EmployeeTransfer.findMany({
+      where: {
+        status: 'pending_approval',
+        fromProjectId: targetProjectId,
+      },
       include: {
         corporateEmployee: {
           select: {
@@ -407,7 +446,40 @@ export const getPendingCorporateTransfers = async (req: Request, res: Response):
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json({ items });
+    // Outbound: requests WE made to other sites (waiting for them to release)
+    const outboundTransfers = await prisma.mF_G_EmployeeTransfer.findMany({
+      where: {
+        status: 'pending_approval',
+        toProjectId: targetProjectId,
+      },
+      include: {
+        corporateEmployee: {
+          select: {
+            id: true,
+            employeeCode: true,
+            fullName: true,
+            nicNo: true,
+            tradeGroup: { select: { name: true } },
+          },
+        },
+        fromProject: { select: { id: true, projectCode: true, projectName: true } },
+        toProject: { select: { id: true, projectCode: true, projectName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let items = inboundTransfers;
+    if (direction === 'outbound') {
+      items = outboundTransfers;
+    } else if (direction === 'all' || direction === 'both') {
+      items = [...inboundTransfers, ...outboundTransfers];
+    }
+
+    res.json({
+      items,
+      inboundItems: inboundTransfers,
+      outboundItems: outboundTransfers,
+    });
   } catch (error: any) {
     console.error('Error fetching pending transfers:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch pending transfers' });
@@ -435,6 +507,36 @@ export const approveCorporateTransfer = async (req: Request, res: Response): Pro
     if (transfer.status === 'active') {
       res.status(400).json({ error: 'Transfer has already been approved and is active.' });
       return;
+    }
+
+    // Security Check: Only the source project (fromProject) or SuperAdmin can approve/release
+    const rawRequesterProject =
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.headers['x-tenant-id'] as string) ||
+      (req.headers['x-project-id'] as string);
+
+    const isSuperAdmin =
+      req.user?.role === 'super_admin' ||
+      rawRequesterProject === 'GLOBAL' ||
+      rawRequesterProject === 'superadmin' ||
+      (req.headers['x-tenant-id'] === 'superadmin');
+
+    if (!isSuperAdmin) {
+      const allProjects = await prisma.mF_P_Project.findMany({
+        select: { id: true, projectCode: true, projectName: true, subdomain: true },
+      });
+      const resolved = resolveProjectByCode(rawRequesterProject || '', allProjects);
+      const requesterId = resolved?.id || rawRequesterProject;
+
+      if (transfer.fromProjectId && transfer.fromProjectId !== requesterId) {
+        res.status(403).json({
+          error: `Unauthorized: Only project ${transfer.fromProject?.projectCode || 'the releasing site'} or Super Admin can release this employee.`,
+        });
+        return;
+      }
     }
 
     const { corporateEmployeeId, fromProjectId, toProjectId, corporateEmployee, toProject } = transfer;
@@ -526,6 +628,52 @@ export const rejectCorporateTransfer = async (req: Request, res: Response): Prom
   try {
     const id = String(req.params.id);
     const { reason } = req.body || {};
+
+    const transfer = await prisma.mF_G_EmployeeTransfer.findUnique({
+      where: { id },
+      include: {
+        fromProject: true,
+        toProject: true,
+      },
+    });
+
+    if (!transfer) {
+      res.status(404).json({ error: 'Transfer request not found' });
+      return;
+    }
+
+    // Security Check: Only the involved project sites or Super Admin can reject or cancel
+    const rawRequesterProject =
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.headers['x-tenant-id'] as string) ||
+      (req.headers['x-project-id'] as string);
+
+    const isSuperAdmin =
+      req.user?.role === 'super_admin' ||
+      rawRequesterProject === 'GLOBAL' ||
+      rawRequesterProject === 'superadmin' ||
+      (req.headers['x-tenant-id'] === 'superadmin');
+
+    if (!isSuperAdmin) {
+      const allProjects = await prisma.mF_P_Project.findMany({
+        select: { id: true, projectCode: true, projectName: true, subdomain: true },
+      });
+      const resolved = resolveProjectByCode(rawRequesterProject || '', allProjects);
+      const requesterId = resolved?.id || rawRequesterProject;
+
+      const isReleasingSite = transfer.fromProjectId && transfer.fromProjectId === requesterId;
+      const isRequestingSite = transfer.toProjectId === requesterId;
+
+      if (!isReleasingSite && !isRequestingSite) {
+        res.status(403).json({
+          error: `Unauthorized: Only the involved project sites or Super Admin can reject or cancel this transfer.`,
+        });
+        return;
+      }
+    }
 
     const updated = await prisma.mF_G_EmployeeTransfer.update({
       where: { id },

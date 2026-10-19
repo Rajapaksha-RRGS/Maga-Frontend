@@ -72,13 +72,17 @@ export default function EmployeesPage() {
   const [loadingPartners, setLoadingPartners] = useState(true);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [pendingTransfers, setPendingTransfers] = useState<PendingTransferItem[]>([]);
+  const [outboundTransfers, setOutboundTransfers] = useState<PendingTransferItem[]>([]);
   const [isProcessingTransfer, setIsProcessingTransfer] = useState(false);
   const [isDirectRegisterModalOpen, setIsDirectRegisterModalOpen] = useState(false);
 
   const fetchPendingTransfers = async () => {
     try {
       const res = await api.get('/corporate/transfers/pending');
-      setPendingTransfers(res.data?.items || []);
+      // Inbound release requests that require THIS site to approve & release
+      setPendingTransfers(res.data?.inboundItems || res.data?.items || []);
+      // Outbound transfer requests made by THIS site waiting for other sites to release
+      setOutboundTransfers(res.data?.outboundItems || []);
     } catch (e) {
       console.error('Failed to load pending transfers:', e);
     }
@@ -95,21 +99,21 @@ export default function EmployeesPage() {
       await refresh();
       await fetchPendingTransfers();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to approve transfer');
+      alert(err.response?.data?.error || err.message || 'Failed to approve transfer');
     } finally {
       setIsProcessingTransfer(false);
     }
   };
 
   const handleRejectRelease = async (transferId: string) => {
-    const reason = prompt('Please enter rejection reason:');
+    const reason = prompt('Please enter reason:');
     if (reason === null) return;
     setIsProcessingTransfer(true);
     try {
       await api.post(`/corporate/transfers/${transferId}/reject`, { reason });
       await fetchPendingTransfers();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to reject transfer');
+      alert(err.response?.data?.error || err.message || 'Failed to update transfer');
     } finally {
       setIsProcessingTransfer(false);
     }
@@ -281,13 +285,13 @@ export default function EmployeesPage() {
             </div>
           </div>
 
-          {/* 2-Way Handshake: Pending Inter-Site Transfer Requests Banner */}
+          {/* 2-Way Handshake: Inbound Release Requests Banner (Action Required) */}
           {pendingTransfers.length > 0 && (
             <div className="mb-5 bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-xs animate-in fade-in">
               <div className="flex items-center justify-between mb-2.5">
                 <div className="flex items-center gap-2 text-amber-900 font-bold text-xs sm:text-sm">
                   <ArrowRightLeft size={16} className="text-amber-600" />
-                  <span>Pending Inter-Site Transfer Requests ({pendingTransfers.length})</span>
+                  <span>Pending Inter-Site Release Requests ({pendingTransfers.length})</span>
                 </div>
                 <span className="text-[11px] font-medium text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full border border-amber-300">
                   2-Way Handshake Release Required
@@ -343,6 +347,71 @@ export default function EmployeesPage() {
                       >
                         <Check size={13} />
                         <span>Approve & Release</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 2-Way Handshake: Outbound Transfer Requests Banner (Awaiting Source Site Release) */}
+          {outboundTransfers.length > 0 && (
+            <div className="mb-5 bg-sky-50 border border-sky-200 rounded-xl p-4 shadow-xs animate-in fade-in">
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center gap-2 text-sky-900 font-bold text-xs sm:text-sm">
+                  <Clock size={16} className="text-sky-600" />
+                  <span>Transfers Requested by This Site ({outboundTransfers.length})</span>
+                </div>
+                <span className="text-[11px] font-medium text-sky-800 bg-sky-100/90 px-2 py-0.5 rounded-full border border-sky-300">
+                  Awaiting Source Site Release
+                </span>
+              </div>
+              <div className="space-y-2">
+                {outboundTransfers.map((req) => (
+                  <div
+                    key={req.id}
+                    className="bg-white p-3 rounded-lg border border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-slate-800">{req.corporateEmployee?.fullName}</span>
+                        <span className="font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                          {req.corporateEmployee?.employeeCode}
+                        </span>
+                        <span className="text-slate-500 font-medium">
+                          ({req.corporateEmployee?.tradeGroup?.name || 'General Labour'})
+                        </span>
+                      </div>
+                      <div className="text-slate-600 text-[11px] mt-1 flex items-center gap-1.5 flex-wrap">
+                        <span>Current Station:</span>
+                        <span className="font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                          {req.fromProject?.projectName || req.fromProject?.projectCode || 'Central Depot'}
+                        </span>
+                        {req.startDate && (
+                          <span className="text-slate-500 flex items-center gap-1 ml-1">
+                            <Clock size={11} /> Effective: {new Date(req.startDate).toLocaleDateString()}
+                          </span>
+                        )}
+                        {req.remarks && (
+                          <span className="italic text-slate-600 ml-1">
+                            — "{req.remarks}"
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 self-end sm:self-auto flex-shrink-0">
+                      <span className="text-[11px] text-sky-700 bg-sky-50 border border-sky-200 px-2.5 py-1 rounded-md font-medium">
+                        ⏳ Pending Release by Station
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRejectRelease(req.id)}
+                        disabled={isProcessingTransfer}
+                        title="Cancel this request"
+                        className="px-2.5 py-1 rounded-md border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-red-50 text-xs font-medium cursor-pointer transition-colors"
+                      >
+                        Cancel
                       </button>
                     </div>
                   </div>

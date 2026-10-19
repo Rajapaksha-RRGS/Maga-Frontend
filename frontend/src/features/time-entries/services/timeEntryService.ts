@@ -25,6 +25,8 @@ export interface ActivityCode {
   id: string;
   code: string;
   description: string;
+  isDerived?: boolean;
+  parentActivityId?: string | null;
 }
 
 export interface TimeEntryPayload {
@@ -74,6 +76,8 @@ export async function getActivityCodes(
           id: item.id,
           code: item.code,
           description: item.description || item.code,
+          isDerived: Boolean(item.isDerived),
+          parentActivityId: item.parentActivityId || null,
         }));
       }
     }

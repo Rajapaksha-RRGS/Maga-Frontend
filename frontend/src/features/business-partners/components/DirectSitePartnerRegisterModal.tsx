@@ -19,7 +19,7 @@ import {
   CheckCircle2,
   Briefcase,
 } from 'lucide-react';
-import api from '../../../config/api';
+import api, { getFileUrl } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 import type { BusinessPartner } from '../services/businessPartnerService';
 
@@ -223,7 +223,7 @@ export default function DirectSitePartnerRegisterModal({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Sierra Construction / Kandy Earthmovers"
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-medium placeholder:text-slate-400"
                 />
               </div>
 
@@ -234,12 +234,13 @@ export default function DirectSitePartnerRegisterModal({
                 <select
                   value={type}
                   onChange={(e) => setType(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-medium text-slate-800"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-medium"
+                  style={{ colorScheme: 'light' }}
                 >
-                  <option value="subcontractor">Subcontractor</option>
-                  <option value="labour_supplier">Labour Supplier</option>
-                  <option value="specialist">Specialist Contractor</option>
-                  <option value="equipment_supplier">Equipment Supplier</option>
+                  <option value="subcontractor" className="text-slate-900 bg-white font-medium">Subcontractor</option>
+                  <option value="labour_supplier" className="text-slate-900 bg-white font-medium">Labour Supplier</option>
+                  <option value="specialist" className="text-slate-900 bg-white font-medium">Specialist Contractor</option>
+                  <option value="equipment_supplier" className="text-slate-900 bg-white font-medium">Equipment Supplier</option>
                 </select>
               </div>
             </div>
@@ -256,7 +257,7 @@ export default function DirectSitePartnerRegisterModal({
                   value={brNumber}
                   onChange={(e) => setBrNumber(e.target.value.toUpperCase())}
                   placeholder="e.g. PV-12345 or BR-88214"
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-mono uppercase"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-mono uppercase font-semibold placeholder:text-slate-400"
                 />
               </div>
 
@@ -270,7 +271,7 @@ export default function DirectSitePartnerRegisterModal({
                   value={nicNo}
                   onChange={(e) => setNicNo(e.target.value.toUpperCase())}
                   placeholder="e.g. 198512345678 or 741230456V"
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-mono uppercase"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-mono uppercase font-semibold placeholder:text-slate-400"
                 />
               </div>
             </div>
@@ -306,27 +307,34 @@ export default function DirectSitePartnerRegisterModal({
               </label>
 
               {documentUrl && (
-                <div className="flex items-center justify-between text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                <div className="flex items-center justify-between text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl mt-1">
                   <div className="flex items-center gap-1.5 truncate">
-                    <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                    <span className="truncate font-medium">Dossier PDF Attached</span>
+                    <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                    <span className="truncate font-semibold">{documentFile?.name || 'Subcontractor Legal Dossier Attached'}</span>
                   </div>
-                  <a
-                    href={
-                      documentUrl.startsWith('http')
-                        ? documentUrl
-                        : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000'}${
-                            documentUrl.startsWith('/') ? '' : '/'
-                          }${documentUrl}`
-                    }
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-violet-700 hover:underline font-semibold text-[11px] shrink-0"
-                  >
-                    <FileText size={12} />
-                    <span>View</span>
-                    <ExternalLink size={10} />
-                  </a>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a
+                      href={getFileUrl(documentUrl)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-violet-700 hover:text-violet-900 hover:underline font-semibold text-[11px] bg-violet-100/60 px-2.5 py-1 rounded-md transition-colors"
+                    >
+                      <FileText size={12} />
+                      <span>View</span>
+                      <ExternalLink size={10} />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDocumentFile(null);
+                        setDocumentUrl(null);
+                      }}
+                      className="text-slate-400 hover:text-red-600 p-1 rounded-md hover:bg-red-50 transition-colors"
+                      title="Remove dossier"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -343,7 +351,7 @@ export default function DirectSitePartnerRegisterModal({
                   value={contactPerson}
                   onChange={(e) => setContactPerson(e.target.value)}
                   placeholder="e.g. Sunil Weerasinghe"
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-medium placeholder:text-slate-400"
                 />
               </div>
 
@@ -357,7 +365,7 @@ export default function DirectSitePartnerRegisterModal({
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="e.g. 077-1234567"
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-medium placeholder:text-slate-400"
                 />
               </div>
             </div>
@@ -372,7 +380,7 @@ export default function DirectSitePartnerRegisterModal({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="e.g. info@sierra.lk"
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-medium placeholder:text-slate-400"
                 />
               </div>
 
@@ -385,7 +393,7 @@ export default function DirectSitePartnerRegisterModal({
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
                   placeholder="e.g. Colombo, Kandy"
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-medium placeholder:text-slate-400"
                 />
               </div>
             </div>
@@ -399,7 +407,7 @@ export default function DirectSitePartnerRegisterModal({
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder="e.g. No 23, Station Road, Colombo"
-                className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:outline-none font-medium placeholder:text-slate-400"
               />
             </div>
           </div>

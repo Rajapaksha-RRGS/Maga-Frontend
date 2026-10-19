@@ -38,6 +38,8 @@ export const getAllActivityCodes = async (req: Request, res: Response): Promise<
         unit: true,
         createdAt: true,
         corporateActivityCodeId: true,
+        parentActivityId: true,
+        isDerived: true,
         corporateActivityCode: {
           select: {
             id: true,
@@ -45,8 +47,20 @@ export const getAllActivityCodes = async (req: Request, res: Response): Promise<
             description: true,
           },
         },
+        parentActivity: {
+          select: {
+            id: true,
+            code: true,
+            description: true,
+          },
+        },
+        _count: {
+          select: {
+            derivedActivities: true,
+          },
+        },
       },
-      orderBy: { code: 'asc' },
+      orderBy: [{ isDerived: 'asc' }, { code: 'asc' }],
     });
 
     res.json(activityCodes);
@@ -70,6 +84,22 @@ export const getActivityCodeById = async (req: Request, res: Response): Promise<
         unit: true,
         createdAt: true,
         corporateActivityCodeId: true,
+        parentActivityId: true,
+        isDerived: true,
+        parentActivity: {
+          select: {
+            id: true,
+            code: true,
+            description: true,
+          },
+        },
+        corporateActivityCode: {
+          select: {
+            id: true,
+            code: true,
+            description: true,
+          },
+        },
       },
     });
 
@@ -85,10 +115,10 @@ export const getActivityCodeById = async (req: Request, res: Response): Promise<
   }
 };
 
-// 3. POST /api/activity-codes — Create activity code
+// 3. POST /api/activity-codes — Create activity code (Standard or Derived Sub-Activity)
 export const createActivityCode = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, description, unit } = req.body || {};
+    const { code, description, unit, parentActivityId, isDerived } = req.body || {};
     if (!code) {
       res.status(400).json({ error: 'Code is required' });
       return;
@@ -103,19 +133,45 @@ export const createActivityCode = async (req: Request, res: Response): Promise<v
 
     const cleanCode = String(code).trim();
 
+    // If derived, verify parent activity exists in this project
+    let parentAct: { id: string; code: string; corporateActivityCodeId: string | null; unit: string | null } | null = null;
+    if (parentActivityId) {
+      parentAct = await prisma.mF_P_ActivityCode.findFirst({
+        where: { id: parentActivityId, projectId },
+        select: { id: true, code: true, corporateActivityCodeId: true, unit: true },
+      });
+      if (!parentAct) {
+        res.status(404).json({ error: 'Parent activity code not found in this project' });
+        return;
+      }
+    }
+
     // Check if corporate master has this code
     const corpMatch = await prisma.mF_G_ActivityCode.findUnique({
       where: { code: cleanCode },
       select: { id: true, description: true, unit: true },
     });
 
+    // Sub-activities inherit parent corporateActivityCodeId so HO roll-up reports work automatically
+    const finalCorpId = corpMatch?.id || parentAct?.corporateActivityCodeId || null;
+
     const newCode = await prisma.mF_P_ActivityCode.create({
       data: {
         projectId,
         code: cleanCode,
         description: description?.trim() || corpMatch?.description || cleanCode,
-        unit: unit?.trim() || corpMatch?.unit || null,
-        corporateActivityCodeId: corpMatch?.id || null,
+        unit: unit?.trim() || corpMatch?.unit || parentAct?.unit || null,
+        corporateActivityCodeId: finalCorpId,
+        parentActivityId: parentAct ? parentAct.id : null,
+        isDerived: Boolean(parentAct || isDerived),
+      },
+      include: {
+        parentActivity: {
+          select: { id: true, code: true, description: true },
+        },
+        corporateActivityCode: {
+          select: { id: true, code: true, description: true },
+        },
       },
     });
 
@@ -123,7 +179,7 @@ export const createActivityCode = async (req: Request, res: Response): Promise<v
   } catch (error: any) {
     console.error('Error creating activity code:', error);
     if (error.code === 'P2002') {
-      res.status(409).json({ error: 'Activity code already exists in this project' });
+      res.status(409).json({ error: `Activity code "${req.body.code}" already exists in this project` });
       return;
     }
     res.status(500).json({ error: 'Failed to create activity code' });
@@ -134,16 +190,26 @@ export const createActivityCode = async (req: Request, res: Response): Promise<v
 export const updateActivityCode = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
-    const { code, description, unit } = req.body || {};
+    const { code, description, unit, parentActivityId, isDerived } = req.body || {};
 
     const data: Record<string, any> = {};
     if (code !== undefined) data.code = String(code).trim();
     if (description !== undefined) data.description = description?.trim() || null;
     if (unit !== undefined) data.unit = unit?.trim() || null;
+    if (parentActivityId !== undefined) data.parentActivityId = parentActivityId || null;
+    if (isDerived !== undefined) data.isDerived = Boolean(isDerived);
 
     const updated = await prisma.mF_P_ActivityCode.update({
       where: { id },
       data,
+      include: {
+        parentActivity: {
+          select: { id: true, code: true, description: true },
+        },
+        corporateActivityCode: {
+          select: { id: true, code: true, description: true },
+        },
+      },
     });
 
     res.json(updated);
@@ -161,6 +227,17 @@ export const updateActivityCode = async (req: Request, res: Response): Promise<v
 export const deleteActivityCode = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = getParam(req.params.id);
+
+    // Check if derived child activities exist under this activity
+    const derivedCount = await prisma.mF_P_ActivityCode.count({
+      where: { parentActivityId: id },
+    });
+    if (derivedCount > 0) {
+      res.status(400).json({
+        error: `Cannot delete: ${derivedCount} derived sub-activity code(s) exist under this master activity. Delete sub-activities first.`,
+      });
+      return;
+    }
 
     // Check if time entries or logs reference this activity
     const [timeEntriesCount, splitsCount, equipLogsCount] = await Promise.all([

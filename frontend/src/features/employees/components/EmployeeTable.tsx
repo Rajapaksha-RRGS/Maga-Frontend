@@ -6,6 +6,7 @@ import { useMemo } from 'react';
 import { Lock, FileText } from 'lucide-react';
 import DataTable, { type Column } from '../../../components/DataTable';
 import StatusBadge from '../../../components/StatusBadge';
+import { getFileUrl } from '../../../config/api';
 import type { Employee } from '../services/employeeService';
 
 interface EmployeeTableProps {
@@ -26,12 +27,21 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
           </span>
         ),
       },
-      {
-        header: 'EPF No',
-        accessor: 'epfNo',
+       {
+        header: 'Calling Name',
+        accessor: 'callingName',
         render: (e) => (
-          <span className="font-mono text-xs text-slate-600">
-            {e.epfNo ? e.epfNo : <span className="text-slate-400">—</span>}
+          <span className="font-bold text-xs text-slate-900 bg-slate-100/90 px-2 py-0.5 rounded border border-slate-200">
+            {e.callingName || '—'}
+          </span>
+        ),
+      },
+      {
+        header: 'Full Name',
+        accessor: 'fullName',
+        render: (e) => (
+          <span className="font-medium text-xs text-slate-800" title={e.fullName}>
+            {e.fullName || '—'}
           </span>
         ),
       },
@@ -63,21 +73,21 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
         render: (e) => (
           e.employeeType === 'internal' || !e.businessPartnerId || !e.businessPartner || e.businessPartner.toLowerCase().includes('direct') ? (
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
-              Direct (Internal)
+               Internal
             </span>
           ) : (
             <div className="flex flex-col gap-0.5">
               <span className="text-slate-800 font-medium text-xs leading-tight">
-                {e.businessPartner}
+                {e.businessPartnerCode}
               </span>
-              {e.businessPartnerCode && (
+              {/* {e.businessPartnerCode && (
                 <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
                   <span>{e.businessPartnerCode}</span>
                   {e.businessPartnerStatus === 'pending_approval' && (
-                    <span className="text-amber-600 font-sans font-semibold text-[9px] bg-amber-50 border border-amber-200 px-1 rounded">Pending HO</span>
+                    <span className="text-amber-600 font-sans font-semibold text-[9px] bg-amber-50 border border-amber-200 px-1 rounded">Pending</span>
                   )}
                 </span>
-              )}
+              )} */}
             </div>
           )
         ),
@@ -95,7 +105,7 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
                 title={e.lockReason || 'Pending Head Office Super Admin Approval — Payout Locked'}
               >
                 <Lock size={11} className="text-amber-600" />
-                <span>Pending HO (Locked)</span>
+                <span>Pending </span>
               </span>
             ) : (
               <StatusBadge status={e.status === 'active' ? 'active' : 'inactive'} />
@@ -116,7 +126,7 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
           <div className="flex items-center gap-2" onClick={(evt) => evt.stopPropagation()}>
             {e.documentUrl && (
               <a
-                href={e.documentUrl.startsWith('http') ? e.documentUrl : `http://localhost:5000${e.documentUrl}`}
+                href={getFileUrl(e.documentUrl)}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(evt) => evt.stopPropagation()}
