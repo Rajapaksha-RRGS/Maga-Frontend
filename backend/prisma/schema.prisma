@@ -100,6 +100,7 @@ model MF_G_Employee {
   epfNo                      String?  @map("epf_no")
   employeeType               String   @map("employee_type") // "internal" | "external" - Strictly Mandatory
   corporateBusinessPartnerId String?  @map("business_partner_id")
+  currentProjectId           String?  @map("current_project_id")
   currentWorkingProject      String?  @map("current_working_project")
   documentUrl                String?  @map("document_url")
   status                     String   @default("active")
@@ -107,12 +108,14 @@ model MF_G_Employee {
 
   tradeGroup               MF_G_TradeGroup        @relation(fields: [tradeGroupId], references: [id])
   corporateBusinessPartner MF_G_BusinessPartner? @relation(fields: [corporateBusinessPartnerId], references: [id])
+  currentProject           MF_P_Project?          @relation("EmployeeCurrentProject", fields: [currentProjectId], references: [id], onDelete: SetNull)
   projectEmployees         MF_P_Employee[]
   transfers                MF_G_EmployeeTransfer[]
 
   @@index([tradeGroupId])
   @@index([corporateBusinessPartnerId])
   @@index([employeeType])
+  @@index([currentProjectId])
   @@map("MF_G_EMPLOYEE")
 }
 
@@ -131,18 +134,22 @@ model MF_G_Equipment {
   costRate                Decimal? @default(0.00) @map("cost_rate") @db.Decimal(12, 2)
   currency                String   @default("LKR")
   type                    String?
+  currentProjectId        String?  @map("current_project_id")
   currentWorkingProject   String?  @map("current_working_project")
   status                  String   @default("active")
   createdAt               DateTime @default(now()) @map("created_at")
 
   unitMaster              MF_G_UnitMaster?      @relation("CorporateEquipmentUnit", fields: [unit], references: [code])
   businesspartner         MF_G_BusinessPartner? @relation(fields: [businessPartnerId], references: [id])
+  currentProject          MF_P_Project?         @relation("EquipmentCurrentProject", fields: [currentProjectId], references: [id], onDelete: SetNull)
   projectEquipment        MF_P_Equipment[]
+  transfers               MF_G_EquipmentTransfer[]
 
   @@index([unit])
   @@index([businessPartnerId])
   @@index([standardEquipmentNumber])
   @@index([vehicleNo])
+  @@index([currentProjectId])
   @@map("MF_G_EQUIPMENT")
 }
 
@@ -179,6 +186,28 @@ model MF_G_EmployeeTransfer {
   @@map("MF_G_EMPLOYEE_TRANSFER")
 }
 
+model MF_G_EquipmentTransfer {
+  id                   String    @id @default(uuid()) @map("equipment_transfer_id")
+  corporateEquipmentId String    @map("corporate_equipment_id")
+  fromProjectId        String?   @map("from_project_id")
+  toProjectId          String?   @map("to_project_id")
+  startDate            DateTime  @map("start_date") @db.Date
+  endDate              DateTime? @map("end_date") @db.Date
+  status               String    @default("active") // "active" | "transferred" | "released"
+  remarks              String?
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  corporateEquipment   MF_G_Equipment @relation(fields: [corporateEquipmentId], references: [id], onDelete: Cascade)
+  fromProject          MF_P_Project?  @relation("EquipmentTransfersFrom", fields: [fromProjectId], references: [id])
+  toProject            MF_P_Project?  @relation("EquipmentTransfersTo", fields: [toProjectId], references: [id])
+
+  @@index([corporateEquipmentId])
+  @@index([fromProjectId])
+  @@index([toProjectId])
+  @@index([toProjectId, startDate, endDate])
+  @@map("MF_G_EQUIPMENT_TRANSFER")
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // LEVEL 2: PROJECT / SITE OPERATIONAL MASTER DATA (MF_P_*)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -212,6 +241,10 @@ model MF_P_Project {
   timeEntries    MF_OP_TimeEntry[]
   transfersFrom  MF_G_EmployeeTransfer[] @relation("TransfersFrom")
   transfersTo    MF_G_EmployeeTransfer[] @relation("TransfersTo")
+  corporateEmployeesAssigned MF_G_Employee[]  @relation("EmployeeCurrentProject")
+  corporateEquipmentAssigned MF_G_Equipment[] @relation("EquipmentCurrentProject")
+  equipmentTransfersFrom     MF_G_EquipmentTransfer[] @relation("EquipmentTransfersFrom")
+  equipmentTransfersTo       MF_G_EquipmentTransfer[] @relation("EquipmentTransfersTo")
 
   @@map("MF_PROJECT")
 }

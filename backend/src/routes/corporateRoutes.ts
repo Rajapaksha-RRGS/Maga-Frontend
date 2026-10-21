@@ -14,6 +14,8 @@ import {
   getCorporateEquipment,
   createCorporateEquipment,
   bulkImportCorporateEquipment,
+  createCorporateEquipmentTransfer,
+  getCorporateEquipmentTransfers,
   getCorporateTradeGroups,
   createCorporateTradeGroup,
   bulkImportCorporateTradeGroups,
@@ -75,6 +77,8 @@ router.post('/employees/bulk-import', bulkImportCorporateEmployees);
 router.get('/equipment', getCorporateEquipment);
 router.post('/equipment', createCorporateEquipment);
 router.post('/equipment/bulk-import', bulkImportCorporateEquipment);
+router.get('/equipment/transfers', getCorporateEquipmentTransfers);
+router.post('/equipment/transfer', createCorporateEquipmentTransfer);
 
 // Global Trade Groups
 router.get('/trade-groups', getCorporateTradeGroups);

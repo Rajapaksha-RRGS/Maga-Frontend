@@ -90,8 +90,10 @@ function formatEquipment(item: any) {
       },
     ],
     status: item.status || 'active',
-    ownerPartnerId: item.ownerPartnerId || null,
-    businessPartner: item.ownerPartner ? item.ownerPartner.name : corp.businesspartner?.name || null,
+    ownerPartnerId: item.ownerPartnerId || corp.businesspartner?.id || null,
+    businessPartnerId: item.ownerPartnerId || corp.businesspartner?.id || null,
+    businessPartner: item.ownerPartner?.name || corp.businesspartner?.name || null,
+    businessPartnerCode: item.ownerPartner?.code || corp.businesspartner?.code || '',
     createdAt: item.createdAt,
   };
 }

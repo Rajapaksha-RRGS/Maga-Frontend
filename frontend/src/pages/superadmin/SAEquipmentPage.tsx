@@ -14,6 +14,7 @@ import {
   XCircle,
   Building2,
   UploadCloud,
+  GitMerge,
 } from 'lucide-react';
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
@@ -66,6 +67,8 @@ interface CorporateEquipmentItem {
   vehicleNo?: string;
   type?: string;
   status: string;
+  currentProjectId?: string | null;
+  currentProject?: { id: string; projectCode: string; projectName: string } | null;
   currentWorkingProject?: string;
 }
 
@@ -99,6 +102,14 @@ export default function SAEquipmentPage() {
   const [formType, setFormType] = useState('Heavy Machinery');
   const [formProject, setFormProject] = useState('');
 
+  // Transfer Modal State
+  const [transferTarget, setTransferTarget] = useState<CorporateEquipmentItem | null>(null);
+  const [transferProject, setTransferProject] = useState('');
+  const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [transferRemarks, setTransferRemarks] = useState('');
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [transferError, setTransferError] = useState('');
+
   const loadData = async () => {
     setIsLoading(true);
     try {
@@ -128,6 +139,7 @@ export default function SAEquipmentPage() {
     setIsSubmitting(true);
     setFormError('');
     try {
+      const selectedProj = projects.find((p) => p.id === formProject || p.projectCode === formProject);
       await api.post('/corporate/equipment', {
         standardEquipmentNumber: formNumber.trim().toUpperCase(),
         equipmentName: formName.trim() || formNumber.trim().toUpperCase(),
@@ -137,7 +149,8 @@ export default function SAEquipmentPage() {
         dailyRate: formDailyRate.trim() !== '' && !isNaN(parseFloat(formDailyRate)) ? parseFloat(formDailyRate) : undefined,
         vehicleNo: formVehicleNo.trim() || undefined,
         type: formType || undefined,
-        currentWorkingProject: formProject || undefined,
+        currentProjectId: selectedProj ? selectedProj.id : (formProject || undefined),
+        currentWorkingProject: selectedProj ? selectedProj.projectCode : (formProject || undefined),
       });
       setIsModalOpen(false);
       setFormNumber('');
@@ -151,6 +164,28 @@ export default function SAEquipmentPage() {
       setFormError(err.message || 'Failed to create equipment');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleExecuteTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferTarget) return;
+    setIsTransferring(true);
+    setTransferError('');
+    try {
+      await api.post('/corporate/equipment/transfer', {
+        corporateEquipmentId: transferTarget.id,
+        toProjectId: transferProject || null,
+        startDate: transferDate,
+        remarks: transferRemarks.trim() || undefined,
+      });
+      setTransferTarget(null);
+      setTransferRemarks('');
+      await loadData();
+    } catch (err: any) {
+      setTransferError(err.response?.data?.error || err.message || 'Failed to transfer equipment');
+    } finally {
+      setIsTransferring(false);
     }
   };
 
@@ -253,6 +288,7 @@ export default function SAEquipmentPage() {
                 <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Cost Rate (LKR)</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Current Location</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-violet-50">
@@ -266,11 +302,12 @@ export default function SAEquipmentPage() {
                     <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-16" /></td>
                     <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-20" /></td>
                     <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-12" /></td>
+                    <td className="px-4 py-3" />
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-400">
+                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-400">
                     No corporate equipment found.
                   </td>
                 </tr>
@@ -303,9 +340,9 @@ export default function SAEquipmentPage() {
                       {eq.costRate != null ? Number(eq.costRate).toLocaleString('en-LK', { minimumFractionDigits: 2 }) : '—'}
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      {eq.currentWorkingProject ? (
-                        <span className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold text-[11px]">
-                          <Building2 size={11} /> {eq.currentWorkingProject}
+                      {eq.currentProject?.projectName || eq.currentProject?.projectCode || eq.currentWorkingProject ? (
+                        <span className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold text-[11px]" title={eq.currentProject?.projectName}>
+                          <Building2 size={11} /> {eq.currentProject?.projectCode || eq.currentWorkingProject}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
@@ -324,6 +361,21 @@ export default function SAEquipmentPage() {
                           Inactive
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTransferTarget(eq);
+                          setTransferError('');
+                          setTransferProject(eq.currentProjectId ? '' : (projects[0]?.id || ''));
+                        }}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-violet-700 hover:text-violet-900 bg-violet-50 hover:bg-violet-100 border border-violet-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                        title="Transfer to another project or yard"
+                      >
+                        <GitMerge size={12} className="text-[#C9A84C]" />
+                        <span>Transfer</span>
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -477,7 +529,7 @@ export default function SAEquipmentPage() {
                 >
                   <option value="" className="bg-white text-slate-900">Central Equipment Yard / Depot</option>
                   {projects.map((proj) => (
-                    <option key={proj.id} value={proj.projectCode} className="bg-white text-slate-900">
+                    <option key={proj.id} value={proj.id} className="bg-white text-slate-900">
                       {proj.projectCode} - {proj.projectName}
                     </option>
                   ))}
@@ -530,6 +582,126 @@ export default function SAEquipmentPage() {
           loadData();
         }}
       />
+
+      {/* ── Transfer Quick Modal ────────────────────────────────────── */}
+      {transferTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl border border-violet-100 shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between pb-4 border-b border-violet-50">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center text-violet-700">
+                    <GitMerge size={15} />
+                  </span>
+                  <h3 className="font-semibold text-slate-900 text-sm">Transfer Fleet Asset</h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Relocate <strong className="text-slate-800">{transferTarget.standardEquipmentNumber}</strong> ({transferTarget.equipmentName}) to a new site or central yard.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTransferTarget(null)}
+                className="text-slate-400 hover:text-slate-600 rounded-lg p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteTransfer} className="mt-4 space-y-4">
+              {transferError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                  {transferError}
+                </div>
+              )}
+
+              {/* Current Location Info */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
+                <span className="text-slate-500 font-medium">Current Deployment:</span>
+                <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+                  <Building2 size={13} className="text-violet-600" />
+                  {transferTarget.currentProject
+                    ? `${transferTarget.currentProject.projectCode} - ${transferTarget.currentProject.projectName}`
+                    : transferTarget.currentWorkingProject || 'Central Equipment Yard / Depot'}
+                </div>
+              </div>
+
+              {/* Destination Dropdown */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Destination Project / Yard <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={transferProject}
+                  onChange={(e) => setTransferProject(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                >
+                  <option value="" className="bg-white text-slate-900 font-medium">
+                    🏭 Central Equipment Yard / Depot (Release from Site)
+                  </option>
+                  <optgroup label="Active Construction Projects">
+                    {projects
+                      .filter((p) => p.id !== transferTarget.currentProjectId)
+                      .map((proj) => (
+                        <option key={proj.id} value={proj.id} className="bg-white text-slate-900">
+                          {proj.projectCode} - {proj.projectName}
+                        </option>
+                      ))}
+                  </optgroup>
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Selecting Central Yard will release the machine from its current active site.
+                </p>
+              </div>
+
+              {/* Effective Start Date */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Effective Movement Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={transferDate}
+                  onChange={(e) => setTransferDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  required
+                />
+              </div>
+
+              {/* Dispatch Remarks */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Remarks / Dispatch Gate Pass (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Transferred on Low-bed Trailer #42, Gate Pass #GP-891"
+                  value={transferRemarks}
+                  onChange={(e) => setTransferRemarks(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setTransferTarget(null)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isTransferring}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] hover:opacity-90 rounded-lg cursor-pointer disabled:opacity-50"
+                >
+                  {isTransferring ? 'Processing Transfer…' : 'Execute Transfer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

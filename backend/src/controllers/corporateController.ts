@@ -255,10 +255,13 @@ export const createCorporateTransfer = async (req: Request, res: Response): Prom
         },
       });
 
-      // 5. Update corporate employee currentWorkingProject to projectCode
+      // 5. Update corporate employee currentWorkingProject to projectCode & currentProjectId
       await tx.mF_G_Employee.update({
         where: { id: corporateEmployeeId },
-        data: { currentWorkingProject: transfer.toProject.projectCode || toProjectId },
+        data: {
+          currentProjectId: toProjectId,
+          currentWorkingProject: transfer.toProject.projectCode || toProjectId,
+        },
       });
 
       return transfer;
@@ -603,10 +606,13 @@ export const approveCorporateTransfer = async (req: Request, res: Response): Pro
         },
       });
 
-      // 5. Update corporate employee's currentWorkingProject
+      // 5. Update corporate employee's currentWorkingProject & currentProjectId
       await tx.mF_G_Employee.update({
         where: { id: corporateEmployeeId },
-        data: { currentWorkingProject: toProject.projectCode },
+        data: {
+          currentProjectId: toProjectId,
+          currentWorkingProject: toProject.projectCode,
+        },
       });
 
       return updatedTransfer;
@@ -720,6 +726,7 @@ export const getCorporateEmployees = async (req: Request, res: Response): Promis
         include: {
           tradeGroup: { select: { id: true, code: true, name: true } },
           corporateBusinessPartner: { select: { id: true, code: true, name: true } },
+          currentProject: { select: { id: true, projectCode: true, projectName: true } },
           projectEmployees: {
             where: { status: 'active' },
             select: {
@@ -749,7 +756,9 @@ export const getCorporateEmployees = async (req: Request, res: Response): Promis
       businessPartnerId: emp.corporateBusinessPartnerId,
       businessPartner: emp.corporateBusinessPartner?.name || 'Mäga Engineering (Direct)',
       businessPartnerCode: emp.corporateBusinessPartner?.code || '',
-      currentWorkingProject: emp.currentWorkingProject,
+      currentProjectId: (emp as any).currentProjectId || null,
+      currentProject: (emp as any).currentProject || null,
+      currentWorkingProject: (emp as any).currentProject?.projectCode || emp.currentWorkingProject,
       activeProject: emp.projectEmployees[0]?.project || null,
       documentUrl: emp.documentUrl || null,
     }));
@@ -774,6 +783,7 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
       isOperator,
       employeeType,
       corporateBusinessPartnerId,
+      currentProjectId,
       currentWorkingProject,
     } = req.body || {};
 
@@ -814,6 +824,24 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
     }
     const targetTradeGroupId = String(tradeGroupId).trim();
 
+    // Resolve project relation
+    const targetProjectInput = currentProjectId || currentWorkingProject;
+    let resolvedProjectId: string | null = null;
+    let resolvedProjectCode: string | null = null;
+    let resolvedProjObj: any = null;
+
+    if (targetProjectInput) {
+      const allProjects = await prisma.mF_P_Project.findMany({
+        select: { id: true, projectCode: true, projectName: true, subdomain: true },
+      });
+      const resolvedProj = resolveProjectByCode(targetProjectInput, allProjects);
+      if (resolvedProj) {
+        resolvedProjectId = resolvedProj.id;
+        resolvedProjectCode = resolvedProj.projectCode;
+        resolvedProjObj = resolvedProj;
+      }
+    }
+
     const created = await prisma.mF_G_Employee.create({
       data: {
         employeeCode: employeeCode.trim().toUpperCase(),
@@ -825,7 +853,8 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
         isOperator: Boolean(isOperator),
         employeeType: resolvedType,
         corporateBusinessPartnerId: finalBpId,
-        currentWorkingProject: currentWorkingProject || null,
+        currentProjectId: resolvedProjectId,
+        currentWorkingProject: resolvedProjectCode || currentWorkingProject || null,
         documentUrl: req.body.documentUrl || null,
         status: req.body.status || 'active',
       },
@@ -835,26 +864,15 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
       },
     });
 
-    // If currentWorkingProject was specified, auto-provision to site
-    if (currentWorkingProject) {
-      const allProjects = await prisma.mF_P_Project.findMany({
-        select: { id: true, projectCode: true, projectName: true, subdomain: true },
-      });
-      const resolvedProj = resolveProjectByCode(currentWorkingProject, allProjects);
-      if (resolvedProj) {
-        // Ensure human-readable projectCode is stored on global master
-        await prisma.mF_G_Employee.update({
-          where: { id: created.id },
-          data: { currentWorkingProject: resolvedProj.projectCode },
-        });
-
-        await prisma.mF_P_Employee.upsert({
-          where: {
-            projectId_corporateEmployeeId: {
-              projectId: resolvedProj.id,
-              corporateEmployeeId: created.id,
-            },
+    // If project was resolved, auto-provision to site
+    if (resolvedProjObj) {
+      await prisma.mF_P_Employee.upsert({
+        where: {
+          projectId_corporateEmployeeId: {
+            projectId: resolvedProjObj.id,
+            corporateEmployeeId: created.id,
           },
+        },
           update: {
             status: 'active',
             callingName: fullName.trim().split(' ')[0],
@@ -864,7 +882,7 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
             isOperator: Boolean(isOperator),
           },
           create: {
-            projectId: resolvedProj.id,
+            projectId: resolvedProjObj.id,
             corporateEmployeeId: created.id,
             callingName: fullName.trim().split(' ')[0],
             status: 'active',
@@ -879,14 +897,13 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
           data: {
             corporateEmployeeId: created.id,
             fromProjectId: null,
-            toProjectId: resolvedProj.id,
+            toProjectId: resolvedProjObj.id,
             startDate: new Date(),
             status: 'active',
             remarks: 'Initial assignment upon employee registration',
           },
         });
       }
-    }
 
     res.status(201).json({
       success: true,
@@ -1006,6 +1023,10 @@ export const getCorporateEquipment = async (req: Request, res: Response): Promis
     const [items, total] = await Promise.all([
       prisma.mF_G_Equipment.findMany({
         where,
+        include: {
+          currentProject: { select: { id: true, projectCode: true, projectName: true } },
+          businesspartner: { select: { id: true, code: true, name: true } },
+        },
         orderBy: { standardEquipmentNumber: 'asc' },
       }),
       prisma.mF_G_Equipment.count({ where }),
@@ -1030,7 +1051,9 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
       dailyRate,
       vehicleNo,
       type,
+      currentProjectId,
       currentWorkingProject,
+      businessPartnerId,
     } = req.body || {};
 
     const code = (standardEquipmentNumber || '').trim().toUpperCase();
@@ -1047,6 +1070,22 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
       return;
     }
 
+    // Resolve project relation
+    const targetProjectInput = currentProjectId || currentWorkingProject;
+    let resolvedProjectId: string | null = null;
+    let resolvedProjectCode: string | null = null;
+
+    if (targetProjectInput) {
+      const allProjects = await prisma.mF_P_Project.findMany({
+        select: { id: true, projectCode: true, projectName: true, subdomain: true },
+      });
+      const resolvedProj = resolveProjectByCode(targetProjectInput, allProjects);
+      if (resolvedProj) {
+        resolvedProjectId = resolvedProj.id;
+        resolvedProjectCode = resolvedProj.projectCode;
+      }
+    }
+
     const created = await prisma.mF_G_Equipment.create({
       data: {
         standardEquipmentNumber: code,
@@ -1057,8 +1096,14 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
         dailyRate: dailyRate !== undefined && dailyRate !== '' && !isNaN(Number(dailyRate)) ? Number(dailyRate) : null,
         vehicleNo: vehicleNo ? vehicleNo.trim() : null,
         type: type || null,
-        currentWorkingProject: currentWorkingProject || null,
+        businessPartnerId: businessPartnerId || null,
+        currentProjectId: resolvedProjectId,
+        currentWorkingProject: resolvedProjectCode || currentWorkingProject || null,
         status: 'active',
+      },
+      include: {
+        currentProject: { select: { id: true, projectCode: true, projectName: true } },
+        businesspartner: { select: { id: true, code: true, name: true } },
       },
     });
 
@@ -1070,6 +1115,189 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
   } catch (error: any) {
     console.error('Error creating corporate equipment:', error);
     res.status(500).json({ error: error.message || 'Failed to create equipment' });
+  }
+};
+
+// ── 8B. POST /api/corporate/equipment/transfer ─────────────────────────────────
+export const createCorporateEquipmentTransfer = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      corporateEquipmentId,
+      toProjectId,
+      fromProjectId,
+      startDate,
+      remarks,
+    } = req.body || {};
+
+    if (!corporateEquipmentId) {
+      res.status(400).json({ error: 'corporateEquipmentId is required' });
+      return;
+    }
+
+    const corpEquip = await prisma.mF_G_Equipment.findUnique({
+      where: { id: corporateEquipmentId },
+      include: { businesspartner: true },
+    });
+
+    if (!corpEquip) {
+      res.status(404).json({ error: 'Corporate equipment not found' });
+      return;
+    }
+
+    const effectiveStartDate = startDate ? new Date(startDate) : new Date();
+
+    // Determine current/from location
+    let resolvedFromProjectId = fromProjectId;
+    if (!resolvedFromProjectId) {
+      resolvedFromProjectId = corpEquip.currentProjectId || null;
+      if (!resolvedFromProjectId) {
+        const activeSiteEquip = await prisma.mF_P_Equipment.findFirst({
+          where: { corporateEquipmentId, status: 'active' },
+        });
+        resolvedFromProjectId = activeSiteEquip?.projectId || null;
+      }
+    }
+
+    // Target project ID or null for Central Yard
+    const targetProjectId = toProjectId || null;
+
+    if (resolvedFromProjectId && targetProjectId && resolvedFromProjectId === targetProjectId) {
+      res.status(400).json({ error: 'Equipment is already deployed at this project site' });
+      return;
+    }
+
+    if (!resolvedFromProjectId && !targetProjectId) {
+      res.status(400).json({ error: 'Equipment is already at Central Equipment Yard' });
+      return;
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Close open active transfers
+      await tx.mF_G_EquipmentTransfer.updateMany({
+        where: {
+          corporateEquipmentId,
+          status: 'active',
+          endDate: null,
+        },
+        data: {
+          status: 'transferred',
+          endDate: effectiveStartDate,
+        },
+      });
+
+      // 2. Create new transfer record
+      const transfer = await tx.mF_G_EquipmentTransfer.create({
+        data: {
+          corporateEquipmentId,
+          fromProjectId: resolvedFromProjectId,
+          toProjectId: targetProjectId,
+          startDate: effectiveStartDate,
+          status: 'active',
+          remarks:
+            remarks ||
+            (targetProjectId
+              ? 'Dispatched to project site by Super Admin'
+              : 'Returned to Central Equipment Yard by Super Admin'),
+        },
+        include: {
+          corporateEquipment: true,
+          fromProject: true,
+          toProject: true,
+        },
+      });
+
+      // 3. Deactivate on previous site
+      if (resolvedFromProjectId) {
+        await tx.mF_P_Equipment.updateMany({
+          where: { corporateEquipmentId, projectId: resolvedFromProjectId },
+          data: { status: 'transferred' },
+        });
+      }
+
+      // 4. Enroll or activate on new site (if deployed to site)
+      if (targetProjectId) {
+        await tx.mF_P_Equipment.upsert({
+          where: {
+            projectId_corporateEquipmentId: {
+              projectId: targetProjectId,
+              corporateEquipmentId,
+            },
+          },
+          update: {
+            status: 'active',
+            condition: corpEquip.condition || 'DRY',
+            costRate: corpEquip.costRate,
+            meterUnitCode: corpEquip.unit,
+            ownerPartnerId: corpEquip.businessPartnerId,
+          },
+          create: {
+            projectId: targetProjectId,
+            corporateEquipmentId,
+            status: 'active',
+            condition: corpEquip.condition || 'DRY',
+            costRate: corpEquip.costRate,
+            meterUnitCode: corpEquip.unit,
+            ownerPartnerId: corpEquip.businessPartnerId,
+          },
+        });
+      }
+
+      // 5. Update corporate equipment master location
+      await tx.mF_G_Equipment.update({
+        where: { id: corporateEquipmentId },
+        data: {
+          currentProjectId: targetProjectId,
+          currentWorkingProject: transfer.toProject?.projectCode || null,
+        },
+      });
+
+      return transfer;
+    });
+
+    res.status(201).json({
+      success: true,
+      message: targetProjectId ? 'Equipment transferred successfully to project site' : 'Equipment returned to Central Yard',
+      transfer: result,
+    });
+  } catch (error: any) {
+    console.error('Error executing equipment transfer:', error);
+    res.status(500).json({ error: error.message || 'Failed to transfer equipment' });
+  }
+};
+
+// ── 8C. GET /api/corporate/equipment/transfers ─────────────────────────────────
+export const getCorporateEquipmentTransfers = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { equipmentId, projectId } = req.query;
+    const where: any = {};
+    if (equipmentId) where.corporateEquipmentId = String(equipmentId);
+    if (projectId) {
+      where.OR = [{ fromProjectId: String(projectId) }, { toProjectId: String(projectId) }];
+    }
+
+    const transfers = await prisma.mF_G_EquipmentTransfer.findMany({
+      where,
+      include: {
+        corporateEquipment: {
+          select: {
+            id: true,
+            standardEquipmentNumber: true,
+            equipmentName: true,
+            vehicleNo: true,
+            unit: true,
+          },
+        },
+        fromProject: { select: { id: true, projectCode: true, projectName: true } },
+        toProject: { select: { id: true, projectCode: true, projectName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    res.json({ items: transfers, total: transfers.length });
+  } catch (error: any) {
+    console.error('Error fetching equipment transfers:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch equipment transfers' });
   }
 };
 

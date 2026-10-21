@@ -336,10 +336,14 @@ export const deleteBusinessPartner = async (req: Request, res: Response): Promis
     const linkedEquipment = await prisma.mF_P_Equipment.count({
       where: { ownerPartnerId: id },
     });
+    const linkedCorpEquipment = await prisma.mF_G_Equipment.count({
+      where: { businessPartnerId: id },
+    });
 
-    if (linkedEmployees > 0 || linkedCorpEmployees > 0 || linkedEquipment > 0) {
+    const totalEq = linkedEquipment + linkedCorpEquipment;
+    if (linkedEmployees > 0 || linkedCorpEmployees > 0 || totalEq > 0) {
       res.status(400).json({
-        error: `Cannot delete: ${linkedEmployees + linkedCorpEmployees} employee(s) and ${linkedEquipment} equipment unit(s) are assigned to this Business Partner.`,
+        error: `Cannot delete: ${linkedEmployees + linkedCorpEmployees} employee(s) and ${totalEq} equipment unit(s) are assigned to this Business Partner.`,
       });
       return;
     }

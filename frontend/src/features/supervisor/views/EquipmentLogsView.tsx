@@ -420,15 +420,15 @@ export function EquipmentLogsView({
     return (
       <div 
         key={`${eq.id}-${unit}-${isAdditional ? 'add' : 'prim'}`}
-        className={[
-          'space-y-3 p-3.5 rounded-2xl border shadow-xs transition-all',
-          isAdditional
-            ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200/90 dark:border-amber-900/60'
-            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
-        ].join(' ')}
+        // className={[
+        //   'space-y-3 p-3.5 rounded-2xl border shadow-xs transition-all',
+        //   isAdditional
+        //     ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200/90 dark:border-amber-900/60'
+        //     : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+        // ].join(' ')}
       >
         {/* Unit Block Header */}
-        <div className="flex items-center justify-between">
+        {/* <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-lg p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700/60">{UNIT_META[unit]?.icon || '⚙️'}</span>
             <div>
@@ -461,7 +461,7 @@ export function EquipmentLogsView({
               </span>
             )}
           </div>
-        </div>
+        </div> */}
 
         {/* ── Inputs by Unit Type ── */}
 
@@ -870,7 +870,7 @@ export function EquipmentLogsView({
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                   <Tag size={13} className="text-blue-600 dark:text-blue-400" />
-                  <span>Activity Distribution ({isDayUnit ? 'Days' : unit})</span>
+                  <span>Activity  ({isDayUnit ? 'Days' : unit})</span>
                 </span>
 
                 {targetValue > 0 && (
@@ -911,7 +911,7 @@ export function EquipmentLogsView({
                       <select
                         value={split.activityCode}
                         onChange={(e) => handleUpdateActivitySplit(eq.id, split.id, { activityCode: e.target.value })}
-                        className="flex-1 min-w-0 px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 text-slate-800 dark:text-slate-100 truncate focus:ring-1 focus:ring-blue-500"
+                        className="flex-1 min-w-0 px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 text-white-800 dark:text-slate-100 truncate focus:ring-1 focus:ring-blue-500"
                       >
                         <option value="">-- Select Activity Code --</option>
                         {activityOptions.map((act) => (
@@ -1164,7 +1164,7 @@ export function EquipmentLogsView({
                   <div className="px-3.5 pb-4 pt-1 border-t border-slate-100 dark:border-slate-800 space-y-3 animate-in slide-in-from-top-1 duration-150">
                     
                     {/* ── Mode Status Banner ── */}
-                    <div className="flex items-center justify-between p-2 rounded-xl bg-slate-100/90 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 text-xs">
+                    {/* <div className="flex items-center justify-between p-2 rounded-xl bg-slate-100/90 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 text-xs">
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">
                           Primary:
@@ -1186,9 +1186,9 @@ export function EquipmentLogsView({
                           Single Unit Mode
                         </span>
                       )}
-                    </div>
+                    </div> */}
 
-                    {/* ── 1. PRIMARY UNIT SECTION (Fixed - Always Present) ── */}
+                    
                     {renderUnitInputs(eq, primaryUnit, false)}
 
                     {/* ── 2. ADDITIONAL UNIT SECTION (Optional) ── */}

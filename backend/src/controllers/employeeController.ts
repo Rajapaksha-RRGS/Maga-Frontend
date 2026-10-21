@@ -32,6 +32,25 @@ const employeeSelectOptimized = {
       employeeType: true,
       documentUrl: true,
       status: true,
+      tradeGroup: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          standardDailyRate: true,
+        },
+      },
+      corporateBusinessPartner: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          type: true,
+          brNumber: true,
+          documentUrl: true,
+          status: true,
+        },
+      },
     },
   },
   tradeGroup: {
@@ -57,8 +76,11 @@ const employeeSelectOptimized = {
 
 function formatEmployee(emp: any) {
   const corp = emp.corporateEmployee || {};
+  const effectiveTradeGroup = emp.tradeGroup || corp.tradeGroup || null;
+  const effectiveBusinessPartner = emp.businessPartner || corp.corporateBusinessPartner || null;
+
   const isEmployeeActive = emp.status === 'active' && corp.status === 'active';
-  const isPartnerActive = !emp.businessPartner || emp.businessPartner.status === 'active';
+  const isPartnerActive = !effectiveBusinessPartner || effectiveBusinessPartner.status === 'active';
   const isPayable = isEmployeeActive && isPartnerActive;
 
   let payrollStatus = 'PAYABLE';
@@ -95,22 +117,22 @@ function formatEmployee(emp: any) {
     corporateStatus: corp.status || 'active',
     documentUrl: corp.documentUrl || null,
     document_url: corp.documentUrl || null,
-    tradeGroupId: emp.tradeGroup?.id || null,
-    tradeGroup: emp.tradeGroup?.name || 'General Labour',
-    trade_group: emp.tradeGroup?.name || 'General Labour',
-    employeeType: corp.employeeType || (emp.businessPartnerId ? 'external' : 'internal'),
-    businessPartnerId: emp.businessPartner?.id || null,
-    businessPartnerCode: emp.businessPartner?.code || null,
-    businessPartnerName: emp.businessPartner?.name || null,
-    businessPartnerStatus: emp.businessPartner?.status || null,
-    businessPartner: emp.businessPartner
+    tradeGroupId: effectiveTradeGroup?.id || null,
+    tradeGroup: effectiveTradeGroup?.name || 'General Labour',
+    trade_group: effectiveTradeGroup?.name || 'General Labour',
+    employeeType: corp.employeeType || (effectiveBusinessPartner ? 'external' : 'internal'),
+    businessPartnerId: effectiveBusinessPartner?.id || null,
+    businessPartnerCode: effectiveBusinessPartner?.code || null,
+    businessPartnerName: effectiveBusinessPartner?.name || null,
+    businessPartnerStatus: effectiveBusinessPartner?.status || null,
+    businessPartner: effectiveBusinessPartner
       ? {
-          id: emp.businessPartner.id,
-          code: emp.businessPartner.code,
-          name: emp.businessPartner.name,
-          status: emp.businessPartner.status,
-          brNumber: emp.businessPartner.brNumber,
-          documentUrl: emp.businessPartner.documentUrl,
+          id: effectiveBusinessPartner.id,
+          code: effectiveBusinessPartner.code,
+          name: effectiveBusinessPartner.name,
+          status: effectiveBusinessPartner.status,
+          brNumber: effectiveBusinessPartner.brNumber,
+          documentUrl: effectiveBusinessPartner.documentUrl,
         }
       : null,
     isApproved: isEmployeeActive && isPartnerActive,
@@ -806,10 +828,11 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
         },
       });
 
-      // Keep corporate employee currentWorkingProject in sync
+      // Keep corporate employee currentWorkingProject & currentProjectId in sync
       await tx.mF_G_Employee.update({
         where: { id: corpEmp.id },
         data: {
+          currentProjectId: targetProjectId,
           currentWorkingProject: targetProjectId,
         },
       });

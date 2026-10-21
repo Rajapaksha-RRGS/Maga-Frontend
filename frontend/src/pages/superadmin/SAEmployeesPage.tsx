@@ -102,6 +102,8 @@ interface CorporateEmployeeItem {
   employeeType: 'internal' | 'external';
   businessPartner: string;
   businessPartnerCode?: string;
+  currentProjectId?: string | null;
+  currentProject?: { id: string; projectCode: string; projectName: string } | null;
   currentWorkingProject?: string;
   activeProject?: { id: string; projectCode: string; projectName: string } | null;
   documentUrl?: string | null;
@@ -299,6 +301,7 @@ export default function SAEmployeesPage() {
     setIsSubmitting(true);
     setAddError('');
     try {
+      const selectedProj = projects.find((p) => p.id === formInitialProject || p.projectCode === formInitialProject);
       await api.post('/corporate/employees', {
         employeeCode: formCode.trim().toUpperCase(),
         fullName: formName.trim(),
@@ -309,7 +312,8 @@ export default function SAEmployeesPage() {
         isOperator: formIsOperator,
         employeeType: formEmployeeType,
         corporateBusinessPartnerId: formEmployeeType === 'external' ? formPartnerId : null,
-        currentWorkingProject: formInitialProject || undefined,
+        currentProjectId: selectedProj ? selectedProj.id : (formInitialProject || undefined),
+        currentWorkingProject: selectedProj ? selectedProj.projectCode : (formInitialProject || undefined),
       });
       setIsAddModalOpen(false);
       // Reset form
@@ -738,9 +742,9 @@ export default function SAEmployeesPage() {
                       {emp.dailyRate.toLocaleString('en-LK', { minimumFractionDigits: 2 })}
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      {emp.activeProject ? (
-                        <span className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold text-[11px]">
-                          <Building2 size={11} /> {emp.activeProject.projectCode}
+                      {emp.activeProject || emp.currentProject || emp.currentWorkingProject ? (
+                        <span className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold text-[11px]" title={emp.activeProject?.projectName || emp.currentProject?.projectName}>
+                          <Building2 size={11} /> {emp.activeProject?.projectCode || emp.currentProject?.projectCode || emp.currentWorkingProject}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
