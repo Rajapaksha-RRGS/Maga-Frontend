@@ -556,30 +556,22 @@ export default function SABusinessPartnersPage() {
           }`}
         >
           <Clock size={14} />
-          <span>Pending Subcontractor Approvals</span>
-          {pendingPartners.length > 0 && (
-            <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                activeTab === 'pending' ? 'bg-white text-amber-700' : 'bg-amber-600 text-white'
-              }`}
-            >
-              {pendingPartners.length}
-            </span>
-          )}
+          <span>Pending Subcontractor</span>
+         
         </button>
       </div>
 
       {activeTab === 'pending' ? (
         /* ── Pending Subcontractor Approvals Tab View ──────────────── */
         <div className="flex flex-col gap-4">
-          <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 flex items-start gap-3">
+          {/* <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 flex items-start gap-3">
             <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
             <div className="text-xs text-amber-900">
               <span className="font-semibold">Subcontractor Business Partner Approval Required: </span>
               Subcontractors registered at project sites operate under provisional codes (<code>BP-TMP-xxxx</code>).
               Their associated workforce can record daily gate attendance, but <strong>subcontractor payroll billing & worker wage disbursement remain strictly locked</strong> until Head Office Super Admin reviews their Business Registration (BR) number, Owner NIC, and Scanned Document Dossier, and assigns an official permanent code (e.g. <code>BP102xxxx</code>).
             </div>
-          </div>
+          </div> */}
 
           <div className="bg-white rounded-2xl border border-violet-100 shadow-sm overflow-hidden flex flex-col">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] min-h-[380px]">

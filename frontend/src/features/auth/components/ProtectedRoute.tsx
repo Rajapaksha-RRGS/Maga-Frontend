@@ -23,10 +23,15 @@ interface ProtectedRouteProps {
 
 /** Map a role to its home path */
 function homeForRole(role: Role): string {
-  if (role === 'super_admin' || role === 'admin') {
+  if (role === 'super_admin') {
+    return '/superadmin';
+  } else if (role === 'admin') {
     return '/admin';
-  }
-  return '/supervisor';
+  } else if (role === 'supervisor') {
+    return '/supervisor';
+  } else {
+    return '/login'; 
+  } 
 }
 
 export default function ProtectedRoute({ requiredRole, allowedRoles }: ProtectedRouteProps) {
@@ -49,6 +54,7 @@ export default function ProtectedRoute({ requiredRole, allowedRoles }: Protected
   if (validRoles && !validRoles.includes(user.role)) {
     return <Navigate to={homeForRole(user.role)} replace />;
   }
+  
 
   return <Outlet />;
 }

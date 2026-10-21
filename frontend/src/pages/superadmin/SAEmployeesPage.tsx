@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
+import { TopUpErrorView } from '../../components/TopUpErrorView';
+
 
 const EMP_SAMPLE_HEADERS = [
   'employeeCode',
@@ -201,7 +203,7 @@ export default function SAEmployeesPage() {
     setError('');
     try {
       const [empRes, tgRes, bpRes, projRes, pendRes] = await Promise.all([
-        api.get('/corporate/employees'),
+        api.get('/corporate/employees'), 
         api.get('/corporate/trade-groups'),
         api.get('/corporate/business-partners'),
         api.get('/tenants'),
@@ -365,6 +367,33 @@ export default function SAEmployeesPage() {
     const matchType = typeFilter === 'all' || emp.employeeType === typeFilter;
     return matchSearch && matchTG && matchType;
   });
+  if (isLoading) {
+    return (
+      <div className="min-h-screen w-full bg-white flex items-center justify-center">
+        <div className="flex items-center gap-4">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-full border-2 border-transparent animate-spin"
+              style={{ borderColor: '#C9A84C' }}></div>
+             <span>loading...</span>  
+          </div>
+          <div className="flex flex-col items-start">
+            <h2 className="text-xl font-bold text-gray-800">Loading Workforce Data</h2>
+            <p className="text-gray-600 text-sm">Fetching employee records from all sites...</p>
+          </div>
+        </div>
+      </div>
+
+
+    );
+  }
+
+  if(error){
+    return (
+      <div className="min-h-[80vh] w-full flex items-center justify-center p-6">
+        <TopUpErrorView massage={error} onRetry={async () => {setError(null); await loadData(); }}/> 
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 md:px-6 py-5 flex flex-col gap-5 min-h-0">
@@ -376,7 +405,7 @@ export default function SAEmployeesPage() {
             <h1 className="text-base font-semibold text-slate-800">Global Employee Master</h1>
           </div>
           <p className="text-xs text-slate-500">
-            Head Office central workforce catalog (MF_G_EMPLOYEE) across all sites
+            Head Office central workforce catalog across all sites
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -405,11 +434,9 @@ export default function SAEmployeesPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-          <XCircle size={16} /> {error}
-        </div>
-      )}
+      
+
+      
 
       {/* Tab Switcher */}
       <div className="flex items-center gap-2 border-b border-violet-100 pb-2">
@@ -455,7 +482,7 @@ export default function SAEmployeesPage() {
       {activeTab === 'pending' ? (
         /* ── Pending Approvals Tab View ──────────────────────────────── */
         <div className="flex flex-col gap-4">
-          <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 flex items-start gap-3">
+          {/* <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 flex items-start gap-3">
             <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
             <div className="text-xs text-amber-900">
               <span className="font-semibold">Dual Approval & Payroll Lock Active: </span>
@@ -463,7 +490,7 @@ export default function SAEmployeesPage() {
               salary disbursement and BP payment billing remain <strong>locked</strong> until Head Office Super Admin
               reviews the scanned verification dossier (NIC, Birth Cert & BR) and issues official permanent codes.
             </div>
-          </div>
+          </div> */}
 
           <div className="bg-white rounded-2xl border border-violet-100 shadow-sm overflow-hidden flex flex-col">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[380px]">
@@ -649,7 +676,7 @@ export default function SAEmployeesPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">NIC / EPF</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Type / Partner</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Trade Group</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Daily Rate (LKR)</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Daily Rate</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Current Site</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
                 <th className="px-4 py-3" />
@@ -686,7 +713,7 @@ export default function SAEmployeesPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">
-                      <div>NIC: {emp.nicNo}</div>
+                      <div>{emp.nicNo}</div>
                       {emp.epfNo && <div className="text-[10px] text-slate-400">EPF: {emp.epfNo}</div>}
                     </td>
                     <td className="px-4 py-3 text-xs">
@@ -845,9 +872,7 @@ export default function SAEmployeesPage() {
                 <div className="mt-2 text-[11px] text-amber-800 bg-amber-100/70 border border-amber-300/80 rounded-lg p-2 flex items-start gap-1.5">
                   <AlertTriangle size={13} className="shrink-0 mt-0.5 text-amber-700" />
                   <div>
-                    <strong>Notice:</strong> This subcontractor is also awaiting HO approval. Approving this employee
-                    now will register their permanent ID, but <strong>payroll will stay held</strong> until the
-                    Business Partner is approved under Corporate Business Partners.
+                    <strong>Notice:</strong> This subcontractor is also awaiting HO approval. 
                   </div>
                 </div>
               )}

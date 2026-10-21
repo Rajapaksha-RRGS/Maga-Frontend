@@ -128,7 +128,7 @@ export default function SAProjectsPage() {
   const [formAdminPassword, setFormAdminPassword] = useState('');
 
   const fetchProjects = async () => { // API eken data gena function eka 
-    setIsLoading(true); // data enakan loading state eka true wenawa 
+    setIsLoading(true); // data enakan loading state eka true wenawa
     setError(null);
     try {
       const res = await api.get('/corporate/projects');
@@ -156,7 +156,7 @@ export default function SAProjectsPage() {
         (p.addressLine1 && p.addressLine1.toLowerCase().includes(searchItem)) ||
         (p.addressLine2 && p.addressLine2.toLowerCase().includes(searchItem));// 
 
-      const matchStatus = statusFilter === 'all' || p.status === statusFilter; // methana mtch status eka all wenawa 
+      const matchStatus = statusFilter === 'all' || p.status === statusFilter; // methana mtch status eka all 
       const matchUnit = unitFilter === 'all' || (p.enterpriseUnit ? p.enterpriseUnit.toLowerCase() === unitFilter.toLowerCase() : unitFilter === 'none');
 
       return matchSearch && matchStatus && matchUnit; // search, status, unit filter eka 3 ekena match wena projects tikak thiyan ena function eka  
@@ -165,9 +165,9 @@ export default function SAProjectsPage() {
 
   // Aggregate stats
   const totalProjectsCount = projects.length;
-  const activeProjectsCount = projects.filter((p) => p.status === 'active').length;
-  const totalWorkforce = projects.reduce((acc, p) => acc + (p.employeeCount || 0), 0);
-  const totalEquipment = projects.reduce((acc, p) => acc + (p.equipmentCount || 0), 0);
+  const activeProjectsCount = projects.filter((project) => project.status === 'active').length; // project wla active projects count eka 
+  const totalWorkforce = projects.reduce((acc, p) => acc + (p.employeeCount || 0), 0); // project wla total workforce count eka 
+  const totalEquipment = projects.reduce((acc, p) => acc + (p.equipmentCount || 0), 0);// project wla total equipment count eka 
 
   // Modal open handlers
   const openAddModal = () => {
@@ -595,10 +595,10 @@ export default function SAProjectsPage() {
               <tr>
                 <th className="px-4 py-3">Site Code</th>
                 <th className="px-4 py-3">Project Title & Description</th>
-                <th className="px-4 py-3">Manager & Division</th>
+                
                 <th className="px-4 py-3">Location & Address</th>
                 <th className="px-4 py-3">Resources</th>
-                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Status</th> 
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
