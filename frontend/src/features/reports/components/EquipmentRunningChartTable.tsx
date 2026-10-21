@@ -120,19 +120,45 @@ export const EquipmentRunningChartTable: React.FC<Props> = ({ data }) => {
                       {item.supervisorName}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono text-slate-600 tabular-nums">
-                      {item.initialMeter.toFixed(1)}
+                      {item.initialMeter > 0 ? item.initialMeter.toFixed(1) : '—'}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono text-slate-600 tabular-nums">
-                      {item.finalMeter.toFixed(1)}
+                      {item.finalMeter > 0 ? item.finalMeter.toFixed(1) : '—'}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 tabular-nums bg-slate-50/50">
-                      {item.netRunningHours.toFixed(1)} {item.primaryUnit}
+                      {(() => {
+                        const unitLower = (item.primaryUnit || 'hrs').toLowerCase();
+                        if (unitLower === 'mth') {
+                          return (
+                            <div className="flex flex-col items-end">
+                              <span>{item.netRunningHours.toFixed(1)} Day</span>
+                              <span className="text-[10px] text-violet-600 font-sans font-medium">Monthly Contract</span>
+                            </div>
+                          );
+                        }
+                        if (unitLower === 'day' || unitLower === 'days') {
+                          return <span>{item.netRunningHours.toFixed(1)} Day</span>;
+                        }
+                        if (unitLower === 'km') {
+                          return <span>{item.netRunningHours.toFixed(1)} km</span>;
+                        }
+                        return <span>{item.netRunningHours.toFixed(1)} Hrs</span>;
+                      })()}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono text-emerald-700 tabular-nums">
-                      {item.workingHours.toFixed(1)}
+                      {(() => {
+                        const unitLower = (item.primaryUnit || 'hrs').toLowerCase();
+                        if (unitLower === 'mth' || unitLower === 'day' || unitLower === 'days') {
+                          return `${item.workingHours.toFixed(1)} Day`;
+                        }
+                        if (unitLower === 'km') {
+                          return `${item.workingHours.toFixed(1)} km`;
+                        }
+                        return `${item.workingHours.toFixed(1)} Hrs`;
+                      })()}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono text-amber-700 tabular-nums">
-                      {item.idleHours.toFixed(1)}
+                      {item.idleHours > 0 ? `${item.idleHours.toFixed(1)} Hrs` : '—'}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono text-slate-800 tabular-nums">
                       {item.fuelLiters > 0 ? `${item.fuelLiters.toFixed(1)} L` : '—'}

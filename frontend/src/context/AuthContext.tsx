@@ -5,7 +5,7 @@ import {
   useEffect,
   type ReactNode,
 } from 'react';
-import { login as authLogin } from '../features/auth/services/authService';
+import { login as authLogin } from '../features/auth/services/authService'; // login function eka authservice eken import karanawa 
 import { cacheManager } from '../utils/cacheManager';
 
 export type Role = 'super_admin' | 'admin' | 'supervisor';
@@ -23,15 +23,9 @@ export interface AuthUser {
 
 interface AuthContextValue {
   user: AuthUser | null;
-  /** Tenant/company name resolved from the logged-in user */
   tenantName: string | null;
   role: Role | null;
   isLoading: boolean;
-  /**
-   * Attempt login with a tenant subdomain, username, and password.
-   * Resolves the tenant first, then authenticates within that tenant's scope.
-   * Throws an Error with a user-facing message on failure.
-   */
   login: (tenant: string, username: string, password: string) => Promise<void>;
   logout: () => void;
 }
@@ -58,11 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = async (
-    tenant: string,
-    username: string,
-    password: string
-  ): Promise<void> => {
+  const login = async ( tenant: string,username: string,password: string): Promise<void> => {
     const loggedInUser = await authLogin(tenant, username, password);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedInUser));
     cacheManager.clear();

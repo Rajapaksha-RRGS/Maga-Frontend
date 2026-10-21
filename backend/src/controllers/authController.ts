@@ -19,7 +19,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     const cleanUsername = String(username).trim().toLowerCase();
 
     // Support SuperAdmin global login
-    if (cleanTenant.toLowerCase() === 'superadmin' || cleanTenant.toLowerCase() === 'system') {
+    if (cleanTenant.toLowerCase() === 'superadmin') {
       const superAdmin = await prisma.mF_G_SuperAdmin.findFirst({
         where: {
           OR: [
@@ -78,7 +78,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
           { id: cleanTenant },
           { subdomain: { equals: cleanTenant, mode: 'insensitive' } },
           { projectCode: { equals: cleanTenant, mode: 'insensitive' } },
-          { projectCode: { equals: `PRJ${cleanTenant}`, mode: 'insensitive' } },
+          
         ],
       },
       select: {
@@ -89,27 +89,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         status: true,
       },
     });
-
-    // Fallback to broader match if no exact match found
-    if (!project) {
-      project = await prisma.mF_P_Project.findFirst({
-        where: {
-          OR: [
-            { subdomain: { equals: `${cleanTenant}M`, mode: 'insensitive' } },
-            { subdomain: { equals: cleanTenant.replace(/M$/i, ''), mode: 'insensitive' } },
-            { projectCode: { contains: cleanTenant, mode: 'insensitive' } },
-            { projectName: { contains: cleanTenant, mode: 'insensitive' } },
-          ],
-        },
-        select: {
-          id: true,
-          projectCode: true,
-          projectName: true,
-          subdomain: true,
-          status: true,
-        },
-      });
-    }
 
     if (!project || project.status !== 'active') {
       res.status(400).json({ error: 'Invalid or inactive project/tenant' });
@@ -137,14 +116,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     });
 
     if (!user || user.status !== 'active') {
-      res.status(401).json({ error: 'Invalid credentials' });
+      res.status(401).json({ error: 'Invalid USERNAME' });
       return;
     }
 
     // 3. Password comparison
     const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) {
-      res.status(401).json({ error: 'Invalid credentials' });
+      res.status(401).json({ error: 'Invalid PASSWORD' });
       return;
     }
 

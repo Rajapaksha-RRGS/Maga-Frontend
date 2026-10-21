@@ -704,12 +704,42 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               </span>
                             </td>
                             <td className="py-2.5 px-3">
-                              <div className="font-semibold text-slate-900">
-                                {(eq.primaryUnit || 'hrs').toUpperCase() === 'HRS'
-                                  ? `${eq.netHours ?? 0} Hrs`
-                                  : `${eq.loggedQuantity ?? 0} ${(eq.primaryUnit || 'hrs').toUpperCase()}`}
-                              </div>
-                              <span className="text-[10px] text-slate-400 font-mono">Unit: {(eq.primaryUnit || 'hrs').toUpperCase()}</span>
+                              {(() => {
+                                const unitUpper = (eq.primaryUnit || 'hrs').toUpperCase();
+                                if (unitUpper === 'HRS') {
+                                  const hrs = Number(eq.netHours || eq.workingHours || eq.loggedQuantity || 0);
+                                  return (
+                                    <>
+                                      <div className="font-semibold text-slate-900">{hrs.toFixed(1)} Hrs</div>
+                                      <span className="text-[10px] text-slate-400 font-mono">Unit: HRS</span>
+                                    </>
+                                  );
+                                }
+                                if (unitUpper === 'MTH') {
+                                  const days = Number(eq.loggedQuantity || 1);
+                                  return (
+                                    <>
+                                      <div className="font-semibold text-slate-900">{days} Day{days === 1 ? '' : 's'}</div>
+                                      <span className="text-[10px] text-violet-600 font-medium">Monthly Contract (Days)</span>
+                                    </>
+                                  );
+                                }
+                                if (unitUpper === 'DAYS' || unitUpper === 'DAY') {
+                                  const days = Number(eq.loggedQuantity || 1);
+                                  return (
+                                    <>
+                                      <div className="font-semibold text-slate-900">{days} Day{days === 1 ? '' : 's'}</div>
+                                      <span className="text-[10px] text-slate-400 font-mono">Unit: DAY</span>
+                                    </>
+                                  );
+                                }
+                                return (
+                                  <>
+                                    <div className="font-semibold text-slate-900">{eq.loggedQuantity ?? 0} {unitUpper}</div>
+                                    <span className="text-[10px] text-slate-400 font-mono">Unit: {unitUpper}</span>
+                                  </>
+                                );
+                              })()}
                             </td>
                             <td className="py-2.5 px-3 font-mono text-[11px]">
                               {eq.initialMeter > 0 || eq.finalMeter > 0 ? (

@@ -16,21 +16,13 @@ export interface Tenant {
 
 import { API_URL } from '../../../config/api';
 
-export async function login(
-  tenantSubdomain: string,
-  username: string,
-  password: string
-): Promise<AuthUser> {
-  // Try real backend API first
+export async function login(tenantSubdomain: string,username: string,password: string): Promise<AuthUser> {
+  // real backend API ekata call karanwa 
   try {
     const res = await fetch(`${API_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tenantId: tenantSubdomain.trim(),
-        username: username.trim(),
-        password,
-      }),
+      body: JSON.stringify({tenantId: tenantSubdomain.trim(),username: username.trim(),password,}),
     });
 
     if (res.ok) {

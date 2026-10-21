@@ -1230,12 +1230,13 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         const condition = eq?.condition || corp?.condition || 'DRY';
         const initialMeter = Number(log?.initialMeter || 0);
         const finalMeter = Number(log?.finalMeter || 0);
-        const netHours = Number(log?.netRunningHours || 0);
-        const workingHours = Number(log?.workingHours || 0);
+        const isHrUnit = primaryUnit === 'hrs' || primaryUnit === 'hr';
+        const netHours = Number(log?.netRunningHours || log?.workingHours || (isHrUnit ? log?.totalUtilization : 0) || 0);
+        const workingHours = Number(log?.workingHours || log?.netRunningHours || (isHrUnit ? log?.totalUtilization : 0) || 0);
         const idleHours = Number(log?.idleHours || 0);
         const fuelLiters = Number(log?.fuelLiters || 0);
         const totalMileage = Number(log?.totalMileage || 0);
-        const loggedQuantity = Number(log?.totalUtilization || 0);
+        const loggedQuantity = Number(log?.totalUtilization || (isHrUnit ? netHours : 0) || 0);
 
         const splits = (log?.activities || []).map((act) => ({
           activityCode: act.activityCode?.code || 'N/A',
@@ -1975,9 +1976,12 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
         },
       });
 
-      const loggedQty = item.daysValue !== undefined && item.daysValue > 0
+      const effectiveNetHours = Number(item.netHours || item.hoursValue || item.workingHours || 0);
+      const effectiveWorkingHours = Number(item.workingHours || item.hoursValue || item.netHours || 0);
+
+      const loggedQty = item.daysValue !== undefined && Number(item.daysValue) > 0
         ? Number(item.daysValue)
-        : Number(item.netHours || item.totalUtilization || 0);
+        : (effectiveNetHours > 0 ? effectiveNetHours : Number(item.totalUtilization || 0));
 
       const dailyLog = await prisma.mF_OP_EquipmentDailyLog.upsert({
         where: { assignmentId: assignment.id },
@@ -1985,8 +1989,8 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
           assignmentId: assignment.id,
           initialMeter: item.startMeter !== undefined ? Number(item.startMeter) : 0,
           finalMeter: item.endMeter !== undefined ? Number(item.endMeter) : 0,
-          netRunningHours: item.netHours !== undefined ? Number(item.netHours) : 0,
-          workingHours: item.workingHours !== undefined ? Number(item.workingHours) : 0,
+          netRunningHours: effectiveNetHours,
+          workingHours: effectiveWorkingHours,
           idleHours: item.idleHours !== undefined ? Number(item.idleHours) : 0,
           breakdownHours: item.breakdownHours !== undefined ? Number(item.breakdownHours) : 0,
           fuelLiters: item.fuelIssuedLiters !== undefined ? Number(item.fuelIssuedLiters) : (item.fuelLiters ? Number(item.fuelLiters) : 0),
@@ -2000,8 +2004,8 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
         update: {
           initialMeter: item.startMeter !== undefined ? Number(item.startMeter) : undefined,
           finalMeter: item.endMeter !== undefined ? Number(item.endMeter) : undefined,
-          netRunningHours: item.netHours !== undefined ? Number(item.netHours) : undefined,
-          workingHours: item.workingHours !== undefined ? Number(item.workingHours) : undefined,
+          netRunningHours: effectiveNetHours > 0 ? effectiveNetHours : (item.netHours !== undefined ? Number(item.netHours) : undefined),
+          workingHours: effectiveWorkingHours > 0 ? effectiveWorkingHours : (item.workingHours !== undefined ? Number(item.workingHours) : undefined),
           idleHours: item.idleHours !== undefined ? Number(item.idleHours) : undefined,
           breakdownHours: item.breakdownHours !== undefined ? Number(item.breakdownHours) : undefined,
           fuelLiters: item.fuelIssuedLiters !== undefined ? Number(item.fuelIssuedLiters) : (item.fuelLiters !== undefined ? Number(item.fuelLiters) : undefined),

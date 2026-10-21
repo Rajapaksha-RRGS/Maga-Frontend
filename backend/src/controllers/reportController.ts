@@ -1748,7 +1748,11 @@ export const getEquipmentRunningChartReport = async (req: Request, res: Response
             meterUnit: true,
           },
         },
-        dailyLog: true,
+        dailyLog: {
+          include: {
+            activities: true,
+          },
+        },
       },
       orderBy: [{ dailySheet: { date: 'desc' } }],
     });
@@ -1760,10 +1764,14 @@ export const getEquipmentRunningChartReport = async (req: Request, res: Response
 
     const items = assignments.map((a) => {
       const log = a.dailyLog;
-      const workingH = Number(log?.workingHours) || 0;
+      let actSum = 0;
+      if (Array.isArray(log?.activities) && log.activities.length > 0) {
+        actSum = log.activities.reduce((s: number, act: any) => s + (Number(act.utilization) || 0), 0);
+      }
+      const workingH = Number(log?.workingHours) || actSum || Number(log?.totalUtilization) || 0;
       const idleH = Number(log?.idleHours) || 0;
       const breakdownH = Number(log?.breakdownHours) || 0;
-      const netH = Number(log?.netRunningHours) || (workingH + idleH);
+      const netH = Number(log?.netRunningHours) || (workingH + idleH) || actSum || Number(log?.totalUtilization) || 0;
       const fuel = Number(log?.fuelLiters) || 0;
 
       totalWorkingHours += workingH;
@@ -1902,7 +1910,15 @@ export const getEquipmentSummaryReport = async (req: Request, res: Response): Pr
       let totalMileage = 0;
 
       const totalRunningHours = logs.reduce((sum: number, l: any) => {
-        const net = Number(l?.netRunningHours) || (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0);
+        let actSum = 0;
+        if (Array.isArray(l?.activities) && l.activities.length > 0) {
+          actSum = l.activities.reduce((s: number, a: any) => s + (Number(a.utilization) || 0), 0);
+        }
+        const net = Number(l?.netRunningHours) || 
+                    (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0) || 
+                    actSum || 
+                    Number(l?.totalUtilization) || 
+                    0;
         return sum + net;
       }, 0);
 

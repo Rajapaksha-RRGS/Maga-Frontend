@@ -200,6 +200,8 @@ export function EquipmentLogsView({
       eq.id === id ? { 
         ...eq, 
         hoursValue: safeHours, 
+        netHours: safeHours,
+        workingHours: safeHours,
         status: (safeHours > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
       } : eq
     );
