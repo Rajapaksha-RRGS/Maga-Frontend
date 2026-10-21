@@ -15,6 +15,7 @@ import {
   Building2,
   UploadCloud,
   GitMerge,
+  Pencil,
 } from 'lucide-react';
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
@@ -108,6 +109,73 @@ export default function SAEquipmentPage() {
   const [transferRemarks, setTransferRemarks] = useState('');
   const [isTransferring, setIsTransferring] = useState(false);
   const [transferError, setTransferError] = useState('');
+
+  // Edit Equipment Modal State
+  const [editingEquipment, setEditingEquipment] = useState<CorporateEquipmentItem | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  const [editNumber, setEditNumber] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editCondition, setEditCondition] = useState('DRY');
+  const [editUnit, setEditUnit] = useState('Hrs');
+  const [editCostRate, setEditCostRate] = useState('');
+  const [editDailyRate, setEditDailyRate] = useState('');
+  const [editVehicleNo, setEditVehicleNo] = useState('');
+  const [editType, setEditType] = useState('Heavy Machinery');
+  const [editStatus, setEditStatus] = useState('active');
+
+  const openEditModal = (eq: CorporateEquipmentItem) => {
+    setEditingEquipment(eq);
+    setEditNumber(eq.standardEquipmentNumber || '');
+    setEditName(eq.equipmentName || '');
+    setEditCondition(eq.condition || 'DRY');
+    setEditUnit(eq.unit || 'Hrs');
+    setEditCostRate(eq.costRate != null ? String(eq.costRate) : '');
+    setEditDailyRate(eq.dailyRate != null ? String(eq.dailyRate) : '');
+    setEditVehicleNo(eq.vehicleNo || '');
+    setEditType(eq.type || 'Heavy Machinery');
+    setEditStatus(eq.status || 'active');
+    setEditError('');
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateEquipment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEquipment) return;
+    if (!editNumber.trim()) {
+      setEditError('Equipment Code is required');
+      return;
+    }
+    setIsUpdating(true);
+    setEditError('');
+    try {
+      const res = await api.put(`/corporate/equipment/${editingEquipment.id}`, {
+        standardEquipmentNumber: editNumber.trim().toUpperCase(),
+        equipmentName: editName.trim() || editNumber.trim().toUpperCase(),
+        condition: editCondition,
+        unit: editUnit,
+        costRate: editCostRate.trim() !== '' && !isNaN(parseFloat(editCostRate)) ? parseFloat(editCostRate) : null,
+        dailyRate: editDailyRate.trim() !== '' && !isNaN(parseFloat(editDailyRate)) ? parseFloat(editDailyRate) : null,
+        vehicleNo: editVehicleNo.trim() ? editVehicleNo.trim().toUpperCase() : null,
+        type: editType || null,
+        status: editStatus,
+      });
+
+      if (res.data?.equipment) {
+        setEquipmentList((prev) =>
+          prev.map((item) => (item.id === editingEquipment.id ? { ...item, ...res.data.equipment } : item))
+        );
+      }
+      setIsEditModalOpen(false);
+      setEditingEquipment(null);
+    } catch (err: any) {
+      setEditError(err.response?.data?.error || err.message || 'Failed to update equipment');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -361,19 +429,29 @@ export default function SAEquipmentPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTransferTarget(eq);
-                          setTransferError('');
-                          setTransferProject(eq.currentProjectId ? '' : (projects[0]?.id || ''));
-                        }}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-violet-700 hover:text-violet-900 bg-violet-50 hover:bg-violet-100 border border-violet-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
-                        title="Transfer to another project or yard"
-                      >
-                        <GitMerge size={12} className="text-[#C9A84C]" />
-                        <span>Transfer</span>
-                      </button>
+                      <div className="inline-flex items-center gap-1.5 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(eq)}
+                          className="p-1 rounded text-slate-400 hover:text-violet-700 hover:bg-violet-50 transition-colors cursor-pointer"
+                          title="Edit Equipment Details"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTransferTarget(eq);
+                            setTransferError('');
+                            setTransferProject(eq.currentProjectId ? '' : (projects[0]?.id || ''));
+                          }}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-violet-700 hover:text-violet-900 bg-violet-50 hover:bg-violet-100 border border-violet-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                          title="Transfer to another project or yard"
+                        >
+                          <GitMerge size={12} className="text-[#C9A84C]" />
+                          <span>Transfer</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -548,6 +626,167 @@ export default function SAEquipmentPage() {
                   className="px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] hover:opacity-90 rounded-lg cursor-pointer disabled:opacity-50"
                 >
                   {isSubmitting ? 'Registering…' : 'Register Equipment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Global Equipment Modal ─────────────────────────────────── */}
+      {isEditModalOpen && editingEquipment && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200 sa-modal"
+          style={{ colorScheme: 'light' }}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-violet-100 max-h-[90vh] overflow-y-auto text-slate-900"
+            style={{ colorScheme: 'light' }}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-base font-bold text-slate-900">Edit Global Equipment</h2>
+              <span className="font-mono text-xs bg-violet-50 text-violet-700 px-2 py-0.5 rounded font-semibold border border-violet-200">
+                {editingEquipment.standardEquipmentNumber}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Update central fleet specifications, rates, and condition.
+            </p>
+
+            {editError && (
+              <div className="mb-4 text-xs text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-200">
+                {editError}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateEquipment} className="space-y-3.5 bg-white text-slate-900">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Equipment Code *</label>
+                  <input
+                    type="text"
+                    value={editNumber}
+                    onChange={(e) => setEditNumber(e.target.value.toUpperCase())}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Vehicle / Reg No</label>
+                  <input
+                    type="text"
+                    value={editVehicleNo}
+                    onChange={(e) => setEditVehicleNo(e.target.value.toUpperCase())}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Equipment Name / Model *</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Category Type</label>
+                  <select
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  >
+                    <option value="Heavy Machinery" className="bg-white text-slate-900">Heavy Machinery</option>
+                    <option value="Earthmoving" className="bg-white text-slate-900">Earthmoving</option>
+                    <option value="Compaction" className="bg-white text-slate-900">Compaction</option>
+                    <option value="Transport" className="bg-white text-slate-900">Transport</option>
+                    <option value="Concrete" className="bg-white text-slate-900">Concrete</option>
+                    <option value="Crane" className="bg-white text-slate-900">Crane</option>
+                    <option value="Power" className="bg-white text-slate-900">Power/Generator</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Condition</label>
+                  <select
+                    value={editCondition}
+                    onChange={(e) => setEditCondition(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  >
+                    <option value="DRY" className="bg-white text-slate-900">DRY (No Fuel)</option>
+                    <option value="WET" className="bg-white text-slate-900">WET (With Fuel)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Meter Unit</label>
+                  <select
+                    value={editUnit}
+                    onChange={(e) => setEditUnit(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  >
+                    <option value="Hrs" className="bg-white text-slate-900">Hrs (Operating Hours)</option>
+                    <option value="Km" className="bg-white text-slate-900">Km (Kilometers)</option>
+                    <option value="Days" className="bg-white text-slate-900">Days (Calendar Days)</option>
+                    <option value="Month" className="bg-white text-slate-900">Month (Monthly Rate)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Internal Cost Rate (LKR)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={editCostRate}
+                    onChange={(e) => setEditCostRate(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Daily Billing Rate (LKR)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={editDailyRate}
+                    onChange={(e) => setEditDailyRate(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Status</label>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                >
+                  <option value="active" className="bg-white text-slate-900">Active</option>
+                  <option value="inactive" className="bg-white text-slate-900">Inactive / Decommissioned</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] hover:opacity-90 rounded-lg cursor-pointer disabled:opacity-50"
+                >
+                  {isUpdating ? 'Saving…' : 'Save Changes'}
                 </button>
               </div>
             </form>

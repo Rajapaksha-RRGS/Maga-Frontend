@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Lock,
   ExternalLink,
+  Pencil,
 } from 'lucide-react';
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
@@ -100,6 +101,7 @@ interface CorporateEmployeeItem {
   tradeGroup: string;
   tradeGroupCode?: string;
   employeeType: 'internal' | 'external';
+  businessPartnerId?: string | null;
   businessPartner: string;
   businessPartnerCode?: string;
   currentProjectId?: string | null;
@@ -198,6 +200,80 @@ export default function SAEmployeesPage() {
   const [transferRemarks, setTransferRemarks] = useState('');
   const [isTransferring, setIsTransferring] = useState(false);
   const [transferError, setTransferError] = useState('');
+
+  // Edit Employee Modal State
+  const [editingEmployee, setEditingEmployee] = useState<CorporateEmployeeItem | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  const [editName, setEditName] = useState('');
+  const [editNic, setEditNic] = useState('');
+  const [editEpf, setEditEpf] = useState('');
+  const [editTradeGroupId, setEditTradeGroupId] = useState('');
+  const [editDailyRate, setEditDailyRate] = useState('1400');
+  const [editIsOperator, setEditIsOperator] = useState(false);
+  const [editEmployeeType, setEditEmployeeType] = useState<'internal' | 'external'>('internal');
+  const [editPartnerId, setEditPartnerId] = useState('');
+  const [editStatus, setEditStatus] = useState('active');
+
+  const openEditModal = (emp: CorporateEmployeeItem) => {
+    setEditingEmployee(emp);
+    setEditName(emp.fullName || '');
+    setEditNic(emp.nicNo || '');
+    setEditEpf(emp.epfNo || '');
+    setEditTradeGroupId(emp.tradeGroupId || (tradeGroups.find(t => t.name === emp.tradeGroup)?.id || ''));
+    setEditDailyRate(String(emp.dailyRate ?? 1400));
+    setEditIsOperator(Boolean(emp.isOperator));
+    setEditEmployeeType(emp.employeeType || 'internal');
+    setEditPartnerId(emp.businessPartnerId || (emp.businessPartnerCode ? (partners.find(p => p.code === emp.businessPartnerCode)?.id || '') : ''));
+    setEditStatus(emp.status || 'active');
+    setEditError('');
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEmployee) return;
+    if (!editName.trim() || !editNic.trim()) {
+      setEditError('Full Name and NIC are required.');
+      return;
+    }
+    if (!editTradeGroupId) {
+      setEditError('Trade Group is strictly required.');
+      return;
+    }
+    if (editEmployeeType === 'external' && !editPartnerId) {
+      setEditError('Business Partner is required for external employees.');
+      return;
+    }
+
+    setIsUpdating(true);
+    setEditError('');
+    try {
+      const res = await api.put(`/corporate/employees/${editingEmployee.id}`, {
+        fullName: editName.trim(),
+        nicNo: editNic.trim().toUpperCase(),
+        epfNo: editEpf.trim() ? editEpf.trim().toUpperCase() : null,
+        tradeGroupId: editTradeGroupId,
+        dailyRate: editDailyRate ? parseFloat(editDailyRate) : 1400,
+        isOperator: editIsOperator,
+        employeeType: editEmployeeType,
+        corporateBusinessPartnerId: editEmployeeType === 'external' ? editPartnerId : null,
+        status: editStatus,
+      });
+
+      if (res.data?.employee) {
+        await loadData();
+      }
+      setIsEditModalOpen(false);
+      setEditingEmployee(null);
+    } catch (err: any) {
+      setEditError(err.response?.data?.error || err.message || 'Failed to update employee');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -732,7 +808,7 @@ export default function SAEmployeesPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      <span className="bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-700">
+                      <span className="bg-slate-50  px-2 py-0.5 rounded text-slate-700">
                         {emp.tradeGroup}
                       </span>
                     </td>
@@ -741,7 +817,7 @@ export default function SAEmployeesPage() {
                     </td>
                     <td className="px-4 py-3 text-xs">
                       {emp.activeProject || emp.currentProject ? (
-                        <span className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold text-[11px]" title={emp.activeProject?.projectName || emp.currentProject?.projectName}>
+                        <span className="inline-flex items-center gap-1 bg-violet-50 text-black-700 border-2px px-2 py-0.5 rounded font-semibold text-[11px]" title={emp.activeProject?.projectName || emp.currentProject?.projectName}>
                           <Building2 size={11} /> {emp.activeProject?.projectCode || emp.currentProject?.projectCode}
                         </span>
                       ) : (
@@ -763,19 +839,29 @@ export default function SAEmployeesPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTransferTarget(emp);
-                          setTransferError('');
-                          if (projects.length > 0) setTransferProject(projects[0].id);
-                        }}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-violet-700 hover:text-violet-900 bg-violet-50 hover:bg-violet-100 border border-violet-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
-                        title="Transfer to another project"
-                      >
-                        <GitMerge size={12} className="text-[#C9A84C]" />
-                        <span>Transfer</span>
-                      </button>
+                      <div className="inline-flex items-center gap-1.5 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(emp)}
+                          className="p-1 rounded text-slate-400 hover:text-violet-700 hover:bg-violet-50 transition-colors cursor-pointer"
+                          title="Edit Employee Details"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTransferTarget(emp);
+                            setTransferError('');
+                            if (projects.length > 0) setTransferProject(projects[0].id);
+                          }}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-violet-700 hover:text-violet-900 bg-violet-50 hover:bg-violet-100 border border-violet-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                          title="Transfer to another project"
+                        >
+                          <GitMerge size={12} className="text-[#C9A84C]" />
+                          <span>Transfer</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1160,6 +1246,214 @@ export default function SAEmployeesPage() {
                   className="px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] hover:opacity-90 rounded-lg cursor-pointer disabled:opacity-50"
                 >
                   {isSubmitting ? 'Registering…' : 'Register Global Employee'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Corporate Employee Modal ─────────────────────────────── */}
+      {isEditModalOpen && editingEmployee && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200 sa-modal"
+          style={{ colorScheme: 'light' }}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-violet-100 max-h-[90vh] overflow-y-auto text-slate-900"
+            style={{ colorScheme: 'light' }}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-base font-bold text-slate-900">Edit Corporate Employee</h2>
+              <span className="font-mono text-xs bg-violet-50 text-violet-700 px-2 py-0.5 rounded font-semibold border border-violet-200">
+                {editingEmployee.employeeCode}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Update worker profile, employment classification, and pay rates.
+            </p>
+
+            {editError && (
+              <div className="mb-4 text-xs text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-200">
+                {editError}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateEmployee} className="space-y-3.5 bg-white text-slate-900">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Employee Code</label>
+                  <input
+                    type="text"
+                    value={editingEmployee.employeeCode}
+                    disabled
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-100 text-slate-500 cursor-not-allowed font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">NIC No *</label>
+                  <input
+                    type="text"
+                    value={editNic}
+                    onChange={(e) => setEditNic(e.target.value.toUpperCase())}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Full Name *</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">EPF No (Internal Only)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. EPF-89211"
+                    value={editEpf}
+                    onChange={(e) => setEditEpf(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Trade Group <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={editTradeGroupId}
+                    required
+                    onChange={(e) => {
+                      setEditTradeGroupId(e.target.value);
+                      const matched = tradeGroups.find((t) => t.id === e.target.value);
+                      if (matched && (!editDailyRate || editDailyRate === '1400')) {
+                        setEditDailyRate(String(matched.standardDailyRate));
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  >
+                    <option value="" className="bg-white text-slate-900">-- Choose Trade Group * --</option>
+                    {tradeGroups.map((tg) => (
+                      <option key={tg.id} value={tg.id} className="bg-white text-slate-900">
+                        {tg.code} - {tg.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Employment Type Selector */}
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1.5">Employment Type *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setEditEmployeeType('internal'); setEditPartnerId(''); }}
+                    className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                      editEmployeeType === 'internal'
+                        ? 'bg-blue-50 border-blue-400 text-blue-700 shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Building2 size={14} className={editEmployeeType === 'internal' ? 'text-blue-600' : 'text-slate-400'} />
+                    <span>Direct Employee (Internal)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditEmployeeType('external')}
+                    className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                      editEmployeeType === 'external'
+                        ? 'bg-purple-50 border-purple-400 text-purple-700 shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Users size={14} className={editEmployeeType === 'external' ? 'text-purple-600' : 'text-slate-400'} />
+                    <span>Subcontractor (External)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Business Partner (conditional if external) */}
+              {editEmployeeType === 'external' && (
+                <div className="bg-purple-50/50 p-3 rounded-lg border border-purple-100">
+                  <label className="block text-xs font-medium text-purple-900 mb-1">
+                    Select Subcontractor / Partner <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={editPartnerId}
+                    required={editEmployeeType === 'external'}
+                    onChange={(e) => setEditPartnerId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-purple-200 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                  >
+                    <option value="" className="bg-white text-slate-900">-- Choose Business Partner * --</option>
+                    {partners.map((bp) => (
+                      <option key={bp.id} value={bp.id} className="bg-white text-slate-900">
+                        {bp.code} - {bp.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Daily Wage Rate (LKR)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editDailyRate}
+                    onChange={(e) => setEditDailyRate(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Status</label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                  >
+                    <option value="active" className="bg-white text-slate-900">Active</option>
+                    <option value="inactive" className="bg-white text-slate-900">Inactive</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="editIsOperator"
+                  checked={editIsOperator}
+                  onChange={(e) => setEditIsOperator(e.target.checked)}
+                  className="rounded text-violet-600 focus:ring-violet-400"
+                />
+                <label htmlFor="editIsOperator" className="text-xs text-slate-700 font-medium cursor-pointer">
+                  Certified Heavy Equipment Operator
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] hover:opacity-90 rounded-lg cursor-pointer disabled:opacity-50"
+                >
+                  {isUpdating ? 'Saving…' : 'Save Changes'}
                 </button>
               </div>
             </form>

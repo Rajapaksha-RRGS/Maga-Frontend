@@ -7,29 +7,16 @@ import { Database } from 'lucide-react';
 import { useEquipment } from '../features/equipment/hooks/useEquipment';
 import EquipmentTable from '../features/equipment/components/EquipmentTable';
 import EquipmentCardList from '../features/equipment/components/EquipmentCardList';
-import EquipmentForm from '../features/equipment/components/EquipmentForm';
 import EquipmentImportView from '../features/equipment/components/EquipmentImportView';
 import SearchInput from '../components/SearchInput';
-import SlidePanel from '../components/SlidePanel';
 import EmptyState from '../components/EmptyState';
 import Breadcrumb from '../components/Breadcrumb';
 import type { CorporateEquipment } from '../features/master-import/services/corporateMasterService';
-import type { Equipment, EquipmentFormData } from '../features/equipment/services/equipmentService';
+import type { Equipment } from '../features/equipment/services/equipmentService';
 
 export default function EquipmentPage() {
-  const { filtered, isLoading, search, setSearch, add, edit, remove } = useEquipment();
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [editing, setEditing] = useState<Equipment | null>(null);
+  const { filtered, isLoading, search, setSearch, add } = useEquipment();
   const [showImport, setShowImport] = useState(false);
-
-  const openEdit = (e: Equipment) => { setEditing(e); setPanelOpen(true); };
-  const close = () => { setPanelOpen(false); setEditing(null); };
-
-  const handleSave = async (data: EquipmentFormData) => {
-    if (editing) await edit(editing.id, data); else await add(data);
-    close();
-  };
-  const handleDeactivate = async (id: string) => { await remove(id); close(); };
 
   const existingCodes = useMemo(() => {
     return new Set(filtered.map((e) => e.code.toUpperCase()));
@@ -93,16 +80,11 @@ export default function EquipmentPage() {
       {!isLoading && filtered.length === 0 && <EmptyState message="No equipment found in this project." />}
       {!isLoading && filtered.length > 0 && (
         <>
-          <EquipmentTable data={filtered} onRowClick={openEdit} />
-          <EquipmentCardList data={filtered} onCardClick={openEdit} />
+          <EquipmentTable data={filtered} />
+          <EquipmentCardList data={filtered} />
           <p className="text-xs text-slate-400 mt-3">{filtered.length} item{filtered.length !== 1 ? 's' : ''}</p>
         </>
       )}
-
-      {/* Manual Slide Panel Form */}
-      <SlidePanel open={panelOpen} onClose={close} title={editing ? 'Edit equipment' : 'Add equipment'}>
-        <EquipmentForm equipment={editing} onSave={handleSave} onDeactivate={handleDeactivate} onCancel={close} />
-      </SlidePanel>
     </div>
   );
 }

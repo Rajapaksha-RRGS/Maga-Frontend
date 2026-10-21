@@ -5,7 +5,7 @@ import DataTable, { type Column } from '../../../components/DataTable';
 import StatusBadge from '../../../components/StatusBadge';
 import type { Equipment } from '../services/equipmentService';
 
-interface Props { data: Equipment[]; onRowClick: (e: Equipment) => void; }
+interface Props { data: Equipment[]; onRowClick?: (e: Equipment) => void; }
 
 const columns: Column<Equipment>[] = [
   { 

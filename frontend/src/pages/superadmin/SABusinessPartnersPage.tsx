@@ -851,16 +851,7 @@ export default function SABusinessPartnersPage() {
                     <td className="px-4 py-3">
                       <div className="font-semibold text-slate-800">{bp.name}</div>
                       <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                        {bp.brNumber && (
-                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-800 px-1.5 py-0.2 rounded border border-slate-200">
-                            BR: {bp.brNumber}
-                          </span>
-                        )}
-                        {(bp.nicNo || bp.businessEntityIdentifier) && (
-                          <span className="text-[10px] text-violet-700 font-mono font-medium">
-                            NIC: {bp.nicNo || bp.businessEntityIdentifier}
-                          </span>
-                        )}
+                        
                         {bp.documentUrl && (
                           <a
                             href={
@@ -895,7 +886,7 @@ export default function SABusinessPartnersPage() {
                           {bp.type.replace(/_/g, ' ')}
                         </span>
                       ) : (
-                        <span className="text-slate-400 italic text-[11px]">Optional / None</span>
+                        <span className="text-slate-400 italic text-[11px]">Optional</span>
                       )}
                     </td>
 

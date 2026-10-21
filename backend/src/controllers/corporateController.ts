@@ -911,6 +911,95 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
   }
 };
 
+// ── 5A. PUT /api/corporate/employees/:id ───────────────────────────────────────
+export const updateCorporateEmployee = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = String(req.params.id);
+    const {
+      fullName,
+      nicNo,
+      epfNo,
+      tradeGroupId,
+      dailyRate,
+      isOperator,
+      employeeType,
+      corporateBusinessPartnerId,
+      status,
+      documentUrl,
+    } = req.body || {};
+
+    const existing = await prisma.mF_G_Employee.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Corporate employee not found' });
+      return;
+    }
+
+    if (nicNo && nicNo.trim().toUpperCase() !== existing.nicNo) {
+      const nicCheck = await prisma.mF_G_Employee.findFirst({
+        where: {
+          nicNo: nicNo.trim().toUpperCase(),
+          id: { not: id },
+        },
+      });
+      if (nicCheck) {
+        res.status(409).json({ error: `NIC No ${nicNo} already registered to another employee` });
+        return;
+      }
+    }
+
+    const resolvedType = employeeType || existing.employeeType;
+    const finalBpId = resolvedType === 'external'
+      ? (corporateBusinessPartnerId !== undefined ? corporateBusinessPartnerId : existing.corporateBusinessPartnerId)
+      : null;
+
+    const updated = await prisma.mF_G_Employee.update({
+      where: { id },
+      data: {
+        ...(fullName ? { fullName: fullName.trim() } : {}),
+        ...(nicNo ? { nicNo: nicNo.trim().toUpperCase() } : {}),
+        ...(epfNo !== undefined ? { epfNo: epfNo ? epfNo.trim() : null } : {}),
+        ...(tradeGroupId ? { tradeGroupId: String(tradeGroupId).trim() } : {}),
+        ...(dailyRate !== undefined && dailyRate !== '' && !isNaN(Number(dailyRate)) ? { dailyRate: Number(dailyRate) } : {}),
+        ...(isOperator !== undefined ? { isOperator: Boolean(isOperator) } : {}),
+        ...(employeeType ? { employeeType: resolvedType } : {}),
+        ...(corporateBusinessPartnerId !== undefined || employeeType ? { corporateBusinessPartnerId: finalBpId } : {}),
+        ...(status ? { status } : {}),
+        ...(documentUrl !== undefined ? { documentUrl: documentUrl || null } : {}),
+      },
+      include: {
+        tradeGroup: true,
+        corporateBusinessPartner: true,
+        currentProject: { select: { id: true, projectCode: true, projectName: true } },
+      },
+    });
+
+    // Sync site employees (MF_P_Employee)
+    await prisma.mF_P_Employee.updateMany({
+      where: { corporateEmployeeId: id },
+      data: {
+        ...(fullName ? { callingName: fullName.trim().split(' ')[0] } : {}),
+        ...(dailyRate !== undefined && dailyRate !== '' && !isNaN(Number(dailyRate)) ? { dailyRate: Number(dailyRate) } : {}),
+        ...(tradeGroupId ? { tradeGroupId: String(tradeGroupId).trim() } : {}),
+        ...(corporateBusinessPartnerId !== undefined || employeeType ? { businessPartnerId: finalBpId } : {}),
+        ...(isOperator !== undefined ? { isOperator: Boolean(isOperator) } : {}),
+        ...(status ? { status } : {}),
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Corporate employee updated successfully',
+      employee: updated,
+    });
+  } catch (error: any) {
+    console.error('Error updating corporate employee:', error);
+    res.status(500).json({ error: error.message || 'Failed to update corporate employee' });
+  }
+};
+
 // ── 6. POST /api/corporate/employees/batch ────────────────────────────────────
 export const batchCreateCorporateEmployees = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -1107,6 +1196,90 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
   } catch (error: any) {
     console.error('Error creating corporate equipment:', error);
     res.status(500).json({ error: error.message || 'Failed to create equipment' });
+  }
+};
+
+// ── 8A. PUT /api/corporate/equipment/:id ───────────────────────────────────────
+export const updateCorporateEquipment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = String(req.params.id);
+    const {
+      standardEquipmentNumber,
+      equipmentName,
+      condition,
+      unit,
+      costRate,
+      dailyRate,
+      vehicleNo,
+      type,
+      status,
+      businessPartnerId,
+    } = req.body || {};
+
+    const existing = await prisma.mF_G_Equipment.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Equipment not found' });
+      return;
+    }
+
+    if (standardEquipmentNumber && standardEquipmentNumber.trim().toUpperCase() !== existing.standardEquipmentNumber) {
+      const codeCheck = await prisma.mF_G_Equipment.findFirst({
+        where: {
+          standardEquipmentNumber: standardEquipmentNumber.trim().toUpperCase(),
+          id: { not: id },
+        },
+      });
+      if (codeCheck) {
+        res.status(409).json({ error: `Equipment number ${standardEquipmentNumber} already exists` });
+        return;
+      }
+    }
+
+    const updated = await prisma.mF_G_Equipment.update({
+      where: { id },
+      data: {
+        ...(standardEquipmentNumber ? { standardEquipmentNumber: standardEquipmentNumber.trim().toUpperCase() } : {}),
+        ...(equipmentName ? { equipmentName: equipmentName.trim() } : {}),
+        ...(condition ? { condition } : {}),
+        ...(unit !== undefined ? { unit: unit || 'Hrs' } : {}),
+        ...(costRate !== undefined && costRate !== '' && !isNaN(Number(costRate)) ? { costRate: Number(costRate) } : {}),
+        ...(dailyRate !== undefined && dailyRate !== '' && !isNaN(Number(dailyRate)) ? { dailyRate: Number(dailyRate) } : {}),
+        ...(vehicleNo !== undefined ? { vehicleNo: vehicleNo ? vehicleNo.trim() : null } : {}),
+        ...(type !== undefined ? { type: type || null } : {}),
+        ...(status ? { status } : {}),
+        ...(businessPartnerId !== undefined ? { businessPartnerId: businessPartnerId || null } : {}),
+      },
+      include: {
+        currentProject: { select: { id: true, projectCode: true, projectName: true } },
+        businesspartner: { select: { id: true, code: true, name: true } },
+      },
+    });
+
+    // Also update any site equipment referencing this corporate equipment so descriptions and rates sync
+    await prisma.mF_P_Equipment.updateMany({
+      where: { corporateEquipmentId: id },
+      data: {
+        ...(equipmentName ? { name: equipmentName.trim() } : {}),
+        ...(condition ? { condition } : {}),
+        ...(type !== undefined ? { type: type || null } : {}),
+        ...(vehicleNo !== undefined ? { vehicleNo: vehicleNo ? vehicleNo.trim() : null } : {}),
+        ...(costRate !== undefined && costRate !== '' && !isNaN(Number(costRate)) ? { costRate: Number(costRate) } : {}),
+        ...(unit !== undefined ? { primaryUnit: unit || 'Hrs' } : {}),
+        ...(status ? { status } : {}),
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Corporate equipment updated successfully',
+      equipment: updated,
+    });
+  } catch (error: any) {
+    console.error('Error updating corporate equipment:', error);
+    res.status(500).json({ error: error.message || 'Failed to update equipment' });
   }
 };
 

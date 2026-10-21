@@ -9,10 +9,12 @@ import {
   rejectCorporateTransfer,
   getCorporateEmployees,
   createCorporateEmployee,
+  updateCorporateEmployee,
   batchCreateCorporateEmployees,
   bulkImportCorporateEmployees,
   getCorporateEquipment,
   createCorporateEquipment,
+  updateCorporateEquipment,
   bulkImportCorporateEquipment,
   createCorporateEquipmentTransfer,
   getCorporateEquipmentTransfers,
@@ -70,12 +72,14 @@ router.post('/employees/:id/approve', approveCorporateEmployee);
 router.post('/employees/:id/reject', rejectCorporateEmployee);
 router.get('/employees', getCorporateEmployees);
 router.post('/employees', createCorporateEmployee);
+router.put('/employees/:id', updateCorporateEmployee);
 router.post('/employees/batch', batchCreateCorporateEmployees);
 router.post('/employees/bulk-import', bulkImportCorporateEmployees);
 
 // Global Equipment
 router.get('/equipment', getCorporateEquipment);
 router.post('/equipment', createCorporateEquipment);
+router.put('/equipment/:id', updateCorporateEquipment);
 router.post('/equipment/bulk-import', bulkImportCorporateEquipment);
 router.get('/equipment/transfers', getCorporateEquipmentTransfers);
 router.post('/equipment/transfer', createCorporateEquipmentTransfer);
