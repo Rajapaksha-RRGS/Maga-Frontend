@@ -255,12 +255,11 @@ export const createCorporateTransfer = async (req: Request, res: Response): Prom
         },
       });
 
-      // 5. Update corporate employee currentWorkingProject to projectCode & currentProjectId
+      // 5. Update corporate employee currentProjectId
       await tx.mF_G_Employee.update({
         where: { id: corporateEmployeeId },
         data: {
           currentProjectId: toProjectId,
-          currentWorkingProject: transfer.toProject.projectCode || toProjectId,
         },
       });
 
@@ -500,7 +499,7 @@ export const approveCorporateTransfer = async (req: Request, res: Response): Pro
         toProject: true,
         fromProject: true,
       },
-    });
+    }); 
 
     if (!transfer) {
       res.status(404).json({ error: 'Transfer request not found' });
@@ -606,12 +605,11 @@ export const approveCorporateTransfer = async (req: Request, res: Response): Pro
         },
       });
 
-      // 5. Update corporate employee's currentWorkingProject & currentProjectId
+      // 5. Update corporate employee currentProjectId
       await tx.mF_G_Employee.update({
         where: { id: corporateEmployeeId },
         data: {
           currentProjectId: toProjectId,
-          currentWorkingProject: toProject.projectCode,
         },
       });
 
@@ -756,9 +754,9 @@ export const getCorporateEmployees = async (req: Request, res: Response): Promis
       businessPartnerId: emp.corporateBusinessPartnerId,
       businessPartner: emp.corporateBusinessPartner?.name || 'Mäga Engineering (Direct)',
       businessPartnerCode: emp.corporateBusinessPartner?.code || '',
-      currentProjectId: (emp as any).currentProjectId || null,
-      currentProject: (emp as any).currentProject || null,
-      currentWorkingProject: (emp as any).currentProject?.projectCode || emp.currentWorkingProject,
+      currentProjectId: emp.currentProjectId || null,
+      currentProject: emp.currentProject || null,
+      currentWorkingProject: emp.currentProject?.projectCode || null,
       activeProject: emp.projectEmployees[0]?.project || null,
       documentUrl: emp.documentUrl || null,
     }));
@@ -827,7 +825,6 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
     // Resolve project relation
     const targetProjectInput = currentProjectId || currentWorkingProject;
     let resolvedProjectId: string | null = null;
-    let resolvedProjectCode: string | null = null;
     let resolvedProjObj: any = null;
 
     if (targetProjectInput) {
@@ -837,7 +834,6 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
       const resolvedProj = resolveProjectByCode(targetProjectInput, allProjects);
       if (resolvedProj) {
         resolvedProjectId = resolvedProj.id;
-        resolvedProjectCode = resolvedProj.projectCode;
         resolvedProjObj = resolvedProj;
       }
     }
@@ -854,7 +850,6 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
         employeeType: resolvedType,
         corporateBusinessPartnerId: finalBpId,
         currentProjectId: resolvedProjectId,
-        currentWorkingProject: resolvedProjectCode || currentWorkingProject || null,
         documentUrl: req.body.documentUrl || null,
         status: req.body.status || 'active',
       },
@@ -1073,7 +1068,6 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
     // Resolve project relation
     const targetProjectInput = currentProjectId || currentWorkingProject;
     let resolvedProjectId: string | null = null;
-    let resolvedProjectCode: string | null = null;
 
     if (targetProjectInput) {
       const allProjects = await prisma.mF_P_Project.findMany({
@@ -1082,7 +1076,6 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
       const resolvedProj = resolveProjectByCode(targetProjectInput, allProjects);
       if (resolvedProj) {
         resolvedProjectId = resolvedProj.id;
-        resolvedProjectCode = resolvedProj.projectCode;
       }
     }
 
@@ -1098,7 +1091,6 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
         type: type || null,
         businessPartnerId: businessPartnerId || null,
         currentProjectId: resolvedProjectId,
-        currentWorkingProject: resolvedProjectCode || currentWorkingProject || null,
         status: 'active',
       },
       include: {
@@ -1247,7 +1239,6 @@ export const createCorporateEquipmentTransfer = async (req: Request, res: Respon
         where: { id: corporateEquipmentId },
         data: {
           currentProjectId: targetProjectId,
-          currentWorkingProject: transfer.toProject?.projectCode || null,
         },
       });
 
@@ -2017,7 +2008,7 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
               corporateBusinessPartnerId: finalBpId !== null ? finalBpId : existing.corporateBusinessPartnerId,
               epfNo: epfNo || existing.epfNo,
               isOperator: rawOp !== '' ? isOperator : existing.isOperator,
-              currentWorkingProject: finalProjectCode || existing.currentWorkingProject,
+              currentProjectId: resolvedProj?.id || existing.currentProjectId,
               status: 'active',
             },
           });
@@ -2036,7 +2027,7 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
               corporateBusinessPartnerId: finalBpId,
               epfNo,
               isOperator,
-              currentWorkingProject: finalProjectCode,
+              currentProjectId: resolvedProj?.id || null,
               status: 'active',
             },
           });
@@ -2879,6 +2870,7 @@ export const getPendingCorporateEmployees = async (_req: Request, res: Response)
             documentUrl: true,
           },
         },
+        currentProject: { select: { id: true, projectCode: true, projectName: true } },
         projectEmployees: {
           select: {
             id: true,
@@ -2918,8 +2910,8 @@ export const getPendingCorporateEmployees = async (_req: Request, res: Response)
         businessPartnerBrNumber: partner?.brNumber || null,
         businessPartnerDocumentUrl: partner?.documentUrl || null,
         isBusinessPartnerApproved: isPartnerApproved,
-        projectCode: siteEmp?.project?.projectCode || emp.currentWorkingProject || 'N/A',
-        projectName: siteEmp?.project?.projectName || 'Project Site',
+        projectCode: siteEmp?.project?.projectCode || emp.currentProject?.projectCode || 'N/A',
+        projectName: siteEmp?.project?.projectName || emp.currentProject?.projectName || 'Project Site',
         siteEmployeeId: siteEmp?.id || null,
         isReadyForPayroll: false, // Locked until approved!
       };

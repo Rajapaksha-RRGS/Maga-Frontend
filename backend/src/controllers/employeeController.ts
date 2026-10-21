@@ -828,12 +828,11 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
         },
       });
 
-      // Keep corporate employee currentWorkingProject & currentProjectId in sync
+      // Keep corporate employee currentProjectId in sync
       await tx.mF_G_Employee.update({
         where: { id: corpEmp.id },
         data: {
           currentProjectId: targetProjectId,
-          currentWorkingProject: targetProjectId,
         },
       });
 
@@ -898,7 +897,7 @@ export const getCorporateEmployeesCatalog = async (_req: Request, res: Response)
         isOperator: true,
         employeeType: true,
         status: true,
-        currentWorkingProject: true,
+        currentProjectId: true,
         tradeGroup: {
           select: { id: true, code: true, name: true },
         },

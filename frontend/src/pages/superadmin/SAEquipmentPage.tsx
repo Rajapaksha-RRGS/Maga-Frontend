@@ -69,7 +69,6 @@ interface CorporateEquipmentItem {
   status: string;
   currentProjectId?: string | null;
   currentProject?: { id: string; projectCode: string; projectName: string } | null;
-  currentWorkingProject?: string;
 }
 
 interface ProjectOption {
@@ -150,7 +149,6 @@ export default function SAEquipmentPage() {
         vehicleNo: formVehicleNo.trim() || undefined,
         type: formType || undefined,
         currentProjectId: selectedProj ? selectedProj.id : (formProject || undefined),
-        currentWorkingProject: selectedProj ? selectedProj.projectCode : (formProject || undefined),
       });
       setIsModalOpen(false);
       setFormNumber('');
@@ -340,9 +338,9 @@ export default function SAEquipmentPage() {
                       {eq.costRate != null ? Number(eq.costRate).toLocaleString('en-LK', { minimumFractionDigits: 2 }) : '—'}
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      {eq.currentProject?.projectName || eq.currentProject?.projectCode || eq.currentWorkingProject ? (
-                        <span className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold text-[11px]" title={eq.currentProject?.projectName}>
-                          <Building2 size={11} /> {eq.currentProject?.projectCode || eq.currentWorkingProject}
+                      {eq.currentProject ? (
+                        <span className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold text-[11px]" title={eq.currentProject.projectName}>
+                          <Building2 size={11} /> {eq.currentProject.projectCode}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
@@ -622,7 +620,7 @@ export default function SAEquipmentPage() {
                   <Building2 size={13} className="text-violet-600" />
                   {transferTarget.currentProject
                     ? `${transferTarget.currentProject.projectCode} - ${transferTarget.currentProject.projectName}`
-                    : transferTarget.currentWorkingProject || 'Central Equipment Yard / Depot'}
+                    : 'Central Equipment Yard / Depot'}
                 </div>
               </div>
 
