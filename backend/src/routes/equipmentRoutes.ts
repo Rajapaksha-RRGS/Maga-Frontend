@@ -9,12 +9,14 @@ import {
   batchImportErpEquipment,
   getCorporateEquipmentCatalog,
   batchSyncCorporateEquipment,
+  getSiteEquipmentPool,
 } from '../controllers/equipmentController';
 
 const router = Router();
 
 router.get('/corporate-master', getCorporateEquipmentCatalog);
 router.post('/corporate-master/batch', batchSyncCorporateEquipment);
+router.get('/site-pool', getSiteEquipmentPool);
 router.get('/', getAllEquipment);
 router.get('/:id', getEquipmentById);
 router.post('/', createEquipment);

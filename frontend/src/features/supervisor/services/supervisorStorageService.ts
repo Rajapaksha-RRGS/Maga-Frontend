@@ -146,6 +146,56 @@ export interface EquipmentLogEntry {
   status: 'draft' | 'pending' | 'done';
   remarks?: string;
   lastSavedAt?: string;
+
+  // Multi-supervisor sharing & conflict context
+  isSharedToday?: boolean;
+  sharedSupervisors?: string[];
+  existingLoggedDays?: number;
+  existingLoggedHours?: number;
+  previousFinalMeter?: number;
+  previousEndMileage?: number;
+  existingActivities?: string[];
+}
+
+export interface ExistingEquipmentUsage {
+  supervisorId: string;
+  supervisorName: string;
+  unitCode?: string;
+  totalUtilization?: number;
+  workingHours?: number;
+  initialMeter?: number;
+  finalMeter?: number;
+  startMileage?: number;
+  endMileage?: number;
+  status?: string;
+  activities?: Array<{
+    code: string;
+    name: string;
+    hours?: number;
+    utilization?: number;
+  }>;
+}
+
+export interface SitePoolEquipmentItem {
+  id: string;
+  projectId: string;
+  code: string;
+  vehicleNo: string;
+  magaNo: string;
+  name: string;
+  type: string;
+  condition: 'DRY' | 'WET';
+  primaryUnit: EquipmentRatingUnit;
+  availableUnits: EquipmentRatingUnit[];
+  status: string;
+  isInUseToday: boolean;
+  currentSupervisors: string[];
+  latestMeter: number;
+  latestMileage?: number;
+  totalLoggedDays?: number;
+  totalLoggedHours?: number;
+  totalLoggedMileage?: number;
+  existingUsages?: ExistingEquipmentUsage[];
 }
 
 export interface SiteProject {
@@ -427,6 +477,109 @@ export const supervisorStorage = {
       console.warn('Backend unavailable, using cached equipment:', err);
     }
     return date ? this.getEquipment(date) : (localStorage.getItem(key) ? JSON.parse(localStorage.getItem(key)!) : []);
+  },
+
+  // ── 2.1 Fetch Site Equipment Pool (Zero-Conflict Handover) ───────────────────
+  async fetchSiteEquipmentPool(projectId?: string, date?: string): Promise<SitePoolEquipmentItem[]> {
+    try {
+      const activeProjId = projectId || this.getActiveSite().id;
+      const url = `${API_URL}/equipment/site-pool?projectId=${encodeURIComponent(activeProjId || '')}${date ? `&date=${encodeURIComponent(date)}` : ''}`;
+      const res = await apiFetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          return data;
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch site equipment pool:', err);
+    }
+    return [];
+  },
+
+  // ── 2.2 Check if Equipment Pool Mode is Enabled for Project ────────────────
+  async isEquipmentPoolModeEnabled(projectId?: string): Promise<boolean> {
+    try {
+      const activeProjId = projectId || this.getActiveSite().id;
+      if (!activeProjId) return false;
+      const res = await apiFetch(`${API_URL}/tenants/${activeProjId}`);
+      if (res.ok) {
+        const data = await res.json();
+        return !!data.equipmentAssignBySupervisor;
+      }
+    } catch (err) {
+      console.warn('Could not check equipment pool mode:', err);
+    }
+    return false;
+  },
+
+  createEquipmentLogEntryFromPool(
+    item: SitePoolEquipmentItem,
+    currentUserId?: string,
+    currentUserName?: string
+  ): EquipmentLogEntry {
+    const primaryUnit: EquipmentRatingUnit = normalizeRatingUnit(item.primaryUnit);
+
+    // Only consider usages by OTHER supervisors
+    const otherUsages = (item.existingUsages || []).filter((u) => {
+      if (currentUserId && u.supervisorId === currentUserId) return false;
+      if (currentUserName && u.supervisorName && u.supervisorName.trim().toLowerCase() === currentUserName.trim().toLowerCase()) return false;
+      return true;
+    });
+
+    const otherSupervisors = Array.from(new Set(otherUsages.map((u) => u.supervisorName)));
+    let otherLoggedDays = 0;
+    let otherLoggedHours = 0;
+    for (const u of otherUsages) {
+      const uCode = (u.unitCode || item.primaryUnit || '').toLowerCase();
+      const uUtil = u.totalUtilization ?? 0;
+      if (uCode === 'days' || uCode === 'day') {
+        otherLoggedDays += uUtil;
+      } else if (uCode === 'hrs' || uCode === 'hr' || uCode === 'ex.hrs') {
+        otherLoggedHours += (u.workingHours || uUtil);
+      } else if (uUtil <= 1.5 && (primaryUnit.toLowerCase() === 'days' || primaryUnit.toLowerCase() === 'mth')) {
+        otherLoggedDays += uUtil;
+      } else {
+        otherLoggedHours += (u.workingHours || uUtil);
+      }
+    }
+
+    return {
+      id: item.id,
+      code: item.code || item.name,
+      name: item.name,
+      type: item.type || 'Equipment',
+      vehicleNo: item.vehicleNo || item.code,
+      magaNo: item.magaNo || item.code,
+      condition: item.condition || 'DRY',
+      primaryUnit,
+      availableUnits: item.availableUnits || [primaryUnit],
+      activeUnit: primaryUnit,
+      startMeter: item.latestMeter || 0,
+      endMeter: item.latestMeter || 0,
+      startMileage: item.latestMileage || 0,
+      endMileage: item.latestMileage || 0,
+      totalMileage: 0,
+      netHours: 0,
+      workingHours: 0,
+      idleHours: 0,
+      breakdownHours: 0,
+      fuelIssuedLiters: 0,
+      activitySplits: [],
+      activities: [],
+      status: 'draft',
+      lastSavedAt: new Date().toISOString(),
+      // Multi-supervisor sharing & smart handover context
+      isSharedToday: otherUsages.length > 0,
+      sharedSupervisors: otherSupervisors,
+      existingLoggedDays: Number(otherLoggedDays.toFixed(2)),
+      existingLoggedHours: Number(otherLoggedHours.toFixed(1)),
+      previousFinalMeter: item.latestMeter || 0,
+      previousEndMileage: item.latestMileage || 0,
+      existingActivities: otherUsages
+        .flatMap((u) => (u.activities || []).map((a) => a.code))
+        .filter(Boolean),
+    };
   },
 
   // ── 3. Laborers (Admin-Assigned to Supervisor for Date) ────────────────────
@@ -929,7 +1082,8 @@ export const supervisorStorage = {
           (Number(e.extraHoursValue) || 0) > 0 ||
           (Number(e.areaValue) || 0) > 0 ||
           (Number(e.totalMileage) || 0) > 0 ||
-          Number(e.startMeter) > 0
+          Number(e.startMeter) > 0 ||
+          (Number(e.fuelIssuedLiters) || 0) > 0
         );
         if (validEq.length > 0) {
           payloadEq = validEq.map((eq: any) => {

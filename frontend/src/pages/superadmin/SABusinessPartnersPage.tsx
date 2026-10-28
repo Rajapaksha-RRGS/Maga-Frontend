@@ -29,7 +29,6 @@ import {
   FileText,
   ExternalLink,
   Check,
-  AlertTriangle,
   Lock,
   Upload,
 } from 'lucide-react';

@@ -5,6 +5,7 @@ import {
   HardHat, 
   Cog, 
   Truck, 
+  Tractor,
   Calendar, 
   ChevronLeft, 
   ChevronRight
@@ -13,6 +14,7 @@ import Breadcrumb from '../components/Breadcrumb';
 import AssignmentsPage from './AssignmentsPage';
 import OperatorAssignmentsPage from './OperatorAssignmentsPage';
 import EquipmentAssignmentsPage from './EquipmentAssignmentsPage';
+import { useEquipmentPoolMode } from '../features/assignments/hooks/useEquipmentPoolMode';
 
 export type AssignmentTabKey = 'labour' | 'operator' | 'equipment';
 
@@ -82,6 +84,20 @@ export default function AssignmentsHubPage({ defaultTab: _defaultTab = 'labour' 
     : currentPath.includes('/equipment')
     ? 'equipment'
     : 'labour';
+
+  const { isPoolMode } = useEquipmentPoolMode();
+
+  // If Pool Mode is ON, only Labour assignment is available in the hub
+  const visibleTabs = isPoolMode
+    ? TABS.filter((t) => t.key === 'labour')
+    : TABS;
+
+  // Auto-redirect to Labour assign if admin visits operator/equipment while in Pool Mode
+  useEffect(() => {
+    if (isPoolMode && (activeTab === 'operator' || activeTab === 'equipment')) {
+      navigate('/admin/assignments/labour', { replace: true });
+    }
+  }, [isPoolMode, activeTab, navigate]);
 
   // Persistent date across tabs
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -186,26 +202,35 @@ export default function AssignmentsHubPage({ defaultTab: _defaultTab = 'labour' 
       </div>
 
       {/* ── Modern Tabs Navigation ── */}
-      <div className="flex items-center gap-2 mb-6 border-b border-slate-200">
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.key;
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => handleTabClick(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-all -mb-px cursor-pointer ${
-                isActive
-                  ? 'border-blue-600 text-blue-700'
-                  : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-              }`}
-            >
-              <Icon size={16} className={isActive ? tab.activeColor : 'text-slate-400'} />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 border-b border-slate-200">
+        <div className="flex items-center gap-2">
+          {visibleTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => handleTabClick(tab.key)}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-all -mb-px cursor-pointer ${
+                  isActive
+                    ? 'border-blue-600 text-blue-700'
+                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                }`}
+              >
+                <Icon size={16} className={isActive ? tab.activeColor : 'text-slate-400'} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {isPoolMode && (
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 mb-2 sm:mb-0 rounded-lg bg-amber-50 border border-amber-200/80 text-amber-800 text-xs font-semibold self-start sm:self-auto">
+            <Tractor size={14} className="text-amber-600 flex-shrink-0" />
+            <span>Equipment Pool Mode Active (Supervisors self-assign machinery)</span>
+          </div>
+        )}
       </div>
 
       {/* ── Active Tab Content ── */}

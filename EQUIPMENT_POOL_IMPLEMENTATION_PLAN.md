@@ -246,7 +246,7 @@ function reconcileEquipmentAndOperatorLabor({
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ PHASE 1: DATABASE & BACKEND FOUNDATION                      │
-│ • Add `hours` column to `MF_OP_EquipmentDailyLogActivity`    │
+│ • Add `hours` column to `MF_OP_EquipmentDailyLogActivity`   │
 │ • Run `prisma db push` / `prisma generate`                  │
 │ • Implement Ratio Engine utility in backend                 │
 └──────────────────────────────┬──────────────────────────────┘
@@ -278,7 +278,7 @@ function reconcileEquipmentAndOperatorLabor({
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ PHASE 5: VERIFICATION & EXPORT AUDIT                        │
-│ • Test with real site scenario (2 supervisors, 4 activities) │
+│ • Test with real site scenario (2 supervisors, 4 activities)│
 │ • Validate generated Excel/CSV uploads against Maga ERP     │
 └─────────────────────────────────────────────────────────────┘
 ```

@@ -16,9 +16,10 @@
  *   - Inactive nav: text-slate-600 hover:bg-slate-50
  *   - Sentence case nav labels
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useEquipmentPoolMode } from '../features/assignments/hooks/useEquipmentPoolMode';
 import magaLogo from '../assets/maga-logo-47321F1221-seeklogo.com.png';
 import AdminHeader from './AdminHeader';
 import {
@@ -41,6 +42,7 @@ import {
   Truck,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings,
 } from 'lucide-react';
 
 // ── Nav item definition ────────────────────────────────────────────────────────
@@ -77,6 +79,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   { label: 'Approvals',         to: '/admin/approvals',         icon: <CheckCircle2 size={18} /> },
   { label: 'Reports',           to: '/admin/reports',           icon: <BarChart3 size={18} /> },
+  { label: 'Settings',          to: '/admin/settings',          icon: <Settings size={18} /> },
 ];
 
 // ── Sidebar content ────────────────────────────────────────────────────────────
@@ -112,7 +115,22 @@ function SidebarContent({ tenantName, onNavClick, isCollapsed = false, onToggleC
     });
   };
 
-  const visibleNavItems = NAV_ITEMS;
+  const { isPoolMode } = useEquipmentPoolMode();
+
+  const visibleNavItems = useMemo(() => {
+    return NAV_ITEMS.map((item) => {
+      if (item.label === 'Assign' && item.children) {
+        if (isPoolMode) {
+          // When Pool Mode is active, Site Admin does not pre-assign equipment/operators
+          return {
+            ...item,
+            children: item.children.filter((c) => c.to.includes('/labour')),
+          };
+        }
+      }
+      return item;
+    });
+  }, [isPoolMode]);
 
   // Shared class builder for nav links
   const navLinkClass = (isActive: boolean) =>

@@ -66,6 +66,7 @@ import CalendarPage from './pages/CalendarPage';
 import AssignmentsHubPage from './pages/AssignmentsHubPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import ReportsPage from './pages/ReportsPage';
+import AdminSettingsPage from './pages/AdminSettingsPage';
 
 
 // Theme
@@ -135,6 +136,7 @@ export default function App() {
               <Route path="assignments/equipment"  element={<AssignmentsHubPage defaultTab="equipment" />} />
               <Route path="approvals"     element={<ApprovalsPage />} />
               <Route path="reports"       element={<ReportsPage />} />
+              <Route path="settings"      element={<AdminSettingsPage />} />
             </Route>
           </Route>
 

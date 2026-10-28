@@ -39,6 +39,7 @@ function formatTenant(t: any) {
     fax: t.fax || '',
     email: t.email || '',
     status: t.status || 'active',
+    equipmentAssignBySupervisor: t.equipmentAssignBySupervisor ?? false,
     createdAt: t.createdAt,
     userCount: t._count?.users ?? 0,
     employeeCount: t._count?.employees ?? 0,
@@ -58,6 +59,7 @@ const projectSelectOptimized = {
   fax: true,
   email: true,
   status: true,
+  equipmentAssignBySupervisor: true,
   createdAt: true,
   users: {
     where: { role: 'admin' },
@@ -362,6 +364,7 @@ export const getCorporateProjectsCatalog = async (_req: Request, res: Response):
         enterpriseUnit: true,
         currency: true,
         status: true,
+        equipmentAssignBySupervisor: true,
       },
     });
     res.json(list);
@@ -370,3 +373,27 @@ export const getCorporateProjectsCatalog = async (_req: Request, res: Response):
     res.status(500).json({ error: 'Failed to fetch corporate projects catalog' });
   }
 };
+
+// 9. PATCH /api/tenants/:id/equipment-mode — Toggle equipmentAssignBySupervisor mode
+export const updateEquipmentAssignMode = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = getParam(req.params.id);
+    const { equipmentAssignBySupervisor } = req.body || {};
+    if (typeof equipmentAssignBySupervisor !== 'boolean') {
+      res.status(400).json({ error: 'equipmentAssignBySupervisor must be a boolean (true/false).' });
+      return;
+    }
+
+    const updated = await prisma.mF_P_Project.update({
+      where: { id },
+      data: { equipmentAssignBySupervisor },
+      select: projectSelectOptimized,
+    });
+
+    res.json(formatTenant(updated));
+  } catch (error) {
+    console.error('Error updating equipment assignment mode:', error);
+    res.status(500).json({ error: 'Failed to update equipment assignment mode' });
+  }
+};
+

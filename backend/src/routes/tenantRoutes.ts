@@ -8,6 +8,7 @@ import {
   updateTenantStatus,
   resetTenantAdminPassword,
   getCorporateProjectsCatalog,
+  updateEquipmentAssignMode,
 } from '../controllers/tenantController';
 import { requireAdmin, requireSuperAdmin } from '../middleware/authMiddleware';
 
@@ -19,6 +20,7 @@ router.post('/register', requireSuperAdmin, registerTenant);
 router.get('/:id', getTenantById);
 router.put('/:id', updateTenant);
 router.patch('/:id/status', requireAdmin, updateTenantStatus);
+router.patch('/:id/equipment-mode', updateEquipmentAssignMode);
 router.post('/:id/reset-admin-password', requireAdmin, resetTenantAdminPassword);
 router.get('/by-subdomain/:subdomain', getTenantBySubdomain);
 

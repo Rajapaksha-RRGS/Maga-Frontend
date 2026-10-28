@@ -12,7 +12,6 @@ import SearchInput from '../components/SearchInput';
 import EmptyState from '../components/EmptyState';
 import Breadcrumb from '../components/Breadcrumb';
 import type { CorporateEquipment } from '../features/master-import/services/corporateMasterService';
-import type { Equipment } from '../features/equipment/services/equipmentService';
 
 export default function EquipmentPage() {
   const { filtered, isLoading, search, setSearch, add } = useEquipment();

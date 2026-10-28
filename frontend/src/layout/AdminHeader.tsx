@@ -89,6 +89,7 @@ export default function AdminHeader({ onOpenMobileNav }: Props) {
     if (path.includes('/admin/reports')) return 'Reports & Analytics';
     if (path.includes('/admin/supervisors')) return 'Supervisors';
     if (path.includes('/admin/calendar')) return 'Working Calendar';
+    if (path.includes('/admin/settings')) return 'Settings';
     return null;
   };
 

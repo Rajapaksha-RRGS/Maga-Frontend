@@ -12,6 +12,9 @@ import {
   Plus,
   Trash2,
   Lock,
+  Users,
+  Info,
+  Fuel,
 } from 'lucide-react';
 import { 
   supervisorStorage,
@@ -21,13 +24,18 @@ import {
   type OperatorEntry,
   type EquipmentRatingUnit,
   type EquipmentActivitySplit,
+  type SitePoolEquipmentItem,
 } from '../services/supervisorStorageService';
+import { SiteEquipmentPoolModal } from '../components/SiteEquipmentPoolModal';
+import { useAuth } from '../../../context/AuthContext';
 
 interface EquipmentLogsViewProps {
   equipment: EquipmentLogEntry[];
   operators: OperatorEntry[];
   onSaveEquipment: (updated: EquipmentLogEntry[]) => void;
   isDayLocked?: boolean;
+  selectedDate?: string;
+  projectId?: string;
 }
 
 const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon: string }> = {
@@ -109,12 +117,46 @@ export function EquipmentLogsView({
   operators,
   onSaveEquipment,
   isDayLocked = false,
+  selectedDate = '',
+  projectId,
 }: EquipmentLogsViewProps) {
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
   const [showMeterMap, setShowMeterMap] = useState<Record<string, boolean>>({});
+  const [isPoolMode, setIsPoolMode] = useState<boolean>(false);
+  const [isPoolModalOpen, setIsPoolModalOpen] = useState<boolean>(false);
+  const [sitePoolMap, setSitePoolMap] = useState<Record<string, SitePoolEquipmentItem>>({});
+
+  useEffect(() => {
+    supervisorStorage.isEquipmentPoolModeEnabled(projectId)
+      .then(setIsPoolMode)
+      .catch(() => setIsPoolMode(false));
+  }, [projectId]);
+
+  useEffect(() => {
+    supervisorStorage.fetchSiteEquipmentPool(projectId, selectedDate).then((items) => {
+      if (Array.isArray(items)) {
+        const map: Record<string, SitePoolEquipmentItem> = {};
+        items.forEach((it) => {
+          map[it.id] = it;
+          if (it.code) map[it.code] = it;
+        });
+        setSitePoolMap(map);
+      }
+    }).catch(() => {});
+  }, [projectId, selectedDate]);
+
+  const handleAddFromPool = (newEntry: EquipmentLogEntry) => {
+    const exists = equipment.some((e) => e.id === newEntry.id);
+    if (!exists) {
+      const updated = [newEntry, ...equipment];
+      onSaveEquipment(updated);
+    }
+    setExpandedId(newEntry.id);
+  };
 
   useEffect(() => {
     supervisorStorage.getActivityCodes().then((codes) => {
@@ -285,17 +327,12 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
-
-  // ── Remove Additional Unit Handler ──
-  const handleRemoveAdditionalUnit = (id: string) => {
-    const updated = equipment.map((eq) => {
-      if (eq.id !== id) return eq;
-      return {
-        ...eq,
-        additionalUnit: null,
-        status: 'draft' as const,
-      };
-    });
+  // ── Fuel Liters Handler ──
+  const handleFuelChange = (id: string, fuel: number) => {
+    const safeFuel = Math.max(0, parseFloat((Number(fuel) || 0).toFixed(2)));
+    const updated = equipment.map((eq) =>
+      eq.id === id ? { ...eq, fuelIssuedLiters: safeFuel, status: 'draft' as const } : eq
+    );
     onSaveEquipment(updated);
   };
 
@@ -1004,6 +1041,35 @@ export function EquipmentLogsView({
         )}
       </div>
 
+      {/* ── Site Equipment Pool Quick Add Banner (When Pool Mode is Active) ── */}
+      {isPoolMode && !isDayLocked && (
+        <div className="p-3 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-white dark:to-slate-800 border border-amber-200 dark:border-amber-900/60 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
+              <Tractor size={16} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
+                  Site Equipment Pool
+                </h4>
+
+              </div>
+
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsPoolModalOpen(true)}
+            className="flex-shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shadow-xs transition-colors cursor-pointer"
+          >
+            <Plus size={14} />
+            <span>Add from Pool</span>
+          </button>
+        </div>
+      )}
+
       {/* ── Status Filter Chips ─────────────────────────────────────────────── */}
       <div className="p-2 bg-white dark:bg-slate-850 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none text-xs"> 
@@ -1057,6 +1123,16 @@ export function EquipmentLogsView({
             <p className="text-xs text-slate-400 mt-1">
               Verify search query or site machinery allocation.
             </p>
+            {isPoolMode && !isDayLocked && (
+              <button
+                type="button"
+                onClick={() => setIsPoolModalOpen(true)}
+                className="mt-3.5 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-xs cursor-pointer transition-all"
+              >
+                <Plus size={14} />
+                <span>Add Equipment from Site Pool</span>
+              </button>
+            )}
           </div>
         ) : (
           filteredEquipment.map((eq) => {
@@ -1066,13 +1142,84 @@ export function EquipmentLogsView({
             const additionalUnit = eq.additionalUnit ? normalizeRatingUnit(eq.additionalUnit) : null;
             const summary = getEquipmentSummary(eq);
 
+            // Multi-Supervisor & Conflict Detection Context
+            const poolItem = sitePoolMap[eq.id] || (eq.code ? sitePoolMap[eq.code] : undefined);
+            
+            // CRITICAL FIX: Only consider usages logged by OTHER supervisors to avoid double-counting current supervisor's own entry!
+            const otherUsages = (poolItem?.existingUsages || []).filter((u) => {
+              if (user?.id && u.supervisorId === user.id) return false;
+              if (user?.fullName && u.supervisorName && u.supervisorName.trim().toLowerCase() === user.fullName.trim().toLowerCase()) return false;
+              if (user?.username && u.supervisorName && u.supervisorName.trim().toLowerCase() === user.username.trim().toLowerCase()) return false;
+              return true;
+            });
+
+            const isShared = otherUsages.length > 0;
+            const sharedSupervisors = Array.from(new Set(otherUsages.map((u) => u.supervisorName)));
+
+            // Calculate only what OTHER supervisors have logged
+            let existingDays = 0;
+            let existingHours = 0;
+            let handoverMeter = 0;
+            let handoverMileage = 0;
+
+            for (const u of otherUsages) {
+              const uCode = (u.unitCode || primaryUnit || '').toLowerCase();
+              const uUtil = u.totalUtilization ?? 0;
+              if (uCode === 'days' || uCode === 'day') {
+                existingDays += uUtil;
+              } else if (uCode === 'hrs' || uCode === 'hr' || uCode === 'ex.hrs') {
+                existingHours += (u.workingHours || uUtil);
+              } else if (uUtil <= 1.5 && (primaryUnit.toLowerCase() === 'days' || primaryUnit.toLowerCase() === 'mth')) {
+                existingDays += uUtil;
+              } else {
+                existingHours += (u.workingHours || uUtil);
+              }
+              if (u.finalMeter && u.finalMeter > handoverMeter) {
+                handoverMeter = u.finalMeter;
+              }
+              if (u.endMileage && u.endMileage > handoverMileage) {
+                handoverMileage = u.endMileage;
+              }
+            }
+
+            // Fallback handover to historical if no OTHER supervisor logged one today
+            if (!handoverMeter) {
+              handoverMeter = poolItem?.latestMeter ?? eq.previousFinalMeter ?? 0;
+            }
+            if (!handoverMileage) {
+              handoverMileage = poolItem?.latestMileage ?? eq.previousEndMileage ?? 0;
+            }
+
+            const existingActivities = otherUsages.flatMap((u) => (u.activities || []).map((a) => a.code));
+
+            // Unit-specific capacity validations (ONLY active if another supervisor actually logged on this vehicle!)
+            const currentDays = eq.daysValue ?? 0;
+            const totalDays = currentDays + existingDays;
+            const isDaysExceeded = isShared && existingDays > 0 && totalDays > 1.001;
+
+            const currentHours = (eq.hoursValue ?? 0) + (eq.extraHoursValue ?? 0);
+            const totalHours = currentHours + existingHours;
+            const isHoursExceeded = isShared && existingHours > 0 && totalHours > 24;
+
+            // Meter & Mileage sequence checks (only if handover was from another supervisor)
+            const isMeterConflict = isShared && handoverMeter > 0 && eq.startMeter > 0 && eq.startMeter < handoverMeter;
+            const isMileageConflict = isShared && handoverMileage > 0 && (eq.startMileage ?? 0) > 0 && (eq.startMileage ?? 0) < handoverMileage;
+
+            // Duplicate activity check ("ekama wade")
+            const hasDuplicateActivity = Boolean(
+              isShared && eq.activityCode && existingActivities.includes(eq.activityCode)
+            );
+
+            const hasAnyConflict = isDaysExceeded || isHoursExceeded || isMeterConflict || isMileageConflict;
 
             return (
               <div
                 key={eq.id}
                 className={[
                   'rounded-2xl border transition-all duration-200 overflow-hidden shadow-2xs',
-                  isExpanded
+                  hasAnyConflict
+                    ? 'border-red-400 dark:border-red-600 bg-white dark:bg-slate-850'
+                    : isExpanded
                     ? 'border-emerald-500 dark:border-emerald-500 ring-2 ring-emerald-500/10 bg-white dark:bg-slate-850'
                     : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800/80 hover:border-slate-300'
                 ].join(' ')}
@@ -1121,7 +1268,7 @@ export function EquipmentLogsView({
                         )}
                       </div>
 
-                      {/* Operator Link Badge */}
+                      {/* Operator & Shared Shift Badges */}
                       <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                         {mappedOp ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
@@ -1130,6 +1277,33 @@ export function EquipmentLogsView({
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
                             No Operator Linked
+                          </span>
+                        )}
+
+                        {/* Multi-Supervisor Sharing Badge */}
+                        {isShared && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                            <Users size={11} /> Shared: {sharedSupervisors.join(', ') || 'Another Supervisor'}
+                          </span>
+                        )}
+
+                        {/* Fuel Pumped Badge */}
+                        {Number(eq.fuelIssuedLiters || 0) > 0 && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-mono">
+                            <Fuel size={11} className="text-amber-600 dark:text-amber-400" /> {eq.fuelIssuedLiters}L
+                          </span>
+                        )}
+
+                        {/* Capacity Exceeded Warning Pill */}
+                        {isDaysExceeded && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-700 animate-pulse">
+                            <AlertTriangle size={11} /> Exceeds 1.0 Day ({totalDays.toFixed(2)}d)
+                          </span>
+                        )}
+
+                        {isHoursExceeded && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-700 animate-pulse">
+                            <AlertTriangle size={11} /> Exceeds 24h ({totalHours.toFixed(1)}h)
                           </span>
                         )}
                       </div>
@@ -1164,6 +1338,100 @@ export function EquipmentLogsView({
                 {/* ── Expanded Content ── */}
                 {isExpanded && (
                   <div className="px-3.5 pb-4 pt-1 border-t border-slate-100 dark:border-slate-800 space-y-3 animate-in slide-in-from-top-1 duration-150">
+
+                    {/* Shared Machinery Shift Handover Banner */}
+                    {isShared && (
+                      <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-semibold text-blue-900 dark:text-blue-200">
+                          <div className="flex items-center gap-1.5">
+                            <Users size={13} className="text-blue-600" />
+                            <span>Shared Machinery (Multi-Supervisor Shift Handover)</span>
+                          </div>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {otherUsages.map((u, idx) => (
+                              <span key={idx} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-200/80 dark:bg-blue-900 text-blue-800 dark:text-blue-200 font-bold">
+                                {u.supervisorName} <span className="opacity-75 font-normal">({u.status === 'submitted' || u.status === 'approved' ? 'Submitted' : 'Draft'})</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        
+                        <div className="text-[11px] text-blue-700 dark:text-blue-300 flex items-center gap-2 flex-wrap">
+                          {existingDays > 0 && (
+                            <span className="bg-white/80 dark:bg-blue-900/50 px-2 py-0.5 rounded border border-blue-100 dark:border-blue-800 font-mono">
+                              Logged by other: <strong>{existingDays} Days</strong> · Rem: <strong>{Math.max(0, 1 - existingDays).toFixed(2)} Days</strong>
+                            </span>
+                          )}
+                          {existingHours > 0 && (
+                            <span className="bg-white/80 dark:bg-blue-900/50 px-2 py-0.5 rounded border border-blue-100 dark:border-blue-800 font-mono">
+                              Logged by other: <strong>{existingHours} Hrs</strong>
+                            </span>
+                          )}
+                          {handoverMeter > 0 && (
+                            <span className="bg-white/80 dark:bg-blue-900/50 px-2 py-0.5 rounded border border-blue-100 dark:border-blue-800 font-mono">
+                              Handover Meter: <strong>{handoverMeter}</strong>
+                            </span>
+                          )}
+                          {handoverMileage > 0 && (
+                            <span className="bg-white/80 dark:bg-blue-900/50 px-2 py-0.5 rounded border border-blue-100 dark:border-blue-800 font-mono">
+                              Handover Mileage: <strong>{handoverMileage} km</strong>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Conflict Alerts */}
+                    {isDaysExceeded && (
+                      <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800/80 text-red-800 dark:text-red-200 text-xs flex items-start gap-2.5">
+                        <AlertTriangle size={16} className="text-red-600 flex-shrink-0 mt-0.5" />
+                        <div className="space-y-0.5">
+                          <p className="font-bold">Daily Capacity Exceeded ({totalDays.toFixed(2)} Days / Max 1.0 Day)</p>
+                          <p className="text-[11px] leading-relaxed text-red-700 dark:text-red-300">
+                            {sharedSupervisors.join(', ')} has already logged <strong>{existingDays} Day(s)</strong> today. With your entry of <strong>{currentDays} Day(s)</strong>, total machinery allocation becomes <strong>{totalDays.toFixed(2)} Days</strong>. One machine cannot exceed 1.0 Day in a single calendar day.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {isHoursExceeded && (
+                      <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800/80 text-red-800 dark:text-red-200 text-xs flex items-start gap-2.5">
+                        <AlertTriangle size={16} className="text-red-600 flex-shrink-0 mt-0.5" />
+                        <div className="space-y-0.5">
+                          <p className="font-bold">24-Hour Daily Capacity Exceeded ({totalHours.toFixed(1)}h / Max 24h)</p>
+                          <p className="text-[11px] leading-relaxed text-red-700 dark:text-red-300">
+                            {sharedSupervisors.join(', ')} logged <strong>{existingHours}h</strong>. Your entry of <strong>{currentHours}h</strong> pushes total machinery hours to <strong>{totalHours.toFixed(1)}h</strong>, which exceeds 24 hours in a day.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {isMeterConflict && (
+                      <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800/80 text-amber-800 dark:text-amber-200 text-xs flex items-center gap-2">
+                        <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
+                        <span>
+                          Start Meter ({eq.startMeter}) is lower than previous supervisor&apos;s final meter ({handoverMeter}). Check your meter reading.
+                        </span>
+                      </div>
+                    )}
+
+                    {isMileageConflict && (
+                      <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800/80 text-amber-800 dark:text-amber-200 text-xs flex items-center gap-2">
+                        <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
+                        <span>
+                          Start Mileage ({eq.startMileage} km) is lower than previous supervisor&apos;s end mileage ({handoverMileage} km).
+                        </span>
+                      </div>
+                    )}
+
+                    {hasDuplicateActivity && (
+                      <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800/80 text-blue-800 dark:text-blue-200 text-xs flex items-center gap-2">
+                        <Info size={14} className="text-blue-600 flex-shrink-0" />
+                        <span>
+                          Activity Notice: <strong>{sharedSupervisors.join(', ')}</strong> also worked on activity &quot;{eq.activityCode}&quot; today. Ensure work locations or shift sections are differentiated.
+                        </span>
+                      </div>
+                    )}
                     
                     {/* ── Mode Status Banner ── */}
                     {/* <div className="flex items-center justify-between p-2 rounded-xl bg-slate-100/90 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 text-xs">
@@ -1192,6 +1460,79 @@ export function EquipmentLogsView({
 
                     
                     {renderUnitInputs(eq, primaryUnit, false)}
+
+                    {/* ── 2. Fuel Refueling Section (DB field: fuel_liters) ── */}
+                    <div className="p-3 rounded-2xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-800/60 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-lg bg-amber-500 text-white flex items-center justify-center flex-shrink-0 shadow-2xs">
+                            <Fuel size={13} />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">
+                              Fuel Issued
+                            </span>
+                            
+                          </div>
+                        </div>
+
+                        {Number(eq.fuelIssuedLiters || 0) > 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 font-mono">
+                            {eq.fuelIssuedLiters} L
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 pt-1">
+                        <div className="relative flex-1 max-w-[180px]">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            disabled={isDayLocked}
+                            placeholder="0.0"
+                            value={eq.fuelIssuedLiters ? eq.fuelIssuedLiters : ''}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              handleFuelChange(eq.id, val);
+                            }}
+                            className="w-full pl-3 pr-5 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-amber-500 font-mono disabled:opacity-60"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400 pointer-events-none">
+                            L
+                          </span>
+                        </div>
+
+                        {!isDayLocked && (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {[20, 50, 100, 200].map((qty) => (
+                              <button
+                                key={qty}
+                                type="button"
+                                onClick={() => handleFuelChange(eq.id, qty)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                                  Number(eq.fuelIssuedLiters || 0) === qty
+                                    ? 'bg-amber-600 border-amber-600 text-white shadow-2xs'
+                                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-amber-50 hover:border-amber-300'
+                                }`}
+                              >
+                                +{qty}L
+                              </button>
+                            ))}
+                            {Number(eq.fuelIssuedLiters || 0) > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleFuelChange(eq.id, 0)}
+                                className="text-[10px] text-slate-400 hover:text-red-500 font-semibold px-1.5 py-1 cursor-pointer transition-colors"
+                                title="Clear Fuel"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
 
                     {/* ── 2. ADDITIONAL UNIT SECTION (Optional) ── */}
                     {/* {additionalUnit ? (
@@ -1226,30 +1567,7 @@ export function EquipmentLogsView({
                       )
                     )} */}
 
-                    {/* ── Summary of Activities Allocated Across All Units ── */}
-                    {Array.isArray(eq.activitySplits) && eq.activitySplits.length > 0 && (
-                      <div className="p-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/60 shadow-2xs space-y-2">
-                        <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-200">
-                          <span className="flex items-center gap-1.5">
-                            <Tag className="text-blue-600" size={13} />
-                            <span>Allocated Activities Summary ({eq.activitySplits.length})</span>
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {eq.activitySplits.map((s, idx) => (
-                            <span 
-                              key={s.id || idx} 
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 shadow-2xs"
-                            >
-                              <span className="font-bold text-blue-600">{s.unit === 'mth' ? 'Days' : s.unit}:</span>
-                              <span className="font-semibold">{s.activityCode}</span>
-                              <span className="text-slate-400">→</span>
-                              <span className="font-bold text-emerald-600">{s.utilization} {s.unit === 'mth' || s.unit === 'Days' ? 'Day' : s.unit}</span>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    
 
                     {/* ── Auto-save Status ── */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
@@ -1266,6 +1584,15 @@ export function EquipmentLogsView({
           })
         )}
       </div>
+
+      {/* ── Site Equipment Pool Selector Modal ── */}
+      <SiteEquipmentPoolModal
+        isOpen={isPoolModalOpen}
+        onClose={() => setIsPoolModalOpen(false)}
+        selectedDate={selectedDate}
+        currentEquipment={equipment}
+        onAddEquipment={handleAddFromPool}
+      />
     </div>
   );
 }

@@ -1,4 +1,15 @@
-export const TopUpErrorView = ({
+import React from 'react';
+
+interface TopUpErrorViewProps {
+  title?: string;
+  subtitle?: string;
+  massage?: string;
+  message?: string;
+  onRetry?: () => void;
+  buttonText?: string;
+}
+
+export const TopUpErrorView: React.FC<TopUpErrorViewProps> = ({
   title = "Something went wrong!",
   subtitle = "We have encountered an unexpected error.",
   massage,

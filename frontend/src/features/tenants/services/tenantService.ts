@@ -30,6 +30,7 @@ export interface TenantRecord {
   fax?: string;
   email?: string;
   status: 'active' | 'suspended';
+  equipmentAssignBySupervisor?: boolean;
   createdAt: string;
   userCount?: number;
   employeeCount?: number;
@@ -178,6 +179,7 @@ export interface CorporateProjectOption {
   enterpriseUnit?: string;
   currency?: string;
   status: string;
+  equipmentAssignBySupervisor?: boolean;
 }
 
 export async function fetchCorporateProjects(): Promise<CorporateProjectOption[]> {
@@ -191,5 +193,35 @@ export async function fetchCorporateProjects(): Promise<CorporateProjectOption[]
     console.error('Failed to fetch corporate projects:', err);
   }
   return [];
+}
+
+export async function getTenantById(id: string): Promise<TenantRecord | null> {
+  try {
+    const res = await apiFetch(`${API_URL}/tenants/${id}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.error('Failed to fetch tenant details:', err);
+  }
+  return null;
+}
+
+export async function updateEquipmentAssignMode(
+  id: string,
+  equipmentAssignBySupervisor: boolean
+): Promise<TenantRecord> {
+  const res = await apiFetch(`${API_URL}/tenants/${id}/equipment-mode`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ equipmentAssignBySupervisor }),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    cacheManager.clear();
+    return data;
+  }
+  const err = await res.json().catch(() => ({}));
+  throw new Error(err.error || 'Failed to update equipment assignment mode');
 }
 

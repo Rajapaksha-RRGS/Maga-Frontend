@@ -227,6 +227,7 @@ model MF_P_Project {
   fax            String?
   email          String?
   status         String   @default("active")
+  equipmentAssignBySupervisor Boolean @default(false) @map("equipment_assign_by_supervisor")
   createdAt      DateTime @default(now()) @map("created_at")
 
   // Site Operations & Resources
@@ -471,6 +472,7 @@ model MF_OP_EquipmentDailyLogActivity {
   id             String   @id @default(uuid()) @map("daily_log_activity_id")
   dailyLogId     String   @map("daily_log_id")
   activityCodeId String   @map("activity_code_id")
+  hours          Decimal? @default(0.00) @map("hours") @db.Decimal(6, 2)
   utilization    Decimal  @default(0.00) @map("utilization") @db.Decimal(8, 2)
   remarks        String?
   createdAt      DateTime @default(now()) @map("created_at")
