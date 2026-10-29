@@ -1110,10 +1110,11 @@ export function LaborEntryView({
                     )}
                   </button>
 
-                  {/* Worker Avatar & Identifiers */}
+                  {/* Worker Avatar & Identifiers - Clicking selects/unselects worker */}
                   <div 
-                    onClick={() => setExpandedId(isExpanded ? null : worker.id)}
-                    className="flex-1 min-w-0 flex items-center gap-2.5 cursor-pointer"
+                    onClick={(e) => handleToggleWorkerSelect(worker.id, e)}
+                    className="flex-1 min-w-0 flex items-center gap-2.5 cursor-pointer select-none"
+                    title={`Click to select/deselect ${worker.callingName || worker.employeeCode}`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -1151,10 +1152,7 @@ export function LaborEntryView({
                   </div>
 
                   {/* Times & Direct Controls */}
-                  <div 
-                    onClick={() => setExpandedId(isExpanded ? null : worker.id)}
-                    className="flex items-center gap-1.5 flex-shrink-0 cursor-pointer text-right"
-                  >
+                  <div className="flex items-center gap-1.5 flex-shrink-0 text-right">
                     {tabMode === 'in' ? (
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         {worker.isAbsent ? (
@@ -1300,10 +1298,19 @@ export function LaborEntryView({
                       </div>
                     )}
 
-                    {/* Chevron Icon */}
-                    <div className="text-slate-400 pl-0.5">
-                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </div>
+                    {/* Chevron Button - Expand/Collapse Only */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedId(isExpanded ? null : worker.id);
+                      }}
+                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer focus:outline-none"
+                      aria-label={isExpanded ? "Collapse worker details" : "Expand worker details"}
+                      title={isExpanded ? "Collapse details" : "Expand details"}
+                    >
+                      {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                    </button>
                   </div>
                 </div>
 
