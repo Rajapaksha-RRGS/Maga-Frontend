@@ -382,7 +382,7 @@ export const deleteEquipment = async (req: Request, res: Response): Promise<void
   }
 };
 
-// 7. POST /api/equipment/batch-erp-import — Import into project
+// 7. POST /api/equipment/batch-erp-import — High-speed bulk import into project
 export const batchImportErpEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
     const projectId =
@@ -398,87 +398,122 @@ export const batchImportErpEquipment = async (req: Request, res: Response): Prom
       return;
     }
 
-    const imported = [];
-    for (const item of items) {
-      const code = (item.standardEquipmentNumber || item.code || item.vehicleNo || '').trim().toUpperCase();
-      if (!code) continue;
+    const codes = items
+      .map((i: any) => (i.standardEquipmentNumber || i.code || i.vehicleNo || '').trim().toUpperCase())
+      .filter(Boolean);
 
-      const name = item.name || item.equipmentName || code;
-      const unit = item.primaryUnit || item.unit || 'Hrs';
-      const numericRate = item.costRate !== undefined ? Number(item.costRate) : 0;
+    // Pre-fetch all matching corporate equipment & units in parallel
+    const [existingCorps, allUnits] = await Promise.all([
+      codes.length > 0
+        ? prisma.mF_G_Equipment.findMany({
+            where: {
+              OR: [
+                { standardEquipmentNumber: { in: codes } },
+                { vehicleNo: { in: codes } },
+              ],
+            },
+          })
+        : Promise.resolve([]),
+      prisma.mF_G_UnitMaster.findMany({ select: { code: true } }),
+    ]);
 
-      // Ensure unit exists
-      await prisma.mF_G_UnitMaster.upsert({
-        where: { code: unit },
-        update: {},
-        create: { code: unit, name: unit, category: 'meter' },
-      });
-
-      // Find or create Corporate Equipment
-      let corp = await prisma.mF_G_Equipment.findFirst({
-        where: {
-          OR: [
-            { standardEquipmentNumber: code },
-            { vehicleNo: item.vehicleNo || code },
-          ],
-        },
-      });
-
-      if (corp) {
-        corp = await prisma.mF_G_Equipment.update({
-          where: { id: corp.id },
-          data: {
-            equipmentName: name,
-            unit,
-          },
-        });
-      } else {
-        corp = await prisma.mF_G_Equipment.create({
-          data: {
-            standardEquipmentNumber: code,
-            equipmentName: name,
-            vehicleNo: item.vehicleNo || code,
-            unit,
-            costRate: numericRate,
-            condition: item.condition || 'DRY',
-            type: item.type || null,
-            status: 'active',
-          },
-        });
+    const corpMap = new Map<string, (typeof existingCorps)[0]>();
+    for (const c of existingCorps) {
+      corpMap.set(c.standardEquipmentNumber.toUpperCase().trim(), c);
+      if (c.vehicleNo) {
+        corpMap.set(c.vehicleNo.toUpperCase().trim(), c);
       }
-
-      // Upsert into Site Equipment
-      const site = await prisma.mF_P_Equipment.upsert({
-        where: {
-          projectId_corporateEquipmentId: {
-            projectId,
-            corporateEquipmentId: corp.id,
-          },
-        },
-        update: {
-          condition: item.condition || corp.condition,
-          costRate: numericRate,
-          meterUnitCode: unit,
-          status: 'active',
-        },
-        create: {
-          projectId,
-          corporateEquipmentId: corp.id,
-          condition: item.condition || corp.condition,
-          costRate: numericRate,
-          meterUnitCode: unit,
-          status: 'active',
-        },
-        select: equipmentSelectOptimized,
-      });
-
-      imported.push(formatEquipment(site));
     }
 
+    const unitSet = new Set(allUnits.map((u) => u.code));
+
+    // Ensure missing units are created in bulk
+    const missingUnits = new Set<string>();
+    for (const item of items) {
+      const u = item.primaryUnit || item.unit || 'Hrs';
+      if (!unitSet.has(u)) missingUnits.add(u);
+    }
+    if (missingUnits.size > 0) {
+      await Promise.all(
+        Array.from(missingUnits).map((u) =>
+          prisma.mF_G_UnitMaster.upsert({
+            where: { code: u },
+            update: {},
+            create: { code: u, name: u, category: 'meter' },
+          })
+        )
+      );
+    }
+
+    const imported: any[] = [];
+
+    // Atomic, high-speed single database transaction for all site equipment upserts
+    await prisma.$transaction(async (tx) => {
+      for (const item of items) {
+        const code = (item.standardEquipmentNumber || item.code || item.vehicleNo || '').trim().toUpperCase();
+        if (!code) continue;
+
+        const name = item.name || item.equipmentName || code;
+        const unit = item.primaryUnit || item.unit || 'Hrs';
+        const numericRate = item.costRate !== undefined && !isNaN(Number(item.costRate)) ? Number(item.costRate) : 0;
+
+        let corp = corpMap.get(code);
+        if (corp) {
+          corp = await tx.mF_G_Equipment.update({
+            where: { id: corp.id },
+            data: {
+              equipmentName: name,
+              unit,
+            },
+          });
+        } else {
+          corp = await tx.mF_G_Equipment.create({
+            data: {
+              standardEquipmentNumber: code,
+              equipmentName: name,
+              vehicleNo: item.vehicleNo || code,
+              unit,
+              costRate: numericRate,
+              condition: item.condition || 'DRY',
+              type: item.type || null,
+              status: 'active',
+            },
+          });
+          corpMap.set(code, corp);
+        }
+
+        const site = await tx.mF_P_Equipment.upsert({
+          where: {
+            projectId_corporateEquipmentId: {
+              projectId,
+              corporateEquipmentId: corp.id,
+            },
+          },
+          update: {
+            condition: item.condition || corp.condition,
+            costRate: numericRate,
+            meterUnitCode: unit,
+            status: 'active',
+          },
+          create: {
+            projectId,
+            corporateEquipmentId: corp.id,
+            condition: item.condition || corp.condition,
+            costRate: numericRate,
+            meterUnitCode: unit,
+            status: 'active',
+          },
+          select: equipmentSelectOptimized,
+        });
+
+        imported.push(formatEquipment(site));
+      }
+    });
+
     res.json({ success: true, count: imported.length, items: imported });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error batch importing ERP equipment:', error);
-    res.status(500).json({ error: 'Failed to batch import equipment' });
+    res.status(500).json({ error: error.message || 'Failed to batch import equipment' });
   }
 };
 

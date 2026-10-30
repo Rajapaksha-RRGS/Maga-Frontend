@@ -1466,6 +1466,8 @@ export function getUniqueCategories(items: { type?: string; tradeGroup?: string;
   ).sort();
 }
 
+import { cacheManager } from '../../../utils/cacheManager';
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 const getHeaders = (): Record<string, string> => {
   const token = localStorage.getItem('token');
@@ -1487,77 +1489,81 @@ export const fetchCorporateBusinessPartners = async (): Promise<CorporateBusines
   }
 };
 
-export const fetchCorporateEquipment = async (): Promise<CorporateEquipment[]> => {
-  try {
-    const res = await fetch(`${API_URL}/equipment/corporate-master`, { headers: getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch');
-    const data = await res.json();
-    if (Array.isArray(data) && data.length > 0) {
-      return data.map((item: any) => ({
-        ...item,
-        code: item.erpNewCode || item.code || item.standardEquipmentNumber || '',
-        name: item.equipmentName || item.name || item.description || item.standardEquipmentNumber || 'Equipment',
-        type: item.type || 'Equipment',
-        sourceProject: item.sourceProject || item.currentWorkingProject || 'Central Depot',
-        costRate: typeof item.costRate === 'number' ? item.costRate : Number(item.dailyRate ?? item.costRate ?? 0),
-        dailyRate: typeof item.dailyRate === 'number' ? item.dailyRate : Number(item.dailyRate ?? item.costRate ?? 0),
-        unit: item.unit || item.primaryUnit || 'Hrs',
-        primaryUnit: item.primaryUnit || item.unit || 'Hrs',
-        availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0 
-          ? item.availableUnits 
-          : [item.unit || item.primaryUnit || 'Hrs'],
-        model: item.model || '',
-        registrationNo: item.registrationNo || item.vehicleNo || '',
-        searchKey: item.searchKey || item.equipmentName || item.name || '',
-      }));
+export const fetchCorporateEquipment = async (forceRefresh = false): Promise<CorporateEquipment[]> => {
+  return cacheManager.fetchWithCache('corporate:equipment:catalog', async () => {
+    try {
+      const res = await fetch(`${API_URL}/equipment/corporate-master`, { headers: getHeaders() });
+      if (!res.ok) throw new Error('Failed to fetch');
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map((item: any) => ({
+          ...item,
+          code: item.erpNewCode || item.code || item.standardEquipmentNumber || '',
+          name: item.equipmentName || item.name || item.description || item.standardEquipmentNumber || 'Equipment',
+          type: item.type || 'Equipment',
+          sourceProject: item.sourceProject || item.currentWorkingProject || 'Central Depot',
+          costRate: typeof item.costRate === 'number' ? item.costRate : Number(item.dailyRate ?? item.costRate ?? 0),
+          dailyRate: typeof item.dailyRate === 'number' ? item.dailyRate : Number(item.dailyRate ?? item.costRate ?? 0),
+          unit: item.unit || item.primaryUnit || 'Hrs',
+          primaryUnit: item.primaryUnit || item.unit || 'Hrs',
+          availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0 
+            ? item.availableUnits 
+            : [item.unit || item.primaryUnit || 'Hrs'],
+          model: item.model || '',
+          registrationNo: item.registrationNo || item.vehicleNo || '',
+          searchKey: item.searchKey || item.equipmentName || item.name || '',
+        }));
+      }
+      return [];
+    } catch (error) {
+      console.error('Error fetching corporate equipment:', error);
+      return [];
     }
-    return [];
-  } catch (error) {
-    console.error('Error fetching corporate equipment:', error);
-    return []; // fallback
-  }
+  }, 5 * 60 * 1000, forceRefresh);
 };
 
-export const fetchCorporateEmployees = async (): Promise<CorporateEmployee[]> => {
-  try {
-    const res = await fetch(`${API_URL}/employees/corporate-master`, { headers: getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch corporate employees');
-    const data = await res.json();
-    if (Array.isArray(data) && data.length > 0) {
-      return data.map((item: any) => {
-        const tradeGroupName = typeof item.tradeGroup === 'string'
-          ? item.tradeGroup
-          : (item.tradeGroup?.name || 'General Labour');
-        const bpName = item.corporateBusinessPartner?.name || item.businessPartnerName || item.businessPartner || '';
-        const bpCode = item.corporateBusinessPartner?.code || item.businessPartnerCode || '';
-        const isOp = Boolean(
-          item.isOperator ||
-          item.is_operator ||
-          (tradeGroupName && ['operator', 'driver', 'heavy operator'].some((t: string) => tradeGroupName.toLowerCase().includes(t)))
-        );
+export const fetchCorporateEmployees = async (forceRefresh = false): Promise<CorporateEmployee[]> => {
+  return cacheManager.fetchWithCache('corporate:employees:catalog', async () => {
+    try {
+      const res = await fetch(`${API_URL}/employees/corporate-master`, { headers: getHeaders() });
+      if (!res.ok) throw new Error('Failed to fetch corporate employees');
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map((item: any) => {
+          const tradeGroupName = typeof item.tradeGroup === 'string'
+            ? item.tradeGroup
+            : (item.tradeGroup?.name || 'General Labour');
+          const bpName = item.corporateBusinessPartner?.name || item.businessPartnerName || item.businessPartner || '';
+          const bpCode = item.corporateBusinessPartner?.code || item.businessPartnerCode || '';
+          const isOp = Boolean(
+            item.isOperator ||
+            item.is_operator ||
+            (tradeGroupName && ['operator', 'driver', 'heavy operator'].some((t: string) => tradeGroupName.toLowerCase().includes(t)))
+          );
 
-        return {
-          ...item,
-          callingName: item.callingName || item.fullName?.split(' ')[0] || item.fullName || item.employeeCode || '',
-          fullName: item.fullName || '',
-          employeeCode: item.employeeCode || '',
-          nicNo: item.nicNo || '',
-          tradeGroup: tradeGroupName,
-          businessPartnerName: bpName,
-          businessPartner: bpName,
-          businessPartnerCode: bpCode,
-          dailyRate: item.dailyRate !== undefined && item.dailyRate !== null ? Number(item.dailyRate) : 1400,
-          isOperator: isOp,
-          employeeType: item.employeeType || (bpCode ? 'external' : 'internal'),
-          currentWorkingProject: item.currentWorkingProject || '',
-        };
-      });
+          return {
+            ...item,
+            callingName: item.callingName || item.fullName?.split(' ')[0] || item.fullName || item.employeeCode || '',
+            fullName: item.fullName || '',
+            employeeCode: item.employeeCode || '',
+            nicNo: item.nicNo || '',
+            tradeGroup: tradeGroupName,
+            businessPartnerName: bpName,
+            businessPartner: bpName,
+            businessPartnerCode: bpCode,
+            dailyRate: item.dailyRate !== undefined && item.dailyRate !== null ? Number(item.dailyRate) : 1400,
+            isOperator: isOp,
+            employeeType: item.employeeType || (bpCode ? 'external' : 'internal'),
+            currentWorkingProject: item.currentWorkingProject || '',
+          };
+        });
+      }
+      return [];
+    } catch (error) {
+      console.error('Error fetching corporate employees:', error);
+      return [];
     }
-    return [];
-  } catch (error) {
-    console.error('Error fetching corporate employees:', error);
-    return []; // fallback
-  }
+  }, 5 * 60 * 1000, forceRefresh);
 };
 
 export const fetchCorporateActivityCodes = async (): Promise<CorporateActivityCode[]> => {

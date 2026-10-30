@@ -37,8 +37,13 @@ export function useEquipment() {
   });
 
   const add = async (data: EquipmentFormData) => { await svc.create(data); await load(true); };
+  const batchImport = async (items: any[]) => {
+    const res = await svc.batchImportErp(items);
+    await load(true);
+    return res;
+  };
   const edit = async (id: string, data: Partial<EquipmentFormData>) => { await svc.update(id, data); await load(true); };
   const remove = async (id: string) => { await svc.deactivate(id); await load(true); };
 
-  return { items, filtered, isLoading, search, setSearch, add, edit, remove, refresh: load };
+  return { items, filtered, isLoading, search, setSearch, add, batchImport, edit, remove, refresh: load };
 }

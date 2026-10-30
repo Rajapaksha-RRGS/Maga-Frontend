@@ -14,7 +14,7 @@ import Breadcrumb from '../components/Breadcrumb';
 import type { CorporateEquipment } from '../features/master-import/services/corporateMasterService';
 
 export default function EquipmentPage() {
-  const { filtered, isLoading, search, setSearch, add } = useEquipment();
+  const { filtered, isLoading, search, setSearch, batchImport } = useEquipment();
   const [showImport, setShowImport] = useState(false);
 
   const existingCodes = useMemo(() => {
@@ -22,19 +22,24 @@ export default function EquipmentPage() {
   }, [filtered]);
 
   const handleBatchImport = async (items: CorporateEquipment[]) => {
-    for (const item of items) {
-      await add({
-        code: item.code,
-        name: item.name,
-        type: item.type,
-        costRate: item.costRate !== undefined && item.costRate !== null ? Number(item.costRate) : 0,
-        primaryUnit: item.primaryUnit || item.unit || 'Hrs',
-        availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0
-          ? item.availableUnits
-          : [item.unit || item.primaryUnit || 'Hrs'],
-      });
+    try {
+      await batchImport(
+        items.map((item) => ({
+          code: item.code,
+          name: item.name,
+          type: item.type,
+          costRate: item.costRate !== undefined && item.costRate !== null ? Number(item.costRate) : 0,
+          primaryUnit: item.primaryUnit || item.unit || 'Hrs',
+          availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0
+            ? item.availableUnits
+            : [item.unit || item.primaryUnit || 'Hrs'],
+        }))
+      );
+      setShowImport(false);
+    } catch (err: any) {
+      console.error('Batch import failed:', err);
+      alert(err.message || 'Failed to import equipment');
     }
-    setShowImport(false);
   };
 
   // ── Full-screen import view ──────────────────────────────────────────────────

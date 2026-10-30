@@ -28,6 +28,7 @@ import {
   ChevronsRight,
 } from 'lucide-react';
 import { fetchCorporateEquipment, type CorporateEquipment } from '../../master-import/services/corporateMasterService';
+import { cacheManager } from '../../../utils/cacheManager';
 
 interface EquipmentImportViewProps {
   onBack: () => void;
@@ -41,14 +42,17 @@ export default function EquipmentImportView({
   existingCodes,
   onImport,
 }: EquipmentImportViewProps) {
-  const [catalog, setCatalog] = useState<CorporateEquipment[]>([]);
-  const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
+  const cachedCatalog = cacheManager.get<CorporateEquipment[]>('corporate:equipment:catalog');
+  const [catalog, setCatalog] = useState<CorporateEquipment[]>(() => cachedCatalog || []);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(() => !cachedCatalog);
 
-  const loadCatalog = async () => {
+  const loadCatalog = async (forceRefresh = false) => {
     setIsRefreshing(true);
-    setIsLoadingCatalog(true);
+    if (forceRefresh || !cacheManager.get('corporate:equipment:catalog')) {
+      setIsLoadingCatalog(true);
+    }
     try {
-      const data = await fetchCorporateEquipment();
+      const data = await fetchCorporateEquipment(forceRefresh);
       setCatalog(data);
     } catch (e) {
       console.error(e);
@@ -190,10 +194,7 @@ export default function EquipmentImportView({
   };
 
   const handleRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 400);
+    loadCatalog(true);
   };
 
   const handleBatchImport = async () => {
