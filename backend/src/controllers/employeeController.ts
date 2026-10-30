@@ -952,7 +952,7 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       },
       include: {
         corporateEmployee: {
-          select: { employeeCode: true, fullName: true, nicNo: true, isOperator: true },
+          select: { employeeCode: true, fullName: true, nicNo: true, isOperator: true, employeeType: true },
         },
         tradeGroup: { select: { id: true, name: true } },
         businessPartner: { select: { id: true, name: true, code: true } },
@@ -1012,6 +1012,7 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       const otherClaim = claims.find((c) => c.supervisorId !== supervisorId);
       const myClaim = claims.find((c) => c.supervisorId === supervisorId);
 
+      const isInternal = emp.corporateEmployee.employeeType === 'internal';
       return {
         id: emp.id,
         employeeCode: emp.corporateEmployee.employeeCode,
@@ -1020,9 +1021,10 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
         nicNo: emp.corporateEmployee.nicNo,
         tradeGroup: emp.tradeGroup?.name || 'General labour',
         tradeGroupId: emp.tradeGroup?.id,
-        businessPartner: emp.businessPartner?.name || 'Direct',
-        businessPartnerId: emp.businessPartner?.id,
-        businessPartnerCode: emp.businessPartner?.code,
+        employeeType: emp.corporateEmployee.employeeType || (emp.businessPartnerId ? 'external' : 'internal'),
+        businessPartner: isInternal ? 'Direct' : (emp.businessPartner?.name || 'Direct'),
+        businessPartnerId: isInternal ? null : (emp.businessPartner?.id || null),
+        businessPartnerCode: isInternal ? null : (emp.businessPartner?.code || null),
         isOperator: Boolean(emp.isOperator || emp.corporateEmployee.isOperator),
         isClaimed: Boolean(otherClaim),
         claimedBySupervisor: otherClaim?.supervisorName,
@@ -1110,11 +1112,11 @@ export const batchEnrollEmployees = async (req: Request, res: Response): Promise
           continue;
         }
 
-        const bpCodeOrName = item.businessPartnerCode || item.businessPartnerName || item.businessPartner || '';
-        const resolvedBpId =
-          corpEmp.corporateBusinessPartnerId ||
-          (bpCodeOrName ? bpMap.get(bpCodeOrName.toLowerCase().trim()) : null) ||
-          null;
+        const isInternal = corpEmp.employeeType === 'internal' || item.employeeType === 'internal';
+        const bpCodeOrName = isInternal ? '' : (item.businessPartnerCode || item.businessPartnerName || item.businessPartner || '');
+        const resolvedBpId = isInternal
+          ? null
+          : (corpEmp.corporateBusinessPartnerId || (bpCodeOrName ? bpMap.get(bpCodeOrName.toLowerCase().trim()) : null) || null);
 
         const tgNameOrCode = item.tradeGroup || item.trade || '';
         const resolvedTgId =

@@ -127,24 +127,30 @@ export default function EmployeesPage() {
   const handleBatchImport = async (items: CorporateEmployee[]) => {
     try {
       const payload = items.map((item) => {
-        const partnerCodeOrName = item.businessPartnerCode || item.businessPartnerName || item.businessPartner || 'BP1002885';
-        const matchedPartner = registeredPartners.find(
-          (p) =>
-            p.code.toLowerCase() === partnerCodeOrName.toLowerCase() ||
-            p.name.toLowerCase() === partnerCodeOrName.toLowerCase()
-        );
+        const isInternal = item.employeeType === 'internal';
+        const partnerCodeOrName = isInternal
+          ? ''
+          : (item.businessPartnerCode || item.businessPartnerName || item.businessPartner || '');
+        const matchedPartner = partnerCodeOrName
+          ? registeredPartners.find(
+              (p) =>
+                p.code.toLowerCase() === partnerCodeOrName.toLowerCase() ||
+                p.name.toLowerCase() === partnerCodeOrName.toLowerCase()
+            )
+          : null;
         return {
           employeeCode: item.employeeCode,
           callingName: item.callingName,
           fullName: item.fullName,
           businessPartnerId: matchedPartner?.id || '',
-          businessPartner: partnerCodeOrName,
+          businessPartner: isInternal ? '' : partnerCodeOrName,
           tradeGroup: item.tradeGroup,
           nicNo: item.nicNo,
           dailyRate: item.dailyRate ?? 0,
           epfNo: item.epfNo,
           isOperator: item.isOperator,
           licenseNo: item.licenseNo,
+          employeeType: item.employeeType || (matchedPartner ? 'external' : 'internal'),
         };
       });
 

@@ -68,12 +68,30 @@ export function SiteLaborPoolModal({
     return Array.from(trades).sort();
   }, [poolWorkers]);
 
+  // Helper to determine if worker is Subcontractor vs Direct
+  const isWorkerSubcon = (worker: any) => {
+    if (worker.employeeType === 'internal') return false;
+    if (worker.employeeType === 'external') return true;
+    const bp = (worker.businessPartner || '').trim().toLowerCase();
+    return Boolean(bp && bp !== 'direct' && bp !== 'internal' && bp !== 'none' && bp !== '-');
+  };
+
+  const { directCount, subconCount } = useMemo(() => {
+    let direct = 0;
+    let subcon = 0;
+    poolWorkers.forEach((w) => {
+      if (isWorkerSubcon(w)) subcon++;
+      else direct++;
+    });
+    return { directCount: direct, subconCount: subcon };
+  }, [poolWorkers]);
+
   // Filtered pool workers
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return poolWorkers.filter((worker) => {
       // Affiliation filter
-      const isSubcon = worker.businessPartner && worker.businessPartner !== 'Direct';
+      const isSubcon = isWorkerSubcon(worker);
       if (affiliationFilter === 'direct' && isSubcon) return false;
       if (affiliationFilter === 'subcontractor' && !isSubcon) return false;
 
@@ -248,7 +266,7 @@ export function SiteLaborPoolModal({
               }`}
             >
               <Building2 size={12} />
-              <span>Direct Maga</span>
+              <span>Direct Maga ({directCount})</span>
             </button>
             <button
               type="button"
@@ -260,7 +278,7 @@ export function SiteLaborPoolModal({
               }`}
             >
               <Briefcase size={12} />
-              <span>Subcontractors</span>
+              <span>Subcontractors ({subconCount})</span>
             </button>
           </div>
 
