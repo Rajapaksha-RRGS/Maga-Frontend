@@ -19,6 +19,7 @@ import type {
   EquipmentRunningChartResponse,
   EquipmentSummaryResponse,
   EquipmentErpUploadResponse,
+  OperatorErpUploadResponse,
 } from '../services/reportService';
 import * as svc from '../services/reportService';
 import { cacheManager } from '../../../utils/cacheManager';
@@ -62,6 +63,7 @@ export function useReports() {
   const [equipmentRunningChartData, setEquipmentRunningChartData] = useState<EquipmentRunningChartResponse | null>(null);
   const [equipmentSummaryData, setEquipmentSummaryData] = useState<EquipmentSummaryResponse | null>(null);
   const [equipmentErpData, setEquipmentErpData] = useState<EquipmentErpUploadResponse | null>(null);
+  const [operatorErpData, setOperatorErpData] = useState<OperatorErpUploadResponse | null>(null);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -86,6 +88,7 @@ export function useReports() {
     cacheManager.invalidate('reports:last-equipment-running-chart');
     cacheManager.invalidate('reports:last-equipment-summary');
     cacheManager.invalidate('reports:last-equipment-erp');
+    cacheManager.invalidate('reports:last-operator-erp');
     // Load filter dropdown options (these are stable reference data — OK to cache)
     svc.getBusinessPartnerOptions().then(setBusinessPartners);
     svc.getActivityCodeOptions().then(setActivityCodes);
@@ -124,10 +127,11 @@ export function useReports() {
       (tab === 'running-chart' && !!runningChartData && runningChartData.items.length > 0) ||
       (tab === 'equipment-running-chart' && !!equipmentRunningChartData && equipmentRunningChartData.items.length > 0) ||
       (tab === 'equipment-summary' && !!equipmentSummaryData && equipmentSummaryData.rows.length > 0) ||
-      (tab === 'equipment-erp-upload' && !!equipmentErpData && equipmentErpData.rows.length > 0)
+      (tab === 'equipment-erp-upload' && !!equipmentErpData && equipmentErpData.rows.length > 0) ||
+      (tab === 'operator-erp-upload' && !!operatorErpData && operatorErpData.rows.length > 0)
     );
     setHasQueried(hasResult);
-  }, [summaryData, dayOtData, bpBillData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData]);
+  }, [summaryData, dayOtData, bpBillData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData, operatorErpData]);
 
   // Execute report query for the active tab
   const runQuery = useCallback(async () => {
@@ -169,6 +173,10 @@ export function useReports() {
         const res = await svc.getEquipmentErpUploadReport(filters);
         setEquipmentErpData(res);
         cacheManager.set('reports:last-equipment-erp', res);
+      } else if (activeTab === 'operator-erp-upload') {
+        const res = await svc.getOperatorErpUploadReport(filters);
+        setOperatorErpData(res);
+        cacheManager.set('reports:last-operator-erp', res);
       }
     } catch (err) {
       console.error('Failed to run report query:', err);
@@ -219,8 +227,9 @@ export function useReports() {
     if (activeTab === 'equipment-running-chart') return !!equipmentRunningChartData && equipmentRunningChartData.items.length > 0;
     if (activeTab === 'equipment-summary') return !!equipmentSummaryData && equipmentSummaryData.rows.length > 0;
     if (activeTab === 'equipment-erp-upload') return !!equipmentErpData && equipmentErpData.rows.length > 0;
+    if (activeTab === 'operator-erp-upload') return !!operatorErpData && operatorErpData.rows.length > 0;
     return false;
-  }, [activeTab, summaryData, dayOtData, bpBillData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData]);
+  }, [activeTab, summaryData, dayOtData, bpBillData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData, operatorErpData]);
 
   return {
     activeTab,
@@ -246,5 +255,6 @@ export function useReports() {
     equipmentRunningChartData,
     equipmentSummaryData,
     equipmentErpData,
+    operatorErpData,
   };
 }

@@ -25,12 +25,16 @@ router.post('/employees/:id/approve', corporateController_1.approveCorporateEmpl
 router.post('/employees/:id/reject', corporateController_1.rejectCorporateEmployee);
 router.get('/employees', corporateController_1.getCorporateEmployees);
 router.post('/employees', corporateController_1.createCorporateEmployee);
+router.put('/employees/:id', corporateController_1.updateCorporateEmployee);
 router.post('/employees/batch', corporateController_1.batchCreateCorporateEmployees);
 router.post('/employees/bulk-import', corporateController_1.bulkImportCorporateEmployees);
 // Global Equipment
 router.get('/equipment', corporateController_1.getCorporateEquipment);
 router.post('/equipment', corporateController_1.createCorporateEquipment);
+router.put('/equipment/:id', corporateController_1.updateCorporateEquipment);
 router.post('/equipment/bulk-import', corporateController_1.bulkImportCorporateEquipment);
+router.get('/equipment/transfers', corporateController_1.getCorporateEquipmentTransfers);
+router.post('/equipment/transfer', corporateController_1.createCorporateEquipmentTransfer);
 // Global Trade Groups
 router.get('/trade-groups', corporateController_1.getCorporateTradeGroups);
 router.post('/trade-groups', corporateController_1.createCorporateTradeGroup);

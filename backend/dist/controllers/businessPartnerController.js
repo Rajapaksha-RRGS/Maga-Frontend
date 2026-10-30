@@ -51,6 +51,33 @@ const getAllBusinessPartners = async (req, res) => {
                 { contactPerson: { contains: q, mode: 'insensitive' } },
             ];
         }
+        const currentProjectId = req.resolvedProjectId ||
+            req.resolvedTenantId ||
+            req.query.projectId ||
+            req.query.tenantId ||
+            req.headers['x-tenant-id'];
+        let siteWorkerCounts = {};
+        if (currentProjectId && currentProjectId !== 'superadmin' && currentProjectId !== 'GLOBAL') {
+            try {
+                const siteCounts = await prisma_1.default.mF_P_Employee.groupBy({
+                    by: ['businessPartnerId'],
+                    where: {
+                        projectId: currentProjectId,
+                        status: 'active',
+                        businessPartnerId: { not: null },
+                    },
+                    _count: { id: true },
+                });
+                siteCounts.forEach((sc) => {
+                    if (sc.businessPartnerId) {
+                        siteWorkerCounts[sc.businessPartnerId] = sc._count.id;
+                    }
+                });
+            }
+            catch (err) {
+                console.warn('Could not compute siteWorkerCounts:', err);
+            }
+        }
         const partners = await prisma_1.default.mF_G_BusinessPartner.findMany({
             where,
             select: partnerSelectOptimized,
@@ -60,6 +87,8 @@ const getAllBusinessPartners = async (req, res) => {
             ...p,
             employeeCount: p._count.employees,
             equipmentCount: p._count.equipment,
+            siteWorkerCount: siteWorkerCounts[p.id] || 0,
+            isActiveOnSite: Boolean(siteWorkerCounts[p.id] && siteWorkerCounts[p.id] > 0),
         }));
         res.json(formatted);
     }
@@ -270,9 +299,13 @@ const deleteBusinessPartner = async (req, res) => {
         const linkedEquipment = await prisma_1.default.mF_P_Equipment.count({
             where: { ownerPartnerId: id },
         });
-        if (linkedEmployees > 0 || linkedCorpEmployees > 0 || linkedEquipment > 0) {
+        const linkedCorpEquipment = await prisma_1.default.mF_G_Equipment.count({
+            where: { businessPartnerId: id },
+        });
+        const totalEq = linkedEquipment + linkedCorpEquipment;
+        if (linkedEmployees > 0 || linkedCorpEmployees > 0 || totalEq > 0) {
             res.status(400).json({
-                error: `Cannot delete: ${linkedEmployees + linkedCorpEmployees} employee(s) and ${linkedEquipment} equipment unit(s) are assigned to this Business Partner.`,
+                error: `Cannot delete: ${linkedEmployees + linkedCorpEmployees} employee(s) and ${totalEq} equipment unit(s) are assigned to this Business Partner.`,
             });
             return;
         }

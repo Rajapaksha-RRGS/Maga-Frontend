@@ -17,6 +17,7 @@ import type {
   EquipmentSummaryResponse,
   EquipmentErpUploadResponse,
   TimeCardResponse,
+  OperatorErpUploadResponse,
 } from './reportService';
 
 // ── Formatting Helpers ───────────────────────────────────────────────────────
@@ -207,6 +208,28 @@ async function downloadWorkbook(workbook: ExcelJS.Workbook, filename: string): P
   a.click();
   window.URL.revokeObjectURL(url);
   document.body.removeChild(a);
+}
+
+/** Trigger browser CSV file download with UTF-8 BOM */
+function downloadCsv(csvContent: string, filename: string): void {
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
+
+function escapeCsv(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return '';
+  const str = String(val);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
 }
 
 // ── 1. Export: Summary Report ────────────────────────────────────────────────
@@ -1814,3 +1837,169 @@ export async function exportTimeCardToExcel(
 }
 
 
+
+
+/**
+ * 9. Operator ERP Upload CSV Export (Comma-delimited format as requested by user)
+ * Columns: Employee,Date,Equipment,Condition,Unit,Hours,Overtime Hours,Remarks
+ */
+export function exportOperatorErpToCsv(
+  data: OperatorErpUploadResponse,
+  filename?: string
+): void {
+  const headers = ['Employee', 'Date', 'Equipment', 'Condition', 'Unit', 'Hours', 'Overtime Hours', 'Remarks'];
+  const lines: string[] = [headers.join(',')];
+
+  data.rows.forEach((r) => {
+    lines.push([
+      escapeCsv(r.employee),
+      escapeCsv(r.date),
+      escapeCsv(r.equipment),
+      escapeCsv(r.condition),
+      escapeCsv(r.unit),
+      escapeCsv(r.hours),
+      escapeCsv(r.overtimeHours),
+      escapeCsv(r.remarks),
+    ].join(','));
+  });
+
+  const csvContent = lines.join('\r\n');
+  const d = new Date().toISOString().slice(0, 10);
+  const exportFilename = filename || `Operator_ERP_Upload_${d}.csv`;
+  downloadCsv(csvContent, exportFilename);
+}
+
+/**
+ * 10. Operator ERP Upload Excel Export (Pixel-perfect matching user's template screenshot)
+ * Columns: Employee | Date | Equipment | Condition | Unit | Hours | Overtime Hours | Remarks
+ */
+export async function exportOperatorErpToExcel(
+  data: OperatorErpUploadResponse,
+  filename?: string
+): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Labour & Operator Entry System';
+  const ws = wb.addWorksheet('Upload Details');
+
+  // Dotted border style matching construction Excel sheet
+  const DOTTED_BORDER: Partial<ExcelJS.Borders> = {
+    top: { style: 'dotted', color: { argb: 'FF94A3B8' } },
+    left: { style: 'dotted', color: { argb: 'FF94A3B8' } },
+    bottom: { style: 'dotted', color: { argb: 'FF94A3B8' } },
+    right: { style: 'dotted', color: { argb: 'FF94A3B8' } },
+  };
+
+  // Row 2: 'Upload Details' Purple Banner (matching exact template header)
+  ws.mergeCells('A2:H2');
+  const bannerCell = ws.getCell('A2');
+  bannerCell.value = 'Upload Details';
+  bannerCell.font = { name: 'Calibri', size: 11, bold: true, italic: true, color: { argb: 'FF6B21A8' } };
+  bannerCell.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFF3E8FF' }, // Soft Purple
+  };
+  bannerCell.alignment = { vertical: 'middle', horizontal: 'center' };
+  bannerCell.border = {
+    top: { style: 'thin', color: { argb: 'FFC084FC' } },
+    bottom: { style: 'thin', color: { argb: 'FFC084FC' } },
+    left: { style: 'thin', color: { argb: 'FFC084FC' } },
+    right: { style: 'thin', color: { argb: 'FFC084FC' } },
+  };
+  ws.getRow(2).height = 26;
+
+  // Row 4: Column Headers
+  const headers = [
+    'Employee',
+    'Date',
+    'Equipment',
+    'Condition',
+    'Unit',
+    'Hours',
+    'Overtime Hours',
+    'Remarks',
+  ];
+
+  const headerRow = ws.getRow(4);
+  headerRow.values = headers;
+  headerRow.height = 24;
+
+  headerRow.eachCell((cell) => {
+    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF6B21A8' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF5F3FF' }, // Soft lavender
+    };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    cell.border = DOTTED_BORDER;
+  });
+
+  // Freeze panes below Row 4
+  ws.views = [{ state: 'frozen', ySplit: 4 }];
+
+  // Column Widths (8 columns matching template)
+  ws.columns = [
+    { width: 14 }, // Employee
+    { width: 14 }, // Date
+    { width: 16 }, // Equipment
+    { width: 12 }, // Condition
+    { width: 10 }, // Unit
+    { width: 12 }, // Hours
+    { width: 16 }, // Overtime Hours
+    { width: 18 }, // Remarks
+  ];
+
+  let currentRow = 5;
+  data.rows.forEach((r) => {
+    const row = ws.getRow(currentRow);
+    const isOt = r.isOtRow || r.equipment.toUpperCase() === 'OT';
+
+    row.values = [
+      r.employee,
+      r.date,
+      r.equipment,
+      r.condition,
+      r.unit,
+      r.hours ? parseFloat(r.hours) : '',
+      r.overtimeHours ? parseFloat(r.overtimeHours) : '',
+      r.remarks || '',
+    ];
+
+    row.height = 20;
+
+    row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(3).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(5).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(6).alignment = { horizontal: 'right', vertical: 'middle' };
+    if (r.hours) row.getCell(6).numFmt = '#,##0.00';
+    row.getCell(7).alignment = { horizontal: 'right', vertical: 'middle' };
+    if (r.overtimeHours) row.getCell(7).numFmt = '#,##0.00';
+    row.getCell(8).alignment = { horizontal: 'left', vertical: 'middle' };
+
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.border = DOTTED_BORDER;
+      cell.font = {
+        name: 'Calibri',
+        size: 10,
+        bold: isOt,
+        color: isOt ? { argb: 'FF92400E' } : { argb: 'FF1E293B' },
+      };
+      if (isOt) {
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFFFFBEB' }, // Warm subtle amber for OT row
+        };
+      }
+    });
+
+    currentRow++;
+  });
+
+  const d = new Date().toISOString().slice(0, 10);
+  const exportFilename = filename || `Operator_ERP_Upload_${d}.xlsx`;
+  await downloadWorkbook(wb, exportFilename);
+}

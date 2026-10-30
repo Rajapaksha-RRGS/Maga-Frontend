@@ -41,7 +41,8 @@ export type ReportType =
   | 'time-card' 
   | 'equipment-running-chart' 
   | 'equipment-summary' 
-  | 'equipment-erp-upload';
+  | 'equipment-erp-upload'
+  | 'operator-erp-upload';
 
 export type ReportCategory = 'labor' | 'operator' | 'equipment';
 
@@ -488,6 +489,8 @@ import {
   exportBpBillToExcel,
   exportErpUploadToExcel,
   exportRunningChartToExcel,
+  exportOperatorErpToExcel,
+  exportOperatorErpToCsv,
   exportEquipmentErpToExcel,
   exportEquipmentSummaryToExcel,
   exportTimeCardToExcel,
@@ -528,6 +531,9 @@ export async function exportReport(
   } else if (type === 'time-card') {
     const data = await getTimeCardReport(filters);
     await exportTimeCardToExcel(data, tenant, preparedBy);
+  } else if (type === 'operator-erp-upload') {
+    const data = await getOperatorErpUploadReport(filters);
+    await exportOperatorErpToExcel(data);
   }
 }
 
@@ -763,11 +769,69 @@ export async function getEquipmentErpUploadReport(
   };
 }
 
+
+export interface OperatorErpUploadRow {
+  id: string;
+  employee: string;
+  employeeName: string;
+  date: string;
+  equipment: string;
+  condition: string;
+  unit: string;
+  hours: string;
+  overtimeHours: string;
+  remarks: string;
+  isOtRow?: boolean;
+}
+
+export interface OperatorErpUploadResponse {
+  dateFrom?: string;
+  dateTo?: string;
+  month?: string;
+  totalRows: number;
+  totalHours: number;
+  totalOtHours: number;
+  rows: OperatorErpUploadRow[];
+}
+
+export async function getOperatorErpUploadReport(
+  filters: ReportFilters
+): Promise<OperatorErpUploadResponse> {
+  const p = new URLSearchParams();
+  const currentTenant = getCurrentTenantId();
+  if (currentTenant) p.set('tenantId', currentTenant);
+  if (filters.dateFrom) p.set('dateFrom', filters.dateFrom);
+  if (filters.dateTo) p.set('dateTo', filters.dateTo);
+  if (filters.month) p.set('month', filters.month);
+  if (filters.employeeQuery) p.set('employeeQuery', filters.employeeQuery);
+  if (filters.businessPartner) p.set('businessPartner', filters.businessPartner);
+  if (filters.equipmentQuery) p.set('equipmentQuery', filters.equipmentQuery);
+  if (filters.condition) p.set('condition', filters.condition);
+
+  try {
+    const r = await apiFetch(`${API_URL}/reports/operator-erp-upload?${p.toString()}`);
+    if (r.ok) {
+      return await r.json();
+    }
+  } catch (err) {
+    console.warn('Failed to fetch operator ERP upload, falling back:', err);
+  }
+
+  return {
+    totalRows: 0,
+    totalHours: 0,
+    totalOtHours: 0,
+    rows: [],
+  };
+}
+
 export {
   exportSummaryToExcel,
   exportDayOtSummaryToExcel,
   exportBpBillToExcel,
   exportErpUploadToExcel,
   exportRunningChartToExcel,
+  exportOperatorErpToExcel,
+  exportOperatorErpToCsv,
 };
 

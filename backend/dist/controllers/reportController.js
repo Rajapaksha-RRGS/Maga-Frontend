@@ -3,18 +3,42 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getEquipmentErpUploadReport = exports.getEquipmentSummaryReport = exports.getEquipmentRunningChartReport = exports.getReportsHubStats = exports.getTimeCardReport = exports.getRunningChartReport = exports.getReportFilterOptions = exports.getErpUploadReport = exports.getBpBillReport = exports.getDayOtSummaryReport = exports.getSummaryReport = void 0;
+exports.getOperatorErpUploadReport = exports.getEquipmentErpUploadReport = exports.getEquipmentSummaryReport = exports.getEquipmentRunningChartReport = exports.getReportsHubStats = exports.getTimeCardReport = exports.getRunningChartReport = exports.getReportFilterOptions = exports.getErpUploadReport = exports.getBpBillReport = exports.getDayOtSummaryReport = exports.getSummaryReport = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const tenantHelper_1 = require("../utils/tenantHelper");
 // ─── Helper: parse query param safely ─────────────────────────────────────────
 const qStr = (v) => typeof v === 'string' && v.trim() ? v.trim() : undefined;
 // ─── Helper: resolve project ID from query / tenantId fallback ────────────────
 async function resolveProjectId(req) {
-    return (req.resolvedProjectId ||
+    const candidate = req.resolvedProjectId ||
         req.resolvedTenantId ||
         qStr(req.query.projectId) ||
-        qStr(req.query.tenantId) ||
-        (await (0, tenantHelper_1.getDefaultProjectId)()));
+        qStr(req.query.tenantId);
+    if (candidate) {
+        const proj = await prisma_1.default.mF_P_Project.findFirst({
+            where: {
+                OR: [
+                    { id: candidate },
+                    { subdomain: { equals: candidate, mode: "insensitive" } },
+                    { projectCode: { equals: candidate, mode: "insensitive" } },
+                    { projectCode: { equals: `PRJ${candidate}`, mode: "insensitive" } },
+                ],
+            },
+            select: { id: true },
+        });
+        if (proj)
+            return proj.id;
+    }
+    const activeWithEntries = await prisma_1.default.mF_P_Project.findFirst({
+        where: {
+            status: "active",
+            timeEntries: { some: {} },
+        },
+        select: { id: true },
+    });
+    if (activeWithEntries)
+        return activeWithEntries.id;
+    return await (0, tenantHelper_1.getDefaultProjectId)();
 }
 // ─── Helper: build date filter for Prisma ─────────────────────────────────────
 function buildDateFilter(dateFrom, dateTo) {
@@ -1582,7 +1606,11 @@ const getEquipmentRunningChartReport = async (req, res) => {
                         meterUnit: true,
                     },
                 },
-                dailyLog: true,
+                dailyLog: {
+                    include: {
+                        activities: true,
+                    },
+                },
             },
             orderBy: [{ dailySheet: { date: 'desc' } }],
         });
@@ -1592,10 +1620,14 @@ const getEquipmentRunningChartReport = async (req, res) => {
         let totalNetHours = 0;
         const items = assignments.map((a) => {
             const log = a.dailyLog;
-            const workingH = Number(log?.workingHours) || 0;
+            let actSum = 0;
+            if (Array.isArray(log?.activities) && log.activities.length > 0) {
+                actSum = log.activities.reduce((s, act) => s + (Number(act.utilization) || 0), 0);
+            }
+            const workingH = Number(log?.workingHours) || actSum || Number(log?.totalUtilization) || 0;
             const idleH = Number(log?.idleHours) || 0;
             const breakdownH = Number(log?.breakdownHours) || 0;
-            const netH = Number(log?.netRunningHours) || (workingH + idleH);
+            const netH = Number(log?.netRunningHours) || (workingH + idleH) || actSum || Number(log?.totalUtilization) || 0;
             const fuel = Number(log?.fuelLiters) || 0;
             totalWorkingHours += workingH;
             totalIdleHours += idleH;
@@ -1722,7 +1754,15 @@ const getEquipmentSummaryReport = async (req, res) => {
             let totalUtilization = 0;
             let totalMileage = 0;
             const totalRunningHours = logs.reduce((sum, l) => {
-                const net = Number(l?.netRunningHours) || (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0);
+                let actSum = 0;
+                if (Array.isArray(l?.activities) && l.activities.length > 0) {
+                    actSum = l.activities.reduce((s, a) => s + (Number(a.utilization) || 0), 0);
+                }
+                const net = Number(l?.netRunningHours) ||
+                    (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0) ||
+                    actSum ||
+                    Number(l?.totalUtilization) ||
+                    0;
                 return sum + net;
             }, 0);
             if (primaryUnit === 'mth') {
@@ -1739,7 +1779,11 @@ const getEquipmentSummaryReport = async (req, res) => {
                     }
                     return sum + dayVal;
                 }, 0);
-                totalUtilization = totalDays;
+                // Minimum threshold for monthly rate: if days logged > 0 in a monthly scope, count as 1.00 mth
+                const MIN_DAYS_FOR_MONTH_RATE = 0;
+                totalUtilization = (month || (from && to && from !== to))
+                    ? (totalDays > MIN_DAYS_FOR_MONTH_RATE ? 1.0 : 0)
+                    : totalDays;
             }
             else if (primaryUnit === 'day' || primaryUnit === 'days') {
                 const totalDays = logs.reduce((sum, l) => {
@@ -1752,7 +1796,11 @@ const getEquipmentSummaryReport = async (req, res) => {
                     }
                     return sum + dayVal;
                 }, 0);
-                totalUtilization = totalDays;
+                // Minimum threshold for monthly rate: if days logged > 0 in a monthly scope, count as 1.00 mth
+                const MIN_DAYS_FOR_MONTH_RATE = 0;
+                totalUtilization = (month || (from && to && from !== to))
+                    ? (totalDays > MIN_DAYS_FOR_MONTH_RATE ? 1.0 : 0)
+                    : totalDays;
             }
             else if (primaryUnit === 'km') {
                 totalMileage = logs.reduce((sum, l) => sum + (Number(l?.totalMileage) || 0), 0);
@@ -1941,10 +1989,11 @@ const getEquipmentErpUploadReport = async (req, res) => {
             if (totalAggregated <= 0)
                 return; // Exclude zero utilization
             if (primaryUnit === 'mth') {
-                const standardDays = 26;
-                const totalMonthFraction = totalAggregated >= 25
-                    ? 1.0
-                    : Math.min(1.0, Number((totalAggregated / standardDays).toFixed(2)));
+                // Option A: Threshold check (> 0 days => 1.00 mth), split proportionally by activity days
+                const MIN_DAYS_FOR_MONTH_RATE = 0;
+                const totalMonthFraction = totalAggregated > MIN_DAYS_FOR_MONTH_RATE ? 1.0 : 0.0;
+                if (totalMonthFraction <= 0)
+                    return;
                 const entries = Array.from(activityMap.entries());
                 let allocatedSum = 0;
                 entries.forEach(([actKey, qty], index) => {
@@ -1995,3 +2044,313 @@ const getEquipmentErpUploadReport = async (req, res) => {
     }
 };
 exports.getEquipmentErpUploadReport = getEquipmentErpUploadReport;
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. OPERATOR ERP UPLOAD EXPORT (Matches Maga SAP/ERP Operator Upload Spec)
+// GET /api/reports/operator-erp-upload?month=&dateFrom=&dateTo=&businessPartner=&employeeQuery=&tenantId=
+// ─────────────────────────────────────────────────────────────────────────────
+const getOperatorErpUploadReport = async (req, res) => {
+    try {
+        const projectId = await resolveProjectId(req);
+        const dateFrom = qStr(req.query.dateFrom);
+        const dateTo = qStr(req.query.dateTo);
+        const month = qStr(req.query.month);
+        const businessPartner = qStr(req.query.businessPartner);
+        const employeeQuery = qStr(req.query.employeeQuery);
+        let from = dateFrom;
+        let to = dateTo;
+        if (month && (!from || !to)) {
+            const [y, m] = month.split('-');
+            const lastDay = new Date(parseInt(y, 10), parseInt(m, 10), 0).getDate();
+            from = `${month}-01`;
+            to = `${month}-${String(lastDay).padStart(2, '0')}`;
+        }
+        const dateFilter = buildDateFilter(from, to);
+        // 1. Fetch all Operator Time Entries (which contain granular machine splits)
+        const operatorTimeEntries = await prisma_1.default.mF_OP_TimeEntry.findMany({
+            where: {
+                projectId,
+                status: 'approved',
+                employee: {
+                    isOperator: true,
+                    ...(businessPartner
+                        ? { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } }
+                        : {}),
+                    ...(employeeQuery
+                        ? {
+                            OR: [
+                                { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+                                { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
+                                { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
+                            ],
+                        }
+                        : {}),
+                },
+                ...(dateFilter ? { date: dateFilter } : {}),
+            },
+            include: {
+                employee: {
+                    include: {
+                        corporateEmployee: true,
+                        businessPartner: true,
+                    },
+                },
+                equipment: {
+                    include: {
+                        corporateEquipment: true,
+                    },
+                },
+            },
+            orderBy: [{ date: 'asc' }, { employee: { callingName: 'asc' } }],
+        });
+        // 2. Also fetch Daily Equipment Assignments in range (for machines assigned to operators)
+        const opAssignments = await prisma_1.default.mF_OP_DailyEquipmentAssignment.findMany({
+            where: {
+                dailySheet: {
+                    projectId,
+                    status: 'approved',
+                    ...(dateFilter ? { date: dateFilter } : {}),
+                },
+                operator: {
+                    isOperator: true,
+                    ...(businessPartner
+                        ? { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } }
+                        : {}),
+                    ...(employeeQuery
+                        ? {
+                            OR: [
+                                { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+                                { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
+                                { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
+                            ],
+                        }
+                        : {}),
+                },
+            },
+            include: {
+                dailySheet: { select: { date: true } },
+                operator: {
+                    include: {
+                        corporateEmployee: true,
+                        businessPartner: true,
+                    },
+                },
+                equipment: {
+                    include: {
+                        corporateEquipment: true,
+                    },
+                },
+                dailyLog: true,
+            },
+            orderBy: { dailySheet: { date: 'asc' } },
+        });
+        const opDayMap = new Map();
+        const getOrCreateOpDay = (op, dObj) => {
+            const dStr = dObj.toISOString().slice(0, 10);
+            const [y, m, d] = dStr.split('-');
+            const dateFormatted = `${d}-${m}-${y}`; // DD-MM-YYYY format
+            const key = `${op.id}___${dStr}`;
+            if (!opDayMap.has(key)) {
+                opDayMap.set(key, {
+                    operatorId: op.id,
+                    employeeCode: op.corporateEmployee?.employeeCode || op.callingName || 'OPERATOR',
+                    callingName: op.callingName || op.corporateEmployee?.fullName || '',
+                    fullName: op.corporateEmployee?.fullName || op.callingName || '',
+                    dateFormatted,
+                    overtimeHours: 0,
+                    machines: new Map(),
+                });
+            }
+            return opDayMap.get(key);
+        };
+        // Pre-fetch equipment in project to resolve split equipment IDs and codes
+        const allProjectEquipment = await prisma_1.default.mF_P_Equipment.findMany({
+            where: { projectId },
+            include: { corporateEquipment: true },
+        });
+        const eqMap = new Map();
+        for (const eq of allProjectEquipment) {
+            eqMap.set(eq.id, eq);
+            const code = eq.corporateEquipment?.standardEquipmentNumber || eq.corporateEquipment?.vehicleNo;
+            if (code)
+                eqMap.set(code, eq);
+        }
+        // Helper to parse multi-machine splits from remarks (e.g. "Splits: 241e...: 8h, 4006...: 5h")
+        const parseSplitsFromRemarks = (remarks) => {
+            if (!remarks)
+                return [];
+            const match = remarks.match(/Splits:\s*([^|]+)/i);
+            if (!match)
+                return [];
+            const splitsStr = match[1].trim();
+            const items = splitsStr.split(",");
+            const result = [];
+            for (const item of items) {
+                const parts = item.trim().split(":");
+                if (parts.length === 2) {
+                    const ref = parts[0].trim();
+                    const hrsStr = parts[1].replace(/[^0-9.]/g, "").trim();
+                    const hrs = parseFloat(hrsStr);
+                    if (ref && !isNaN(hrs) && hrs > 0) {
+                        result.push({ equipmentRef: ref, hours: hrs });
+                    }
+                }
+            }
+            return result;
+        };
+        // Populate from Time Entries
+        for (const te of operatorTimeEntries) {
+            if (!te.employee)
+                continue;
+            const dayData = getOrCreateOpDay(te.employee, te.date);
+            const otH = Number(te.overtimeHours) || 0;
+            if (otH > dayData.overtimeHours) {
+                dayData.overtimeHours = otH;
+            }
+            // Check if this entry contains multi-machine splits in remarks
+            const parsedSplits = parseSplitsFromRemarks(te.remarks);
+            if (parsedSplits.length > 0) {
+                for (const split of parsedSplits) {
+                    const eq = eqMap.get(split.equipmentRef) || (te.equipmentId === split.equipmentRef ? te.equipment : undefined);
+                    const eqCode = eq?.corporateEquipment?.standardEquipmentNumber || eq?.corporateEquipment?.vehicleNo || split.equipmentRef;
+                    const cond = (eq?.condition || te.equipment?.condition || "DRY").toUpperCase();
+                    const unit = (eq?.meterUnitCode || eq?.corporateEquipment?.unit || te.equipment?.meterUnitCode || "hrs").toLowerCase();
+                    const h = split.hours;
+                    if (dayData.machines.has(eqCode)) {
+                        dayData.machines.get(eqCode).hours = Math.max(dayData.machines.get(eqCode).hours, h);
+                    }
+                    else {
+                        dayData.machines.set(eqCode, {
+                            equipmentCode: eqCode,
+                            condition: cond,
+                            unit,
+                            hours: h,
+                            remarks: "",
+                        });
+                    }
+                }
+            }
+            else if (te.equipment) {
+                const eqCode = te.equipment.corporateEquipment?.standardEquipmentNumber || te.equipment.corporateEquipment?.vehicleNo || "EQUIP";
+                const cond = (te.equipment.condition || "DRY").toUpperCase();
+                const unit = (te.equipment.meterUnitCode || te.equipment.corporateEquipment?.unit || "hrs").toLowerCase();
+                const h = Number(te.hours) || 0;
+                if (dayData.machines.has(eqCode)) {
+                    dayData.machines.get(eqCode).hours += h;
+                }
+                else {
+                    dayData.machines.set(eqCode, {
+                        equipmentCode: eqCode,
+                        condition: cond,
+                        unit,
+                        hours: h,
+                        remarks: te.remarks || "",
+                    });
+                }
+            }
+        }
+        // Complement from Daily Equipment Assignments
+        for (const oa of opAssignments) {
+            if (!oa.operator || !oa.equipment)
+                continue;
+            const dayData = getOrCreateOpDay(oa.operator, oa.dailySheet.date);
+            const parsedSplits = parseSplitsFromRemarks(oa.dailyLog?.remarks);
+            if (parsedSplits.length > 0) {
+                for (const split of parsedSplits) {
+                    const eq = eqMap.get(split.equipmentRef) || (oa.equipmentId === split.equipmentRef ? oa.equipment : undefined);
+                    const eqCode = eq?.corporateEquipment?.standardEquipmentNumber || eq?.corporateEquipment?.vehicleNo || split.equipmentRef;
+                    const cond = (eq?.condition || oa.equipment.condition || "DRY").toUpperCase();
+                    const unit = (eq?.meterUnitCode || eq?.corporateEquipment?.unit || oa.equipment.meterUnitCode || "hrs").toLowerCase();
+                    const h = split.hours;
+                    if (dayData.machines.has(eqCode)) {
+                        dayData.machines.get(eqCode).hours = Math.max(dayData.machines.get(eqCode).hours, h);
+                    }
+                    else {
+                        dayData.machines.set(eqCode, {
+                            equipmentCode: eqCode,
+                            condition: cond,
+                            unit,
+                            hours: h,
+                            remarks: "",
+                        });
+                    }
+                }
+            }
+            else {
+                const eqCode = oa.equipment.corporateEquipment?.standardEquipmentNumber || oa.equipment.corporateEquipment?.vehicleNo || "EQUIP";
+                if (!dayData.machines.has(eqCode)) {
+                    const cond = (oa.equipment.condition || "DRY").toUpperCase();
+                    const unit = (oa.equipment.meterUnitCode || oa.equipment.corporateEquipment?.unit || "hrs").toLowerCase();
+                    const h = Number(oa.dailyLog?.workingHours || oa.dailyLog?.netRunningHours || 0);
+                    if (h > 0) {
+                        dayData.machines.set(eqCode, {
+                            equipmentCode: eqCode,
+                            condition: cond,
+                            unit,
+                            hours: h,
+                            remarks: oa.dailyLog?.remarks || "",
+                        });
+                    }
+                }
+            }
+        }
+        // Build flat ERP rows exactly matching Maga SAP format
+        const rows = [];
+        let totalRegularHours = 0;
+        let totalOtHours = 0;
+        let rowIdx = 0;
+        for (const dayData of opDayMap.values()) {
+            // 1. Regular Equipment Rows
+            for (const m of dayData.machines.values()) {
+                if (m.hours <= 0)
+                    continue;
+                totalRegularHours += m.hours;
+                rows.push({
+                    id: `op-erp-${rowIdx++}`,
+                    employee: dayData.employeeCode,
+                    employeeName: dayData.fullName,
+                    date: dayData.dateFormatted,
+                    equipment: m.equipmentCode,
+                    condition: m.condition,
+                    unit: m.unit,
+                    hours: m.hours.toFixed(2),
+                    overtimeHours: '',
+                    remarks: m.remarks,
+                    isOtRow: false,
+                });
+            }
+            // 2. Dedicated OT Row
+            if (dayData.overtimeHours > 0) {
+                totalOtHours += dayData.overtimeHours;
+                rows.push({
+                    id: `op-erp-ot-${rowIdx++}`,
+                    employee: dayData.employeeCode,
+                    employeeName: dayData.fullName,
+                    date: dayData.dateFormatted,
+                    equipment: 'OT',
+                    condition: '',
+                    unit: '',
+                    hours: '',
+                    overtimeHours: Number.isInteger(dayData.overtimeHours)
+                        ? String(dayData.overtimeHours)
+                        : dayData.overtimeHours.toFixed(2),
+                    remarks: '',
+                    isOtRow: true,
+                });
+            }
+        }
+        res.json({
+            dateFrom: from,
+            dateTo: to,
+            month,
+            totalRows: rows.length,
+            totalHours: Number(totalRegularHours.toFixed(2)),
+            totalOtHours: Number(totalOtHours.toFixed(2)),
+            rows,
+        });
+    }
+    catch (error) {
+        console.error('Error generating operator ERP upload report:', error);
+        res.status(500).json({ error: 'Failed to generate operator ERP upload report' });
+    }
+};
+exports.getOperatorErpUploadReport = getOperatorErpUploadReport;

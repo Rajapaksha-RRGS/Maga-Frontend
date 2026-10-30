@@ -120,6 +120,34 @@ async function resolveProjectActivityId(
     return cache.get(cacheKey)!;
   }
 
+  // 0. Dedicated resolution for ZIDLE (Idle Hours)
+  if (clean.toUpperCase() === 'ZIDLE') {
+    let idleAct = await prisma.mF_P_ActivityCode.findFirst({
+      where: { projectId, code: 'ZIDLE' },
+      select: { id: true },
+    });
+    if (!idleAct) {
+      let corpIdle = await prisma.mF_G_ActivityCode.findUnique({ where: { code: 'ZIDLE' } });
+      if (!corpIdle) {
+        corpIdle = await prisma.mF_G_ActivityCode.create({
+          data: { code: 'ZIDLE', description: 'Idle / Unallocated Hours', unit: 'hrs' },
+        });
+      }
+      idleAct = await prisma.mF_P_ActivityCode.create({
+        data: {
+          projectId,
+          code: 'ZIDLE',
+          description: 'Idle / Unallocated Hours',
+          unit: 'hrs',
+          corporateActivityCodeId: corpIdle.id,
+        },
+        select: { id: true },
+      });
+    }
+    if (cache) cache.set(cacheKey, idleAct.id);
+    return idleAct.id;
+  }
+
   // 1. Direct match by id in MF_P_ActivityCode for this project
   const directMatch = await prisma.mF_P_ActivityCode.findFirst({
     where: { id: clean, projectId },
@@ -1818,13 +1846,35 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
         validEquipmentId = eqExists ? eqExists.id : null;
       }
 
-      // 1. Upsert Equipment Assignment if equipment is valid
-      if (validEquipmentId) {
+      const rawSplits = Array.isArray(item.splits) && item.splits.length > 0
+        ? item.splits
+        : (Array.isArray(item.equipmentSplits) && item.equipmentSplits.length > 0 ? item.equipmentSplits : []);
+
+      // Validate all machine splits
+      const validSplits: Array<{ equipmentId: string; hours: number }> = [];
+      for (const s of rawSplits) {
+        if (!s.equipmentId || s.equipmentId === 'ZXQOPRIDLE') continue;
+        const eqExists = await prisma.mF_P_Equipment.findUnique({
+          where: { id: s.equipmentId },
+          select: { id: true },
+        });
+        if (eqExists && Number(s.hours) > 0) {
+          validSplits.push({ equipmentId: eqExists.id, hours: Number(s.hours) });
+        }
+      }
+
+      // If no valid splits passed but single assignedEquipmentId exists:
+      if (validSplits.length === 0 && validEquipmentId) {
+        validSplits.push({ equipmentId: validEquipmentId, hours: Number(item.hours || item.shiftHours || 0) });
+      }
+
+      // 1. Upsert Equipment Assignments & Logs for each machine
+      for (const split of validSplits) {
         const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
           where: {
             dailySheetId_equipmentId: {
               dailySheetId: dailySheet.id,
-              equipmentId: validEquipmentId,
+              equipmentId: split.equipmentId,
             },
           },
           update: {
@@ -1833,28 +1883,28 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           create: {
             dailySheetId: dailySheet.id,
             operatorId: opId,
-            equipmentId: validEquipmentId,
+            equipmentId: split.equipmentId,
           },
         });
 
-        if (item.notes || item.status) {
-          await prisma.mF_OP_EquipmentDailyLog.upsert({
-            where: { assignmentId: assignment.id },
-            update: {
-              remarks: item.notes || undefined,
-              status: item.status || undefined,
-            },
-            create: {
-              assignmentId: assignment.id,
-              remarks: item.notes || null,
-              status: item.status || 'draft',
-            },
-          });
-        }
+        await prisma.mF_OP_EquipmentDailyLog.upsert({
+          where: { assignmentId: assignment.id },
+          update: {
+            workingHours: split.hours,
+            remarks: item.notes || undefined,
+            status: item.status || undefined,
+          },
+          create: {
+            assignmentId: assignment.id,
+            workingHours: split.hours,
+            remarks: item.notes || null,
+            status: item.status || 'draft',
+          },
+        });
       }
 
       // 2. Upsert Operator Shift Time Entry with In/Out Times
-      if (item.inTime || item.outTime || item.shiftHours) {
+      if (item.inTime || item.outTime || item.shiftHours || validSplits.length > 0) {
         let shiftHoursVal: number = Number(item.shiftHours || 0);
         let overtimeHours: number = Number(item.otHours || item.overtimeHours || 0);
         let breakHours: number = 0;
@@ -1872,41 +1922,86 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           ? dailySheet.status
           : (item.status === 'done' ? 'draft' : (item.status || 'draft'));
 
-        const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
-          where: {
+        if (validSplits.length > 0) {
+          // Persist a time entry per machine split for granular ERP reporting
+          for (let sIdx = 0; sIdx < validSplits.length; sIdx++) {
+            const split = validSplits[sIdx];
+            const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
+              where: {
+                projectId,
+                employeeId: opId,
+                date: targetDate,
+                equipmentId: split.equipmentId,
+              },
+            });
+
+            const teData = {
+              projectId,
+              dailySheetId: dailySheet.id,
+              employeeId: opId,
+              date: targetDate,
+              activityId: defaultActivityId,
+              equipmentId: split.equipmentId,
+              effectiveDayTypeId,
+              inTime: item.inTime || null,
+              outTime: item.outTime || null,
+              shiftHours: shiftHoursVal,
+              hours: split.hours,
+              overtimeHours: sIdx === 0 ? overtimeHours : 0,
+              breakHours: sIdx === 0 ? breakHours : 0,
+              remarks: item.notes || null,
+              status: teStatus,
+            };
+
+            if (existingTe) {
+              await prisma.mF_OP_TimeEntry.update({
+                where: { id: existingTe.id },
+                data: teData,
+              });
+            } else {
+              await prisma.mF_OP_TimeEntry.create({
+                data: teData,
+              });
+            }
+          }
+        } else {
+          // No equipment (e.g. idle operator)
+          const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
+            where: {
+              projectId,
+              employeeId: opId,
+              date: targetDate,
+            },
+          });
+
+          const teData = {
             projectId,
+            dailySheetId: dailySheet.id,
             employeeId: opId,
             date: targetDate,
-          },
-        });
+            activityId: defaultActivityId,
+            equipmentId: null,
+            effectiveDayTypeId,
+            inTime: item.inTime || null,
+            outTime: item.outTime || null,
+            shiftHours: shiftHoursVal,
+            hours: regularHours,
+            overtimeHours,
+            breakHours,
+            remarks: item.notes || 'Exter. Equipment Operator Idle (ZXQOPRIDLE)',
+            status: teStatus,
+          };
 
-        const teData = {
-          projectId,
-          dailySheetId: dailySheet.id,
-          employeeId: opId,
-          date: targetDate,
-          activityId: defaultActivityId,
-          equipmentId: validEquipmentId,
-          effectiveDayTypeId,
-          inTime: item.inTime || null,
-          outTime: item.outTime || null,
-          shiftHours: shiftHoursVal,
-          hours: regularHours,
-          overtimeHours,
-          breakHours,
-          remarks: item.notes || null,
-          status: teStatus,
-        };
-
-        if (existingTe) {
-          await prisma.mF_OP_TimeEntry.update({
-            where: { id: existingTe.id },
-            data: teData,
-          });
-        } else {
-          await prisma.mF_OP_TimeEntry.create({
-            data: teData,
-          });
+          if (existingTe) {
+            await prisma.mF_OP_TimeEntry.update({
+              where: { id: existingTe.id },
+              data: teData,
+            });
+          } else {
+            await prisma.mF_OP_TimeEntry.create({
+              data: teData,
+            });
+          }
         }
       }
     }

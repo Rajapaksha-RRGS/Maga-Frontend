@@ -656,6 +656,13 @@ const getEquipmentAssignmentsForDate = async (req, res) => {
                         startMileage: Number(a.dailyLog.startMileage || 0),
                         endMileage: Number(a.dailyLog.endMileage || 0),
                         totalMileage: Number(a.dailyLog.totalMileage || 0),
+                        totalUtilization: Number(a.dailyLog.totalUtilization || 0),
+                        daysValue: (primaryUnit.toLowerCase() === 'day' || primaryUnit.toLowerCase() === 'days' || primaryUnit.toLowerCase() === 'mth')
+                            ? Number(a.dailyLog.totalUtilization || 0)
+                            : undefined,
+                        hoursValue: (primaryUnit.toLowerCase() === 'hrs' || primaryUnit.toLowerCase() === 'hr')
+                            ? Number(a.dailyLog.totalUtilization || a.dailyLog.workingHours || 0)
+                            : undefined,
                         remarks: a.dailyLog.remarks,
                         status: a.dailyLog.status,
                         activitySplits: a.dailyLog.activities.map((act) => ({

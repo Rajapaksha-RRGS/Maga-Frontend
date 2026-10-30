@@ -8,14 +8,29 @@ const multer_1 = __importDefault(require("multer"));
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const router = (0, express_1.Router)();
-// Ensure upload directory exists
-const uploadDir = path_1.default.join(__dirname, '../../uploads/documents');
-if (!fs_1.default.existsSync(uploadDir)) {
-    fs_1.default.mkdirSync(uploadDir, { recursive: true });
+// Ensure upload directory exists safely (works in both local and Vercel serverless /tmp)
+const uploadDir = process.env.VERCEL
+    ? path_1.default.join('/tmp', 'uploads', 'documents')
+    : path_1.default.join(__dirname, '../../uploads/documents');
+try {
+    if (!fs_1.default.existsSync(uploadDir)) {
+        fs_1.default.mkdirSync(uploadDir, { recursive: true });
+    }
+}
+catch (err) {
+    console.warn('Warning: Could not create upload directory:', err);
 }
 // Multer storage configuration
 const storage = multer_1.default.diskStorage({
     destination: (_req, _file, cb) => {
+        try {
+            if (!fs_1.default.existsSync(uploadDir)) {
+                fs_1.default.mkdirSync(uploadDir, { recursive: true });
+            }
+        }
+        catch {
+            // Ignore
+        }
         cb(null, uploadDir);
     },
     filename: (_req, file, cb) => {

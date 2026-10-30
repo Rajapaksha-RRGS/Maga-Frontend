@@ -19,7 +19,7 @@ const login = async (req, res) => {
         const cleanTenant = String(tenantId).trim();
         const cleanUsername = String(username).trim().toLowerCase();
         // Support SuperAdmin global login
-        if (cleanTenant.toLowerCase() === 'superadmin' || cleanTenant.toLowerCase() === 'system') {
+        if (cleanTenant.toLowerCase() === 'superadmin') {
             const superAdmin = await prisma_1.default.mF_G_SuperAdmin.findFirst({
                 where: {
                     OR: [
@@ -71,7 +71,6 @@ const login = async (req, res) => {
                     { id: cleanTenant },
                     { subdomain: { equals: cleanTenant, mode: 'insensitive' } },
                     { projectCode: { equals: cleanTenant, mode: 'insensitive' } },
-                    { projectCode: { equals: `PRJ${cleanTenant}`, mode: 'insensitive' } },
                 ],
             },
             select: {
@@ -82,26 +81,6 @@ const login = async (req, res) => {
                 status: true,
             },
         });
-        // Fallback to broader match if no exact match found
-        if (!project) {
-            project = await prisma_1.default.mF_P_Project.findFirst({
-                where: {
-                    OR: [
-                        { subdomain: { equals: `${cleanTenant}M`, mode: 'insensitive' } },
-                        { subdomain: { equals: cleanTenant.replace(/M$/i, ''), mode: 'insensitive' } },
-                        { projectCode: { contains: cleanTenant, mode: 'insensitive' } },
-                        { projectName: { contains: cleanTenant, mode: 'insensitive' } },
-                    ],
-                },
-                select: {
-                    id: true,
-                    projectCode: true,
-                    projectName: true,
-                    subdomain: true,
-                    status: true,
-                },
-            });
-        }
         if (!project || project.status !== 'active') {
             res.status(400).json({ error: 'Invalid or inactive project/tenant' });
             return;
@@ -126,13 +105,13 @@ const login = async (req, res) => {
             },
         });
         if (!user || user.status !== 'active') {
-            res.status(401).json({ error: 'Invalid credentials' });
+            res.status(401).json({ error: 'Invalid USERNAME' });
             return;
         }
         // 3. Password comparison
         const isMatch = await bcrypt_1.default.compare(password, user.passwordHash);
         if (!isMatch) {
-            res.status(401).json({ error: 'Invalid credentials' });
+            res.status(401).json({ error: 'Invalid PASSWORD' });
             return;
         }
         // 4. JWT generation

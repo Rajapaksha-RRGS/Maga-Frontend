@@ -42,7 +42,7 @@ const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon:
   'Days': { label: 'Days', sub: 'Day / Shift Rate', icon: '📅' },
   'Hrs': { label: 'Hrs', sub: 'Operating Hours', icon: '⏱️' },
   'EX.hrs': { label: 'EX.hrs', sub: 'Extra / OT Hours', icon: '⚡' },
-  'mth': { label: 'Mth', sub: 'Monthly Hire (Standard 26 Days)', icon: '📆' },
+  'mth': { label: 'Mth', sub: 'Monthly Contract (Logged in Days)', icon: '📆' },
   'm2': { label: 'm²', sub: 'Work Area (Square Meters)', icon: '📐' },
   'km': { label: 'km', sub: 'Mileage / Kilometers', icon: '🚗' },
 };
@@ -559,7 +559,7 @@ export function EquipmentLogsView({
           </div>
         )}
 
-        {/* MONTHLY HIRE (mth) - Logged in Days (Standard 26 days/month) */}
+        {/* MONTHLY HIRE (mth) - Logged in Days */}
         {unit === 'mth' && (
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
@@ -567,7 +567,7 @@ export function EquipmentLogsView({
               <span className="font-bold text-emerald-700 dark:text-emerald-400 font-mono text-sm">
                 {eq.daysValue ?? 0} {(eq.daysValue ?? 0) === 1 ? 'Day' : 'Days'}
                 <span className="text-[11px] text-slate-500 font-normal ml-1.5">
-                  ({(((eq.daysValue ?? 0) / 26) * 1.0).toFixed(2)} mth)
+                  (Monthly Hire • 1 Mth at Month End)
                 </span>
               </span>
             </div>

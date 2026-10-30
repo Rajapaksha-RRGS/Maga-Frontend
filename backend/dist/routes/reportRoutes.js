@@ -29,5 +29,6 @@ router.get('/running-chart', reportController_1.getRunningChartReport);
 router.get('/equipment-running-chart', reportController_1.getEquipmentRunningChartReport);
 router.get('/equipment-summary', reportController_1.getEquipmentSummaryReport);
 router.get('/equipment-erp-upload', reportController_1.getEquipmentErpUploadReport);
+router.get('/operator-erp-upload', reportController_1.getOperatorErpUploadReport);
 router.get('/time-card', reportController_1.getTimeCardReport);
 exports.default = router;

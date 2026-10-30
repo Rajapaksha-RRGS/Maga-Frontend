@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getCorporateProjectsCatalog = exports.resetTenantAdminPassword = exports.updateTenantStatus = exports.updateTenant = exports.registerTenant = exports.getTenantBySubdomain = exports.getTenantById = exports.getAllTenants = void 0;
+exports.updateEquipmentAssignMode = exports.getCorporateProjectsCatalog = exports.resetTenantAdminPassword = exports.updateTenantStatus = exports.updateTenant = exports.registerTenant = exports.getTenantBySubdomain = exports.getTenantById = exports.getAllTenants = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const prisma_1 = __importDefault(require("../config/prisma"));
 const getParam = (param) => {
@@ -42,6 +42,7 @@ function formatTenant(t) {
         fax: t.fax || '',
         email: t.email || '',
         status: t.status || 'active',
+        equipmentAssignBySupervisor: t.equipmentAssignBySupervisor ?? false,
         createdAt: t.createdAt,
         userCount: t._count?.users ?? 0,
         employeeCount: t._count?.employees ?? 0,
@@ -60,6 +61,7 @@ const projectSelectOptimized = {
     fax: true,
     email: true,
     status: true,
+    equipmentAssignBySupervisor: true,
     createdAt: true,
     users: {
         where: { role: 'admin' },
@@ -336,6 +338,7 @@ const getCorporateProjectsCatalog = async (_req, res) => {
                 enterpriseUnit: true,
                 currency: true,
                 status: true,
+                equipmentAssignBySupervisor: true,
             },
         });
         res.json(list);
@@ -346,3 +349,25 @@ const getCorporateProjectsCatalog = async (_req, res) => {
     }
 };
 exports.getCorporateProjectsCatalog = getCorporateProjectsCatalog;
+// 9. PATCH /api/tenants/:id/equipment-mode — Toggle equipmentAssignBySupervisor mode
+const updateEquipmentAssignMode = async (req, res) => {
+    try {
+        const id = getParam(req.params.id);
+        const { equipmentAssignBySupervisor } = req.body || {};
+        if (typeof equipmentAssignBySupervisor !== 'boolean') {
+            res.status(400).json({ error: 'equipmentAssignBySupervisor must be a boolean (true/false).' });
+            return;
+        }
+        const updated = await prisma_1.default.mF_P_Project.update({
+            where: { id },
+            data: { equipmentAssignBySupervisor },
+            select: projectSelectOptimized,
+        });
+        res.json(formatTenant(updated));
+    }
+    catch (error) {
+        console.error('Error updating equipment assignment mode:', error);
+        res.status(500).json({ error: 'Failed to update equipment assignment mode' });
+    }
+};
+exports.updateEquipmentAssignMode = updateEquipmentAssignMode;

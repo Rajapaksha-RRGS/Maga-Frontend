@@ -351,16 +351,18 @@ export function LaborEntryView({
     }
   };
 
-  // ── BATCH ACTIVITY ROW HANDLERS (SMART AUTO-BALANCING) ──
+  // ── BATCH ACTIVITY ROW HANDLERS (SMART AUTO-BALANCING & STRICT SHIFT CAP) ──
   const handleAddBatchActivityRow = () => {
-    const currentSum = batchActivities.reduce((acc, a) => acc + (a.hours || 0), 0);
+    const currentSum = sumHhmm(batchActivities.map((a) => a.hours));
+    const targetMins = hhmmToMinutes(targetShiftHours);
+    const currentMins = hhmmToMinutes(currentSum);
+    const diffMins = Math.max(0, targetMins - currentMins);
 
-    // Case 1: Only 1 activity exists and its hours equal targetShiftHours (unmodified)
-    // -> Split evenly! (e.g. 8.00h -> 4.00h & 4.00h, or 12.50h -> 6.25h & 6.25h)
-    if (batchActivities.length === 1 && Math.abs(hhmmToMinutes(batchActivities[0].hours) - hhmmToMinutes(targetShiftHours)) < 1) {
-      const halfMins = Math.round(hhmmToMinutes(targetShiftHours) / 2);
+    // Case 1: Only 1 activity exists and takes the whole shift -> split 50/50
+    if (batchActivities.length === 1 && Math.abs(currentMins - targetMins) < 1 && targetMins > 0) {
+      const halfMins = Math.round(targetMins / 2);
       const half = minutesToHhmm(halfMins);
-      const secondHalf = minutesToHhmm(hhmmToMinutes(targetShiftHours) - halfMins);
+      const secondHalf = minutesToHhmm(targetMins - halfMins);
 
       const updatedFirst = { ...batchActivities[0], hours: half };
       const newRow: BatchActivityItem = {
@@ -372,29 +374,49 @@ export function LaborEntryView({
       return;
     }
 
-    // Case 2: Top activity or existing activities were edited and sum < targetShiftHours
-    // -> Auto-fill the remaining hours! (e.g. 12.50 - 8.00 = 4.50h)
-    let fillHours = 4.0;
-    const diffMins = hhmmToMinutes(targetShiftHours) - hhmmToMinutes(currentSum);
-    if (diffMins > 0) {
-      fillHours = minutesToHhmm(diffMins);
-    } else {
-      fillHours = 1.0;
+    // Strictly enforce: Never allow adding beyond targetShiftHours!
+    if (diffMins <= 0) {
+      return;
     }
 
+    const fillHours = minutesToHhmm(diffMins);
     const nextActivity = (activityOptions[batchActivities.length % activityOptions.length] || activityOptions[0]).code;
     const newRow: BatchActivityItem = {
       id: `batch-act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       activityCode: nextActivity,
-      hours: Math.max(0.5, fillHours),
+      hours: fillHours,
     };
     setBatchActivities((prev) => [...prev, newRow]);
   };
 
   const handleUpdateBatchActivityRow = (id: string, field: 'activityCode' | 'hours', value: any) => {
-    setBatchActivities((prev) => 
-      prev.map((a) => (a.id === id ? { ...a, [field]: value } : a))
-    );
+    setBatchActivities((prev) => {
+      if (field === 'hours') {
+        const rawHours = Math.max(0, parseFloat(value) || 0);
+        const targetMins = hhmmToMinutes(targetShiftHours);
+        const otherMins = prev
+          .filter((a) => a.id !== id)
+          .reduce((sum, a) => sum + hhmmToMinutes(a.hours), 0);
+        const maxAvailMins = Math.max(0, targetMins - otherMins);
+        const maxAvailHours = minutesToHhmm(maxAvailMins);
+        const safeHours = Math.min(rawHours, maxAvailHours);
+
+        if (prev.length === 2) {
+          const otherRow = prev.find((a) => a.id !== id);
+          if (otherRow) {
+            const autoRemainingMins = Math.max(0, targetMins - hhmmToMinutes(safeHours));
+            const autoRemainingHours = minutesToHhmm(autoRemainingMins);
+            return prev.map((a) => {
+              if (a.id === id) return { ...a, hours: safeHours };
+              if (a.id === otherRow.id) return { ...a, hours: autoRemainingHours };
+              return a;
+            });
+          }
+        }
+        return prev.map((a) => (a.id === id ? { ...a, hours: safeHours } : a));
+      }
+      return prev.map((a) => (a.id === id ? { ...a, [field]: value } : a));
+    });
   };
 
   const handleRemoveBatchActivityRow = (id: string) => {
@@ -491,6 +513,20 @@ export function LaborEntryView({
       let activities = [...l.activities];
       if (activities.length === 1 && shift > 0) {
         activities = [{ ...activities[0], hours: shift }];
+      } else if (activities.length > 1 && shift > 0) {
+        let runningMins = 0;
+        const maxMins = hhmmToMinutes(shift);
+        activities = activities.map((a) => {
+          const actMins = hhmmToMinutes(a.hours);
+          if (runningMins + actMins <= maxMins) {
+            runningMins += actMins;
+            return a;
+          } else {
+            const availMins = Math.max(0, maxMins - runningMins);
+            runningMins += availMins;
+            return { ...a, hours: minutesToHhmm(availMins) };
+          }
+        }).filter((a) => a.hours > 0);
       }
 
       return {
@@ -528,10 +564,18 @@ export function LaborEntryView({
 
   const handleMarkIndividualDone = (id: string) => {
     const laborer = laborers.find((l) => l.id === id);
+    if (!laborer) return;
+    const inTime = laborer.inTime || batchInTime || '07:00';
+    const outTime = laborer.outTime || batchOutTime || '17:00';
+    const { shift } = computeHours(inTime, outTime);
+    const actSum = sumHhmm((laborer.activities || []).map((a) => a.hours));
+    if (shift > 0 && hhmmToMinutes(actSum) > hhmmToMinutes(shift)) {
+      alert(`Activity hours (${formatHhmm(actSum)}h) cannot exceed shift hours (${formatHhmm(shift)}h). Please reduce activity hours.`);
+      return;
+    }
+
     const updated = laborers.map((l) => {
       if (l.id !== id) return l;
-      const inTime = l.inTime || batchInTime || '07:00';
-      const outTime = l.outTime || batchOutTime || '17:00';
       const { shift, ot } = computeHours(inTime, outTime);
 
       return {
@@ -593,18 +637,38 @@ export function LaborEntryView({
     if (!laborer) return;
 
     const allocatedSum = sumHhmm(laborer.activities.map((a) => a.hours));
-    const remainingMins = Math.max(0, hhmmToMinutes(laborer.shiftHours) - hhmmToMinutes(allocatedSum));
+    const allocatedMins = hhmmToMinutes(allocatedSum);
+    const shiftMins = hhmmToMinutes(laborer.shiftHours);
+    let remainingMins = Math.max(0, shiftMins - allocatedMins);
+
+    let updatedExisting = [...laborer.activities];
+
+    // If only 1 activity currently takes the full shift (e.g. 9.0h),
+    // split 50/50 so first becomes 4.5h and new task gets remaining 4.5h
+    if (laborer.activities.length === 1 && remainingMins <= 0 && allocatedMins >= shiftMins && shiftMins > 0) {
+      const halfMins = Math.round(shiftMins / 2);
+      const halfHours = minutesToHhmm(halfMins);
+      const remainingHalf = minutesToHhmm(shiftMins - halfMins);
+      updatedExisting = [{ ...laborer.activities[0], hours: halfHours }];
+      remainingMins = hhmmToMinutes(remainingHalf);
+    }
+
+    // Strictly enforce: Never allow adding task if shift hours are already fully allocated
+    if (remainingMins <= 0) {
+      return;
+    }
+
     const remaining = minutesToHhmm(remainingMins);
 
     const newSplit: ActivitySplit = {
       id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      activityCode: activityOptions[0]?.code || '',
-      hours: remaining || 4.0,
+      activityCode: activityOptions.find((o) => !updatedExisting.some((a) => a.activityCode === o.code))?.code || activityOptions[0]?.code || '',
+      hours: remaining,
     };
 
     const updated = laborers.map((l) => 
       l.id === laborerId 
-        ? { ...l, activities: [...l.activities, newSplit], status: 'draft' as const }
+        ? { ...l, activities: [...updatedExisting, newSplit], status: 'draft' as const }
         : l
     );
     onSaveLaborers(updated);
@@ -613,6 +677,39 @@ export function LaborEntryView({
   const handleUpdateIndividualActivitySplit = (laborerId: string, splitId: string, field: 'activityCode' | 'hours', value: any) => {
     const updated = laborers.map((l) => {
       if (l.id !== laborerId) return l;
+
+      if (field === 'hours') {
+        const rawHours = Math.max(0, parseFloat(value) || 0);
+        const shiftMins = hhmmToMinutes(l.shiftHours);
+        const otherMins = l.activities
+          .filter((a) => a.id !== splitId)
+          .reduce((sum, a) => sum + hhmmToMinutes(a.hours), 0);
+        const maxAvailMins = Math.max(0, shiftMins - otherMins);
+        const maxAvailHours = minutesToHhmm(maxAvailMins);
+        // Strictly cap at max available hours (never allow exceeding shift hours!)
+        const safeHours = Math.min(rawHours, maxAvailHours);
+
+        // Auto-balance if exactly 2 activities exist
+        if (l.activities.length === 2) {
+          const otherAct = l.activities.find((a) => a.id !== splitId);
+          if (otherAct) {
+            const autoRemainingMins = Math.max(0, shiftMins - hhmmToMinutes(safeHours));
+            const autoRemainingHours = minutesToHhmm(autoRemainingMins);
+            const activities = l.activities.map((a) => {
+              if (a.id === splitId) return { ...a, hours: safeHours };
+              if (a.id === otherAct.id) return { ...a, hours: autoRemainingHours };
+              return a;
+            });
+            return { ...l, activities, status: 'draft' as const };
+          }
+        }
+
+        const activities = l.activities.map((a) =>
+          a.id === splitId ? { ...a, hours: safeHours } : a
+        );
+        return { ...l, activities, status: 'draft' as const };
+      }
+
       const activities = l.activities.map((a) => 
         a.id === splitId ? { ...a, [field]: value } : a
       );
@@ -1440,7 +1537,9 @@ export function LaborEntryView({
                             <button
                               type="button"
                               onClick={() => handleAddIndividualActivitySplit(worker.id)}
-                              className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5 cursor-pointer"
+                              disabled={isDayLocked || (worker.shiftHours > 0 && hhmmToMinutes(activitySum) >= hhmmToMinutes(worker.shiftHours) && worker.activities.length > 1)}
+                              className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={worker.shiftHours > 0 && hhmmToMinutes(activitySum) >= hhmmToMinutes(worker.shiftHours) ? `Shift hours fully allocated (${worker.shiftHours}h)` : "Add Task"}
                             >
                               <Plus size={13} /> Add Task
                             </button>
@@ -1472,7 +1571,7 @@ export function LaborEntryView({
                                   type="number"
                                   step="0.5"
                                   min="0"
-                                  max="24"
+                                  max={worker.shiftHours || 24}
                                   disabled={isDayLocked}
                                   value={act.hours}
                                   onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'hours', parseFloat(e.target.value) || 0)}

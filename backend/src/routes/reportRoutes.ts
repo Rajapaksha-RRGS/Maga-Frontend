@@ -11,6 +11,7 @@ import {
   getEquipmentRunningChartReport,
   getEquipmentSummaryReport,
   getEquipmentErpUploadReport,
+  getOperatorErpUploadReport,
 } from '../controllers/reportController';
 
 const router = Router();
@@ -41,6 +42,7 @@ router.get('/running-chart', getRunningChartReport);
 router.get('/equipment-running-chart', getEquipmentRunningChartReport);
 router.get('/equipment-summary', getEquipmentSummaryReport);
 router.get('/equipment-erp-upload', getEquipmentErpUploadReport);
+router.get('/operator-erp-upload', getOperatorErpUploadReport);
 router.get('/time-card', getTimeCardReport);
 
 export default router;

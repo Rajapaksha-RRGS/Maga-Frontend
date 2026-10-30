@@ -5,6 +5,7 @@ const equipmentController_1 = require("../controllers/equipmentController");
 const router = (0, express_1.Router)();
 router.get('/corporate-master', equipmentController_1.getCorporateEquipmentCatalog);
 router.post('/corporate-master/batch', equipmentController_1.batchSyncCorporateEquipment);
+router.get('/site-pool', equipmentController_1.getSiteEquipmentPool);
 router.get('/', equipmentController_1.getAllEquipment);
 router.get('/:id', equipmentController_1.getEquipmentById);
 router.post('/', equipmentController_1.createEquipment);

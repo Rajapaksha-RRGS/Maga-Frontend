@@ -32,6 +32,7 @@ const ALL_TABS: TabOption[] = [
   { id: 'erp-upload',              label: 'ERP Upload File',          icon: <FileUp size={16} />,        categories: ['labor'] },
   // Operator Category
   { id: 'running-chart',           label: 'Operator Running Chart',   icon: <Clock3 size={16} />,        categories: ['operator'] },
+  { id: 'operator-erp-upload',     label: 'Operator ERP Upload',      icon: <FileUp size={16} />,        categories: ['operator'] },
   { id: 'time-card',               label: 'Operator Time Card',       icon: <FileText size={16} />,     categories: ['operator'] },
   { id: 'bp-bill',                 label: 'BP Subcontractor Bill',    icon: <Receipt size={16} />,       categories: ['operator'] },
   { id: 'summary',                 label: 'Attendance Summary',       icon: <BarChart3 size={16} />,     categories: ['operator'] },

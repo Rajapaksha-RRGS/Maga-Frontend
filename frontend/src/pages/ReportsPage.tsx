@@ -30,6 +30,7 @@ import RunningChartTable from '../features/reports/components/RunningChartTable'
 import { EquipmentRunningChartTable } from '../features/reports/components/EquipmentRunningChartTable';
 import { EquipmentEntrySheetView } from '../features/reports/components/EquipmentEntrySheetView';
 import { EquipmentErpUploadTable } from '../features/reports/components/EquipmentErpUploadTable';
+import { OperatorErpUploadTable } from '../features/reports/components/OperatorErpUploadTable';
 import { TimeCardReportView } from '../features/reports/components/TimeCardReportView';
 import EmptyState from '../components/EmptyState';
 
@@ -57,6 +58,7 @@ export default function ReportsPage() {
     equipmentRunningChartData,
     equipmentSummaryData,
     equipmentErpData,
+    operatorErpData,
   } = useReports();
 
   // Active Category State: 'labor' | 'operator' | 'equipment'
@@ -253,6 +255,10 @@ export default function ReportsPage() {
 
               {activeTab === 'equipment-erp-upload' && equipmentErpData && (
                 <EquipmentErpUploadTable data={equipmentErpData} />
+              )}
+
+              {activeTab === 'operator-erp-upload' && operatorErpData && (
+                <OperatorErpUploadTable data={operatorErpData} />
               )}
             </div>
           )}

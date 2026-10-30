@@ -966,8 +966,9 @@ export const supervisorStorage = {
       // Pre-fetch all real tenant activity codes once
       const allActivities = await this.getActivityCodes();
       const defaultActivityId = allActivities[0]?.id;
-      const zidleAct = allActivities.find((a) => a.code === 'ZIDLE');
-      const zidleId = zidleAct?.id || defaultActivityId;
+      const zidleAct = allActivities.find((a) => a.code?.toUpperCase() === 'ZIDLE');
+      // Always guarantee ZIDLE activity ID, never fall back to defaultActivityId (e.g. 00-00-10-00)!
+      const zidleId = zidleAct?.id || 'ZIDLE';
 
       // 1. Prepare Bulk Laborers attendance and activity splits with ZIDLE auto-balance
       const bulkLaborEntries: Array<{
@@ -987,10 +988,15 @@ export const supervisorStorage = {
           for (const act of lab.activities) {
             const actObj = allActivities.find((a) => a.code === act.activityCode);
             const resolvedActId = actObj?.id || defaultActivityId;
-            const actHours = Number(act.hours) || 0;
-            sumAssigned += actHours;
+            let actHours = Number(act.hours) || 0;
+
+            // STRICT GUARANTEE: Never allow activity hours to exceed remaining shift hours!
+            if (totalShift > 0 && sumAssigned + actHours > totalShift) {
+              actHours = Math.max(0, Math.round((totalShift - sumAssigned) * 10) / 10);
+            }
 
             if (resolvedActId && actHours > 0) {
+              sumAssigned += actHours;
               bulkLaborEntries.push({
                 employeeId: lab.id,
                 activityId: resolvedActId,
@@ -1016,15 +1022,14 @@ export const supervisorStorage = {
             });
           }
         } else if (sumAssigned === 0 && (lab.inTime || lab.outTime)) {
-          if (defaultActivityId) {
-            bulkLaborEntries.push({
-              employeeId: lab.id,
-              activityId: zidleId || defaultActivityId,
-              hours: lab.shiftHours || 0,
-              inTime: lab.inTime || undefined,
-              outTime: lab.outTime || undefined,
-            });
-          }
+          bulkLaborEntries.push({
+            employeeId: lab.id,
+            activityId: zidleId,
+            hours: lab.shiftHours || 0,
+            inTime: lab.inTime || undefined,
+            outTime: lab.outTime || undefined,
+            remarks: 'Unallocated shift hours (ZIDLE)',
+          });
         }
       }
 
@@ -1067,6 +1072,8 @@ export const supervisorStorage = {
               overtimeHours: op.otHours || 0,
               notes: noteParts.length > 0 ? noteParts.join(' | ') : undefined,
               status: op.status || 'draft',
+              splits,
+              equipmentSplits: splits,
             });
           });
         }
