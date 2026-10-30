@@ -290,6 +290,14 @@ export default function SACsvImportModal({
     failedCount: number;
     errors: CsvImportErrorItem[];
   } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{
+    processed: number;
+    total: number;
+    percentage: number;
+    currentBatch: number;
+    totalBatches: number;
+    statusText: string;
+  } | null>(null);
 
   // ── Pre-Validation Analysis (Unconditional Hook at Top-Level) ───────────────
   const validationSummary = useMemo(() => {
@@ -331,6 +339,7 @@ export default function SACsvImportModal({
     setDetectedDelimiter(',');
     setParseError(null);
     setImportResult(null);
+    setUploadProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -422,29 +431,97 @@ export default function SACsvImportModal({
     triggerCsvDownload(filename, csvContent);
   };
 
-  // ── 5. Execute Import API Call ──────────────────────────────────────────────
+  // ── 5. Execute Import API Call with Chunked Progress ────────────────────────
+  const BATCH_SIZE = 35;
+
   const handleExecuteImport = async () => {
     if (parsedRows.length === 0 || isSubmitting) return;
 
     setIsSubmitting(true);
     setParseError(null);
+    setImportResult(null);
+
+    const totalRecords = parsedRows.length;
+    const totalBatches = Math.max(1, Math.ceil(totalRecords / BATCH_SIZE));
+
+    let accumulatedImported = 0;
+    let accumulatedInserted = 0;
+    let accumulatedUpdated = 0;
+    const accumulatedErrors: CsvImportErrorItem[] = [];
+
+    setUploadProgress({
+      processed: 0,
+      total: totalRecords,
+      percentage: 0,
+      currentBatch: 1,
+      totalBatches,
+      statusText: `Preparing to import ${totalRecords} records across ${totalBatches} batch${totalBatches > 1 ? 'es' : ''}…`,
+    });
 
     try {
-      const res = await api.post(endpoint, { records: parsedRows });
-      const data = res.data;
+      for (let b = 0; b < totalBatches; b++) {
+        const startIdx = b * BATCH_SIZE;
+        const endIdx = Math.min(startIdx + BATCH_SIZE, totalRecords);
+        const batchRecords = parsedRows.slice(startIdx, endIdx);
 
-      const failedCount = data.failedCount ?? (data.errors ? data.errors.length : 0);
+        setUploadProgress({
+          processed: startIdx,
+          total: totalRecords,
+          percentage: Math.round((startIdx / totalRecords) * 100),
+          currentBatch: b + 1,
+          totalBatches,
+          statusText: `Uploading batch ${b + 1} of ${totalBatches} (rows ${startIdx + 1}–${endIdx})…`,
+        });
+
+        const res = await api.post(endpoint, { records: batchRecords });
+        const data = res.data;
+
+        accumulatedImported += data.importedCount ?? 0;
+        accumulatedInserted += data.insertedCount ?? 0;
+        accumulatedUpdated += data.updatedCount ?? 0;
+
+        if (Array.isArray(data.errors) && data.errors.length > 0) {
+          const adjustedErrors = data.errors.map((err: CsvImportErrorItem) => ({
+            ...err,
+            row: (err.row || 1) + startIdx,
+          }));
+          accumulatedErrors.push(...adjustedErrors);
+        }
+
+        const currentProcessed = endIdx;
+        const currentPercent = Math.round((currentProcessed / totalRecords) * 100);
+
+        setUploadProgress({
+          processed: currentProcessed,
+          total: totalRecords,
+          percentage: currentPercent,
+          currentBatch: b + 1,
+          totalBatches,
+          statusText:
+            currentProcessed < totalRecords
+              ? `Batch ${b + 1} done (${currentProcessed}/${totalRecords} records). Continuing…`
+              : `All ${totalRecords} records processed. Compiling scorecard…`,
+        });
+
+        if (b < totalBatches - 1) {
+          await new Promise((r) => setTimeout(r, 60));
+        }
+      }
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      const finalFailed = accumulatedErrors.length;
       setImportResult({
-        success: data.success ?? true,
-        total: data.total ?? parsedRows.length,
-        importedCount: data.importedCount ?? 0,
-        insertedCount: data.insertedCount ?? 0,
-        updatedCount: data.updatedCount ?? 0,
-        failedCount,
-        errors: data.errors ?? [],
+        success: true,
+        total: totalRecords,
+        importedCount: accumulatedImported,
+        insertedCount: accumulatedInserted,
+        updatedCount: accumulatedUpdated,
+        failedCount: finalFailed,
+        errors: accumulatedErrors,
       });
 
-      if (onSuccess && (data.importedCount ?? 0) > 0) {
+      if (onSuccess && accumulatedImported > 0) {
         onSuccess();
       }
     } catch (err: any) {
@@ -455,6 +532,7 @@ export default function SACsvImportModal({
       );
     } finally {
       setIsSubmitting(false);
+      setUploadProgress(null);
     }
   };
 
@@ -481,8 +559,11 @@ export default function SACsvImportModal({
           </div>
           <button
             type="button"
+            disabled={isSubmitting}
             onClick={onClose}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            className={`w-7 h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors ${
+              isSubmitting ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+            }`}
           >
             <X size={16} />
           </button>
@@ -567,7 +648,49 @@ export default function SACsvImportModal({
               ) : (
                 /* ── Step 2: Preview Parsed Rows with Pre-Validation ────────── */
                 <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                  {/* ── Real-Time Batch Upload Progress Bar ─────────────────── */}
+                  {isSubmitting && uploadProgress && (
+                    <div className="bg-gradient-to-r from-[#1A0A2E] via-[#2A114B] to-[#1A0A2E] text-white rounded-2xl p-4 shadow-xl border border-violet-700/50 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <Loader2 size={16} className="animate-spin text-[#C9A84C]" />
+                          <span className="font-semibold text-white tracking-wide">
+                            Uploading & Validating {entityName} Records…
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] bg-white/10 border border-white/15 px-2 py-0.5 rounded font-mono text-[#C9A84C]">
+                            Batch {uploadProgress.currentBatch} of {uploadProgress.totalBatches}
+                          </span>
+                          <span className="text-sm font-bold font-mono text-[#C9A84C]">
+                            {uploadProgress.percentage}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Progress Bar Track */}
+                      <div className="w-full bg-black/40 h-3 rounded-full overflow-hidden p-0.5 border border-white/10 shadow-inner">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-violet-500 via-amber-400 to-[#C9A84C] transition-all duration-300 ease-out shadow-sm relative overflow-hidden"
+                          style={{ width: `${Math.max(uploadProgress.percentage, 4)}%` }}
+                        >
+                          <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                        </div>
+                      </div>
+
+                      {/* Status Text & Record Count */}
+                      <div className="flex items-center justify-between text-[11px] text-violet-200/80">
+                        <span className="truncate max-w-md font-medium text-violet-200">
+                          {uploadProgress.statusText}
+                        </span>
+                        <span className="font-mono text-[#C9A84C] shrink-0 font-bold">
+                          {uploadProgress.processed} / {uploadProgress.total} records
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className={`flex flex-wrap items-center justify-between gap-2 ${isSubmitting ? 'opacity-50 pointer-events-none' : ''}`}>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
                         <CheckCircle2 size={12} className="text-emerald-600" />
@@ -601,7 +724,7 @@ export default function SACsvImportModal({
                   </div>
 
                   {/* Preview Table (First 10 rows) */}
-                  <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                  <div className={`border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs ${isSubmitting ? 'opacity-50 pointer-events-none' : ''}`}>
                     <div className="overflow-x-auto max-h-60">
                       <table className="w-full text-left text-xs">
                         <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 text-slate-600">
@@ -679,7 +802,7 @@ export default function SACsvImportModal({
                 )}
 
                 <div className="flex-1">
-                  <h4 className="text-sm font-bold">
+                  <h4 className="text-sm text-black font-bold">
                     {importResult.failedCount === 0
                       ? 'Import Completed Successfully!'
                       : `⚠️ Import Incomplete: ${importResult.failedCount} Records Were REJECTED and NOT Saved!`}
@@ -707,7 +830,7 @@ export default function SACsvImportModal({
               </div>
 
               {/* High-visibility Warning Alert when any row failed */}
-              {importResult.failedCount > 0 && (
+             {/* {importResult.failedCount > 0 && (
                 <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-3 flex items-start gap-2.5 text-xs">
                   <XCircle size={16} className="text-red-600 shrink-0 mt-0.5" />
                   <div className="flex-1">
@@ -717,7 +840,7 @@ export default function SACsvImportModal({
                     </p>
                   </div>
                 </div>
-              )}
+              )}*/}
 
               {/* Detailed Error Breakdown (If any rows failed) */}
               {importResult.errors.length > 0 && (
@@ -813,8 +936,13 @@ export default function SACsvImportModal({
           <div className="flex items-center gap-2.5">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-200/60 rounded-lg transition-colors cursor-pointer"
+              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                isSubmitting
+                  ? 'text-slate-400 cursor-not-allowed opacity-50'
+                  : 'text-slate-600 hover:text-slate-800 hover:bg-slate-200/60 cursor-pointer'
+              }`}
             >
               {importResult ? 'Close' : 'Cancel'}
             </button>
@@ -834,7 +962,11 @@ export default function SACsvImportModal({
                 {isSubmitting ? (
                   <>
                     <Loader2 size={14} className="animate-spin text-[#C9A84C]" />
-                    <span>Importing {parsedRows.length} records…</span>
+                    <span>
+                      {uploadProgress
+                        ? `Importing… ${uploadProgress.percentage}% (${uploadProgress.processed}/${uploadProgress.total})`
+                        : `Importing ${parsedRows.length} records…`}
+                    </span>
                   </>
                 ) : (
                   <>
