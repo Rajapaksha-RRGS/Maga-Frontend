@@ -702,6 +702,19 @@ export default function SACsvImportModal({
                 </div>
               </div>
 
+              {/* High-visibility Warning Alert when any row failed */}
+              {importResult.failedCount > 0 && (
+                <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-3 flex items-start gap-2.5 text-xs">
+                  <XCircle size={16} className="text-red-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <span className="font-bold">Attention: {importResult.failedCount} records were skipped!</span>
+                    <p className="text-[11px] text-red-700 mt-0.5">
+                      Check the diagnosis table below for exact row numbers and reasons, or click &quot;Download Failed Rows Only (.csv)&quot; to view and correct them in Excel.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Detailed Error Breakdown (If any rows failed) */}
               {importResult.errors.length > 0 && (
                 <div className="space-y-2.5">

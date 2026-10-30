@@ -2162,7 +2162,7 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         continue;
       }
 
-      // Resolve Business Partner & Employee Type
+      // Resolve Business Partner & Employee Type (Auto-provision if not yet registered)
       const explicitType = getFieldVal(item, ['employeeType', 'type', 'employmentType']).toLowerCase();
       const bpCodeInput = getFieldVal(item, [
         'businessPartnerCode',
@@ -2173,37 +2173,70 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         'vendor',
         'partnerCode',
       ]);
+      const bpNameInput = getFieldVal(item, [
+        'businessPartnerName',
+        'bpName',
+        'supplierName',
+        'vendorName',
+        'partnerName',
+        'subcontractorName',
+      ]);
 
       let resolvedBpId: string | null = null;
       if (bpCodeInput) {
-        resolvedBpId = bpMap.get(bpCodeInput.toLowerCase().trim()) || null;
+        const cleanBpCode = bpCodeInput.toUpperCase().trim();
+        resolvedBpId = bpMap.get(cleanBpCode.toLowerCase()) || null;
         if (!resolvedBpId) {
-          errors.push({
-            row: rowNum,
-            code,
-            name,
-            field: 'Business Partner Code',
-            reason: `Business Partner '${bpCodeInput}' is not registered in the system`,
-            suggestion: `Add '${bpCodeInput}' to the Business Partners master first, or leave blank if internal employee.`,
-          });
-          continue;
+          // Auto-provision missing Business Partner so external employees are never rejected!
+          try {
+            let bpRecord = await prisma.mF_G_BusinessPartner.findUnique({
+              where: { code: cleanBpCode },
+            });
+            if (!bpRecord) {
+              bpRecord = await prisma.mF_G_BusinessPartner.create({
+                data: {
+                  code: cleanBpCode,
+                  name: bpNameInput ? bpNameInput.trim() : `Partner ${cleanBpCode}`,
+                  type: 'subcontractor',
+                  status: 'active',
+                },
+              });
+            }
+            resolvedBpId = bpRecord.id;
+            bpMap.set(cleanBpCode.toLowerCase(), bpRecord.id);
+            if (bpNameInput) bpMap.set(bpNameInput.toLowerCase().trim(), bpRecord.id);
+          } catch (bpErr) {
+            console.warn(`Could not auto-provision BP ${cleanBpCode}:`, bpErr);
+          }
         }
       }
 
       const isExternal =
         explicitType === 'external' ||
-        (explicitType !== 'internal' && Boolean(bpCodeInput || resolvedBpId));
+        code.startsWith('X') ||
+        Boolean(bpCodeInput || resolvedBpId);
 
+      // If marked external but no BP code was provided, assign to default General Subcontractor
       if (isExternal && !resolvedBpId) {
-        errors.push({
-          row: rowNum,
-          code,
-          name,
-          field: 'Business Partner Code',
-          reason: 'Business Partner Code is required for external / supply employees',
-          suggestion: 'Provide a valid Business Partner Code (e.g. BP1002885) for external subcontractors.',
-        });
-        continue;
+        let generalBpId = bpMap.get('bp-general');
+        if (!generalBpId) {
+          let generalBp = await prisma.mF_G_BusinessPartner.findFirst({
+            where: { code: 'BP-GENERAL' },
+          });
+          if (!generalBp) {
+            generalBp = await prisma.mF_G_BusinessPartner.create({
+              data: {
+                code: 'BP-GENERAL',
+                name: 'General / Unassigned Subcontractor',
+                type: 'subcontractor',
+                status: 'active',
+              },
+            });
+          }
+          generalBpId = generalBp.id;
+          bpMap.set('bp-general', generalBpId);
+        }
+        resolvedBpId = generalBpId;
       }
 
       // Resolve Trade Group intelligently using smart normalization & ERP aliases
@@ -2251,7 +2284,14 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
           rawOp === 'true' || rawOp === '1' || rawOp === 'yes' || rawOp === 'y' || rawOp === 'operator';
         if (rawOp === '') {
           const tgLower = (matchedTradeGroup.name || '').toLowerCase();
-          if (tgLower.includes('operator') || tgLower.includes('driver')) {
+          const tgCode = (matchedTradeGroup.code || '').toUpperCase();
+          if (
+            tgLower.includes('operator') ||
+            tgLower.includes('driver') ||
+            code.startsWith('R') ||
+            tgCode.includes('OP') ||
+            tgCode.includes('DR')
+          ) {
             isOperator = true;
           }
         }
