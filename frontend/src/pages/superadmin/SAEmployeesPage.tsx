@@ -275,8 +275,8 @@ export default function SAEmployeesPage() {
     }
   };
 
-  const loadData = async () => {
-    setIsLoading(true);
+  const loadData = async (showFullScreenLoading = false) => {
+    if (showFullScreenLoading) setIsLoading(true);
     setError('');
     try {
       const [empRes, tgRes, bpRes, projRes, pendRes] = await Promise.all([
@@ -295,7 +295,7 @@ export default function SAEmployeesPage() {
       console.error('Failed to load global employees:', err);
       setError(err?.message || 'Failed to load global employees.');
     } finally {
-      setIsLoading(false);
+      if (showFullScreenLoading) setIsLoading(false);
     }
   };
 
@@ -312,7 +312,7 @@ export default function SAEmployeesPage() {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(true);
   }, []);
 
   const openApproveModal = (target: PendingEmployeeItem) => {
@@ -445,7 +445,7 @@ export default function SAEmployeesPage() {
     const matchType = typeFilter === 'all' || emp.employeeType === typeFilter;
     return matchSearch && matchTG && matchType;
   });
-  if (isLoading) {
+  if (isLoading && employees.length === 0) {
     return (
       <div className="min-h-screen w-full bg-white flex items-center justify-center">
         <div className="flex items-center gap-4">
@@ -1546,7 +1546,7 @@ export default function SAEmployeesPage() {
       {/* ── Universal CSV Import Modal ──────────────────────────────── */}
       <SACsvImportModal
         isOpen={isCsvModalOpen}
-        onClose={() => setIsCsvModalOpen(false)}
+        onClose={() => { setIsCsvModalOpen(false); loadData(false); }}
         title="Import Corporate Employees via CSV"
         entityName="Employee"
         endpoint="/corporate/employees/bulk-import"
@@ -1564,7 +1564,7 @@ export default function SAEmployeesPage() {
           businessPartnerCode: 'Business Partner Code',
         }}
         onSuccess={() => {
-          loadData();
+          loadData(false);
         }}
       />
     </div>
