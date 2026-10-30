@@ -1566,14 +1566,28 @@ export const fetchCorporateEmployees = async (forceRefresh = false): Promise<Cor
   }, 5 * 60 * 1000, forceRefresh);
 };
 
-export const fetchCorporateActivityCodes = async (): Promise<CorporateActivityCode[]> => {
-  try {
-    const res = await fetch(`${API_URL}/activity-codes/corporate-master`, { headers: getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch');
-    return res.json();
-  } catch (error) {
-    console.error('Error fetching corporate activity codes:', error);
-    return []; // fallback
-  }
+export const fetchCorporateActivityCodes = async (forceRefresh = false): Promise<CorporateActivityCode[]> => {
+  return cacheManager.fetchWithCache('corporate:activity-codes:catalog', async () => {
+    try {
+      const res = await fetch(`${API_URL}/activity-codes/corporate-master`, { headers: getHeaders() });
+      if (!res.ok) throw new Error('Failed to fetch');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data.map((item: any) => ({
+          id: item.id,
+          code: item.code,
+          description: item.description,
+          unit: item.unit || '',
+          projectCode: item.projectCode || '',
+          searchKey: item.searchKey || item.code,
+          activityType: item.activityType || 'Work Package',
+        }));
+      }
+      return [];
+    } catch (error) {
+      console.error('Error fetching corporate activity codes:', error);
+      return []; // fallback
+    }
+  }, 5 * 60 * 1000, forceRefresh);
 };
 

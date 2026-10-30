@@ -313,23 +313,30 @@ export const batchSyncCorporateActivityCodes = async (req: Request, res: Respons
       return;
     }
 
-    const results = [];
-    for (const item of items) {
-      if (!item.code) continue;
-      const cleanCode = String(item.code).trim();
-      const record = await prisma.mF_G_ActivityCode.upsert({
-        where: { code: cleanCode },
-        update: {
-          description: item.description || cleanCode,
-          unit: item.unit || null,
-        },
-        create: {
-          code: cleanCode,
-          description: item.description || cleanCode,
-          unit: item.unit || null,
-        },
-      });
-      results.push(record);
+    const validItems = items.filter((item: any) => item && item.code);
+    const BATCH_CHUNK_SIZE = 25;
+    const results: any[] = [];
+
+    for (let i = 0; i < validItems.length; i += BATCH_CHUNK_SIZE) {
+      const chunk = validItems.slice(i, i + BATCH_CHUNK_SIZE);
+      const chunkResults = await Promise.all(
+        chunk.map(async (item: any) => {
+          const cleanCode = String(item.code).trim();
+          return prisma.mF_G_ActivityCode.upsert({
+            where: { code: cleanCode },
+            update: {
+              description: item.description?.trim() || cleanCode,
+              unit: item.unit?.trim() || null,
+            },
+            create: {
+              code: cleanCode,
+              description: item.description?.trim() || cleanCode,
+              unit: item.unit?.trim() || null,
+            },
+          });
+        })
+      );
+      results.push(...chunkResults);
     }
 
     res.json({ success: true, count: results.length });
@@ -355,32 +362,63 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
       return;
     }
 
-    const imported = [];
-    for (const item of items) {
-      if (!item.code) continue;
-      const cleanCode = String(item.code).trim();
+    const validItems = items.filter((item: any) => item && item.code);
+    if (validItems.length === 0) {
+      res.status(400).json({ error: 'No valid activity codes provided' });
+      return;
+    }
 
-      const upserted = await prisma.mF_P_ActivityCode.upsert({
-        where: {
-          projectId_code: {
-            projectId,
-            code: cleanCode,
-          },
-        },
-        update: {
-          description: item.description || cleanCode,
-          unit: item.unit || null,
-          corporateActivityCodeId: item.id || undefined,
-        },
-        create: {
-          projectId,
-          code: cleanCode,
-          description: item.description || cleanCode,
-          unit: item.unit || null,
-          corporateActivityCodeId: item.id || null,
-        },
-      });
-      imported.push(upserted);
+    // Step 1: Pre-fetch any Corporate Activity Code IDs from mF_G_ActivityCode in one query
+    const codes = validItems.map((item: any) => String(item.code).trim());
+    const corporateActivities = await prisma.mF_G_ActivityCode.findMany({
+      where: { code: { in: codes } },
+      select: { id: true, code: true, description: true, unit: true },
+    });
+    const corpMap = new Map(corporateActivities.map((c) => [c.code.toUpperCase(), c]));
+
+    // Step 2: Parallel execution across connection pool without interactive transaction lock
+    const BATCH_CHUNK_SIZE = 25;
+    const imported: any[] = [];
+
+    for (let i = 0; i < validItems.length; i += BATCH_CHUNK_SIZE) {
+      const chunk = validItems.slice(i, i + BATCH_CHUNK_SIZE);
+      const chunkResults = await Promise.all(
+        chunk.map(async (item: any) => {
+          const cleanCode = String(item.code).trim();
+          const corp = corpMap.get(cleanCode.toUpperCase());
+          const finalCorpId = item.id || corp?.id || null;
+          const finalDescription = item.description?.trim() || corp?.description || cleanCode;
+          const finalUnit = item.unit?.trim() || corp?.unit || null;
+
+          return prisma.mF_P_ActivityCode.upsert({
+            where: {
+              projectId_code: {
+                projectId,
+                code: cleanCode,
+              },
+            },
+            update: {
+              description: finalDescription,
+              unit: finalUnit,
+              ...(finalCorpId ? { corporateActivityCodeId: finalCorpId } : {}),
+            },
+            create: {
+              projectId,
+              code: cleanCode,
+              description: finalDescription,
+              unit: finalUnit,
+              corporateActivityCodeId: finalCorpId,
+            },
+            select: {
+              id: true,
+              code: true,
+              description: true,
+              unit: true,
+            },
+          });
+        })
+      );
+      imported.push(...chunkResults);
     }
 
     res.json({

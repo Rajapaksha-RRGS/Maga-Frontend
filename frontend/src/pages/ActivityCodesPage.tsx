@@ -15,9 +15,10 @@ import Breadcrumb from '../components/Breadcrumb';
 import { fetchCorporateActivityCodes, type CorporateActivityCode } from '../features/master-import/services/corporateMasterService';
 import type { ActivityCode } from '../features/activity-codes/services/activityCodeService';
 import DeriveSubActivityModal from '../features/activity-codes/components/DeriveSubActivityModal';
+import { cacheManager } from '../utils/cacheManager';
 
 export default function ActivityCodesPage() {
-  const { filtered, isLoading, search, setSearch, add, edit, del, checkUnique } = useActivityCodes();
+  const { filtered, isLoading, search, setSearch, add, edit, del, checkUnique, batchImport } = useActivityCodes();
   const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<ActivityCode | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -36,7 +37,9 @@ export default function ActivityCodesPage() {
     return new Set(filtered.map((c) => c.code.toUpperCase()));
   }, [filtered]);
 
-  const [catalogItems, setCatalogItems] = useState<CorporateActivityCode[]>([]);
+  // Instant opening from memory cache
+  const cachedCatalog = cacheManager.get<CorporateActivityCode[]>('corporate:activity-codes:catalog');
+  const [catalogItems, setCatalogItems] = useState<CorporateActivityCode[]>(() => cachedCatalog || []);
 
   useEffect(() => {
     if (importModalOpen) {
@@ -51,13 +54,15 @@ export default function ActivityCodesPage() {
   }, [importModalOpen]);
 
   const handleBatchImport = async (items: CorporateActivityCode[]) => {
-    for (const item of items) {
-      await add({
+    await batchImport(
+      items.map((item) => ({
+        id: item.id,
         code: item.code,
         description: item.description,
+        unit: item.unit,
         projectCode: item.projectCode || item.currentWorkingProject,
-      });
-    }
+      }))
+    );
   };
 
   const activityColumns = [

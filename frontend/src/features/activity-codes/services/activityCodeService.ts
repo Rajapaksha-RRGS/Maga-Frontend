@@ -106,9 +106,9 @@ export async function create(data: ActivityCodeFormData): Promise<ActivityCode> 
 }
 
 export async function importFromCorporate(
-  items: Array<{ code: string; description: string; projectCode?: string; activityType?: string }>,
+  items: Array<{ id?: string; code: string; description: string; unit?: string | null; projectCode?: string; activityType?: string }>,
   targetProjectCode?: string
-): Promise<{ success: boolean; importedCount: number; skippedCount: number }> {
+): Promise<{ success: boolean; importedCount: number; skippedCount?: number }> {
   const res = await apiFetch(`${API_URL}/activity-codes/import-from-corporate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

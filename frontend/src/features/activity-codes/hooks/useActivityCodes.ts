@@ -43,8 +43,21 @@ export function useActivityCodes() {
     await svc.remove(id); await load();
   };
 
+  const batchImport = async (
+    importItems: Array<{ id?: string; code: string; description: string; unit?: string | null; projectCode?: string }>
+  ) => {
+    setError(null);
+    try {
+      await svc.importFromCorporate(importItems);
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Batch import failed');
+      throw e;
+    }
+  };
+
   const checkUnique = (code: string, excludeId?: string): boolean =>
     !items.some((c) => c.code.toLowerCase() === code.toLowerCase() && c.id !== excludeId);
 
-  return { items, filtered, isLoading, search, setSearch, error, setError, add, edit, del, checkUnique, refresh: load };
+  return { items, filtered, isLoading, search, setSearch, error, setError, add, edit, del, batchImport, checkUnique, refresh: load };
 }
