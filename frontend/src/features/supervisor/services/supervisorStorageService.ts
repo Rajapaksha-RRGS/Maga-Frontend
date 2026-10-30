@@ -1338,4 +1338,67 @@ export const supervisorStorage = {
 
     return successful;
   },
+
+  /**
+   * Fetch recent past gangs for a supervisor across the past N working days before currentDate.
+   * Scans local drafts first, falls back to backend /time-entries/assigned.
+   */
+  async getPastGangsForSupervisor(
+    supervisorId: string,
+    currentDate: string,
+    daysCount: number = 5
+  ): Promise<Array<{ date: string; dayName: string; workerIds: string[]; workerCount: number }>> {
+    const results: Array<{ date: string; dayName: string; workerIds: string[]; workerCount: number }> = [];
+    if (!currentDate) return results;
+
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    const shiftDateStr = (dateStr: string, days: number): string => {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() + days);
+      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+    };
+
+    for (let i = 1; i <= daysCount; i++) {
+      const pastDate = shiftDateStr(currentDate, -i);
+      const [y, m, d] = pastDate.split('-').map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      const dayName = dayNames[dt.getUTCDay()];
+
+      // 1. Try local storage
+      const localWorkers = this.getLaborers(pastDate);
+      if (localWorkers && localWorkers.length > 0) {
+        results.push({
+          date: pastDate,
+          dayName,
+          workerIds: localWorkers.map((w) => w.id),
+          workerCount: localWorkers.length,
+        });
+        continue;
+      }
+
+      // 2. Try backend
+      if (supervisorId) {
+        try {
+          const res = await apiFetch(`${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(pastDate)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              results.push({
+                date: pastDate,
+                dayName,
+                workerIds: data.map((emp: any) => emp.id),
+                workerCount: data.length,
+              });
+            }
+          }
+        } catch {
+          // ignore network hiccups
+        }
+      }
+    }
+
+    return results;
+  },
 };

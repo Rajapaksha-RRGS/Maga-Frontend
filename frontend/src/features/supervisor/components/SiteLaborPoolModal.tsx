@@ -11,6 +11,11 @@ import {
   Briefcase,
   Building2,
   UserCheck,
+  History,
+  Copy,
+  Calendar,
+  ChevronDown,
+  Zap,
 } from 'lucide-react';
 import {
   supervisorStorage,
@@ -42,16 +47,27 @@ export function SiteLaborPoolModal({
   const [selectedTrade, setSelectedTrade] = useState<string>('all');
   const [affiliationFilter, setAffiliationFilter] = useState<'all' | 'direct' | 'subcontractor'>('all');
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [pastGangs, setPastGangs] = useState<Array<{ date: string; dayName: string; workerIds: string[]; workerCount: number }>>([]);
+  const [showPastDaysDropdown, setShowPastDaysDropdown] = useState(false);
+  const [pastGangNotice, setPastGangNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     setIsLoading(true);
     setCheckedIds(new Set());
+    setPastGangNotice(null);
+    setShowPastDaysDropdown(false);
+
     supervisorStorage
       .fetchSiteLaborPool(projectId, selectedDate, user?.id)
       .then((items) => setPoolWorkers(items))
       .catch((err) => console.warn('Could not load labor pool:', err))
       .finally(() => setIsLoading(false));
+
+    supervisorStorage
+      .getPastGangsForSupervisor(user?.id || '', selectedDate, 5)
+      .then((gangs) => setPastGangs(gangs))
+      .catch((err) => console.warn('Could not load past gangs:', err));
   }, [isOpen, selectedDate, projectId, user?.id]);
 
   // Set of IDs already in the current supervisor's active daily list
@@ -119,6 +135,67 @@ export function SiteLaborPoolModal({
       else next.add(id);
       return next;
     });
+  };
+
+  const mostRecentGang = pastGangs[0];
+  const recentAvailableCount = useMemo(() => {
+    if (!mostRecentGang) return 0;
+    const idSet = new Set(mostRecentGang.workerIds);
+    return poolWorkers.filter((w) => idSet.has(w.id) && !currentIds.has(w.id)).length;
+  }, [mostRecentGang, poolWorkers, currentIds]);
+
+  const handleSelectPastGang = (pg: { date: string; dayName: string; workerIds: string[]; workerCount: number }) => {
+    const idSet = new Set(pg.workerIds);
+    const matchingAvailable = poolWorkers
+      .filter((w) => idSet.has(w.id) && !currentIds.has(w.id))
+      .map((w) => w.id);
+
+    if (matchingAvailable.length === 0) {
+      setPastGangNotice(`All ${pg.workerCount} workers from ${pg.date} are already in today's gang.`);
+      setTimeout(() => setPastGangNotice(null), 3000);
+      return;
+    }
+
+    setCheckedIds(new Set(matchingAvailable));
+    setShowPastDaysDropdown(false);
+    setPastGangNotice(`Checked ${matchingAvailable.length} worker${matchingAvailable.length > 1 ? 's' : ''} from ${pg.date} (${pg.dayName}). Review and tap "Add Selected" below!`);
+    setTimeout(() => setPastGangNotice(null), 4000);
+  };
+
+  const handleDirectAddPastGang = (pg: { date: string; dayName: string; workerIds: string[]; workerCount: number }) => {
+    const idSet = new Set(pg.workerIds);
+    const toAddWorkers = poolWorkers.filter((w) => idSet.has(w.id) && !currentIds.has(w.id));
+
+    if (toAddWorkers.length === 0) {
+      setPastGangNotice(`All workers from ${pg.date} are already in today's gang.`);
+      setTimeout(() => setPastGangNotice(null), 3000);
+      return;
+    }
+
+    const newEntries: LaborerEntry[] = toAddWorkers.map((w) => ({
+      id: w.id,
+      employeeCode: w.employeeCode || '',
+      callingName: w.callingName || w.fullName || 'Worker',
+      fullName: w.fullName || '',
+      tradeGroup: w.tradeGroup || 'General labour',
+      businessPartner: w.businessPartner || 'Direct',
+      nic: w.nicNo || '',
+      inTime: '',
+      outTime: '',
+      shiftHours: 0,
+      otHours: 0,
+      activities: [],
+      status: 'pending',
+      claimedBySupervisor: w.claimedBySupervisor,
+      claimedSupervisorId: w.claimedSupervisorId,
+      claimedInTime: w.claimedInTime,
+      claimedOutTime: w.claimedOutTime,
+      claimedHours: w.claimedHours,
+      claimedByMe: w.claimedByMe,
+    }));
+
+    onAddLaborers(newEntries);
+    onClose();
   };
 
   const handleSelectAllAvailable = () => {
@@ -228,6 +305,104 @@ export function SiteLaborPoolModal({
             <X size={16} />
           </button>
         </div>
+
+        {/* ── Quick Copy Past Gang Banner ── */}
+        {pastGangs.length > 0 && mostRecentGang && (
+          <div className="p-3 sm:px-5 sm:py-3 border-b border-blue-100 dark:border-blue-900/60 bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-blue-50/90 dark:from-slate-850 dark:via-blue-950/30 dark:to-slate-850">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
+                  <History size={16} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      Copy Past Gang
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                      {mostRecentGang.workerCount} workers on {mostRecentGang.date} ({mostRecentGang.dayName})
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    1-click select your regular crew instead of picking one by one.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {/* 1-Click Select Button */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectPastGang(mostRecentGang)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-2xs transition-colors cursor-pointer"
+                  title={`Auto-check ${recentAvailableCount} available workers from ${mostRecentGang.date}`}
+                >
+                  <Copy size={13} />
+                  <span>Select {mostRecentGang.dayName}'s Gang ({recentAvailableCount})</span>
+                </button>
+
+                {/* Direct 1-Click Add Button */}
+                <button
+                  type="button"
+                  onClick={() => handleDirectAddPastGang(mostRecentGang)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-2xs transition-colors cursor-pointer"
+                  title="Directly add all available workers from this past gang to today without having to check and tap add"
+                >
+                  <Zap size={13} className="fill-current" />
+                  <span className="hidden sm:inline">1-Click Add</span>
+                </button>
+
+                {/* Other Past Days Dropdown */}
+                {pastGangs.length > 1 && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowPastDaysDropdown(!showPastDaysDropdown)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-semibold text-xs border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors cursor-pointer shadow-2xs"
+                    >
+                      <Calendar size={13} />
+                      <span className="hidden sm:inline">Other Days</span>
+                      <ChevronDown size={13} />
+                    </button>
+
+                    {showPastDaysDropdown && (
+                      <div className="absolute right-0 mt-1.5 w-60 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-1.5 z-30 space-y-1">
+                        <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Select Gang from Past Days:
+                        </div>
+                        {pastGangs.map((pg) => {
+                          const pgAvail = poolWorkers.filter((w) => new Set(pg.workerIds).has(w.id) && !currentIds.has(w.id)).length;
+                          return (
+                            <button
+                              key={pg.date}
+                              type="button"
+                              onClick={() => handleSelectPastGang(pg)}
+                              className="w-full text-left px-2.5 py-1.5 rounded-xl text-xs hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center justify-between cursor-pointer transition-colors"
+                            >
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
+                                {pg.date} ({pg.dayName})
+                              </span>
+                              <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400">
+                                {pgAvail} / {pg.workerCount} avail
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {pastGangNotice && (
+              <div className="mt-2 text-xs font-semibold text-blue-800 dark:text-blue-300 bg-blue-100/70 dark:bg-blue-950/80 px-2.5 py-1 rounded-lg border border-blue-200 dark:border-blue-800 flex items-center gap-1.5 animate-in fade-in">
+                <Check size={13} className="text-blue-600" />
+                <span>{pastGangNotice}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Search Bar & Filter Chips ── */}
         <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 space-y-2.5">
