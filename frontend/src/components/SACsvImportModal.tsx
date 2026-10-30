@@ -659,15 +659,11 @@ export default function SACsvImportModal({
                 className={`p-4 rounded-xl border flex items-start gap-3 ${
                   importResult.failedCount === 0
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                    : importResult.importedCount > 0
-                      ? 'bg-amber-50 border-amber-200 text-amber-900'
-                      : 'bg-red-50 border-red-200 text-red-900'
+                    : 'bg-red-50 border-red-300 text-red-950'
                 }`}
               >
                 {importResult.failedCount === 0 ? (
                   <CheckCircle2 size={24} className="text-emerald-600 shrink-0 mt-0.5" />
-                ) : importResult.importedCount > 0 ? (
-                  <AlertTriangle size={24} className="text-amber-600 shrink-0 mt-0.5" />
                 ) : (
                   <XCircle size={24} className="text-red-600 shrink-0 mt-0.5" />
                 )}
@@ -676,13 +672,11 @@ export default function SACsvImportModal({
                   <h4 className="text-sm font-bold">
                     {importResult.failedCount === 0
                       ? 'Import Completed Successfully!'
-                      : importResult.importedCount > 0
-                        ? 'Import Completed with Partial Warnings'
-                        : 'Import Failed'}
+                      : `⚠️ Import Incomplete: ${importResult.failedCount} Records Were REJECTED and NOT Saved!`}
                   </h4>
                   <div className="text-xs mt-1 flex items-center gap-3 font-semibold flex-wrap">
                     <span className="text-emerald-700">
-                      ✓ {importResult.importedCount} Imported
+                      ✓ {importResult.importedCount} Valid Records Saved
                       {importResult.insertedCount !== undefined &&
                         importResult.updatedCount !== undefined && (
                           <span className="font-normal text-[11px] ml-1">
@@ -691,8 +685,8 @@ export default function SACsvImportModal({
                         )}
                     </span>
                     {importResult.failedCount > 0 && (
-                      <span className="text-red-600">
-                        ✕ {importResult.failedCount} Failed / Skipped
+                      <span className="text-red-700 font-bold bg-red-100/80 border border-red-300 px-2 py-0.5 rounded">
+                        ✕ {importResult.failedCount} Invalid Records REJECTED (Missing BP / Trade)
                       </span>
                     )}
                     <span className="text-slate-500 font-normal">
