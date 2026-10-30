@@ -1102,70 +1102,70 @@ export const batchEnrollEmployees = async (req: Request, res: Response): Promise
     let enrolledCount = 0;
     const errors: Array<{ code: string; reason: string }> = [];
 
-    // 2. Perform bulk enrollment in a single high-speed database transaction
-    await prisma.$transaction(async (tx) => {
-      for (const item of rawItems) {
-        const code = String(item.employeeCode || item.code || '').trim().toUpperCase();
-        const corpEmp = corpMap.get(code);
+    // 2. Perform high-speed parallel site upserts across the connection pool (no 5s transaction timeout!)
+    const enrollPromises = rawItems.map(async (item: any) => {
+      const code = String(item.employeeCode || item.code || '').trim().toUpperCase();
+      const corpEmp = corpMap.get(code);
 
-        if (!corpEmp) {
-          errors.push({ code, reason: `Employee '${code}' not found in Corporate Master.` });
-          continue;
-        }
+      if (!corpEmp) {
+        errors.push({ code, reason: `Employee '${code}' not found in Corporate Master.` });
+        return;
+      }
 
-        const isInternal = corpEmp.employeeType === 'internal' || item.employeeType === 'internal';
-        const bpCodeOrName = isInternal ? '' : (item.businessPartnerCode || item.businessPartnerName || item.businessPartner || '');
-        const resolvedBpId = isInternal
-          ? null
-          : (corpEmp.corporateBusinessPartnerId || (bpCodeOrName ? bpMap.get(bpCodeOrName.toLowerCase().trim()) : null) || null);
+      const isInternal = corpEmp.employeeType === 'internal' || item.employeeType === 'internal';
+      const bpCodeOrName = isInternal ? '' : (item.businessPartnerCode || item.businessPartnerName || item.businessPartner || '');
+      const resolvedBpId = isInternal
+        ? null
+        : (corpEmp.corporateBusinessPartnerId || (bpCodeOrName ? bpMap.get(bpCodeOrName.toLowerCase().trim()) : null) || null);
 
-        const tgNameOrCode = item.tradeGroup || item.trade || '';
-        const resolvedTgId =
-          corpEmp.tradeGroupId ||
-          (tgNameOrCode ? tgMap.get(tgNameOrCode.toLowerCase().trim()) : null) ||
-          null;
+      const tgNameOrCode = item.tradeGroup || item.trade || '';
+      const resolvedTgId =
+        corpEmp.tradeGroupId ||
+        (tgNameOrCode ? tgMap.get(tgNameOrCode.toLowerCase().trim()) : null) ||
+        null;
 
-        const callingName = (item.callingName || corpEmp.fullName || 'Worker').trim().split(' ')[0] || 'Worker';
-        const dailyRate =
-          item.dailyRate !== undefined && item.dailyRate !== null && !isNaN(Number(item.dailyRate))
-            ? Number(item.dailyRate)
-            : Number(corpEmp.dailyRate ?? 1400.0);
+      const callingName = (item.callingName || corpEmp.fullName || 'Worker').trim().split(' ')[0] || 'Worker';
+      const dailyRate =
+        item.dailyRate !== undefined && item.dailyRate !== null && !isNaN(Number(item.dailyRate))
+          ? Number(item.dailyRate)
+          : Number(corpEmp.dailyRate ?? 1400.0);
 
-        const isOperator =
-          item.isOperator !== undefined
-            ? Boolean(item.isOperator === true || item.isOperator === 'true')
-            : corpEmp.isOperator;
+      const isOperator =
+        item.isOperator !== undefined
+          ? Boolean(item.isOperator === true || item.isOperator === 'true')
+          : corpEmp.isOperator;
 
-        await tx.mF_P_Employee.upsert({
-          where: {
-            projectId_corporateEmployeeId: {
-              projectId,
-              corporateEmployeeId: corpEmp.id,
-            },
-          },
-          update: {
-            callingName,
-            dailyRate,
-            tradeGroupId: resolvedTgId,
-            businessPartnerId: resolvedBpId,
-            isOperator,
-            status: 'active',
-          },
-          create: {
+      await prisma.mF_P_Employee.upsert({
+        where: {
+          projectId_corporateEmployeeId: {
             projectId,
             corporateEmployeeId: corpEmp.id,
-            callingName,
-            dailyRate,
-            tradeGroupId: resolvedTgId,
-            businessPartnerId: resolvedBpId,
-            isOperator,
-            status: 'active',
           },
-        });
+        },
+        update: {
+          callingName,
+          dailyRate,
+          tradeGroupId: resolvedTgId,
+          businessPartnerId: resolvedBpId,
+          isOperator,
+          status: 'active',
+        },
+        create: {
+          projectId,
+          corporateEmployeeId: corpEmp.id,
+          callingName,
+          dailyRate,
+          tradeGroupId: resolvedTgId,
+          businessPartnerId: resolvedBpId,
+          isOperator,
+          status: 'active',
+        },
+      });
 
-        enrolledCount++;
-      }
+      enrolledCount++;
     });
+
+    await Promise.all(enrollPromises);
 
     res.json({
       success: true,

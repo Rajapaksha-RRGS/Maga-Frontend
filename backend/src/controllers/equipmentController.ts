@@ -382,7 +382,7 @@ export const deleteEquipment = async (req: Request, res: Response): Promise<void
   }
 };
 
-// 7. POST /api/equipment/batch-erp-import — High-speed bulk import into project
+// 7. POST /api/equipment/batch-erp-import — High-speed parallel bulk import into project
 export const batchImportErpEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
     const projectId =
@@ -445,70 +445,76 @@ export const batchImportErpEquipment = async (req: Request, res: Response): Prom
       );
     }
 
-    const imported: any[] = [];
+    // Ensure any corporate equipment that doesn't exist yet is created first
+    for (const item of items) {
+      const code = (item.standardEquipmentNumber || item.code || item.vehicleNo || '').trim().toUpperCase();
+      if (!code) continue;
 
-    // Atomic, high-speed single database transaction for all site equipment upserts
-    await prisma.$transaction(async (tx) => {
-      for (const item of items) {
-        const code = (item.standardEquipmentNumber || item.code || item.vehicleNo || '').trim().toUpperCase();
-        if (!code) continue;
-
+      let corp = corpMap.get(code);
+      if (!corp) {
         const name = item.name || item.equipmentName || code;
         const unit = item.primaryUnit || item.unit || 'Hrs';
         const numericRate = item.costRate !== undefined && !isNaN(Number(item.costRate)) ? Number(item.costRate) : 0;
 
-        let corp = corpMap.get(code);
-        if (corp) {
-          corp = await tx.mF_G_Equipment.update({
-            where: { id: corp.id },
-            data: {
-              equipmentName: name,
-              unit,
-            },
-          });
-        } else {
-          corp = await tx.mF_G_Equipment.create({
-            data: {
-              standardEquipmentNumber: code,
-              equipmentName: name,
-              vehicleNo: item.vehicleNo || code,
-              unit,
-              costRate: numericRate,
-              condition: item.condition || 'DRY',
-              type: item.type || null,
-              status: 'active',
-            },
-          });
-          corpMap.set(code, corp);
-        }
-
-        const site = await tx.mF_P_Equipment.upsert({
-          where: {
-            projectId_corporateEquipmentId: {
-              projectId,
-              corporateEquipmentId: corp.id,
-            },
-          },
-          update: {
-            condition: item.condition || corp.condition,
+        corp = await prisma.mF_G_Equipment.create({
+          data: {
+            standardEquipmentNumber: code,
+            equipmentName: name,
+            vehicleNo: item.vehicleNo || code,
+            unit,
             costRate: numericRate,
-            meterUnitCode: unit,
+            condition: item.condition || 'DRY',
+            type: item.type || null,
             status: 'active',
           },
-          create: {
+        });
+        corpMap.set(code, corp);
+      }
+    }
+
+    // High-speed parallel site upserts across the connection pool (no sequential roundtrips, no 5s timeout!)
+    const upsertPromises = items.map(async (item: any) => {
+      const code = (item.standardEquipmentNumber || item.code || item.vehicleNo || '').trim().toUpperCase();
+      if (!code) return null;
+
+      const corp = corpMap.get(code);
+      if (!corp) return null;
+
+      const unit = item.primaryUnit || item.unit || corp.unit || 'Hrs';
+      const numericRate =
+        item.costRate !== undefined && !isNaN(Number(item.costRate))
+          ? Number(item.costRate)
+          : Number(corp.costRate ?? 0);
+
+      const site = await prisma.mF_P_Equipment.upsert({
+        where: {
+          projectId_corporateEquipmentId: {
             projectId,
             corporateEquipmentId: corp.id,
-            condition: item.condition || corp.condition,
-            costRate: numericRate,
-            meterUnitCode: unit,
-            status: 'active',
           },
-          select: equipmentSelectOptimized,
-        });
+        },
+        update: {
+          condition: item.condition || corp.condition,
+          costRate: numericRate,
+          meterUnitCode: unit,
+          status: 'active',
+        },
+        create: {
+          projectId,
+          corporateEquipmentId: corp.id,
+          condition: item.condition || corp.condition,
+          costRate: numericRate,
+          meterUnitCode: unit,
+          status: 'active',
+        },
+        select: equipmentSelectOptimized,
+      });
 
-        imported.push(formatEquipment(site));
-      }
+      return formatEquipment(site);
     });
+
+    const results = await Promise.all(upsertPromises);
+    const imported = results.filter(Boolean);
 
     res.json({ success: true, count: imported.length, items: imported });
   } catch (error: any) {
