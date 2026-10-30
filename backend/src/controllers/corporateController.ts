@@ -48,6 +48,120 @@ export function resolveProjectByCode(
   return null;
 }
 
+
+export interface SimpleTradeGroupRef {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export function resolveTradeGroupSmart(
+  rawInput: string | undefined | null,
+  isExternal: boolean,
+  allTradeGroups: SimpleTradeGroupRef[]
+): SimpleTradeGroupRef | null {
+  const trimmed = (rawInput || '').trim();
+  const lower = trimmed.toLowerCase();
+
+  // 1. Unassigned, '0', empty, or general helper indicators -> Fall back to Unskilled Worker
+  const isHelperOrUnassigned =
+    !trimmed ||
+    lower === '0' ||
+    lower === 'none' ||
+    lower === 'null' ||
+    lower === '-' ||
+    lower === 'helper' ||
+    lower === 'helpers' ||
+    lower === 'general helper' ||
+    lower === 'general labour' ||
+    lower === 'general labor' ||
+    lower === 'labour' ||
+    lower === 'labor' ||
+    lower === 'unskilled' ||
+    lower === 'un skilled' ||
+    lower === 'unskilled worker';
+
+  if (isHelperOrUnassigned) {
+    const defaultCode = isExternal ? 'SUS' : 'MUS';
+    const fallback = allTradeGroups.find((tg) => tg.code.toUpperCase() === defaultCode);
+    if (fallback) return fallback;
+  }
+
+  // 2. Direct code or name match (case-insensitive)
+  const direct = allTradeGroups.find(
+    (tg) => tg.code.toLowerCase() === lower || tg.name.toLowerCase() === lower
+  );
+  if (direct) return direct;
+
+  // 3. Clean alphanumeric string (e.g. "barbender" matches "bar bender")
+  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleanInput = clean(trimmed);
+
+  // Common aliases & ERP trade mappings
+  const ALIAS_MAP: Record<string, string> = {
+    carpenter: 'carpenters',
+    carpentry: 'carpenters',
+    barbender: 'bar bender',
+    ironbender: 'bar bender',
+    steelfixer: 'bar bender',
+    machanic: 'mechanic',
+    traineemachanic: 'trainee mechanic',
+    traineemechanic: 'trainee mechanic',
+    storehelper: 'stores helper',
+    storeshelper: 'stores helper',
+    storekeeperhelper: 'stores helper',
+    storeman: 'stores helper',
+    surveyinghelper: 'survey helper',
+    surveyorhelper: 'survey helper',
+    labhelper: 'lab helper',
+    laboratoryhelper: 'lab helper',
+    officehelper: 'office helper',
+    flagman: 'flagman',
+    mason: 'mason',
+    welder: 'welder',
+    electrician: 'electrician',
+    cook: 'cook',
+  };
+
+  const canonicalTarget = ALIAS_MAP[cleanInput] || null;
+
+  // If external, check for "Supply - <target>" first
+  if (isExternal) {
+    const supplyMatch = allTradeGroups.find((tg) => {
+      const cleanTg = clean(tg.name);
+      if (canonicalTarget && (cleanTg === clean(`supply - ${canonicalTarget}`) || cleanTg === clean(`supply ${canonicalTarget}`))) return true;
+      if (cleanTg === clean(`supply - ${trimmed}`) || cleanTg === clean(`supply ${trimmed}`)) return true;
+      return false;
+    });
+    if (supplyMatch) return supplyMatch;
+  }
+
+  // Check alias target against trade groups
+  if (canonicalTarget) {
+    const aliasMatch = allTradeGroups.find((tg) => {
+      return (
+        tg.code.toLowerCase() === canonicalTarget ||
+        tg.name.toLowerCase() === canonicalTarget ||
+        clean(tg.name) === clean(canonicalTarget) ||
+        clean(tg.code) === clean(canonicalTarget)
+      );
+    });
+    if (aliasMatch) return aliasMatch;
+  }
+
+  // 4. Normalized alphanumeric match (including plural/singular tolerance)
+  const alphaMatch = allTradeGroups.find((tg) => {
+    const cName = clean(tg.name);
+    const cCode = clean(tg.code);
+    if (cName === cleanInput || cCode === cleanInput) return true;
+    if (cName === cleanInput + 's' || cName + 's' === cleanInput) return true;
+    return false;
+  });
+  if (alphaMatch) return alphaMatch;
+
+  return null;
+}
+
 // ── 1. GET /api/corporate/stats ───────────────────────────────────────────────
 export const getCorporateStats = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -2092,7 +2206,7 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         continue;
       }
 
-      // Resolve Trade Group directly from MF_G_TradeGroup table (matches Code or Name)
+      // Resolve Trade Group intelligently using smart normalization & ERP aliases
       const tradeGroupInput = getFieldVal(item, [
         'tradeGroup',
         'trade',
@@ -2102,22 +2216,7 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         'tradeGroupId',
       ]);
 
-      if (!tradeGroupInput || !tradeGroupInput.trim()) {
-        errors.push({
-          row: rowNum,
-          code,
-          name,
-          field: 'Trade Group',
-          reason: 'Trade Group is strictly required. An employee cannot exist without a Trade Group.',
-          suggestion: 'Provide a valid Trade Group Name or Code from the Trade Group Master table.',
-        });
-        continue;
-      }
-
-      const lookup = tradeGroupInput.toLowerCase().trim();
-      const matchedTradeGroup = allTradeGroups.find(
-        (tg) => tg.code.toLowerCase() === lookup || tg.name.toLowerCase() === lookup
-      );
+      const matchedTradeGroup = resolveTradeGroupSmart(tradeGroupInput, isExternal, allTradeGroups);
 
       if (!matchedTradeGroup) {
         errors.push({
@@ -2125,8 +2224,8 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
           code,
           name,
           field: 'Trade Group',
-          reason: `Trade Group '${tradeGroupInput}' is not found in the Trade Group Master table`,
-          suggestion: 'Please specify a valid Trade Group Name or Code that is registered in your Trade Group table.',
+          reason: tradeGroupInput ? `Trade Group '${tradeGroupInput}' could not be matched in Trade Group Master` : 'Trade Group is required',
+          suggestion: 'Provide a valid Trade Group Name or Code (e.g. Carpenter, Mason, Electrician, Helper, etc.).',
         });
         continue;
       }
@@ -2148,8 +2247,14 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         const dailyRate = rawRate !== '' && !isNaN(Number(rawRate)) ? Number(rawRate) : undefined;
 
         const rawOp = getFieldVal(item, ['isOperator', 'operator', 'operatorYN', 'machineOperator']).toLowerCase();
-        const isOperator =
+        let isOperator =
           rawOp === 'true' || rawOp === '1' || rawOp === 'yes' || rawOp === 'y' || rawOp === 'operator';
+        if (rawOp === '') {
+          const tgLower = (matchedTradeGroup.name || '').toLowerCase();
+          if (tgLower.includes('operator') || tgLower.includes('driver')) {
+            isOperator = true;
+          }
+        }
 
         const epfNo = getFieldVal(item, ['epfNo', 'epf', 'epfNumber']) || null;
 
