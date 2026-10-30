@@ -458,7 +458,7 @@ export default function SACsvImportModal({
   };
 
   // ── 5. Execute Import API Call with Chunked Progress ────────────────────────
-  const BATCH_SIZE = 35;
+  const BATCH_SIZE = 50;
 
   const handleExecuteImport = async () => {
     if (parsedRows.length === 0 || isSubmitting) return;

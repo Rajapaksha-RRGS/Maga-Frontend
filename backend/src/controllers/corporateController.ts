@@ -2031,6 +2031,33 @@ export const bulkImportCorporateBusinessPartners = async (req: Request, res: Res
       return;
     }
 
+    const codes = rawItems
+      .map((item: any) =>
+        getFieldVal(item, [
+          'code',
+          'bpCode',
+          'partnerCode',
+          'vendorCode',
+          'supplierCode',
+          'erpCode',
+          'erpNewCode',
+          'bp',
+        ]).toUpperCase().trim()
+      )
+      .filter(Boolean);
+
+    // Pre-fetch all matching business partners in 1 single query
+    const existingBPs = codes.length > 0
+      ? await prisma.mF_G_BusinessPartner.findMany({
+          where: { code: { in: codes } },
+        })
+      : [];
+
+    const existingMap = new Map<string, (typeof existingBPs)[0]>();
+    for (const bp of existingBPs) {
+      existingMap.set(bp.code.toUpperCase().trim(), bp);
+    }
+
     const errors: Array<{
       row: number;
       code?: string;
@@ -2041,6 +2068,25 @@ export const bulkImportCorporateBusinessPartners = async (req: Request, res: Res
     }> = [];
     let insertedCount = 0;
     let updatedCount = 0;
+
+    interface ValidBpOp {
+      rowNum: number;
+      code: string;
+      name: string;
+      cleanNic: string | null;
+      type: string | null;
+      bAddress: string | null;
+      bCity: string | null;
+      bCountry: string;
+      contactPerson: string | null;
+      phone: string | null;
+      email: string | null;
+      rating: string | null;
+      existing?: (typeof existingBPs)[0];
+    }
+
+    const ops: ValidBpOp[] = [];
+    const seenCodesInBatch = new Set<string>();
 
     for (let i = 0; i < rawItems.length; i++) {
       const rowNum = i + 1;
@@ -2057,7 +2103,7 @@ export const bulkImportCorporateBusinessPartners = async (req: Request, res: Res
         'erpCode',
         'erpNewCode',
         'bp',
-      ]).toUpperCase();
+      ]).toUpperCase().trim();
 
       const name = getFieldVal(item, [
         'name',
@@ -2082,6 +2128,19 @@ export const bulkImportCorporateBusinessPartners = async (req: Request, res: Res
         continue;
       }
 
+      if (seenCodesInBatch.has(code)) {
+        errors.push({
+          row: rowNum,
+          code,
+          name,
+          field: 'Partner Code',
+          reason: `Duplicate partner code '${code}' found within the uploaded spreadsheet.`,
+          suggestion: 'Ensure each row has a unique Partner Code.',
+        });
+        continue;
+      }
+      seenCodesInBatch.add(code);
+
       const cleanNic = getFieldVal(item, [
         'nicNo',
         'nic',
@@ -2101,60 +2160,77 @@ export const bulkImportCorporateBusinessPartners = async (req: Request, res: Res
       const email = getFieldVal(item, ['email', 'emailAddress', 'mail']) || null;
       const rating = getFieldVal(item, ['rating', 'grade', 'score']) || null;
 
-      try {
-        const existing = await prisma.mF_G_BusinessPartner.findUnique({
-          where: { code },
-        });
-
-        if (existing) {
-          await prisma.mF_G_BusinessPartner.update({
-            where: { id: existing.id },
-            data: {
-              name,
-              type: type || existing.type,
-              nicNo: cleanNic || existing.nicNo,
-              address: bAddress || existing.address,
-              city: bCity || existing.city,
-              country: bCountry || existing.country,
-              contactPerson: contactPerson || existing.contactPerson,
-              phone: phone || existing.phone,
-              email: email || existing.email,
-              rating: rating || existing.rating,
-              status: 'active',
-            },
-          });
-          updatedCount++;
-        } else {
-          await prisma.mF_G_BusinessPartner.create({
-            data: {
-              code,
-              name,
-              type,
-              nicNo: cleanNic,
-              address: bAddress,
-              city: bCity,
-              country: bCountry,
-              contactPerson,
-              phone,
-              email,
-              rating,
-              status: 'active',
-            },
-          });
-          insertedCount++;
-        }
-      } catch (err: any) {
-        const translated = translateError(err, 'business partner', code);
-        errors.push({
-          row: rowNum,
-          code,
-          name,
-          field: 'Database',
-          reason: translated.reason,
-          suggestion: translated.suggestion,
-        });
-      }
+      ops.push({
+        rowNum,
+        code,
+        name,
+        cleanNic,
+        type,
+        bAddress,
+        bCity,
+        bCountry,
+        contactPerson,
+        phone,
+        email,
+        rating,
+        existing: existingMap.get(code),
+      });
     }
+
+    // Parallel DB writes for high performance
+    await Promise.all(
+      ops.map(async (op) => {
+        try {
+          if (op.existing) {
+            await prisma.mF_G_BusinessPartner.update({
+              where: { id: op.existing.id },
+              data: {
+                name: op.name,
+                type: op.type || op.existing.type,
+                nicNo: op.cleanNic || op.existing.nicNo,
+                address: op.bAddress || op.existing.address,
+                city: op.bCity || op.existing.city,
+                country: op.bCountry || op.existing.country,
+                contactPerson: op.contactPerson || op.existing.contactPerson,
+                phone: op.phone || op.existing.phone,
+                email: op.email || op.existing.email,
+                rating: op.rating || op.existing.rating,
+                status: 'active',
+              },
+            });
+            updatedCount++;
+          } else {
+            await prisma.mF_G_BusinessPartner.create({
+              data: {
+                code: op.code,
+                name: op.name,
+                type: op.type,
+                nicNo: op.cleanNic,
+                address: op.bAddress,
+                city: op.bCity,
+                country: op.bCountry,
+                contactPerson: op.contactPerson,
+                phone: op.phone,
+                email: op.email,
+                rating: op.rating,
+                status: 'active',
+              },
+            });
+            insertedCount++;
+          }
+        } catch (err: any) {
+          const translated = translateError(err, 'business partner', op.code);
+          errors.push({
+            row: op.rowNum,
+            code: op.code,
+            name: op.name,
+            field: 'Database',
+            reason: translated.reason,
+            suggestion: translated.suggestion,
+          });
+        }
+      })
+    );
 
     res.json({
       success: true,
@@ -2171,7 +2247,6 @@ export const bulkImportCorporateBusinessPartners = async (req: Request, res: Res
   }
 };
 
-// ── 20. POST /api/corporate/employees/bulk-import ──────────────────────────────
 export const bulkImportCorporateEmployees = async (req: Request, res: Response): Promise<void> => {
   try {
     const rawItems = req.body.records || req.body.items || [];
@@ -2180,11 +2255,31 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
       return;
     }
 
-    // Pre-cache Trade Groups, Business Partners, and Projects for O(1) lookups
-    const [allTradeGroups, allBusinessPartners, allProjects] = await Promise.all([
+    const codes = rawItems
+      .map((item: any) =>
+        getFieldVal(item, [
+          'employeeCode',
+          'empCode',
+          'erpNewCode',
+          'erpCode',
+          'code',
+          'empNo',
+          'employeeNo',
+          'emp_no',
+        ]).toUpperCase().trim()
+      )
+      .filter(Boolean);
+
+    // Pre-cache Trade Groups, Business Partners, Projects, and Existing Corporate Employees in parallel
+    const [allTradeGroups, allBusinessPartners, allProjects, existingEmployees] = await Promise.all([
       prisma.mF_G_TradeGroup.findMany({ select: { id: true, code: true, name: true } }),
       prisma.mF_G_BusinessPartner.findMany({ select: { id: true, code: true, name: true } }),
       prisma.mF_P_Project.findMany({ select: { id: true, projectCode: true, projectName: true, subdomain: true } }),
+      codes.length > 0
+        ? prisma.mF_G_Employee.findMany({
+            where: { employeeCode: { in: codes } },
+          })
+        : Promise.resolve([]),
     ]);
 
     const tradeGroupMap = new Map<string, string>();
@@ -2199,6 +2294,11 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
       bpMap.set(bp.name.toLowerCase().trim(), bp.id);
     }
 
+    const existingMap = new Map<string, (typeof existingEmployees)[0]>();
+    for (const emp of existingEmployees) {
+      existingMap.set(emp.employeeCode.toUpperCase().trim(), emp);
+    }
+
     const errors: Array<{
       row: number;
       code?: string;
@@ -2209,6 +2309,25 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
     }> = [];
     let insertedCount = 0;
     let updatedCount = 0;
+
+    interface ValidEmpOp {
+      rowNum: number;
+      code: string;
+      name: string;
+      nic: string;
+      dailyRate?: number;
+      isOperator: boolean;
+      rawOp: string;
+      epfNo: string | null;
+      resolvedTradeGroupId: string;
+      isExternal: boolean;
+      finalBpId: string | null;
+      resolvedProj: (typeof allProjects)[0] | null;
+      existing?: (typeof existingEmployees)[0];
+    }
+
+    const ops: ValidEmpOp[] = [];
+    const seenCodesInBatch = new Set<string>();
 
     for (let i = 0; i < rawItems.length; i++) {
       const rowNum = i + 1;
@@ -2225,7 +2344,7 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         'empNo',
         'employeeNo',
         'emp_no',
-      ]).toUpperCase();
+      ]).toUpperCase().trim();
 
       const name = getFieldVal(item, [
         'fullName',
@@ -2242,7 +2361,7 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         'nationalId',
         'idNumber',
         'nicNumber',
-      ]).toUpperCase();
+      ]).toUpperCase().trim();
 
       if (!code || !name) {
         errors.push({
@@ -2255,6 +2374,19 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         });
         continue;
       }
+
+      if (seenCodesInBatch.has(code)) {
+        errors.push({
+          row: rowNum,
+          code,
+          name,
+          field: 'Employee Code',
+          reason: `Duplicate employee code '${code}' found within the uploaded spreadsheet.`,
+          suggestion: 'Ensure each row has a unique Employee Code.',
+        });
+        continue;
+      }
+      seenCodesInBatch.add(code);
 
       // Resolve Business Partner & Employee Type (Strict Enterprise Validation)
       const explicitType = getFieldVal(item, ['employeeType', 'type', 'employmentType']).toLowerCase();
@@ -2273,7 +2405,6 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         const cleanBpCode = bpCodeInput.toUpperCase().trim();
         resolvedBpId = bpMap.get(cleanBpCode.toLowerCase()) || null;
         if (!resolvedBpId) {
-          // STRICT RULE: If Business Partner is not registered in the system, REJECT and return clear error!
           errors.push({
             row: rowNum,
             code,
@@ -2291,7 +2422,6 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         (explicitType !== 'internal' && Boolean(bpCodeInput || resolvedBpId));
 
       if (isExternal && !resolvedBpId) {
-        // STRICT RULE: External / Subcontract employees MUST have a valid registered Business Partner!
         errors.push({
           row: rowNum,
           code,
@@ -2339,153 +2469,132 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         continue;
       }
 
-      const resolvedTradeGroupId = matchedTradeGroup.id;
-      const finalBpId = isExternal ? resolvedBpId : null;
+      const rawRate = getFieldVal(item, ['dailyRate', 'rateRs', 'rate', 'basicRate', 'rateLkr']);
+      const dailyRate = rawRate !== '' && !isNaN(Number(rawRate)) ? Number(rawRate) : undefined;
 
-      try {
-        // STRICT PRIMARY IDENTIFIER: Check duplicate solely by unique employeeCode!
-        const existing = await prisma.mF_G_Employee.findUnique({
-          where: { employeeCode: code },
-        });
+      const rawOp = getFieldVal(item, ['isOperator', 'operator', 'operatorYN', 'machineOperator']).toLowerCase();
+      const isOperator =
+        rawOp === 'true' || rawOp === '1' || rawOp === 'yes' || rawOp === 'y' || rawOp === 'operator';
 
-        const rawRate = getFieldVal(item, ['dailyRate', 'rateRs', 'rate', 'basicRate', 'rateLkr']);
-        const dailyRate = rawRate !== '' && !isNaN(Number(rawRate)) ? Number(rawRate) : undefined;
+      const epfNo = getFieldVal(item, ['epfNo', 'epf', 'epfNumber']) || null;
 
-        const rawOp = getFieldVal(item, ['isOperator', 'operator', 'operatorYN', 'machineOperator']).toLowerCase();
-        // STRICT RULE: Only set isOperator to true if explicitly specified in the CSV / data!
-        const isOperator =
-          rawOp === 'true' || rawOp === '1' || rawOp === 'yes' || rawOp === 'y' || rawOp === 'operator';
+      const rawProject = getFieldVal(item, [
+        'currentWorkingProject',
+        'currentProject',
+        'workingProject',
+        'projectCode',
+        'project',
+        'site',
+        'workingPlace',
+        'siteCode',
+      ]);
+      const resolvedProj = resolveProjectByCode(rawProject, allProjects);
 
-        const epfNo = getFieldVal(item, ['epfNo', 'epf', 'epfNumber']) || null;
+      ops.push({
+        rowNum,
+        code,
+        name,
+        nic,
+        dailyRate,
+        isOperator,
+        rawOp,
+        epfNo,
+        resolvedTradeGroupId: matchedTradeGroup.id,
+        isExternal,
+        finalBpId: isExternal ? resolvedBpId : null,
+        resolvedProj: resolvedProj || null,
+        existing: existingMap.get(code),
+      });
+    }
 
-        const rawProject = getFieldVal(item, [
-          'currentWorkingProject',
-          'currentProject',
-          'workingProject',
-          'projectCode',
-          'project',
-          'site',
-          'workingPlace',
-          'siteCode',
-        ]);
-        const resolvedProj = resolveProjectByCode(rawProject, allProjects);
-        const finalProjectCode = resolvedProj ? resolvedProj.projectCode : (rawProject ? rawProject.trim() : null);
+    // Parallel DB writes for high performance
+    await Promise.all(
+      ops.map(async (op) => {
+        try {
+          let savedEmployeeId: string;
+          let finalDailyRate = op.dailyRate !== undefined ? op.dailyRate : 1400.0;
 
-        let savedEmployeeId: string;
-        let finalDailyRate = dailyRate !== undefined ? dailyRate : 1400.0;
-
-        if (existing) {
-          const updated = await prisma.mF_G_Employee.update({
-            where: { id: existing.id },
-            data: {
-              fullName: name,
-              nicNo: nic || existing.nicNo,
-              dailyRate: dailyRate !== undefined ? dailyRate : existing.dailyRate,
-              tradeGroupId: resolvedTradeGroupId || existing.tradeGroupId,
-              employeeType: isExternal ? 'external' : 'internal',
-              corporateBusinessPartnerId: finalBpId !== null ? finalBpId : existing.corporateBusinessPartnerId,
-              epfNo: epfNo || existing.epfNo,
-              isOperator: rawOp !== '' ? isOperator : existing.isOperator,
-              currentProjectId: resolvedProj?.id || existing.currentProjectId,
-              status: 'active',
-            },
-          });
-          savedEmployeeId = updated.id;
-          finalDailyRate = Number(updated.dailyRate ?? 1400.0);
-          updatedCount++;
-        } else {
-          const created = await prisma.mF_G_Employee.create({
-            data: {
-              employeeCode: code,
-              fullName: name,
-              nicNo: nic || `NIC-${code}`,
-              dailyRate: dailyRate !== undefined ? dailyRate : 1400.0,
-              tradeGroupId: resolvedTradeGroupId,
-              employeeType: isExternal ? 'external' : 'internal',
-              corporateBusinessPartnerId: finalBpId,
-              epfNo,
-              isOperator,
-              currentProjectId: resolvedProj?.id || null,
-              status: 'active',
-            },
-          });
-          savedEmployeeId = created.id;
-          insertedCount++;
-        }
-
-        // Auto-provision to site if a valid project was specified!
-        if (resolvedProj) {
-          await prisma.mF_P_Employee.upsert({
-            where: {
-              projectId_corporateEmployeeId: {
-                projectId: resolvedProj.id,
-                corporateEmployeeId: savedEmployeeId,
-              },
-            },
-            update: {
-              callingName: name.split(' ')[0] || name,
-              status: 'active',
-              dailyRate: finalDailyRate,
-              tradeGroupId: resolvedTradeGroupId,
-              businessPartnerId: finalBpId,
-              isOperator: isOperator,
-            },
-            create: {
-              projectId: resolvedProj.id,
-              corporateEmployeeId: savedEmployeeId,
-              callingName: name.split(' ')[0] || name,
-              status: 'active',
-              dailyRate: finalDailyRate,
-              tradeGroupId: resolvedTradeGroupId,
-              businessPartnerId: finalBpId,
-              isOperator: isOperator,
-            },
-          });
-
-          // Create active transfer ledger record if not already active for this site
-          const activeTransfer = await prisma.mF_G_EmployeeTransfer.findFirst({
-            where: {
-              corporateEmployeeId: savedEmployeeId,
-              toProjectId: resolvedProj.id,
-              status: 'active',
-            },
-          });
-          if (!activeTransfer) {
-            await prisma.mF_G_EmployeeTransfer.updateMany({
-              where: {
-                corporateEmployeeId: savedEmployeeId,
-                status: 'active',
-                endDate: null,
-              },
+          if (op.existing) {
+            const updated = await prisma.mF_G_Employee.update({
+              where: { id: op.existing.id },
               data: {
-                status: 'transferred',
-                endDate: new Date(),
+                fullName: op.name,
+                nicNo: op.nic || op.existing.nicNo,
+                dailyRate: op.dailyRate !== undefined ? op.dailyRate : op.existing.dailyRate,
+                tradeGroupId: op.resolvedTradeGroupId || op.existing.tradeGroupId,
+                employeeType: op.isExternal ? 'external' : 'internal',
+                corporateBusinessPartnerId: op.finalBpId !== null ? op.finalBpId : op.existing.corporateBusinessPartnerId,
+                epfNo: op.epfNo || op.existing.epfNo,
+                isOperator: op.rawOp !== '' ? op.isOperator : op.existing.isOperator,
+                currentProjectId: op.resolvedProj?.id || op.existing.currentProjectId,
+                status: 'active',
               },
             });
-
-            await prisma.mF_G_EmployeeTransfer.create({
+            savedEmployeeId = updated.id;
+            finalDailyRate = Number(updated.dailyRate ?? 1400.0);
+            updatedCount++;
+          } else {
+            const created = await prisma.mF_G_Employee.create({
               data: {
-                corporateEmployeeId: savedEmployeeId,
-                toProjectId: resolvedProj.id,
-                startDate: new Date(),
+                employeeCode: op.code,
+                fullName: op.name,
+                nicNo: op.nic || `NIC-${op.code}`,
+                dailyRate: op.dailyRate !== undefined ? op.dailyRate : 1400.0,
+                tradeGroupId: op.resolvedTradeGroupId,
+                employeeType: op.isExternal ? 'external' : 'internal',
+                corporateBusinessPartnerId: op.finalBpId,
+                epfNo: op.epfNo,
+                isOperator: op.isOperator,
+                currentProjectId: op.resolvedProj?.id || null,
                 status: 'active',
-                remarks: 'Auto-provisioned via Corporate Employee Master Import',
+              },
+            });
+            savedEmployeeId = created.id;
+            insertedCount++;
+          }
+
+          // Auto-provision to site if a valid project was specified
+          if (op.resolvedProj) {
+            await prisma.mF_P_Employee.upsert({
+              where: {
+                projectId_corporateEmployeeId: {
+                  projectId: op.resolvedProj.id,
+                  corporateEmployeeId: savedEmployeeId,
+                },
+              },
+              update: {
+                callingName: op.name.split(' ')[0] || op.name,
+                status: 'active',
+                dailyRate: finalDailyRate,
+                tradeGroupId: op.resolvedTradeGroupId,
+                businessPartnerId: op.finalBpId,
+                isOperator: op.isOperator,
+              },
+              create: {
+                projectId: op.resolvedProj.id,
+                corporateEmployeeId: savedEmployeeId,
+                callingName: op.name.split(' ')[0] || op.name,
+                status: 'active',
+                dailyRate: finalDailyRate,
+                tradeGroupId: op.resolvedTradeGroupId,
+                businessPartnerId: op.finalBpId,
+                isOperator: op.isOperator,
               },
             });
           }
+        } catch (err: any) {
+          const translated = translateError(err, 'employee', op.code);
+          errors.push({
+            row: op.rowNum,
+            code: op.code,
+            name: op.name,
+            field: 'Database',
+            reason: translated.reason,
+            suggestion: translated.suggestion,
+          });
         }
-      } catch (err: any) {
-        const translated = translateError(err, 'employee', code);
-        errors.push({
-          row: rowNum,
-          code,
-          name,
-          field: 'Database',
-          reason: translated.reason,
-          suggestion: translated.suggestion,
-        });
-      }
-    }
+      })
+    );
 
     res.json({
       success: true,
@@ -2502,7 +2611,6 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
   }
 };
 
-// ── 21. POST /api/corporate/equipment/bulk-import ──────────────────────────────
 export const bulkImportCorporateEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
     const rawItems = req.body.records || req.body.items || [];
@@ -2511,10 +2619,30 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
       return;
     }
 
-    // Pre-cache Business Partners and Unit Master for fast O(1) relational lookups
-    const [allPartners, allUnits] = await Promise.all([
+    const standardNumbers = rawItems
+      .map((item: any) =>
+        getFieldVal(item, [
+          'standardEquipmentNumber',
+          'equipmentNumber',
+          'erpNewCode',
+          'erpCode',
+          'equipmentCode',
+          'machineCode',
+          'assetNo',
+          'code',
+        ]).toUpperCase().trim()
+      )
+      .filter(Boolean);
+
+    // Pre-cache Business Partners, Unit Master, and Existing Equipment for fast O(1) relational lookups
+    const [allPartners, allUnits, existingEquipment] = await Promise.all([
       prisma.mF_G_BusinessPartner.findMany({ select: { id: true, code: true, name: true } }),
       prisma.mF_G_UnitMaster.findMany({ select: { id: true, code: true, name: true } }),
+      standardNumbers.length > 0
+        ? prisma.mF_G_Equipment.findMany({
+            where: { standardEquipmentNumber: { in: standardNumbers } },
+          })
+        : Promise.resolve([]),
     ]);
 
     const bpMap = new Map<string, string>();
@@ -2527,6 +2655,11 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
     const unitSet = new Set<string>();
     for (const u of allUnits) {
       unitSet.add(u.code);
+    }
+
+    const existingMap = new Map<string, (typeof existingEquipment)[0]>();
+    for (const eq of existingEquipment) {
+      existingMap.set(eq.standardEquipmentNumber.toUpperCase().trim(), eq);
     }
 
     const normalizeUnit = (rawUnit: string | null | undefined): string => {
@@ -2554,6 +2687,23 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
     let insertedCount = 0;
     let updatedCount = 0;
 
+    interface ValidEquipmentOp {
+      rowNum: number;
+      standardNumber: string;
+      name: string;
+      condition: string;
+      unit: string;
+      minUtil: number | null;
+      dailyRate: number | null;
+      costRate: number | null;
+      vehicleNo: string | null;
+      resolvedBpId: string | null;
+      existing?: (typeof existingEquipment)[0];
+    }
+
+    const ops: ValidEquipmentOp[] = [];
+    const seenCodesInBatch = new Set<string>();
+
     for (let i = 0; i < rawItems.length; i++) {
       const rowNum = i + 1;
       const item = rawItems[i] || {};
@@ -2569,7 +2719,7 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
         'machineCode',
         'assetNo',
         'code',
-      ]).toUpperCase();
+      ]).toUpperCase().trim();
 
       const name = getFieldVal(item, [
         'equipmentName',
@@ -2590,6 +2740,19 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
         });
         continue;
       }
+
+      if (seenCodesInBatch.has(standardNumber)) {
+        errors.push({
+          row: rowNum,
+          code: standardNumber,
+          name,
+          field: 'Equipment Number',
+          reason: `Duplicate equipment number '${standardNumber}' found within the uploaded spreadsheet.`,
+          suggestion: 'Ensure each row has a unique Standard Equipment Number.',
+        });
+        continue;
+      }
+      seenCodesInBatch.add(standardNumber);
 
       const rawDailyRate = getFieldVal(item, ['dailyRate', 'dailyRateLkr', 'baseRate', 'rate']);
       const dailyRate = rawDailyRate !== '' && !isNaN(Number(rawDailyRate)) ? Number(rawDailyRate) : null;
@@ -2642,57 +2805,72 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
         }
       }
 
-      try {
-        const existing = await prisma.mF_G_Equipment.findFirst({
-          where: { standardEquipmentNumber: standardNumber },
-        });
-
-        if (existing) {
-          await prisma.mF_G_Equipment.update({
-            where: { id: existing.id },
-            data: {
-              equipmentName: name,
-              condition: condition || existing.condition,
-              unit: unit || existing.unit,
-              minimumUtilization: minUtil !== null ? minUtil : existing.minimumUtilization,
-              dailyRate: dailyRate !== null ? dailyRate : existing.dailyRate,
-              costRate: costRate !== null ? costRate : existing.costRate,
-              vehicleNo: vehicleNo || existing.vehicleNo,
-              businessPartnerId: resolvedBpId !== null ? resolvedBpId : existing.businessPartnerId,
-              status: 'active',
-            },
-          });
-          updatedCount++;
-        } else {
-          await prisma.mF_G_Equipment.create({
-            data: {
-              standardEquipmentNumber: standardNumber,
-              equipmentName: name,
-              condition,
-              unit,
-              minimumUtilization: minUtil,
-              dailyRate,
-              costRate,
-              vehicleNo,
-              businessPartnerId: resolvedBpId,
-              currency: 'LKR',
-              status: 'active',
-            },
-          });
-          insertedCount++;
-        }
-      } catch (err: any) {
-        const translated = translateError(err, 'equipment', standardNumber);
-        errors.push({
-          row: rowNum,
-          code: standardNumber,
-          name,
-          field: 'Database',
-          reason: translated.reason,
-          suggestion: translated.suggestion,
-        });
-      }
+      ops.push({
+        rowNum,
+        standardNumber,
+        name,
+        condition,
+        unit,
+        minUtil,
+        dailyRate,
+        costRate,
+        vehicleNo,
+        resolvedBpId,
+        existing: existingMap.get(standardNumber),
+      });
     }
+
+    // Parallel DB writes for high performance
+    await Promise.all(
+      ops.map(async (op) => {
+        try {
+          if (op.existing) {
+            await prisma.mF_G_Equipment.update({
+              where: { id: op.existing.id },
+              data: {
+                equipmentName: op.name,
+                condition: op.condition || op.existing.condition,
+                unit: op.unit || op.existing.unit,
+                minimumUtilization: op.minUtil !== null ? op.minUtil : op.existing.minimumUtilization,
+                dailyRate: op.dailyRate !== null ? op.dailyRate : op.existing.dailyRate,
+                costRate: op.costRate !== null ? op.costRate : op.existing.costRate,
+                vehicleNo: op.vehicleNo || op.existing.vehicleNo,
+                businessPartnerId: op.resolvedBpId !== null ? op.resolvedBpId : op.existing.businessPartnerId,
+                status: 'active',
+              },
+            });
+            updatedCount++;
+          } else {
+            await prisma.mF_G_Equipment.create({
+              data: {
+                standardEquipmentNumber: op.standardNumber,
+                equipmentName: op.name,
+                condition: op.condition,
+                unit: op.unit,
+                minimumUtilization: op.minUtil,
+                dailyRate: op.dailyRate,
+                costRate: op.costRate,
+                vehicleNo: op.vehicleNo,
+                businessPartnerId: op.resolvedBpId,
+                currency: 'LKR',
+                status: 'active',
+              },
+            });
+            insertedCount++;
+          }
+        } catch (err: any) {
+          const translated = translateError(err, 'equipment', op.standardNumber);
+          errors.push({
+            row: op.rowNum,
+            code: op.standardNumber,
+            name: op.name,
+            field: 'Database',
+            reason: translated.reason,
+            suggestion: translated.suggestion,
+          });
+        }
+      })
+    );
 
     res.json({
       success: true,
@@ -2709,13 +2887,27 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
   }
 };
 
-// ── 22. POST /api/corporate/activity-codes/bulk-import ─────────────────────────
 export const bulkImportCorporateActivityCodes = async (req: Request, res: Response): Promise<void> => {
   try {
     const rawItems = req.body.records || req.body.items || [];
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
       res.status(400).json({ error: 'records array is required' });
       return;
+    }
+
+    const codes = rawItems
+      .map((item: any) => getFieldVal(item, ['code', 'activityCode', 'activity', 'codeNo']).trim())
+      .filter(Boolean);
+
+    const existingCodes = codes.length > 0
+      ? await prisma.mF_G_ActivityCode.findMany({
+          where: { code: { in: codes } },
+        })
+      : [];
+
+    const existingMap = new Map<string, (typeof existingCodes)[0]>();
+    for (const ac of existingCodes) {
+      existingMap.set(ac.code.toLowerCase().trim(), ac);
     }
 
     const errors: Array<{
@@ -2728,6 +2920,17 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
     }> = [];
     let insertedCount = 0;
     let updatedCount = 0;
+
+    interface ValidActivityOp {
+      rowNum: number;
+      code: string;
+      description: string;
+      unit: string;
+      existing?: (typeof existingCodes)[0];
+    }
+
+    const ops: ValidActivityOp[] = [];
+    const seenCodesInBatch = new Set<string>();
 
     for (let i = 0; i < rawItems.length; i++) {
       const rowNum = i + 1;
@@ -2751,42 +2954,65 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
         continue;
       }
 
-      try {
-        const existing = await prisma.mF_G_ActivityCode.findUnique({
-          where: { code },
-        });
-
-        if (existing) {
-          await prisma.mF_G_ActivityCode.update({
-            where: { id: existing.id },
-            data: {
-              description,
-              unit: unit || existing.unit,
-            },
-          });
-          updatedCount++;
-        } else {
-          await prisma.mF_G_ActivityCode.create({
-            data: {
-              code,
-              description,
-              unit,
-            },
-          });
-          insertedCount++;
-        }
-      } catch (err: any) {
-        const translated = translateError(err, 'activity code', code);
+      const lowerCode = code.toLowerCase();
+      if (seenCodesInBatch.has(lowerCode)) {
         errors.push({
           row: rowNum,
           code,
           name: description,
-          field: 'Database',
-          reason: translated.reason,
-          suggestion: translated.suggestion,
+          field: 'Activity Code',
+          reason: `Duplicate activity code '${code}' found within the uploaded spreadsheet.`,
+          suggestion: 'Ensure each row has a unique Activity Code.',
         });
+        continue;
       }
+      seenCodesInBatch.add(lowerCode);
+
+      ops.push({
+        rowNum,
+        code,
+        description,
+        unit,
+        existing: existingMap.get(lowerCode),
+      });
     }
+
+    // Parallel DB writes for high performance
+    await Promise.all(
+      ops.map(async (op) => {
+        try {
+          if (op.existing) {
+            await prisma.mF_G_ActivityCode.update({
+              where: { id: op.existing.id },
+              data: {
+                description: op.description,
+                unit: op.unit || op.existing.unit,
+              },
+            });
+            updatedCount++;
+          } else {
+            await prisma.mF_G_ActivityCode.create({
+              data: {
+                code: op.code,
+                description: op.description,
+                unit: op.unit,
+              },
+            });
+            insertedCount++;
+          }
+        } catch (err: any) {
+          const translated = translateError(err, 'activity code', op.code);
+          errors.push({
+            row: op.rowNum,
+            code: op.code,
+            name: op.description,
+            field: 'Database',
+            reason: translated.reason,
+            suggestion: translated.suggestion,
+          });
+        }
+      })
+    );
 
     res.json({
       success: true,
@@ -2803,13 +3029,27 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
   }
 };
 
-// ── 23. POST /api/corporate/trade-groups/bulk-import ───────────────────────────
 export const bulkImportCorporateTradeGroups = async (req: Request, res: Response): Promise<void> => {
   try {
     const rawItems = req.body.records || req.body.items || [];
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
       res.status(400).json({ error: 'records array is required' });
       return;
+    }
+
+    const codes = rawItems
+      .map((item: any) => getFieldVal(item, ['code', 'tradeGroup', 'tradeCode', 'tradeGroupId']).toUpperCase().trim())
+      .filter(Boolean);
+
+    const existingTg = codes.length > 0
+      ? await prisma.mF_G_TradeGroup.findMany({
+          where: { code: { in: codes } },
+        })
+      : [];
+
+    const existingMap = new Map<string, (typeof existingTg)[0]>();
+    for (const tg of existingTg) {
+      existingMap.set(tg.code.toUpperCase().trim(), tg);
     }
 
     const errors: Array<{
@@ -2823,13 +3063,25 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
     let insertedCount = 0;
     let updatedCount = 0;
 
+    interface ValidTgOp {
+      rowNum: number;
+      code: string;
+      name: string;
+      normalRate: number;
+      otRate: number | null;
+      existing?: (typeof existingTg)[0];
+    }
+
+    const ops: ValidTgOp[] = [];
+    const seenCodesInBatch = new Set<string>();
+
     for (let i = 0; i < rawItems.length; i++) {
       const rowNum = i + 1;
       const item = rawItems[i] || {};
 
       if (isRowEmpty(item)) continue;
 
-      const code = getFieldVal(item, ['code', 'tradeGroup', 'tradeCode', 'tradeGroupId']).toUpperCase();
+      const code = getFieldVal(item, ['code', 'tradeGroup', 'tradeCode', 'tradeGroupId']).toUpperCase().trim();
       const name = getFieldVal(item, ['name', 'tradeName', 'tradeGroupName', 'title']);
 
       const rawRate = getFieldVal(item, ['standardDailyRate', 'normalRate', 'dailyRate', 'rate', 'rateRs']);
@@ -2849,46 +3101,69 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
         continue;
       }
 
-      try {
-        const existing = await prisma.mF_G_TradeGroup.findUnique({
-          where: { code },
-        });
-
-        if (existing) {
-          await prisma.mF_G_TradeGroup.update({
-            where: { id: existing.id },
-            data: {
-              name,
-              standardDailyRate: normalRate,
-              standardOtRate: otRate !== null ? otRate : existing.standardOtRate,
-              status: 'active',
-            },
-          });
-          updatedCount++;
-        } else {
-          await prisma.mF_G_TradeGroup.create({
-            data: {
-              code,
-              name,
-              standardDailyRate: normalRate,
-              standardOtRate: otRate,
-              status: 'active',
-            },
-          });
-          insertedCount++;
-        }
-      } catch (err: any) {
-        const translated = translateError(err, 'trade group', code);
+      if (seenCodesInBatch.has(code)) {
         errors.push({
           row: rowNum,
           code,
           name,
-          field: 'Database',
-          reason: translated.reason,
-          suggestion: translated.suggestion,
+          field: 'Trade Code',
+          reason: `Duplicate trade group code '${code}' found within the uploaded spreadsheet.`,
+          suggestion: 'Ensure each row has a unique Trade Group Code.',
         });
+        continue;
       }
+      seenCodesInBatch.add(code);
+
+      ops.push({
+        rowNum,
+        code,
+        name,
+        normalRate,
+        otRate,
+        existing: existingMap.get(code),
+      });
     }
+
+    // Parallel DB writes for high performance
+    await Promise.all(
+      ops.map(async (op) => {
+        try {
+          if (op.existing) {
+            await prisma.mF_G_TradeGroup.update({
+              where: { id: op.existing.id },
+              data: {
+                name: op.name,
+                standardDailyRate: op.normalRate,
+                standardOtRate: op.otRate !== null ? op.otRate : op.existing.standardOtRate,
+                status: 'active',
+              },
+            });
+            updatedCount++;
+          } else {
+            await prisma.mF_G_TradeGroup.create({
+              data: {
+                code: op.code,
+                name: op.name,
+                standardDailyRate: op.normalRate,
+                standardOtRate: op.otRate,
+                status: 'active',
+              },
+            });
+            insertedCount++;
+          }
+        } catch (err: any) {
+          const translated = translateError(err, 'trade group', op.code);
+          errors.push({
+            row: op.rowNum,
+            code: op.code,
+            name: op.name,
+            field: 'Database',
+            reason: translated.reason,
+            suggestion: translated.suggestion,
+          });
+        }
+      })
+    );
 
     res.json({
       success: true,
