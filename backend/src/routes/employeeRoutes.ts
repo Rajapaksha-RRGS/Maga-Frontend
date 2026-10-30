@@ -10,6 +10,7 @@ import {
   transferEmployee,
   getCorporateEmployeesCatalog,
   getSiteEmployeePool,
+  batchEnrollEmployees,
 } from '../controllers/employeeController';
 import {
   getPendingCorporateEmployees,
@@ -34,6 +35,7 @@ router.post('/transfer', requireAdmin, transferEmployee);
 router.get('/site-pool', getSiteEmployeePool);
 router.get('/', requireAuth, getAllEmployees);
 router.get('/:id', requireAuth, getEmployeeById);
+router.post('/batch-enroll', requireAdmin, batchEnrollEmployees);
 router.post('/', requireAdmin, createEmployee);
 router.put('/:id', requireAdmin, updateEmployee);
 router.patch('/:id/status', requireAdmin, updateEmployeeStatus);

@@ -26,6 +26,7 @@ interface UseEmployeesReturn {
   clearFilters: () => void;
   businessPartners: string[];
   tradeGroups: string[];
+  batchEnrollEmployees: (items: any[]) => Promise<any>;
   addEmployee: (data: EmployeeFormData) => Promise<void>;
   updateEmployee: (id: string, data: Partial<EmployeeFormData>) => Promise<void>;
   activateEmployee: (id: string) => Promise<void>;
@@ -104,6 +105,12 @@ export function useEmployees(): UseEmployeesReturn {
     setStatusFilter('');
   }, []);
 
+  const batchEnrollEmployees = async (items: any[]) => {
+    const result = await employeeService.batchEnroll(items);
+    await load(true);
+    return result;
+  };
+
   const addEmployee = async (data: EmployeeFormData) => {
     await employeeService.create(data);
     await load();
@@ -151,6 +158,7 @@ export function useEmployees(): UseEmployeesReturn {
     clearFilters,
     businessPartners,
     tradeGroups,
+    batchEnrollEmployees,
     addEmployee,
     updateEmployee,
     activateEmployee,

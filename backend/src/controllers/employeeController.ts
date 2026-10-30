@@ -1041,3 +1041,138 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
     res.status(500).json({ error: 'Failed to fetch site employee pool' });
   }
 };
+
+// 11. POST /api/employees/batch-enroll — Fast bulk enrollment of Corporate Master employees to Site (Local)
+export const batchEnrollEmployees = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawItems = req.body.employees || req.body.items || [];
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      res.status(400).json({ error: 'employees array is required' });
+      return;
+    }
+
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      req.body.projectId ||
+      req.body.tenantId ||
+      (await getDefaultTenantId());
+
+    const codes = rawItems
+      .map((item: any) => String(item.employeeCode || item.code || '').trim().toUpperCase())
+      .filter(Boolean);
+
+    if (codes.length === 0) {
+      res.status(400).json({ error: 'No valid employee codes provided' });
+      return;
+    }
+
+    // 1. Fetch matching corporate employees, BPs, and TradeGroups in parallel
+    const [corpEmployees, allBp, allTg] = await Promise.all([
+      prisma.mF_G_Employee.findMany({
+        where: { employeeCode: { in: codes } },
+        include: { tradeGroup: true, corporateBusinessPartner: true },
+      }),
+      prisma.mF_G_BusinessPartner.findMany({ select: { id: true, code: true, name: true } }),
+      prisma.mF_G_TradeGroup.findMany({ select: { id: true, code: true, name: true } }),
+    ]);
+
+    const corpMap = new Map<string, (typeof corpEmployees)[0]>();
+    for (const ce of corpEmployees) {
+      corpMap.set(ce.employeeCode.toUpperCase(), ce);
+    }
+
+    const bpMap = new Map<string, string>();
+    for (const bp of allBp) {
+      bpMap.set(bp.id.toLowerCase().trim(), bp.id);
+      bpMap.set(bp.code.toLowerCase().trim(), bp.id);
+      bpMap.set(bp.name.toLowerCase().trim(), bp.id);
+    }
+
+    const tgMap = new Map<string, string>();
+    for (const tg of allTg) {
+      tgMap.set(tg.id.toLowerCase().trim(), tg.id);
+      tgMap.set(tg.name.toLowerCase().trim(), tg.id);
+      tgMap.set(tg.code.toLowerCase().trim(), tg.id);
+    }
+
+    let enrolledCount = 0;
+    const errors: Array<{ code: string; reason: string }> = [];
+
+    // 2. Perform bulk enrollment in a single high-speed database transaction
+    await prisma.$transaction(async (tx) => {
+      for (const item of rawItems) {
+        const code = String(item.employeeCode || item.code || '').trim().toUpperCase();
+        const corpEmp = corpMap.get(code);
+
+        if (!corpEmp) {
+          errors.push({ code, reason: `Employee '${code}' not found in Corporate Master.` });
+          continue;
+        }
+
+        const bpCodeOrName = item.businessPartnerCode || item.businessPartnerName || item.businessPartner || '';
+        const resolvedBpId =
+          corpEmp.corporateBusinessPartnerId ||
+          (bpCodeOrName ? bpMap.get(bpCodeOrName.toLowerCase().trim()) : null) ||
+          null;
+
+        const tgNameOrCode = item.tradeGroup || item.trade || '';
+        const resolvedTgId =
+          corpEmp.tradeGroupId ||
+          (tgNameOrCode ? tgMap.get(tgNameOrCode.toLowerCase().trim()) : null) ||
+          null;
+
+        const callingName = (item.callingName || corpEmp.fullName || 'Worker').trim().split(' ')[0] || 'Worker';
+        const dailyRate =
+          item.dailyRate !== undefined && item.dailyRate !== null && !isNaN(Number(item.dailyRate))
+            ? Number(item.dailyRate)
+            : Number(corpEmp.dailyRate ?? 1400.0);
+
+        const isOperator =
+          item.isOperator !== undefined
+            ? Boolean(item.isOperator === true || item.isOperator === 'true')
+            : corpEmp.isOperator;
+
+        await tx.mF_P_Employee.upsert({
+          where: {
+            projectId_corporateEmployeeId: {
+              projectId,
+              corporateEmployeeId: corpEmp.id,
+            },
+          },
+          update: {
+            callingName,
+            dailyRate,
+            tradeGroupId: resolvedTgId,
+            businessPartnerId: resolvedBpId,
+            isOperator,
+            status: 'active',
+          },
+          create: {
+            projectId,
+            corporateEmployeeId: corpEmp.id,
+            callingName,
+            dailyRate,
+            tradeGroupId: resolvedTgId,
+            businessPartnerId: resolvedBpId,
+            isOperator,
+            status: 'active',
+          },
+        });
+
+        enrolledCount++;
+      }
+    });
+
+    res.json({
+      success: true,
+      total: rawItems.length,
+      enrolledCount,
+      failedCount: errors.length,
+      errors,
+    });
+  } catch (error: any) {
+    console.error('Error in batchEnrollEmployees:', error);
+    res.status(500).json({ error: error.message || 'Failed to batch enroll employees' });
+  }
+};

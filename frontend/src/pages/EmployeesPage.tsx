@@ -58,6 +58,7 @@ export default function EmployeesPage() {
     clearFilters,
     businessPartners,
     tradeGroups,
+    batchEnrollEmployees,
     addEmployee,
     updateEmployee,
     activateEmployee,
@@ -124,28 +125,35 @@ export default function EmployeesPage() {
   }, [employees]);
 
   const handleBatchImport = async (items: CorporateEmployee[]) => {
-    for (const item of items) {
-      const partnerCodeOrName = item.businessPartnerCode || item.businessPartnerName || item.businessPartner || 'BP1002885';
-      const matchedPartner = registeredPartners.find(
-        (p) => p.code.toLowerCase() === partnerCodeOrName.toLowerCase() ||
-               p.name.toLowerCase() === partnerCodeOrName.toLowerCase()
-      );
-
-      await addEmployee({
-        employeeCode: item.employeeCode,
-        callingName: item.callingName,
-        fullName: item.fullName,
-        businessPartnerId: matchedPartner?.id || '',
-        businessPartner: partnerCodeOrName,
-        tradeGroup: item.tradeGroup,
-        nicNo: item.nicNo,
-        dailyRate: item.dailyRate ?? 0,
-        epfNo: item.epfNo,
-        isOperator: item.isOperator,
-        licenseNo: item.licenseNo,
+    try {
+      const payload = items.map((item) => {
+        const partnerCodeOrName = item.businessPartnerCode || item.businessPartnerName || item.businessPartner || 'BP1002885';
+        const matchedPartner = registeredPartners.find(
+          (p) =>
+            p.code.toLowerCase() === partnerCodeOrName.toLowerCase() ||
+            p.name.toLowerCase() === partnerCodeOrName.toLowerCase()
+        );
+        return {
+          employeeCode: item.employeeCode,
+          callingName: item.callingName,
+          fullName: item.fullName,
+          businessPartnerId: matchedPartner?.id || '',
+          businessPartner: partnerCodeOrName,
+          tradeGroup: item.tradeGroup,
+          nicNo: item.nicNo,
+          dailyRate: item.dailyRate ?? 0,
+          epfNo: item.epfNo,
+          isOperator: item.isOperator,
+          licenseNo: item.licenseNo,
+        };
       });
+
+      await batchEnrollEmployees(payload);
+      await fetchPartners();
+    } catch (err: any) {
+      console.error('Batch import failed:', err);
+      alert(err.message || 'Failed to import employees');
     }
-    await fetchPartners();
   };
 
   const handleTransferEmployee = async (

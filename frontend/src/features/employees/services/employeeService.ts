@@ -227,6 +227,32 @@ export async function deactivate(id: string): Promise<Employee> {
   return updateStatus(id, 'inactive');
 }
 
+export interface BatchEnrollResult {
+  success: boolean;
+  total: number;
+  enrolledCount: number;
+  failedCount: number;
+  errors: Array<{ code: string; reason: string }>;
+}
+
+/** Bulk enroll corporate employees to current site in a single network round-trip */
+export async function batchEnroll(items: any[]): Promise<BatchEnrollResult> {
+  const res = await apiFetch(`${API_URL}/employees/batch-enroll`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ employees: items }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.error || 'Failed to batch enroll employees');
+  }
+  cacheManager.invalidate('employees');
+  cacheManager.invalidate('reports');
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('assignments:context');
+  return res.json();
+}
+
 /** Delete an employee by ID on backend */
 export async function deleteEmployee(id: string): Promise<void> {
   const res = await apiFetch(`${API_URL}/employees/${encodeURIComponent(id)}`, {
