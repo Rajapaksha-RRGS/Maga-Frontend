@@ -154,11 +154,21 @@ function parseCsvText(
     const nextChar = cleanText[i + 1];
 
     if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentVal += '"';
-        i++;
+      if (inQuotes) {
+        if (nextChar === '"') {
+          currentVal += '"';
+          i++; // Escaped quote
+        } else if (nextChar === delimiter || nextChar === '\r' || nextChar === '\n' || nextChar === undefined) {
+          inQuotes = false; // Valid closing quote at boundary
+        } else {
+          currentVal += '"'; // Stray quote inside quoted text
+        }
       } else {
-        inQuotes = !inQuotes;
+        if (currentVal.trim() === '') {
+          inQuotes = true; // Opening quote at start of field
+        } else {
+          currentVal += '"'; // Literal quote inside field (e.g. 4" or unescaped quote)
+        }
       }
     } else if (char === delimiter && !inQuotes) {
       currentRow.push(currentVal.trim());

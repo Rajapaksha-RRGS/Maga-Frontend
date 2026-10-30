@@ -1173,13 +1173,8 @@ export const batchCreateCorporateEmployees = async (req: Request, res: Response)
 
       if (!tradeGroupId) continue;
 
-      const existing = await prisma.mF_G_Employee.findFirst({
-        where: {
-          OR: [
-            { employeeCode: code },
-            nic ? { nicNo: nic } : undefined,
-          ].filter(Boolean) as any,
-        },
+      const existing = await prisma.mF_G_Employee.findUnique({
+        where: { employeeCode: code },
       });
 
       if (existing) {
@@ -2268,13 +2263,9 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
       const finalBpId = isExternal ? resolvedBpId : null;
 
       try {
-        const existing = await prisma.mF_G_Employee.findFirst({
-          where: {
-            OR: [
-              { employeeCode: code },
-              nic ? { nicNo: nic } : undefined,
-            ].filter(Boolean) as any,
-          },
+        // STRICT PRIMARY IDENTIFIER: Check duplicate solely by unique employeeCode!
+        const existing = await prisma.mF_G_Employee.findUnique({
+          where: { employeeCode: code },
         });
 
         const rawRate = getFieldVal(item, ['dailyRate', 'rateRs', 'rate', 'basicRate', 'rateLkr']);
