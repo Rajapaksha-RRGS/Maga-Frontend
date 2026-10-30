@@ -77,7 +77,8 @@ const employeeSelectOptimized = {
 function formatEmployee(emp: any) {
   const corp = emp.corporateEmployee || {};
   const effectiveTradeGroup = emp.tradeGroup || corp.tradeGroup || null;
-  const effectiveBusinessPartner = emp.businessPartner || corp.corporateBusinessPartner || null;
+  const isInternalEmp = corp.employeeType === 'internal';
+  const effectiveBusinessPartner = isInternalEmp ? null : (emp.businessPartner || corp.corporateBusinessPartner || null);
 
   const isEmployeeActive = emp.status === 'active' && corp.status === 'active';
   const isPartnerActive = !effectiveBusinessPartner || effectiveBusinessPartner.status === 'active';
