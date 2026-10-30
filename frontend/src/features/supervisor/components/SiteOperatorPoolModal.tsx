@@ -6,7 +6,6 @@ import {
   Plus,
   Lock,
   UserCheck,
-  Tractor,
 } from 'lucide-react';
 import {
   supervisorStorage,
