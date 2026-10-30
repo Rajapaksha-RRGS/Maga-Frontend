@@ -1296,6 +1296,36 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
       }
     }
 
+    // Resolve business partner relation
+    let resolvedBpId: string | null = null;
+    const bpInput = businessPartnerId || (req.body as any).businessPartner || (req.body as any).bpCode;
+    if (
+      bpInput &&
+      typeof bpInput === 'string' &&
+      bpInput.trim() &&
+      bpInput.trim() !== '-' &&
+      bpInput.trim() !== '0' &&
+      bpInput.toLowerCase() !== 'none' &&
+      bpInput.toLowerCase() !== 'n/a'
+    ) {
+      const trimmed = bpInput.trim();
+      const bpRecord = await prisma.mF_G_BusinessPartner.findFirst({
+        where: {
+          OR: [
+            { id: trimmed },
+            { code: { equals: trimmed, mode: 'insensitive' } },
+            { name: { equals: trimmed, mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (bpRecord) {
+        resolvedBpId = bpRecord.id;
+      } else {
+        res.status(400).json({ error: `Business Partner '${trimmed}' is not registered in the system.` });
+        return;
+      }
+    }
+
     const created = await prisma.mF_G_Equipment.create({
       data: {
         standardEquipmentNumber: code,
@@ -1306,7 +1336,7 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
         dailyRate: dailyRate !== undefined && dailyRate !== '' && !isNaN(Number(dailyRate)) ? Number(dailyRate) : null,
         vehicleNo: vehicleNo ? vehicleNo.trim() : null,
         type: type || null,
-        businessPartnerId: businessPartnerId || null,
+        businessPartnerId: resolvedBpId,
         currentProjectId: resolvedProjectId,
         status: 'active',
       },
@@ -1366,6 +1396,40 @@ export const updateCorporateEquipment = async (req: Request, res: Response): Pro
       }
     }
 
+    // Resolve business partner relation if provided
+    let resolvedBpId: string | null | undefined = undefined;
+    const bpInput = businessPartnerId !== undefined ? businessPartnerId : ((req.body as any).businessPartner || (req.body as any).bpCode);
+    if (bpInput !== undefined) {
+      if (
+        !bpInput ||
+        typeof bpInput !== 'string' ||
+        !bpInput.trim() ||
+        bpInput.trim() === '-' ||
+        bpInput.trim() === '0' ||
+        bpInput.toLowerCase() === 'none' ||
+        bpInput.toLowerCase() === 'n/a'
+      ) {
+        resolvedBpId = null;
+      } else {
+        const trimmed = bpInput.trim();
+        const bpRecord = await prisma.mF_G_BusinessPartner.findFirst({
+          where: {
+            OR: [
+              { id: trimmed },
+              { code: { equals: trimmed, mode: 'insensitive' } },
+              { name: { equals: trimmed, mode: 'insensitive' } },
+            ],
+          },
+        });
+        if (bpRecord) {
+          resolvedBpId = bpRecord.id;
+        } else {
+          res.status(400).json({ error: `Business Partner '${trimmed}' is not registered in the system.` });
+          return;
+        }
+      }
+    }
+
     const updated = await prisma.mF_G_Equipment.update({
       where: { id },
       data: {
@@ -1378,7 +1442,7 @@ export const updateCorporateEquipment = async (req: Request, res: Response): Pro
         ...(vehicleNo !== undefined ? { vehicleNo: vehicleNo ? vehicleNo.trim() : null } : {}),
         ...(type !== undefined ? { type: type || null } : {}),
         ...(status ? { status } : {}),
-        ...(businessPartnerId !== undefined ? { businessPartnerId: businessPartnerId || null } : {}),
+        ...(resolvedBpId !== undefined ? { businessPartnerId: resolvedBpId } : {}),
       },
       include: {
         currentProject: { select: { id: true, projectCode: true, projectName: true } },
@@ -1929,7 +1993,23 @@ function translateError(err: any, entity: string, code?: string): { reason: stri
     };
   }
 
-  if (msg.includes('Foreign key constraint failed') || msg.includes('foreign key constraint')) {
+  if (
+    msg.includes('Foreign key constraint failed') ||
+    msg.includes('Foreign key constraint violated') ||
+    msg.includes('foreign key constraint')
+  ) {
+    if (msg.includes('business_partner_id') || msg.includes('businessPartner')) {
+      return {
+        reason: `Business Partner reference not found in database.`,
+        suggestion: `Ensure the specified Business Partner is registered in the Business Partner Master first.`,
+      };
+    }
+    if (msg.includes('unit')) {
+      return {
+        reason: `Invalid Unit of Measure.`,
+        suggestion: `Use a valid registered unit (e.g. Hrs, Days, km, mth, ton).`,
+      };
+    }
     return {
       reason: `Linked reference not found in database.`,
       suggestion: `Make sure referenced items (such as Business Partner, Trade Group, or Unit) exist first.`,
@@ -2431,6 +2511,38 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
       return;
     }
 
+    // Pre-cache Business Partners and Unit Master for fast O(1) relational lookups
+    const [allPartners, allUnits] = await Promise.all([
+      prisma.mF_G_BusinessPartner.findMany({ select: { id: true, code: true, name: true } }),
+      prisma.mF_G_UnitMaster.findMany({ select: { id: true, code: true, name: true } }),
+    ]);
+
+    const bpMap = new Map<string, string>();
+    for (const p of allPartners) {
+      bpMap.set(p.id.toLowerCase().trim(), p.id);
+      bpMap.set(p.code.toLowerCase().trim(), p.id);
+      bpMap.set(p.name.toLowerCase().trim(), p.id);
+    }
+
+    const unitSet = new Set<string>();
+    for (const u of allUnits) {
+      unitSet.add(u.code);
+    }
+
+    const normalizeUnit = (rawUnit: string | null | undefined): string => {
+      if (!rawUnit || !rawUnit.trim()) return 'Hrs';
+      const clean = rawUnit.trim();
+      if (unitSet.has(clean)) return clean;
+      const lower = clean.toLowerCase();
+      if (lower.includes('hr') || lower.includes('hour')) return 'Hrs';
+      if (lower.includes('day')) return 'Days';
+      if (lower.includes('km') || lower.includes('kilo')) return 'km';
+      if (lower.includes('mth') || lower.includes('month')) return 'mth';
+      if (lower.includes('ton')) return 'ton';
+      if (lower.includes('ex')) return 'EX.hrs';
+      return 'Hrs';
+    };
+
     const errors: Array<{
       row: number;
       code?: string;
@@ -2488,10 +2600,47 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
       const rawMinUtil = getFieldVal(item, ['minimumUtilization', 'minUtilization', 'minHours']);
       const minUtil = rawMinUtil !== '' && !isNaN(Number(rawMinUtil)) ? Number(rawMinUtil) : null;
 
-      const condition = getFieldVal(item, ['condition', 'machineCondition']) || 'DRY';
-      const unit = getFieldVal(item, ['unit', 'meterUnit', 'unitOfMeasure']) || 'hrs';
+      const rawCondition = getFieldVal(item, ['condition', 'machineCondition']);
+      const condition = rawCondition ? rawCondition.toUpperCase().trim() : 'DRY';
+
+      const rawUnit = getFieldVal(item, ['unit', 'meterUnit', 'unitOfMeasure']);
+      const unit = normalizeUnit(rawUnit);
+
       const vehicleNo = getFieldVal(item, ['vehicleNo', 'vehicleNumber', 'registrationNo', 'plateNo']) || null;
-      const bp = getFieldVal(item, ['businessPartner', 'bpCode', 'businessPartnerCode', 'bp']) || null;
+      
+      const bpInput = getFieldVal(item, [
+        'businessPartner',
+        'bpCode',
+        'businessPartnerCode',
+        'bp',
+        'supplier',
+        'vendor',
+        'partnerCode',
+      ]);
+
+      let resolvedBpId: string | null = null;
+      if (
+        bpInput &&
+        bpInput.trim() &&
+        bpInput.trim() !== '-' &&
+        bpInput.trim() !== '0' &&
+        bpInput.toLowerCase() !== 'none' &&
+        bpInput.toLowerCase() !== 'n/a'
+      ) {
+        const cleanBp = bpInput.trim().toLowerCase();
+        resolvedBpId = bpMap.get(cleanBp) || null;
+        if (!resolvedBpId) {
+          errors.push({
+            row: rowNum,
+            code: standardNumber,
+            name,
+            field: 'Business Partner Code',
+            reason: `Business Partner '${bpInput.trim()}' is NOT registered in the Business Partner Master.`,
+            suggestion: `Please register '${bpInput.trim()}' in the Business Partner Master first before importing equipment for this partner, or leave blank for internal equipment.`,
+          });
+          continue;
+        }
+      }
 
       try {
         const existing = await prisma.mF_G_Equipment.findFirst({
@@ -2509,7 +2658,7 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
               dailyRate: dailyRate !== null ? dailyRate : existing.dailyRate,
               costRate: costRate !== null ? costRate : existing.costRate,
               vehicleNo: vehicleNo || existing.vehicleNo,
-              businessPartnerId: bp || existing.businessPartnerId,
+              businessPartnerId: resolvedBpId !== null ? resolvedBpId : existing.businessPartnerId,
               status: 'active',
             },
           });
@@ -2525,7 +2674,7 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
               dailyRate,
               costRate,
               vehicleNo,
-              businessPartnerId: bp,
+              businessPartnerId: resolvedBpId,
               currency: 'LKR',
               status: 'active',
             },
