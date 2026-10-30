@@ -9,7 +9,7 @@
  *   5. Detailed failure ledger per row (Row #, Code, Name, Field, Reason, Actionable Suggestion)
  *   6. 1-click "Download Failed Rows (.csv)" for effortless correction in Excel
  */
-import { useState, useRef, useId, useMemo } from 'react';
+import { useState, useEffect, useRef, useId, useMemo } from 'react';
 import {
   X,
   UploadCloud,
@@ -298,6 +298,31 @@ export default function SACsvImportModal({
     totalBatches: number;
     statusText: string;
   } | null>(null);
+  const [displayPercentage, setDisplayPercentage] = useState<number>(0);
+
+  // ── Ultra-Smooth Micro-Tick Easing Engine (60fps Interpolation) ─────────────
+  useEffect(() => {
+    if (!uploadProgress || !isSubmitting) {
+      if (!isSubmitting && !importResult) setDisplayPercentage(0);
+      return;
+    }
+
+    const target = uploadProgress.percentage;
+    const interval = setInterval(() => {
+      setDisplayPercentage((prev) => {
+        if (prev < target) {
+          const diff = target - prev;
+          const step = Math.max(0.3, diff * 0.12);
+          return Math.min(target, +(prev + step).toFixed(1));
+        } else if (target < 98) {
+          return +(prev + 0.08).toFixed(1);
+        }
+        return prev;
+      });
+    }, 28);
+
+    return () => clearInterval(interval);
+  }, [uploadProgress?.percentage, isSubmitting, importResult]);
 
   // ── Pre-Validation Analysis (Unconditional Hook at Top-Level) ───────────────
   const validationSummary = useMemo(() => {
@@ -340,6 +365,7 @@ export default function SACsvImportModal({
     setParseError(null);
     setImportResult(null);
     setUploadProgress(null);
+    setDisplayPercentage(0);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -508,7 +534,18 @@ export default function SACsvImportModal({
         }
       }
 
-      await new Promise((r) => setTimeout(r, 250));
+      setUploadProgress((prev) =>
+        prev
+          ? {
+              ...prev,
+              percentage: 100,
+              processed: totalRecords,
+              statusText: `All ${totalRecords} records processed! Compiling scorecard…`,
+            }
+          : null
+      );
+      // Allow visual display to glide smoothly to 100%
+      await new Promise((r) => setTimeout(r, 380));
 
       const finalFailed = accumulatedErrors.length;
       setImportResult({
@@ -662,19 +699,28 @@ export default function SACsvImportModal({
                           <span className="text-[11px] bg-white/10 border border-white/15 px-2 py-0.5 rounded font-mono text-[#C9A84C]">
                             Batch {uploadProgress.currentBatch} of {uploadProgress.totalBatches}
                           </span>
-                          <span className="text-sm font-bold font-mono text-[#C9A84C]">
-                            {uploadProgress.percentage}%
+                          <span className="text-sm font-bold font-mono text-[#C9A84C] min-w-[42px] text-right">
+                            {Math.round(displayPercentage)}%
                           </span>
                         </div>
                       </div>
 
-                      {/* Progress Bar Track */}
-                      <div className="w-full bg-black/40 h-3 rounded-full overflow-hidden p-0.5 border border-white/10 shadow-inner">
+                      {/* Progress Bar Track with Smooth Fluid Shimmer */}
+                      <style>{`
+                        @keyframes fluidShimmer {
+                          0% { transform: translateX(-100%); }
+                          100% { transform: translateX(200%); }
+                        }
+                      `}</style>
+                      <div className="w-full bg-black/40 h-3.5 rounded-full overflow-hidden p-0.5 border border-white/10 shadow-inner">
                         <div
-                          className="h-full rounded-full bg-gradient-to-r from-violet-500 via-amber-400 to-[#C9A84C] transition-all duration-300 ease-out shadow-sm relative overflow-hidden"
-                          style={{ width: `${Math.max(uploadProgress.percentage, 4)}%` }}
+                          className="h-full rounded-full bg-gradient-to-r from-violet-600 via-amber-400 to-[#C9A84C] transition-[width] duration-75 ease-linear shadow-sm relative overflow-hidden"
+                          style={{ width: `${Math.max(displayPercentage, 3)}%` }}
                         >
-                          <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                          <div
+                            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/35 to-transparent"
+                            style={{ animation: 'fluidShimmer 1.8s infinite linear' }}
+                          />
                         </div>
                       </div>
 
@@ -964,7 +1010,7 @@ export default function SACsvImportModal({
                     <Loader2 size={14} className="animate-spin text-[#C9A84C]" />
                     <span>
                       {uploadProgress
-                        ? `Importing… ${uploadProgress.percentage}% (${uploadProgress.processed}/${uploadProgress.total})`
+                        ? `Importing… ${Math.round(displayPercentage)}% (${uploadProgress.processed}/${uploadProgress.total})`
                         : `Importing ${parsedRows.length} records…`}
                     </span>
                   </>
