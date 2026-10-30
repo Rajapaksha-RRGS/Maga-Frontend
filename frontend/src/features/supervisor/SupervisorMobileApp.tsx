@@ -313,6 +313,8 @@ export default function SupervisorMobileApp() {
             laborers={laborers}
             onSaveLaborers={handleSaveLaborers}
             isDayLocked={isDayLocked}
+            selectedDate={selectedDate}
+            projectId={currentSite.id}
           />
         )}
 
@@ -322,6 +324,8 @@ export default function SupervisorMobileApp() {
             equipment={equipment}
             onSaveOperators={handleSaveOperators}
             isDayLocked={isDayLocked}
+            selectedDate={selectedDate}
+            projectId={currentSite.id}
           />
         )}
 

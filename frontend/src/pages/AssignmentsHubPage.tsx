@@ -228,7 +228,7 @@ export default function AssignmentsHubPage({ defaultTab: _defaultTab = 'labour' 
         {isPoolMode && (
           <div className="inline-flex items-center gap-1.5 px-3 py-1 mb-2 sm:mb-0 rounded-lg bg-amber-50 border border-amber-200/80 text-amber-800 text-xs font-semibold self-start sm:self-auto">
             <Tractor size={14} className="text-amber-600 flex-shrink-0" />
-            <span>Equipment Pool Mode Active (Supervisors self-assign machinery)</span>
+            <span>Site Resource Pool Mode Active (Supervisors self-dispatch machinery, operators & labour)</span>
           </div>
         )}
       </div>

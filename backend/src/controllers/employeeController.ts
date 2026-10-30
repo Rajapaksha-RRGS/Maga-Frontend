@@ -913,3 +913,131 @@ export const getCorporateEmployeesCatalog = async (_req: Request, res: Response)
     res.status(500).json({ error: 'Failed to fetch corporate employees catalog' });
   }
 };
+
+// 10. GET /api/employees/site-pool — List site employee pool with real-time claiming status
+export const getSiteEmployeePool = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (await getDefaultTenantId());
+
+    const dateStr = req.query.date as string;
+    const supervisorId = req.query.supervisorId as string;
+    const typeFilter = req.query.type as 'labor' | 'operator' | 'all';
+    
+    let targetDate = new Date();
+    if (dateStr) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      targetDate = new Date(Date.UTC(y, m - 1, d));
+    }
+
+    const isOperatorFilter = typeFilter === 'operator' 
+      ? true 
+      : typeFilter === 'labor' 
+      ? false 
+      : undefined;
+
+    const employees = await prisma.mF_P_Employee.findMany({
+      where: {
+        projectId,
+        status: { in: ['active', 'pending_approval'] },
+        ...(isOperatorFilter !== undefined
+          ? isOperatorFilter
+            ? { OR: [{ isOperator: true }, { corporateEmployee: { isOperator: true } }] }
+            : { isOperator: false, corporateEmployee: { isOperator: false } }
+          : {}),
+      },
+      include: {
+        corporateEmployee: {
+          select: { employeeCode: true, fullName: true, nicNo: true, isOperator: true },
+        },
+        tradeGroup: { select: { id: true, name: true } },
+        businessPartner: { select: { id: true, name: true, code: true } },
+      },
+      orderBy: { corporateEmployee: { employeeCode: 'asc' } },
+    });
+
+    // Check today's time entries on targetDate across project to identify claiming
+    const entriesOnDate = await prisma.mF_OP_TimeEntry.findMany({
+      where: {
+        projectId,
+        date: targetDate,
+      },
+      include: {
+        dailySheet: {
+          select: {
+            supervisorId: true,
+            supervisor: { select: { id: true, fullName: true, username: true } },
+          },
+        },
+        equipment: {
+          select: {
+            corporateEquipment: { select: { standardEquipmentNumber: true } },
+          },
+        },
+      },
+    });
+
+    const claimsMap = new Map<string, Array<{
+      supervisorId: string;
+      supervisorName: string;
+      inTime?: string | null;
+      outTime?: string | null;
+      hours: number;
+      machineCode?: string;
+    }>>();
+
+    for (const te of entriesOnDate) {
+      if (!te.employeeId) continue;
+      const sId = te.dailySheet?.supervisorId || '';
+      const sName = te.dailySheet?.supervisor?.fullName || te.dailySheet?.supervisor?.username || 'Another Supervisor';
+      const mCode = te.equipment?.corporateEquipment?.standardEquipmentNumber;
+      const list = claimsMap.get(te.employeeId) || [];
+      list.push({
+        supervisorId: sId,
+        supervisorName: sName,
+        inTime: te.inTime,
+        outTime: te.outTime,
+        hours: Number(te.shiftHours || te.hours || 0),
+        machineCode: mCode,
+      });
+      claimsMap.set(te.employeeId, list);
+    }
+
+    const formatted = employees.map((emp) => {
+      const claims = claimsMap.get(emp.id) || [];
+      const otherClaim = claims.find((c) => c.supervisorId !== supervisorId);
+      const myClaim = claims.find((c) => c.supervisorId === supervisorId);
+
+      return {
+        id: emp.id,
+        employeeCode: emp.corporateEmployee.employeeCode,
+        callingName: emp.callingName || emp.corporateEmployee.fullName,
+        fullName: emp.corporateEmployee.fullName,
+        nicNo: emp.corporateEmployee.nicNo,
+        tradeGroup: emp.tradeGroup?.name || 'General labour',
+        tradeGroupId: emp.tradeGroup?.id,
+        businessPartner: emp.businessPartner?.name || 'Direct',
+        businessPartnerId: emp.businessPartner?.id,
+        businessPartnerCode: emp.businessPartner?.code,
+        isOperator: Boolean(emp.isOperator || emp.corporateEmployee.isOperator),
+        isClaimed: Boolean(otherClaim),
+        claimedBySupervisor: otherClaim?.supervisorName,
+        claimedSupervisorId: otherClaim?.supervisorId,
+        claimedInTime: otherClaim?.inTime || undefined,
+        claimedOutTime: otherClaim?.outTime || undefined,
+        claimedHours: otherClaim?.hours,
+        claimedMachineCodes: claims.map((c) => c.machineCode).filter(Boolean),
+        claimedByMe: Boolean(myClaim),
+      };
+    });
+
+    res.json(formatted);
+  } catch (error) {
+    console.error('Error fetching site employee pool:', error);
+    res.status(500).json({ error: 'Failed to fetch site employee pool' });
+  }
+};

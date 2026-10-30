@@ -159,7 +159,7 @@ export default function AdminSettingsPage() {
         </div>
       ) : (
         <div className="space-y-4 max-w-3xl">
-          {/* ── Equipment Pool Mode Setting Card ── */}
+          {/* ── Site Resource Pool Mode (Self-Dispatch Mode) Setting Card ── */}
           <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3.5">
               <div
@@ -187,7 +187,7 @@ export default function AdminSettingsPage() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed max-w-xl">
-                  Allow supervisors to select machinery directly from the site yard pool (via <strong>&quot;+ Add from Pool&quot;</strong>). When disabled, Site Admin must assign equipment daily.
+                  Allow supervisors to directly access and log all site resources (Labour, Subcontractors, Operators, and Equipment) from the site pool without requiring daily manual pre-assignment by Site Admin. Includes multi-supervisor claiming badges and time overwrite protection.
                 </p>
               </div>
             </div>

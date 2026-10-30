@@ -366,6 +366,14 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
     const supervisorId = req.query.supervisorId as string;
     const targetDate = parseDate(dateStr);
 
+    // 1. Check if Site Resource Pool Mode is enabled
+    const project = await prisma.mF_P_Project.findUnique({
+      where: { id: projectId },
+      select: { equipmentAssignBySupervisor: true },
+    });
+    const isPoolMode = !!project?.equipmentAssignBySupervisor;
+
+    // 2. Fetch explicit pre-assignments for this date
     const assignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
       where: {
         dailySheet: {
@@ -412,14 +420,74 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
       orderBy: { createdAt: 'asc' },
     });
 
+    // 3. Query all operator time entries on this date to attach Claiming / Ownership Context
+    const existingOpEntries = await prisma.mF_OP_TimeEntry.findMany({
+      where: {
+        projectId,
+        date: targetDate,
+        employee: {
+          OR: [
+            { isOperator: true },
+            { corporateEmployee: { isOperator: true } },
+          ],
+        },
+      },
+      include: {
+        dailySheet: {
+          select: {
+            supervisorId: true,
+            supervisor: { select: { id: true, fullName: true, username: true } },
+          },
+        },
+        equipment: {
+          select: {
+            corporateEquipment: {
+              select: { standardEquipmentNumber: true, vehicleNo: true },
+            },
+          },
+        },
+      },
+    });
+
+    const opClaimsMap = new Map<string, Array<{
+      supervisorId: string;
+      supervisorName: string;
+      inTime?: string | null;
+      outTime?: string | null;
+      hours: number;
+      machineCode?: string;
+    }>>();
+
+    for (const te of existingOpEntries) {
+      if (!te.employeeId) continue;
+      const sId = te.dailySheet?.supervisorId || '';
+      const sName = te.dailySheet?.supervisor?.fullName || te.dailySheet?.supervisor?.username || 'Another Supervisor';
+      const mCode = te.equipment?.corporateEquipment?.standardEquipmentNumber || te.equipment?.corporateEquipment?.vehicleNo;
+      const list = opClaimsMap.get(te.employeeId) || [];
+      list.push({
+        supervisorId: sId,
+        supervisorName: sName,
+        inTime: te.inTime,
+        outTime: te.outTime,
+        hours: Number(te.shiftHours || te.hours || 0),
+        machineCode: mCode || undefined,
+      });
+      opClaimsMap.set(te.employeeId, list);
+    }
+
     const seen = new Set<string>();
     const formatted: any[] = [];
 
+    // Map pre-assignments
     for (const a of assignments) {
       if (!a.operator || !a.operatorId) continue;
       const key = `${a.dailySheet.supervisorId}_${a.operatorId}`;
       if (seen.has(key)) continue;
       seen.add(key);
+
+      const claims = opClaimsMap.get(a.operatorId) || [];
+      const otherClaim = claims.find((c) => c.supervisorId !== supervisorId);
+      const myClaim = claims.find((c) => c.supervisorId === supervisorId);
 
       formatted.push({
         id: a.id,
@@ -435,7 +503,67 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
         equipmentName: a.equipment.corporateEquipment.equipmentName,
         vehicleNo: a.equipment.corporateEquipment.vehicleNo,
         businessPartner: a.operator.businessPartner?.name || 'Direct',
+        claimedBySupervisor: otherClaim?.supervisorName,
+        claimedSupervisorId: otherClaim?.supervisorId,
+        claimedInTime: otherClaim?.inTime || undefined,
+        claimedOutTime: otherClaim?.outTime || undefined,
+        claimedHours: otherClaim?.hours,
+        claimedMachineCodes: claims.map((c) => c.machineCode).filter(Boolean),
+        claimedByMe: !!myClaim,
       });
+    }
+
+    // Also include any operators this supervisor has already recorded entries for on this date
+    if (supervisorId) {
+      const myOpEntries = await prisma.mF_OP_TimeEntry.findMany({
+        where: {
+          projectId,
+          date: targetDate,
+          dailySheet: { supervisorId },
+          employee: {
+            OR: [
+              { isOperator: true },
+              { corporateEmployee: { isOperator: true } },
+            ],
+          },
+        },
+        include: {
+          employee: {
+            include: {
+              corporateEmployee: true,
+              tradeGroup: true,
+              businessPartner: true,
+            },
+          },
+          equipment: {
+            include: { corporateEquipment: true },
+          },
+        },
+      });
+
+      for (const me of myOpEntries) {
+        if (!me.employee) continue;
+        const key = `${supervisorId}_${me.employeeId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        formatted.push({
+          id: `op-entry-${me.id}`,
+          date: dateStr,
+          supervisorId,
+          operatorId: me.employeeId,
+          equipmentId: me.equipmentId || '',
+          supervisorName: '',
+          operatorName: me.employee.callingName || me.employee.corporateEmployee.fullName,
+          operatorCode: me.employee.corporateEmployee.employeeCode,
+          operatorTrade: me.employee.tradeGroup?.name || 'Operator',
+          equipmentCode: me.equipment?.corporateEquipment?.standardEquipmentNumber || '',
+          equipmentName: me.equipment?.corporateEquipment?.equipmentName || '',
+          vehicleNo: me.equipment?.corporateEquipment?.vehicleNo || '',
+          businessPartner: me.employee.businessPartner?.name || 'Direct',
+          claimedByMe: true,
+        });
+      }
     }
 
     res.json(formatted);
@@ -445,7 +573,6 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
   }
 };
 
-// 7. POST /api/assignments/operator
 export const assignOperators = async (req: Request, res: Response): Promise<void> => {
   try {
     const { date, supervisorId, operatorIds, equipmentId } = req.body || {};

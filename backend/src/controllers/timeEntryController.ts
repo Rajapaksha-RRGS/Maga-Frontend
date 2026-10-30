@@ -270,6 +270,14 @@ export const getAssignedEmployees = async (req: Request, res: Response): Promise
 
     const targetDate = parseDate(dateStr);
 
+    // 1. Check if Site Resource Pool Mode is enabled
+    const project = await prisma.mF_P_Project.findUnique({
+      where: { id: projectId },
+      select: { equipmentAssignBySupervisor: true },
+    });
+    const isPoolMode = !!project?.equipmentAssignBySupervisor;
+
+    // 2. Fetch explicit assignments for this supervisor
     const assignedRecords = await prisma.mF_OP_DailyAssignment.findMany({
       where: {
         dailySheet: {
@@ -285,7 +293,7 @@ export const getAssignedEmployees = async (req: Request, res: Response): Promise
             id: true,
             callingName: true,
             corporateEmployee: {
-              select: { employeeCode: true, fullName: true },
+              select: { employeeCode: true, fullName: true, isOperator: true },
             },
             tradeGroup: { select: { name: true } },
             businessPartner: { select: { name: true } },
@@ -295,14 +303,113 @@ export const getAssignedEmployees = async (req: Request, res: Response): Promise
       orderBy: { createdAt: 'asc' },
     });
 
-    const result = assignedRecords.map((rec) => ({
-      id: rec.employee.id,
-      employeeCode: rec.employee.corporateEmployee.employeeCode,
-      callingName: rec.employee.callingName || rec.employee.corporateEmployee.fullName,
-      fullName: rec.employee.corporateEmployee.fullName,
-      tradeGroup: rec.employee.tradeGroup?.name || 'General labour',
-      businessPartner: rec.employee.businessPartner?.name || 'Direct',
-    }));
+    let employeePool: any[] = [];
+    const seenIds = new Set<string>();
+
+    for (const r of assignedRecords) {
+      if (!seenIds.has(r.employee.id)) {
+        seenIds.add(r.employee.id);
+        employeePool.push(r.employee);
+      }
+    }
+
+    // Also include any employees this supervisor has already recorded entries for on this date
+    if (supervisorId) {
+      const myRecordedEntries = await prisma.mF_OP_TimeEntry.findMany({
+        where: {
+          projectId,
+          date: targetDate,
+          dailySheet: { supervisorId },
+        },
+        select: {
+          employee: {
+            select: {
+              id: true,
+              callingName: true,
+              corporateEmployee: {
+                select: { employeeCode: true, fullName: true, isOperator: true },
+              },
+              tradeGroup: { select: { name: true } },
+              businessPartner: { select: { name: true } },
+            },
+          },
+        },
+      });
+
+      for (const me of myRecordedEntries) {
+        if (me.employee && !seenIds.has(me.employee.id)) {
+          seenIds.add(me.employee.id);
+          employeePool.push(me.employee);
+        }
+      }
+    }
+
+    // 3. Query all time entries on this date across the project to attach Ownership/Claiming Context
+    const existingEntriesOnDate = await prisma.mF_OP_TimeEntry.findMany({
+      where: {
+        projectId,
+        date: targetDate,
+      },
+      select: {
+        id: true,
+        employeeId: true,
+        inTime: true,
+        outTime: true,
+        hours: true,
+        shiftHours: true,
+        dailySheet: {
+          select: {
+            supervisorId: true,
+            supervisor: { select: { id: true, fullName: true, username: true } },
+          },
+        },
+      },
+    });
+
+    // Group entries by employeeId
+    const claimsMap = new Map<string, Array<{
+      supervisorId: string;
+      supervisorName: string;
+      inTime?: string | null;
+      outTime?: string | null;
+      hours: number;
+    }>>();
+
+    for (const te of existingEntriesOnDate) {
+      if (!te.employeeId) continue;
+      const supId = te.dailySheet?.supervisorId || '';
+      const supName = te.dailySheet?.supervisor?.fullName || te.dailySheet?.supervisor?.username || 'Another Supervisor';
+      const list = claimsMap.get(te.employeeId) || [];
+      list.push({
+        supervisorId: supId,
+        supervisorName: supName,
+        inTime: te.inTime,
+        outTime: te.outTime,
+        hours: Number(te.shiftHours || te.hours || 0),
+      });
+      claimsMap.set(te.employeeId, list);
+    }
+
+    const result = employeePool.map((emp) => {
+      const claims = claimsMap.get(emp.id) || [];
+      const otherClaim = claims.find((c) => c.supervisorId !== supervisorId);
+      const myClaim = claims.find((c) => c.supervisorId === supervisorId);
+
+      return {
+        id: emp.id,
+        employeeCode: emp.corporateEmployee.employeeCode,
+        callingName: emp.callingName || emp.corporateEmployee.fullName,
+        fullName: emp.corporateEmployee.fullName,
+        tradeGroup: emp.tradeGroup?.name || 'General labour',
+        businessPartner: emp.businessPartner?.name || 'Direct',
+        claimedBySupervisor: otherClaim?.supervisorName,
+        claimedSupervisorId: otherClaim?.supervisorId,
+        claimedInTime: otherClaim?.inTime || undefined,
+        claimedOutTime: otherClaim?.outTime || undefined,
+        claimedHours: otherClaim?.hours,
+        claimedByMe: !!myClaim,
+      };
+    });
 
     res.json(result);
   } catch (error) {
@@ -1911,6 +2018,44 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
         let regularHours: number = Number(item.hours || 0);
 
         if (item.inTime && item.outTime) {
+          // Conflict Protection: Check if operator is already booked on overlapping hours by another supervisor
+          const otherSupOpEntries = await prisma.mF_OP_TimeEntry.findMany({
+            where: {
+              projectId,
+              employeeId: opId,
+              date: targetDate,
+              dailySheetId: { not: dailySheet.id },
+              inTime: { not: null },
+              outTime: { not: null },
+            },
+            include: {
+              dailySheet: {
+                select: {
+                  supervisor: { select: { fullName: true, username: true } },
+                },
+              },
+              equipment: {
+                select: {
+                  corporateEquipment: { select: { standardEquipmentNumber: true } },
+                },
+              },
+            },
+          });
+
+          const conflictingOp = otherSupOpEntries.find((oe) => {
+            if (!oe.inTime || !oe.outTime) return false;
+            return item.inTime < oe.outTime && item.outTime > oe.inTime;
+          });
+
+          if (conflictingOp) {
+            const supName = conflictingOp.dailySheet?.supervisor?.fullName || conflictingOp.dailySheet?.supervisor?.username || 'another supervisor';
+            const eqCode = conflictingOp.equipment?.corporateEquipment?.standardEquipmentNumber || 'a machine';
+            res.status(409).json({
+              error: `Time conflict: Operator is already recorded by Supervisor ${supName} on ${eqCode} from ${conflictingOp.inTime} to ${conflictingOp.outTime}. Overlapping shifts cannot overwrite existing attendance.`,
+            });
+            return;
+          }
+
           const calc = calculateShiftAndOvertime(item.inTime, item.outTime, standardHoursCap, isAllOvertime);
           shiftHoursVal = calc.shiftHours;
           overtimeHours = calc.otHours;
@@ -1926,9 +2071,11 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           // Persist a time entry per machine split for granular ERP reporting
           for (let sIdx = 0; sIdx < validSplits.length; sIdx++) {
             const split = validSplits[sIdx];
+            // Strictly scope to current supervisor dailySheet to prevent cross-supervisor overwriting
             const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
               where: {
                 projectId,
+                dailySheetId: dailySheet.id,
                 employeeId: opId,
                 date: targetDate,
                 equipmentId: split.equipmentId,
@@ -1969,6 +2116,7 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
             where: {
               projectId,
+              dailySheetId: dailySheet.id,
               employeeId: opId,
               date: targetDate,
             },
@@ -2218,9 +2366,45 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         overtimeHours = isAllOvertime ? numHours : numHours > standardHoursCap ? numHours - standardHoursCap : 0;
       }
 
+      // Conflict Protection: Check if worker has an active overlapping shift logged by another supervisor
+      if (finalInTime && finalOutTime) {
+        const otherSupEntries = await prisma.mF_OP_TimeEntry.findMany({
+          where: {
+            projectId,
+            employeeId,
+            date: targetDate,
+            dailySheetId: { not: dailySheet?.id },
+            inTime: { not: null },
+            outTime: { not: null },
+          },
+          include: {
+            dailySheet: {
+              select: {
+                supervisor: { select: { fullName: true, username: true } },
+              },
+            },
+          },
+        });
+
+        const conflicting = otherSupEntries.find((oe) => {
+          if (!oe.inTime || !oe.outTime) return false;
+          return finalInTime < oe.outTime && finalOutTime > oe.inTime;
+        });
+
+        if (conflicting) {
+          const supName = conflicting.dailySheet?.supervisor?.fullName || conflicting.dailySheet?.supervisor?.username || 'another supervisor';
+          res.status(409).json({
+            error: `Time conflict: Worker is already recorded by Supervisor ${supName} from ${conflicting.inTime} to ${conflicting.outTime}. Overlapping shifts cannot overwrite existing attendance.`,
+          });
+          return;
+        }
+      }
+
+      // Strictly scope to current supervisor dailySheet to prevent overwriting other supervisors
       const existing = await prisma.mF_OP_TimeEntry.findFirst({
         where: {
           projectId,
+          dailySheetId: dailySheet ? dailySheet.id : null,
           employeeId,
           activityId: resolvedActivityId,
           date: targetDate,

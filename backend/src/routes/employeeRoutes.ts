@@ -9,6 +9,7 @@ import {
   getCrossTenantEmployeeStatus,
   transferEmployee,
   getCorporateEmployeesCatalog,
+  getSiteEmployeePool,
 } from '../controllers/employeeController';
 import {
   getPendingCorporateEmployees,
@@ -30,6 +31,7 @@ router.post('/cross-tenant-status', requireAdmin, getCrossTenantEmployeeStatus);
 router.post('/transfer', requireAdmin, transferEmployee);
 
 // Standard routes matching frontend expectations
+router.get('/site-pool', getSiteEmployeePool);
 router.get('/', requireAuth, getAllEmployees);
 router.get('/:id', requireAuth, getEmployeeById);
 router.post('/', requireAdmin, createEmployee);

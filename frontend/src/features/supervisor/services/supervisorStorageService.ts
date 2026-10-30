@@ -52,6 +52,12 @@ export interface LaborerEntry {
   isStandbyAssigned?: boolean;
   isAbsent?: boolean;
   lastSavedAt?: string;
+  claimedBySupervisor?: string;
+  claimedSupervisorId?: string;
+  claimedInTime?: string;
+  claimedOutTime?: string;
+  claimedHours?: number;
+  claimedByMe?: boolean;
 }
 
 export interface OperatorEquipmentSplit {
@@ -76,6 +82,13 @@ export interface OperatorEntry {
   status: 'draft' | 'pending' | 'done';
   notes?: string;
   lastSavedAt?: string;
+  claimedBySupervisor?: string;
+  claimedSupervisorId?: string;
+  claimedInTime?: string;
+  claimedOutTime?: string;
+  claimedHours?: number;
+  claimedMachineCodes?: string[];
+  claimedByMe?: boolean;
 }
 
 export type EquipmentRatingUnit = 'Days' | 'Hrs' | 'EX.hrs' | 'mth' | 'm2' | 'km';
@@ -479,6 +492,50 @@ export const supervisorStorage = {
     return date ? this.getEquipment(date) : (localStorage.getItem(key) ? JSON.parse(localStorage.getItem(key)!) : []);
   },
 
+  // ── 2.01 Fetch Site Labor Pool ──────────────────────────────────────────────
+  async fetchSiteLaborPool(projectId?: string, date?: string, supervisorId?: string): Promise<any[]> {
+    try {
+      const activeProjId = projectId || this.getActiveSite().id;
+      const params = new URLSearchParams({
+        projectId: activeProjId || '',
+        type: 'labor',
+      });
+      if (date) params.append('date', date);
+      if (supervisorId) params.append('supervisorId', supervisorId);
+
+      const res = await apiFetch(`${API_URL}/employees/site-pool?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) return data;
+      }
+    } catch (err) {
+      console.warn('Could not fetch site labor pool:', err);
+    }
+    return [];
+  },
+
+  // ── 2.02 Fetch Site Operator Pool ───────────────────────────────────────────
+  async fetchSiteOperatorPool(projectId?: string, date?: string, supervisorId?: string): Promise<any[]> {
+    try {
+      const activeProjId = projectId || this.getActiveSite().id;
+      const params = new URLSearchParams({
+        projectId: activeProjId || '',
+        type: 'operator',
+      });
+      if (date) params.append('date', date);
+      if (supervisorId) params.append('supervisorId', supervisorId);
+
+      const res = await apiFetch(`${API_URL}/employees/site-pool?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) return data;
+      }
+    } catch (err) {
+      console.warn('Could not fetch site operator pool:', err);
+    }
+    return [];
+  },
+
   // ── 2.1 Fetch Site Equipment Pool (Zero-Conflict Handover) ───────────────────
   async fetchSiteEquipmentPool(projectId?: string, date?: string): Promise<SitePoolEquipmentItem[]> {
     try {
@@ -693,6 +750,12 @@ export const supervisorStorage = {
             status,
             isAbsent,
             lastSavedAt: localDraft?.lastSavedAt,
+            claimedBySupervisor: emp.claimedBySupervisor,
+            claimedSupervisorId: emp.claimedSupervisorId,
+            claimedInTime: emp.claimedInTime,
+            claimedOutTime: emp.claimedOutTime,
+            claimedHours: emp.claimedHours,
+            claimedByMe: emp.claimedByMe,
           };
         });
 
@@ -763,6 +826,13 @@ export const supervisorStorage = {
               ? 'done'
               : (existing?.status ? existing.status : (te?.status === 'submitted' || te?.status === 'approved' ? 'draft' : 'pending')),
             notes: existing?.notes || te?.notes || '',
+            claimedBySupervisor: asgn.claimedBySupervisor,
+            claimedSupervisorId: asgn.claimedSupervisorId,
+            claimedInTime: asgn.claimedInTime,
+            claimedOutTime: asgn.claimedOutTime,
+            claimedHours: asgn.claimedHours,
+            claimedMachineCodes: asgn.claimedMachineCodes,
+            claimedByMe: asgn.claimedByMe,
           };
         });
         localStorage.setItem(key, JSON.stringify(mapped));

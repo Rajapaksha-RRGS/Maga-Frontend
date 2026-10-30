@@ -22,6 +22,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { SearchableActivitySelect } from '../components/SearchableActivitySelect';
+import { SiteLaborPoolModal } from '../components/SiteLaborPoolModal';
 import { 
   supervisorStorage,
   type ActivityCodeItem,
@@ -42,6 +43,8 @@ interface LaborEntryViewProps {
   searchQuery?: string;
   statusFilter?: 'all' | 'pending' | 'done';
   isDayLocked?: boolean;
+  selectedDate?: string;
+  projectId?: string;
 }
 
 interface BatchActivityItem {
@@ -64,7 +67,26 @@ export function LaborEntryView({
   searchQuery: externalSearchQuery = '',
   statusFilter: externalStatusFilter = 'all',
   isDayLocked = false,
+  selectedDate = '',
+  projectId,
 }: LaborEntryViewProps) {
+  const [isLaborPoolModalOpen, setIsLaborPoolModalOpen] = useState(false);
+  const [isPoolMode, setIsPoolMode] = useState(false);
+
+  useEffect(() => {
+    supervisorStorage.isEquipmentPoolModeEnabled(projectId)
+      .then(setIsPoolMode)
+      .catch(() => setIsPoolMode(false));
+  }, [projectId]);
+
+  const handleAddLaborersFromPool = (newLaborers: LaborerEntry[]) => {
+    const existingIds = new Set(laborers.map((l) => l.id));
+    const toAdd = newLaborers.filter((nl) => !existingIds.has(nl.id));
+    if (toAdd.length > 0) {
+      const updated = [...laborers, ...toAdd];
+      onSaveLaborers(updated);
+    }
+  };
   // Mode: In Time or Out Time (matching hand-drawn sketch)
   const [tabMode, setTabMode] = useState<'in' | 'out'>('in');
 
@@ -814,23 +836,38 @@ export function LaborEntryView({
         </button>
       </div>
 
-      {/* ── 3. Search Bar ──────────────────────────────────────────────────────── */}
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-        <input
-          type="text"
-          value={localSearch}
-          onChange={(e) => setLocalSearch(e.target.value)}
-          placeholder="Search employee code, calling name, NIC..."
-          className="w-full pl-9 pr-9 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-blue-600 focus:outline-none shadow-2xs transition-colors"
-        />
-        {localSearch && (
+      {/* ── 3. Search Bar & Add from Pool ───────────────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          <input
+            type="text"
+            value={localSearch}
+            onChange={(e) => setLocalSearch(e.target.value)}
+            placeholder="Search employee code, calling name, NIC..."
+            className="w-full pl-9 pr-9 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-blue-600 focus:outline-none shadow-2xs transition-colors"
+          />
+          {localSearch && (
+            <button
+              type="button"
+              onClick={() => setLocalSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {isPoolMode && !isDayLocked && (
           <button
             type="button"
-            onClick={() => setLocalSearch('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            onClick={() => setIsLaborPoolModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition-colors shrink-0 cursor-pointer"
+            title="Add workers from site pool"
           >
-            <X size={14} />
+            <Plus size={15} className="stroke-[3]" />
+            <span className="hidden sm:inline">Add from Pool</span>
+            <span className="sm:hidden">Pool</span>
           </button>
         )}
       </div>
@@ -1245,6 +1282,13 @@ export function LaborEntryView({
                           {worker.tradeGroup}
                         </span>
                       </div>
+
+                      {worker.claimedBySupervisor && !worker.claimedByMe && (
+                        <div className="mt-1 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[10px] text-amber-900 dark:text-amber-200 font-semibold">
+                          <Lock size={10} className="text-amber-600 shrink-0" />
+                          <span>Logged by Sup. {worker.claimedBySupervisor} ({worker.claimedInTime || '--:--'} - {worker.claimedOutTime || '--:--'})</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1752,6 +1796,15 @@ export function LaborEntryView({
           </span>
         </div>
       )}
+      {/* ── Site Labor Pool Modal ── */}
+      <SiteLaborPoolModal
+        isOpen={isLaborPoolModalOpen}
+        onClose={() => setIsLaborPoolModalOpen(false)}
+        selectedDate={selectedDate || ''}
+        currentLaborers={laborers}
+        onAddLaborers={handleAddLaborersFromPool}
+        projectId={projectId}
+      />
     </div>
   );
 }
