@@ -1465,4 +1465,83 @@ export const supervisorStorage = {
 
     return results;
   },
+
+  /**
+   * Fetch recent past operators for a supervisor across the past N working days before currentDate.
+   * Scans local drafts first, falls back to backend /assignments/operator.
+   */
+  async getPastOperatorsForSupervisor(
+    supervisorId: string,
+    currentDate: string,
+    daysCount: number = 5
+  ): Promise<Array<{ date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }>> {
+    const results: Array<{ date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }> = [];
+    if (!currentDate) return results;
+
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    const shiftDateStr = (dateStr: string, days: number): string => {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() + days);
+      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+    };
+
+    for (let i = 1; i <= daysCount; i++) {
+      const pastDate = shiftDateStr(currentDate, -i);
+      const [y, m, d] = pastDate.split('-').map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      const dayName = dayNames[dt.getUTCDay()];
+
+      // 1. Try local storage
+      const localOperators = this.getOperators(pastDate);
+      if (localOperators && localOperators.length > 0) {
+        results.push({
+          date: pastDate,
+          dayName,
+          operatorIds: localOperators.map((o) => o.id),
+          operatorCount: localOperators.length,
+          operators: localOperators,
+        });
+        continue;
+      }
+
+      // 2. Try backend
+      if (supervisorId) {
+        try {
+          const res = await apiFetch(`${API_URL}/assignments/operator?date=${encodeURIComponent(pastDate)}&supervisorId=${encodeURIComponent(supervisorId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              const mapped: OperatorEntry[] = data.map((asgn: any) => ({
+                id: asgn.operatorId || asgn.id,
+                callingName: asgn.operatorName || asgn.callingName || 'Operator',
+                employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
+                licenseNo: asgn.licenseNo || '',
+                designation: asgn.operatorTrade || 'Machine Operator',
+                inTime: '',
+                outTime: '',
+                shiftHours: 0,
+                otHours: 0,
+                assignedEquipmentId: asgn.equipmentId || '',
+                equipmentSplits: asgn.equipmentId ? [{ id: '1', equipmentId: asgn.equipmentId, hours: 0 }] : [],
+                status: 'pending',
+              }));
+              results.push({
+                date: pastDate,
+                dayName,
+                operatorIds: mapped.map((o) => o.id),
+                operatorCount: mapped.length,
+                operators: mapped,
+              });
+            }
+          }
+        } catch {
+          // ignore network hiccups
+        }
+      }
+    }
+
+    return results;
+  },
 };

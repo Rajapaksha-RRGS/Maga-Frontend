@@ -6,6 +6,11 @@ import {
   Plus,
   Lock,
   UserCheck,
+  History,
+  Calendar,
+  ChevronDown,
+  Zap,
+  Check,
 } from 'lucide-react';
 import {
   supervisorStorage,
@@ -19,6 +24,7 @@ interface SiteOperatorPoolModalProps {
   selectedDate: string;
   currentOperators: OperatorEntry[];
   onAddOperator: (newOperator: OperatorEntry) => void;
+  onAddOperators?: (newOperators: OperatorEntry[]) => void;
   projectId?: string;
 }
 
@@ -28,6 +34,7 @@ export function SiteOperatorPoolModal({
   selectedDate,
   currentOperators,
   onAddOperator,
+  onAddOperators,
   projectId,
 }: SiteOperatorPoolModalProps) {
   const { user } = useAuth();
@@ -35,15 +42,84 @@ export function SiteOperatorPoolModal({
   const [poolOperators, setPoolOperators] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  const [pastOperatorsGangs, setPastOperatorsGangs] = useState<
+    Array<{ date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }>
+  >([]);
+  const [showPastDaysDropdown, setShowPastDaysDropdown] = useState(false);
+  const [pastNotice, setPastNotice] = useState<string | null>(null);
+
   useEffect(() => {
     if (!isOpen) return;
     setIsLoading(true);
+    setPastNotice(null);
+    setShowPastDaysDropdown(false);
+
     supervisorStorage
       .fetchSiteOperatorPool(projectId, selectedDate, user?.id)
       .then((items) => setPoolOperators(items))
       .catch((err) => console.warn('Could not load operator pool:', err))
       .finally(() => setIsLoading(false));
+
+    supervisorStorage
+      .getPastOperatorsForSupervisor(user?.id || '', selectedDate, 5)
+      .then((gangs) => setPastOperatorsGangs(gangs))
+      .catch((err) => console.warn('Could not load past operators:', err));
   }, [isOpen, selectedDate, projectId, user?.id]);
+
+  const mostRecentGang = pastOperatorsGangs[0];
+  const recentAvailableCount = useMemo(() => {
+    if (!mostRecentGang) return 0;
+    const pastIds = new Set(mostRecentGang.operatorIds);
+    return poolOperators.filter((op) => pastIds.has(op.id) && !currentOperators.some((c) => c.id === op.id)).length;
+  }, [mostRecentGang, poolOperators, currentOperators]);
+
+  const handleDirectAddPastGang = (pg: { date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }) => {
+    const idSet = new Set(pg.operatorIds);
+    const currSet = new Set(currentOperators.map((c) => c.id));
+    const toAddOps = poolOperators.filter((op) => idSet.has(op.id) && !currSet.has(op.id));
+
+    if (toAddOps.length === 0) {
+      setPastNotice(`All operators from ${pg.date} are already in today's shift.`);
+      setTimeout(() => setPastNotice(null), 3000);
+      return;
+    }
+
+    const pastMap = new Map((pg.operators || []).map((p) => [p.id, p]));
+
+    const newEntries: OperatorEntry[] = toAddOps.map((op) => {
+      const pastOp = pastMap.get(op.id);
+      return {
+        id: op.id,
+        callingName: op.callingName || op.fullName || 'Operator',
+        employeeNumber: op.employeeCode || '',
+        licenseNo: op.nicNo || '',
+        designation: op.tradeGroup || 'Machine Operator',
+        inTime: '',
+        outTime: '',
+        shiftHours: 0,
+        otHours: 0,
+        assignedEquipmentId: pastOp?.assignedEquipmentId || '',
+        equipmentSplits: pastOp?.equipmentSplits && pastOp.equipmentSplits.length > 0
+          ? pastOp.equipmentSplits.map((s, idx) => ({ ...s, id: `split-${Date.now()}-${idx}` }))
+          : (pastOp?.assignedEquipmentId ? [{ id: `split-${Date.now()}-0`, equipmentId: pastOp.assignedEquipmentId, hours: 0 }] : []),
+        status: 'pending',
+        claimedBySupervisor: op.claimedBySupervisor,
+        claimedSupervisorId: op.claimedSupervisorId,
+        claimedInTime: op.claimedInTime,
+        claimedOutTime: op.claimedOutTime,
+        claimedHours: op.claimedHours,
+        claimedMachineCodes: op.claimedMachineCodes,
+        claimedByMe: op.claimedByMe,
+      };
+    });
+
+    if (onAddOperators) {
+      onAddOperators(newEntries);
+    } else {
+      newEntries.forEach((e) => onAddOperator(e));
+    }
+    onClose();
+  };
 
   // Set of IDs already in the current supervisor's active daily list
   const currentIds = useMemo(() => {
@@ -129,6 +205,96 @@ export function SiteOperatorPoolModal({
             <X size={16} />
           </button>
         </div>
+
+        {/* ── Quick Copy Past Operators Banner ── */}
+        {pastOperatorsGangs.length > 0 && mostRecentGang && (
+          <div className="p-3 sm:px-5 sm:py-3 border-b border-blue-100 dark:border-blue-900/60 bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-blue-50/90 dark:from-slate-850 dark:via-blue-950/30 dark:to-slate-850">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
+                  <History size={16} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      Copy Past Operators
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                      ${mostRecentGang.operatorCount} on ${mostRecentGang.date} (${mostRecentGang.dayName})
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    1-click select your regular operators instead of picking one by one.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Direct 1-Click Add Button */}
+                <button
+                  type="button"
+                  onClick={() => handleDirectAddPastGang(mostRecentGang)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-2xs transition-colors cursor-pointer"
+                  title={`Directly add ${recentAvailableCount} available operators from ${mostRecentGang.date}`}
+                >
+                  <Zap size={13} className="fill-current" />
+                  <span>1-Click Add (${recentAvailableCount})</span>
+                </button>
+
+                {/* Other Past Days Dropdown */}
+                {pastOperatorsGangs.length > 1 && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowPastDaysDropdown(!showPastDaysDropdown)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-semibold text-xs border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors cursor-pointer shadow-2xs"
+                    >
+                      <Calendar size={13} />
+                      <span className="hidden sm:inline">Other Days</span>
+                      <ChevronDown size={13} />
+                    </button>
+
+                    {showPastDaysDropdown && (
+                      <div className="absolute right-0 mt-1.5 w-60 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-1.5 z-30 space-y-1">
+                        <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Select from Past Days:
+                        </div>
+                        {pastOperatorsGangs.map((pg) => {
+                          const pgAvail = poolOperators.filter((op) => new Set(pg.operatorIds).has(op.id) && !currentOperators.some((c) => c.id === op.id)).length;
+                          return (
+                            <button
+                              key={pg.date}
+                              type="button"
+                              onClick={() => {
+                                setShowPastDaysDropdown(false);
+                                handleDirectAddPastGang(pg);
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 rounded-xl text-xs hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center justify-between cursor-pointer transition-colors"
+                            >
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
+                                ${pg.date} (${pg.dayName})
+                              </span>
+                              <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400">
+                                ${pgAvail} / ${pg.operatorCount} avail
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {pastNotice && (
+              <div className="mt-2 text-xs font-semibold text-blue-800 dark:text-blue-300 bg-blue-100/70 dark:bg-blue-950/80 px-2.5 py-1 rounded-lg border border-blue-200 dark:border-blue-800 flex items-center gap-1.5 animate-in fade-in">
+                <Check size={13} className="text-blue-600" />
+                <span>{pastNotice}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Search Bar ── */}
         <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850">

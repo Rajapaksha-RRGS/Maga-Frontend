@@ -20,7 +20,8 @@ import {
   Plus,
   Trash2,
   PauseCircle,
-  Sparkles
+  Sparkles,
+  History
 } from 'lucide-react';
 import type { 
   OperatorEntry, 
@@ -124,11 +125,53 @@ export function OperatorEntryView({
       .catch(() => setIsPoolMode(false));
   }, [projectId]);
 
+  const [recentPastGang, setRecentPastGang] = useState<{ date: string; dayName: string; operatorCount: number } | null>(null);
+
+  useEffect(() => {
+    supervisorStorage.getPastOperatorsForSupervisor('', selectedDate, 1)
+      .then((gangs) => {
+        if (gangs && gangs.length > 0) {
+          setRecentPastGang(gangs[0]);
+        } else {
+          setRecentPastGang(null);
+        }
+      })
+      .catch(() => setRecentPastGang(null));
+  }, [selectedDate]);
+
   const handleAddOperatorFromPool = (newOp: OperatorEntry) => {
     const exists = operators.some((o) => o.id === newOp.id);
     if (!exists) {
       const updated = [...operators, newOp];
       onSaveOperators(updated);
+    }
+  };
+
+  const handleAddMultipleOperatorsFromPool = (newOps: OperatorEntry[]) => {
+    const existingIds = new Set(operators.map((o) => o.id));
+    const toAdd = newOps.filter((o) => !existingIds.has(o.id));
+    if (toAdd.length > 0) {
+      const updated = [...operators, ...toAdd];
+      onSaveOperators(updated);
+
+      if (onSaveEquipment) {
+        const poolItemsToAdd: SitePoolEquipmentItem[] = [];
+        toAdd.forEach((op) => {
+          const splits = op.equipmentSplits || [];
+          splits.forEach((s) => {
+            if (s.equipmentId && !equipment.some((e) => e.id === s.equipmentId)) {
+              const poolItem = sitePoolEquipment.find((p) => p.id === s.equipmentId);
+              if (poolItem && !poolItemsToAdd.some((p) => p.id === poolItem.id)) {
+                poolItemsToAdd.push(poolItem);
+              }
+            }
+          });
+        });
+        if (poolItemsToAdd.length > 0) {
+          const newEntries = poolItemsToAdd.map((p) => supervisorStorage.createEquipmentLogEntryFromPool(p));
+          onSaveEquipment([...equipment, ...newEntries]);
+        }
+      }
     }
   };
   // Mode: In Time or Out Time (matching Labor view layout)
@@ -600,6 +643,20 @@ export function OperatorEntryView({
           )}
         </div>
 
+        {/* Quick Copy Past Operators Button */}
+        {recentPastGang && recentPastGang.operatorCount > 0 && !isDayLocked && (
+          <button
+            type="button"
+            onClick={() => setIsOperatorPoolModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl font-bold text-xs bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 shadow-2xs transition-colors shrink-0 cursor-pointer"
+            title={`Copy operators from ${recentPastGang.date} (${recentPastGang.dayName})`}
+          >
+            <History size={14} className="text-indigo-600 dark:text-indigo-400" />
+            <span className="hidden md:inline">Past (${recentPastGang.dayName})</span>
+            <span className="md:hidden">Past</span>
+          </button>
+        )}
+
         {isPoolMode && !isDayLocked && (
           <button
             type="button"
@@ -826,11 +883,40 @@ export function OperatorEntryView({
       {/* ── 5. Operator Cards List ────────────────────────────────────────── */}
       <div className="space-y-2.5">
         {filteredOperators.length === 0 ? (
-          <div className="py-12 px-4 text-center bg-white dark:bg-slate-800 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700">
-            <HardHat className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-              No operators found
-            </p>
+          <div className="py-12 px-4 text-center bg-white dark:bg-slate-800 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 space-y-3">
+            <HardHat className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-1" />
+            <div>
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                No operators found
+              </p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {operators.length === 0
+                  ? 'Add operators from the site pool or copy from your previous shift.'
+                  : 'No operators matching the selected filter or search.'}
+              </p>
+            </div>
+            {operators.length === 0 && !isDayLocked && (
+              <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+                {recentPastGang && recentPastGang.operatorCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsOperatorPoolModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs transition-colors cursor-pointer"
+                  >
+                    <History size={14} />
+                    <span>Copy Past Operators ({recentPastGang.dayName})</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsOperatorPoolModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-2xs transition-colors cursor-pointer"
+                >
+                  <Plus size={14} className="stroke-[3]" />
+                  <span>Add from Site Pool</span>
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           filteredOperators.map((operator) => {
@@ -1224,6 +1310,7 @@ export function OperatorEntryView({
         selectedDate={selectedDate || ''}
         currentOperators={operators}
         onAddOperator={handleAddOperatorFromPool}
+        onAddOperators={handleAddMultipleOperatorsFromPool}
         projectId={projectId}
       />
     </div>
