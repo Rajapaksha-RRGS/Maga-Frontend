@@ -1045,6 +1045,7 @@ export const supervisorStorage = {
 
         return {
           id: eq.id,
+          operatorId: eq.operatorId || null,
           condition: eq.condition || 'DRY',
           startMeter: Number(eq.startMeter || 0),
           endMeter: Number(eq.endMeter || 0),

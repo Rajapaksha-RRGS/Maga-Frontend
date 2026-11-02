@@ -1361,8 +1361,10 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
             });
           } else {
             const existing = opMap.get(te.employee.id)!;
-            if (teEqDisplay && !existing.equipmentDisplays.includes(teEqDisplay)) {
+            // Fallback only: Only use time entry equipment if equipmentAssignments had NO equipment for this operator
+            if (existing.equipmentDisplays.length === 0 && teEqDisplay) {
               existing.equipmentDisplays.push(teEqDisplay);
+              if (te.equipmentId) existing.equipmentIds.push(te.equipmentId);
             }
           }
         }
@@ -2032,7 +2034,20 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
         validSplits.push({ equipmentId: validEquipmentId, hours: Number(item.hours || item.shiftHours || 0) });
       }
 
-      // 1. Upsert Equipment Assignments & Logs for each machine
+      // 1. Reconcile Equipment Assignments: Clear operator link from any machines not in current splits
+      const activeEqIds = validSplits.map((s) => s.equipmentId);
+      await prisma.mF_OP_DailyEquipmentAssignment.updateMany({
+        where: {
+          dailySheetId: dailySheet.id,
+          operatorId: opId,
+          ...(activeEqIds.length > 0 ? { equipmentId: { notIn: activeEqIds } } : {}),
+        },
+        data: {
+          operatorId: null,
+        },
+      });
+
+      // Upsert Equipment Assignments & Logs for each assigned machine
       for (const split of validSplits) {
         const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
           where: {
@@ -2126,7 +2141,6 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
 
         // Reconcile operator time entries: delete stale draft entries for this operator on this date under this sheet
         // that are not part of current valid splits
-        const activeEqIds = validSplits.map((s) => s.equipmentId);
         if (activeEqIds.length > 0) {
           await prisma.mF_OP_TimeEntry.deleteMany({
             where: {
@@ -2134,7 +2148,7 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
               dailySheetId: dailySheet.id,
               employeeId: opId,
               date: targetDate,
-              status: 'draft',
+              status: { not: 'approved' },
               OR: [
                 { equipmentId: null },
                 { equipmentId: { notIn: activeEqIds } },
@@ -2148,7 +2162,7 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
               dailySheetId: dailySheet.id,
               employeeId: opId,
               date: targetDate,
-              status: 'draft',
+              status: { not: 'approved' },
               equipmentId: { not: null },
             },
           });
@@ -2310,7 +2324,7 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
           },
         },
         update: {
-          ...(explicitOpId ? { operatorId: explicitOpId } : {}),
+          operatorId: explicitOpId,
         },
         create: {
           dailySheetId: dailySheet.id,
