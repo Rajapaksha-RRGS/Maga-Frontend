@@ -323,6 +323,7 @@ export default function SupervisorMobileApp() {
             operators={operators}
             equipment={equipment}
             onSaveOperators={handleSaveOperators}
+            onSaveEquipment={handleSaveEquipment}
             isDayLocked={isDayLocked}
             selectedDate={selectedDate}
             projectId={currentSite.id}

@@ -25,7 +25,8 @@ import {
 import type { 
   OperatorEntry, 
   EquipmentLogEntry,
-  OperatorEquipmentSplit 
+  OperatorEquipmentSplit,
+  SitePoolEquipmentItem
 } from '../services/supervisorStorageService';
 import {
   computeHours,
@@ -39,6 +40,7 @@ interface OperatorEntryViewProps {
   operators: OperatorEntry[];
   equipment: EquipmentLogEntry[];
   onSaveOperators: (updated: OperatorEntry[]) => void;
+  onSaveEquipment?: (updated: EquipmentLogEntry[]) => void;
   searchQuery?: string;
   statusFilter?: 'all' | 'pending' | 'done';
   isDayLocked?: boolean;
@@ -60,6 +62,7 @@ export function OperatorEntryView({
   operators,
   equipment,
   onSaveOperators,
+  onSaveEquipment,
   searchQuery: externalSearchQuery = '',
   statusFilter: externalStatusFilter = 'all',
   isDayLocked = false,
@@ -68,6 +71,52 @@ export function OperatorEntryView({
 }: OperatorEntryViewProps) {
   const [isOperatorPoolModalOpen, setIsOperatorPoolModalOpen] = useState(false);
   const [isPoolMode, setIsPoolMode] = useState(false);
+  const [sitePoolEquipment, setSitePoolEquipment] = useState<SitePoolEquipmentItem[]>([]);
+
+  useEffect(() => {
+    supervisorStorage.fetchSiteEquipmentPool(projectId, selectedDate)
+      .then((pool) => {
+        if (Array.isArray(pool) && pool.length > 0) {
+          setSitePoolEquipment(pool);
+        }
+      })
+      .catch((err) => console.warn('Could not load site pool equipment for operators:', err));
+  }, [projectId, selectedDate]);
+
+  // Combined options of ALL equipment at the site (Site Equipment Pool + Supervisor daily logged equipment)
+  const allEquipmentOptions = useMemo(() => {
+    const map = new Map<string, { id: string; code: string; name: string; vehicleNo?: string; loggedHours: number }>();
+
+    // 1. Add all vehicles from Site Equipment Pool
+    sitePoolEquipment.forEach((p) => {
+      const usageSum = (p.existingUsages || []).reduce(
+        (acc, u) => acc + (Number(u.workingHours || u.totalUtilization) || 0),
+        0
+      );
+      map.set(p.id, {
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        vehicleNo: p.vehicleNo,
+        loggedHours: usageSum,
+      });
+    });
+
+    // 2. Merge with supervisor's current equipment list (current logged hours take priority)
+    equipment.forEach((eq) => {
+      const lh = getEquipmentLoggedHours(eq);
+      const existing = map.get(eq.id);
+      map.set(eq.id, {
+        id: eq.id,
+        code: eq.code,
+        name: eq.name,
+        vehicleNo: eq.vehicleNo || existing?.vehicleNo,
+        loggedHours: lh > 0 ? lh : (existing?.loggedHours || 0),
+      });
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.code.localeCompare(b.code));
+  }, [sitePoolEquipment, equipment]);
 
   useEffect(() => {
     supervisorStorage.isEquipmentPoolModeEnabled(projectId)
@@ -121,7 +170,7 @@ export function OperatorEntryView({
       const search = effectiveSearch.toLowerCase().trim();
       const splits = o.equipmentSplits || [];
       const hasMatchingEquip = splits.some((s) => {
-        const eq = equipment.find((e) => e.id === s.equipmentId);
+        const eq = allEquipmentOptions.find((e) => e.id === s.equipmentId) || equipment.find((e) => e.id === s.equipmentId);
         return eq && (eq.code.toLowerCase().includes(search) || eq.name.toLowerCase().includes(search));
       });
 
@@ -320,13 +369,18 @@ export function OperatorEntryView({
 
   // ── MULTI-VEHICLE SPLIT HANDLERS ──
   const handleAddEquipmentSplit = (operatorId: string) => {
+    let poolToAdd: SitePoolEquipmentItem | undefined;
     const updated = operators.map((o) => {
       if (o.id !== operatorId) return o;
       const targetShift = Number(o.shiftHours) || 8.0;
       const currentSplits = o.equipmentSplits || [];
       
-      const defaultEq = equipment.find((eq) => !currentSplits.some((s) => s.equipmentId === eq.id)) || equipment[0];
+      const defaultEq = allEquipmentOptions.find((eq) => !currentSplits.some((s) => s.equipmentId === eq.id)) || equipment[0] || allEquipmentOptions[0];
       const defaultEqId = defaultEq?.id || '';
+
+      if (defaultEqId && onSaveEquipment && !equipment.some((e) => e.id === defaultEqId)) {
+        poolToAdd = sitePoolEquipment.find((p) => p.id === defaultEqId);
+      }
 
       let newSplits: OperatorEquipmentSplit[] = [];
 
@@ -374,10 +428,16 @@ export function OperatorEntryView({
         equipmentSplits: newSplits,
       };
     });
+
+    if (poolToAdd && onSaveEquipment) {
+      const newEntry = supervisorStorage.createEquipmentLogEntryFromPool(poolToAdd);
+      onSaveEquipment([...equipment, newEntry]);
+    }
     onSaveOperators(updated);
   };
 
   const handleUpdateEquipmentSplit = (operatorId: string, splitId: string, field: 'equipmentId' | 'hours', value: any) => {
+    let poolToAdd: SitePoolEquipmentItem | undefined;
     const updated = operators.map((o) => {
       if (o.id !== operatorId) return o;
       const targetShift = Number(o.shiftHours) || 8.0;
@@ -391,6 +451,9 @@ export function OperatorEntryView({
             equipmentId: value,
           };
         });
+        if (value && onSaveEquipment && !equipment.some((e) => e.id === value)) {
+          poolToAdd = sitePoolEquipment.find((p) => p.id === value);
+        }
         return {
           ...o,
           assignedEquipmentId: splits[0]?.equipmentId || '',
@@ -427,6 +490,11 @@ export function OperatorEntryView({
         equipmentSplits: splits,
       };
     });
+
+    if (poolToAdd && onSaveEquipment) {
+      const newEntry = supervisorStorage.createEquipmentLogEntryFromPool(poolToAdd);
+      onSaveEquipment([...equipment, newEntry]);
+    }
     onSaveOperators(updated);
   };
 
@@ -901,7 +969,7 @@ export function OperatorEntryView({
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {splits.length > 0 ? (
                         splits.map((s, idx) => {
-                          const eq = equipment.find((e) => e.id === s.equipmentId);
+                          const eq = allEquipmentOptions.find((e) => e.id === s.equipmentId) || equipment.find((e) => e.id === s.equipmentId);
                           const sharedWith = getSharedEquipmentOperators(s.equipmentId, operator.id);
                           return (
                             <span 
@@ -1009,7 +1077,8 @@ export function OperatorEntryView({
                           {splits.map((split, sIdx) => {
                             const sharedWith = getSharedEquipmentOperators(split.equipmentId, operator.id);
                             const matchedEq = equipment.find((e) => e.id === split.equipmentId);
-                            const eqLoggedHours = getEquipmentLoggedHours(matchedEq);
+                            const poolItem = allEquipmentOptions.find((e) => e.id === split.equipmentId);
+                            const eqLoggedHours = matchedEq ? getEquipmentLoggedHours(matchedEq) : (poolItem?.loggedHours || 0);
 
                             return (
                               <div 
@@ -1023,9 +1092,9 @@ export function OperatorEntryView({
                                     onChange={(e) => handleUpdateEquipmentSplit(operator.id, split.id, 'equipmentId', e.target.value)}
                                     className="flex-1 min-w-0 w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 truncate"
                                   >
-                                    <option value="">-- Choose Equipment --</option>
-                                    {equipment.map((eq) => {
-                                      const lh = getEquipmentLoggedHours(eq);
+                                    <option value="">-- Choose Equipment (Site Pool) --</option>
+                                    {allEquipmentOptions.map((eq) => {
+                                      const lh = eq.loggedHours;
                                       const lhStr = lh > 0 ? ` · [${lh}h logged]` : '';
                                       return (
                                         <option key={eq.id} value={eq.id}>
