@@ -402,11 +402,12 @@ export function EquipmentLogsView({
       : [];
     let updatedExistingSplits = [...validOtherSplits, ...existingSplits];
 
-    // If first activity took the full amount (e.g. 1.0 Day) and supervisor adds 2nd activity,
-    // split 50/50 so first becomes 0.5 and new gets remaining 0.5!
-    if (isDayUnit && existingSplits.length === 1 && remaining <= 0.001 && existingSplits[0].utilization >= totalTarget) {
-      const half = parseFloat((totalTarget / 2).toFixed(2));
-      const balance = parseFloat((totalTarget - half).toFixed(2));
+    // If first activity took the full amount (e.g. 1.0 Day or 6.7 Hrs) and supervisor adds 2nd activity,
+    // split 50/50 so first becomes half and new gets remaining balance!
+    if (existingSplits.length === 1 && remaining <= 0.001 && totalTarget > 0 && existingSplits[0].utilization >= totalTarget) {
+      const precision = isDayUnit ? 2 : 1;
+      const half = parseFloat((totalTarget / 2).toFixed(precision));
+      const balance = parseFloat((totalTarget - half).toFixed(precision));
       updatedExistingSplits = updatedExistingSplits.map((s) =>
         s.id === existingSplits[0].id ? { ...s, utilization: half } : s
       );
@@ -489,13 +490,14 @@ export function EquipmentLogsView({
 
       const sameUnitSplits = splits.filter((s) => s.unit === targetSplit.unit);
 
-      // If updating utilization in Day unit and exactly 2 splits exist:
-      // When supervisor updates one split (e.g. 0.7), automatically calculate the remaining balance on the other (0.3)
-      if (isDayUnit && updates.utilization !== undefined && sameUnitSplits.length === 2) {
-        const newUtil = Math.min(totalTarget, Math.max(0, parseFloat(Number(updates.utilization).toFixed(2))));
+      // If updating utilization and exactly 2 splits exist:
+      // When supervisor updates one split (e.g. 4.0 out of 6.7), automatically calculate the remaining balance on the other (2.7)
+      if (updates.utilization !== undefined && sameUnitSplits.length === 2 && totalTarget > 0) {
+        const precision = isDayUnit ? 2 : 1;
+        const newUtil = Math.min(totalTarget, Math.max(0, parseFloat(Number(updates.utilization).toFixed(precision))));
         const otherSplit = sameUnitSplits.find((s) => s.id !== splitId);
         if (otherSplit) {
-          const autoBalance = Math.max(0, parseFloat((totalTarget - newUtil).toFixed(2)));
+          const autoBalance = Math.max(0, parseFloat((totalTarget - newUtil).toFixed(precision)));
           splits = splits.map((s) => {
             if (s.id === splitId) return { ...s, ...updates, utilization: newUtil };
             if (s.id === otherSplit.id) return { ...s, utilization: autoBalance };

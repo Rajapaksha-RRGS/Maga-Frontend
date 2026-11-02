@@ -2344,18 +2344,29 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
         });
 
         for (const split of rawSplits) {
-          let actCodeId = split.activityCodeId || split.activityId;
-          const rawCode = split.activityCode || split.code || split.activityId;
-          if (!actCodeId && rawCode) {
+          let actCodeId = null;
+          const rawCode = split.activityCode || split.code;
+
+          if (rawCode) {
             actCodeId = await resolveProjectActivityId(rawCode, projectId);
+          } else if (split.activityCodeId || split.activityId) {
+            const possibleId = String(split.activityCodeId || split.activityId);
+            if (!possibleId.startsWith('split-')) {
+              actCodeId = await resolveProjectActivityId(possibleId, projectId);
+            }
+          }
+
+          if (!actCodeId) {
+            actCodeId = await getOrCreateDefaultActivityId(projectId);
           }
 
           if (actCodeId) {
+            const utilVal = Number(split.utilization ?? split.hours ?? split.quantity ?? 0);
             await prisma.mF_OP_EquipmentDailyLogActivity.create({
               data: {
                 dailyLogId: dailyLog.id,
                 activityCodeId: actCodeId,
-                utilization: split.utilization ? Number(split.utilization) : (split.hours ? Number(split.hours) : 0),
+                utilization: utilVal > 0 ? utilVal : (loggedQty > 0 ? loggedQty : effectiveWorkingHours),
               },
             });
           }
