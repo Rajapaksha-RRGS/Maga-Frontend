@@ -9,7 +9,7 @@
  *   - Offline sync queue & simulated sync with realistic feedback
  */
 
-import { apiFetch, API_URL } from "../../../config/api";
+import { apiFetch, API_URL, getCurrentTenantId } from "../../../config/api";
 import { DEFAULT_MASTER_ACTIVITY_CODES } from "../data/defaultActivityCodes";
 
 export interface ActivityCodeItem {
@@ -219,20 +219,41 @@ export interface SiteProject {
   projectManager: string;
 }
 
-// ─── Default Fallback Site ───────────────────────────────────────────────────
+// ─── Dynamic Initial Active Site (Pure DB & Session-backed) ───────────────────
 
-export const DEFAULT_SITE: SiteProject = {
-  id: '',
-  name: 'Mäga Engineering',
-  code: 'MAGA',
-  location: 'Site Operations Base',
-  projectManager: 'Eng. Project Lead',
-};
+export function getInitialActiveSite(): SiteProject {
+  const tenantId = getCurrentTenantId();
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('les_auth_user');
+      if (raw) {
+        const u = JSON.parse(raw);
+        return {
+          id: u.tenantId || tenantId || '',
+          name: u.projectName || u.companyName || 'Loading Site...',
+          code: u.projectCode || u.subdomain || 'SITE',
+          location: '',
+          projectManager: '',
+        };
+      }
+    } catch {
+      // Ignore
+    }
+  }
+  return {
+    id: tenantId || '',
+    name: 'Loading Site...',
+    code: 'SITE',
+    location: '',
+    projectManager: '',
+  };
+}
 
+export const DEFAULT_SITE: SiteProject = getInitialActiveSite();
 
 // In-memory active site and session cache (100% Database-backed - No localStorage)
-let currentActiveSite: SiteProject = DEFAULT_SITE;
-let currentAvailableSites: SiteProject[] = [DEFAULT_SITE];
+let currentActiveSite: SiteProject = getInitialActiveSite();
+let currentAvailableSites: SiteProject[] = [currentActiveSite];
 let inMemoryActivityCodes: ActivityCodeItem[] | null = null;
 
 export const supervisorStorage = {
@@ -242,9 +263,10 @@ export const supervisorStorage = {
 
   async fetchActiveSite(userId?: string, tenantId?: string): Promise<SiteProject> {
     try {
+      const activeTenant = tenantId || currentActiveSite.id || getCurrentTenantId();
       const params = new URLSearchParams();
       if (userId) params.append('supervisorId', userId);
-      if (tenantId) params.append('tenantId', tenantId);
+      if (activeTenant) params.append('tenantId', activeTenant);
       const query = params.toString() ? ('?' + params.toString()) : '';
 
       const res = await apiFetch(`${API_URL}/supervisors/active-site${query}`);
@@ -447,7 +469,7 @@ export const supervisorStorage = {
   // ── 3. Site Resource Pool Mode ───────────────────────────────────────────
   async fetchSiteLaborPool(projectId?: string, date?: string, supervisorId?: string): Promise<any[]> {
     try {
-      const pId = projectId || this.getActiveSite().id;
+      const pId = projectId || this.getActiveSite().id || getCurrentTenantId();
       const params = new URLSearchParams();
       params.append('type', 'labor');
       if (date) params.append('date', date);
@@ -467,7 +489,7 @@ export const supervisorStorage = {
 
   async fetchSiteOperatorPool(projectId?: string, date?: string, supervisorId?: string): Promise<any[]> {
     try {
-      const pId = projectId || this.getActiveSite().id;
+      const pId = projectId || this.getActiveSite().id || getCurrentTenantId();
       const params = new URLSearchParams();
       params.append('type', 'operator');
       if (date) params.append('date', date);
@@ -487,7 +509,7 @@ export const supervisorStorage = {
 
   async fetchSiteEquipmentPool(projectId?: string, date?: string): Promise<SitePoolEquipmentItem[]> {
     try {
-      const pId = projectId || this.getActiveSite().id;
+      const pId = projectId || this.getActiveSite().id || getCurrentTenantId();
       const params = new URLSearchParams();
       if (date) params.append('date', date);
       if (pId) params.append('projectId', pId);
@@ -505,7 +527,7 @@ export const supervisorStorage = {
 
   async isEquipmentPoolModeEnabled(projectId?: string): Promise<boolean> {
     try {
-      const activeProjId = projectId || this.getActiveSite().id;
+      const activeProjId = projectId || this.getActiveSite().id || getCurrentTenantId();
       if (!activeProjId || activeProjId === 'site-default') return false;
       const res = await apiFetch(`${API_URL}/tenants/${activeProjId}`);
       if (res.ok) {
