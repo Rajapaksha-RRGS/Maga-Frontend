@@ -765,6 +765,37 @@ export function LaborEntryView({
     onSaveLaborers(updated);
   };
 
+  const handleRemoveLaborer = (laborerId: string) => {
+    const worker = laborers.find((l) => l.id === laborerId);
+    if (!worker) return;
+    const name = worker.callingName || worker.employeeCode || 'this worker';
+    const hasData = Boolean(worker.inTime || worker.outTime || (worker.activities && worker.activities.length > 0));
+    if (hasData) {
+      if (!window.confirm(`Are you sure you want to remove ${name} from today's list?`)) {
+        return;
+      }
+    }
+    const updated = laborers.filter((l) => l.id !== laborerId);
+    onSaveLaborers(updated);
+    setSelectedWorkerIds((prev) => prev.filter((id) => id !== laborerId));
+    if (expandedId === laborerId) {
+      setExpandedId(null);
+    }
+  };
+
+  const handleBatchRemoveLaborers = () => {
+    if (selectedWorkerIds.length === 0) return;
+    if (window.confirm(`Remove ${selectedWorkerIds.length} selected worker(s) from today's list?`)) {
+      const removeSet = new Set(selectedWorkerIds);
+      const updated = laborers.filter((l) => !removeSet.has(l.id));
+      onSaveLaborers(updated);
+      setSelectedWorkerIds([]);
+      if (expandedId && removeSet.has(expandedId)) {
+        setExpandedId(null);
+      }
+    }
+  };
+
   const isAllFilteredSelected = 
     filteredLaborers.length > 0 && 
     filteredLaborers.every((l) => selectedWorkerIds.includes(l.id));
@@ -1019,15 +1050,29 @@ export function LaborEntryView({
               <span>{isAllFilteredSelected ? 'Deselect All' : `Select All (${filteredLaborers.length})`}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleApplyBatchIn}
-              disabled={isDayLocked || selectedFilteredCount === 0}
-              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
-            >
-              <Check size={14} />
-              <span>Apply In-Time to {selectedFilteredCount} Workers</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedFilteredCount > 0 && !isDayLocked && (
+                <button
+                  type="button"
+                  onClick={handleBatchRemoveLaborers}
+                  className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
+                  title={`Remove ${selectedFilteredCount} selected worker(s) from today`}
+                >
+                  <Trash2 size={13} />
+                  <span>Remove ({selectedFilteredCount})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleApplyBatchIn}
+                disabled={isDayLocked || selectedFilteredCount === 0}
+                className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
+              >
+                <Check size={14} />
+                <span>Apply In-Time to {selectedFilteredCount} Workers</span>
+              </button>
+            </div>
           </div>
         </div>
       ) : (
@@ -1176,6 +1221,19 @@ export function LaborEntryView({
                 <Trash2 size={13} />
                 <span>Clear Activities</span>
               </button>
+
+              {!isDayLocked && (
+                <button
+                  type="button"
+                  onClick={handleBatchRemoveLaborers}
+                  disabled={selectedFilteredCount === 0}
+                  className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-red-300 dark:border-red-800 bg-red-100/80 dark:bg-red-950/60 hover:bg-red-200 text-red-700 dark:text-red-300 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-40"
+                  title="Remove selected workers from today's shift"
+                >
+                  <Trash2 size={13} />
+                  <span>Remove ({selectedFilteredCount})</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -1673,11 +1731,24 @@ export function LaborEntryView({
                     </div>
 
                     {/* ── Auto-save Status & Mark as Done button ── */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-[10px]">
-                        <Check size={13} className="text-emerald-500" />
-                        <span>Auto-saved</span>
-                      </span>
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-[10px]">
+                          <Check size={13} className="text-emerald-500" />
+                          <span>Auto-saved</span>
+                        </span>
+                        {!isDayLocked && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveLaborer(worker.id)}
+                            className="flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-0.5 rounded-lg transition-colors cursor-pointer"
+                            title="Remove this worker from today's shift"
+                          >
+                            <Trash2 size={12} />
+                            <span>Remove</span>
+                          </button>
+                        )}
+                      </div>
                       {!isDayLocked && (
                         <button
                           type="button"

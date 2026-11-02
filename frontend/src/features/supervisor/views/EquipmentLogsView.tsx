@@ -389,6 +389,30 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
+  const handleRemoveEquipment = (eqId: string) => {
+    const eq = equipment.find((e) => e.id === eqId);
+    if (!eq) return;
+    const name = eq.name || eq.code || 'this machine';
+    const hasData = Boolean(
+      (eq.hoursValue && eq.hoursValue > 0) ||
+      (eq.daysValue && eq.daysValue > 0) ||
+      (eq.fuelIssuedLiters && eq.fuelIssuedLiters > 0) ||
+      (eq.activitySplits && eq.activitySplits.length > 0) ||
+      (eq.netHours && eq.netHours > 0) ||
+      (eq.totalMileage && eq.totalMileage > 0)
+    );
+    if (hasData) {
+      if (!window.confirm(`Are you sure you want to remove ${name} from today's log?`)) {
+        return;
+      }
+    }
+    const updated = equipment.filter((e) => e.id !== eqId);
+    onSaveEquipment(updated);
+    if (expandedId === eqId) {
+      setExpandedId(null);
+    }
+  };
+
   const handleRemoveActivitySplit = (eqId: string, splitId: string) => {
     const updated = equipment.map((e) => {
       if (e.id !== eqId) return e;
@@ -455,7 +479,9 @@ export function EquipmentLogsView({
     const unit = normalizeRatingUnit(rawUnit);
     const isMeterInvalid = unit === 'mth' && eq.endMeter < eq.startMeter;
     const unitInfo = getUnitValueInfo(eq, unit);
-    const unitSplits = (eq.activitySplits || []).filter((s) => normalizeRatingUnit(s.unit) === unit);
+    const unitSplits = (eq.activitySplits || []).filter((s) => 
+      eq.additionalUnit ? normalizeRatingUnit(s.unit) === unit : true
+    );
     const allocatedSum = unitSplits.reduce((sum, s) => sum + (Number(s.utilization) || 0), 0);
     const meterKey = `${eq.id}-${unit}`;
     const showMeter = !!showMeterMap[meterKey];
@@ -1333,6 +1359,21 @@ export function EquipmentLogsView({
                       </span>
                     )}
 
+                    {/* Remove Equipment Button */}
+                    {!isDayLocked && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveEquipment(eq.id);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer focus:outline-none"
+                        title={`Remove ${eq.name || eq.code} from today's log`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+
                     <div className="text-slate-400">
                       {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                     </div>
@@ -1575,10 +1616,23 @@ export function EquipmentLogsView({
 
                     {/* ── Auto-save Status ── */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
-                      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
-                        <Check size={13} className="text-emerald-500" />
-                        <span>Auto-saved</span>
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                          <Check size={13} className="text-emerald-500" />
+                          <span>Auto-saved</span>
+                        </span>
+                        {!isDayLocked && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveEquipment(eq.id)}
+                            className="flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-0.5 rounded-lg transition-colors cursor-pointer"
+                            title="Remove this equipment from today's list"
+                          >
+                            <Trash2 size={12} />
+                            <span>Remove Machine</span>
+                          </button>
+                        )}
+                      </div>
                       <span className="text-[10px]">Changes save automatically</span>
                     </div>
                   </div>

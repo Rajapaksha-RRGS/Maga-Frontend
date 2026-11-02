@@ -1409,7 +1409,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         const splits = (log?.activities || []).map((act) => ({
           activityCode: act.activityCode?.code || 'N/A',
           activityDesc: act.activityCode?.description || '',
-          unit: act.activityCode?.unit || primaryUnit,
+          unit: primaryUnit || 'hrs',
           utilization: Number(act.utilization || 0),
         }));
 

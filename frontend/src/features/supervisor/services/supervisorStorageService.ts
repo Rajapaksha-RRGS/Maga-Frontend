@@ -451,7 +451,7 @@ export const supervisorStorage = {
                   ? log.activitySplits.map((s: any) => ({
                       id: s.id || `split-${Math.random()}`,
                       activityCode: s.activityCode,
-                      unit: normalizeRatingUnit(s.unit || resolvedActiveUnit || dbPrimaryUnit),
+                      unit: normalizeRatingUnit(existing?.additionalUnit ? (s.unit || resolvedActiveUnit) : resolvedActiveUnit),
                       utilization: Number(s.utilization ?? 0),
                     }))
                   : [];
@@ -459,6 +459,13 @@ export const supervisorStorage = {
                   return backendSplits.length > 0 ? backendSplits : (existing?.activitySplits || []);
                 }
                 if (existing?.status === 'draft' && existing?.activitySplits && existing.activitySplits.length > 0) {
+                  // Normalize unit if machine has no additional unit so ghost splits don't get trapped
+                  if (!existing.additionalUnit) {
+                    return existing.activitySplits.map((s) => ({
+                      ...s,
+                      unit: resolvedActiveUnit,
+                    }));
+                  }
                   return existing.activitySplits;
                 }
                 return backendSplits.length > 0 ? backendSplits : (existing?.activitySplits || []);
