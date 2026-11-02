@@ -229,26 +229,15 @@ export const DEFAULT_SITE: SiteProject = {
   projectManager: 'Eng. Project Lead',
 };
 
-// ─── Storage Keys & Helper Functions ─────────────────────────────────────────
 
-const STORAGE_PREFIX = 'maga_supervisor_data_';
-const SYNC_QUEUE_KEY = 'maga_supervisor_sync_queue';
-const ACTIVE_SITE_KEY = 'maga_supervisor_active_site';
-const AVAILABLE_SITES_KEY = 'maga_supervisor_available_sites';
+// In-memory active site and session cache (100% Database-backed - No localStorage)
+let currentActiveSite: SiteProject = DEFAULT_SITE;
+let currentAvailableSites: SiteProject[] = [DEFAULT_SITE];
+let inMemoryActivityCodes: ActivityCodeItem[] | null = null;
 
 export const supervisorStorage = {
   getAvailableSites(): SiteProject[] {
-    try {
-      const saved = localStorage.getItem(AVAILABLE_SITES_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {
-      // ignore
-    }
-    const active = this.getActiveSite();
-    return active.id ? [active] : [DEFAULT_SITE];
+    return currentAvailableSites;
   },
 
   async fetchActiveSite(userId?: string, tenantId?: string): Promise<SiteProject> {
@@ -262,34 +251,23 @@ export const supervisorStorage = {
       if (res.ok) {
         const data = await res.json();
         if (data.activeSite) {
-          this.setActiveSite(data.activeSite);
-          localStorage.setItem(AVAILABLE_SITES_KEY, JSON.stringify([data.activeSite]));
+          currentActiveSite = data.activeSite;
+          currentAvailableSites = [data.activeSite];
           return data.activeSite;
         }
       }
     } catch (err) {
       console.warn('Could not fetch active site from backend:', err);
     }
-    return this.getActiveSite();
+    return currentActiveSite;
   },
 
   getActiveSite(): SiteProject {
-    try {
-      const saved = localStorage.getItem(ACTIVE_SITE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object' && parsed.name) {
-          return parsed;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return DEFAULT_SITE;
+    return currentActiveSite;
   },
 
   setActiveSite(site: SiteProject) {
-    localStorage.setItem(ACTIVE_SITE_KEY, JSON.stringify(site));
+    currentActiveSite = site;
   },
 
   async getStandbyWorkers(_userId?: string, _tenantId?: string) {
@@ -300,26 +278,25 @@ export const supervisorStorage = {
     return [];
   },
 
-  // ── 1. Master Activity Codes (Backend with Tenant Isolation + Project Code Validation + Offline Cache)
+  // ── 1. Master Activity Codes (Direct from Backend Database) ──────────────
   async getActivityCodes(): Promise<ActivityCodeItem[]> {
+    if (inMemoryActivityCodes && inMemoryActivityCodes.length > 0) {
+      return inMemoryActivityCodes;
+    }
+
     const activeSite = this.getActiveSite();
     const siteCode = activeSite?.code;
-    const key = siteCode ? `${STORAGE_PREFIX}activities_cache_${siteCode}` : `${STORAGE_PREFIX}activities_cache`;
-    const fallbackKey = `${STORAGE_PREFIX}activities_master_cache`;
 
     try {
-      // 1. Fetch tenant/project activity codes from backend
       const queryParam = siteCode ? `?projectCode=${encodeURIComponent(siteCode)}` : '';
       let res = await apiFetch(`${API_URL}/activity-codes${queryParam}`);
       if (!res.ok && siteCode) {
-        // Try tenant-wide without projectCode
         res = await apiFetch(`${API_URL}/activity-codes`);
       }
 
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          // If projectCode matches siteCode, prioritize them; otherwise accept general tenant codes
           const projectSpecific = data.filter((d: any) => d.projectCode && siteCode && d.projectCode.trim().toLowerCase() === siteCode.trim().toLowerCase());
           const candidateList = projectSpecific.length > 0 ? projectSpecific : data;
 
@@ -331,19 +308,16 @@ export const supervisorStorage = {
             category: d.category || '',
             projectCode: d.projectCode || siteCode,
           }));
-          localStorage.setItem(key, JSON.stringify(mapped));
-          localStorage.setItem(fallbackKey, JSON.stringify(mapped));
+          inMemoryActivityCodes = mapped;
           return mapped;
         }
       }
 
-      // 2. If tenant doesn't have custom codes, query Corporate ERP Catalog
       let corpRes: Response | null = null;
       if (siteCode && siteCode !== 'MAGA') {
         corpRes = await apiFetch(`${API_URL}/activity-codes/corporate-master?projectCode=${encodeURIComponent(siteCode)}`);
       }
       if (!corpRes || !corpRes.ok) {
-        // Query general corporate catalog (124+ codes)
         corpRes = await apiFetch(`${API_URL}/activity-codes/corporate-master`);
       }
 
@@ -358,28 +332,15 @@ export const supervisorStorage = {
             category: d.activityType || 'Civil',
             projectCode: d.projectCode || siteCode,
           }));
-          localStorage.setItem(key, JSON.stringify(mapped));
-          localStorage.setItem(fallbackKey, JSON.stringify(mapped));
+          inMemoryActivityCodes = mapped;
           return mapped;
         }
       }
     } catch (err) {
-      console.warn('Backend unavailable, trying cached/bundled activities:', err);
+      console.warn('Backend unavailable, using bundled fallback activities:', err);
     }
 
-    // 3. Try Site-specific Cache
-    const cached = localStorage.getItem(key) || localStorage.getItem(fallbackKey);
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      } catch {}
-    }
-
-    // 4. Bundled Offline Fallback (Guaranteed to populate for Mobile APK)
-    localStorage.setItem(fallbackKey, JSON.stringify(DEFAULT_MASTER_ACTIVITY_CODES));
+    inMemoryActivityCodes = DEFAULT_MASTER_ACTIVITY_CODES;
     return DEFAULT_MASTER_ACTIVITY_CODES;
   },
 
@@ -388,11 +349,10 @@ export const supervisorStorage = {
     return list.find((a) => a.code === code);
   },
 
-  // ── 2. Master Equipment (Backend + Offline Cache) ──────────────────────────
+  // ── 2. Master Equipment (Direct from Database) ───────────────────────────
   async fetchEquipment(supervisorId?: string, date?: string): Promise<EquipmentLogEntry[]> {
     try {
       if (supervisorId && date) {
-        // Fetch equipment assigned to this supervisor on this date directly from Backend (Single Source of Truth)
         const res = await apiFetch(
           `${API_URL}/assignments/equipment?date=${encodeURIComponent(date)}&supervisorId=${encodeURIComponent(supervisorId)}`
         );
@@ -449,7 +409,7 @@ export const supervisorStorage = {
               activitySplits: backendSplits,
               activities: [],
               remarks: log?.remarks || '',
-              status: log?.status || 'pending',
+              status: (log?.status === 'approved' || log?.status === 'done') ? 'done' : (log?.status || 'pending'),
             };
           });
           return mapped;
@@ -479,164 +439,141 @@ export const supervisorStorage = {
         }
       }
     } catch (err) {
-      console.warn('Backend unavailable for equipment:', err);
+      console.warn('Could not fetch equipment from backend:', err);
     }
     return [];
   },
 
-  // ── 2.01 Fetch Site Labor Pool ──────────────────────────────────────────────
+  // ── 3. Site Resource Pool Mode ───────────────────────────────────────────
   async fetchSiteLaborPool(projectId?: string, date?: string, supervisorId?: string): Promise<any[]> {
     try {
-      const activeProjId = projectId || this.getActiveSite().id;
-      const params = new URLSearchParams({
-        projectId: activeProjId || '',
-        type: 'labor',
-      });
+      const pId = projectId || this.getActiveSite().id;
+      const params = new URLSearchParams();
       if (date) params.append('date', date);
       if (supervisorId) params.append('supervisorId', supervisorId);
-
-      const res = await apiFetch(`${API_URL}/employees/site-pool?${params.toString()}`);
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/tenants/${pId}/labor-pool${query}`);
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) return data;
+        return Array.isArray(data) ? data : [];
       }
     } catch (err) {
-      console.warn('Could not fetch site labor pool:', err);
+      console.warn('Could not fetch labor pool:', err);
     }
     return [];
   },
 
-  // ── 2.02 Fetch Site Operator Pool ───────────────────────────────────────────
   async fetchSiteOperatorPool(projectId?: string, date?: string, supervisorId?: string): Promise<any[]> {
     try {
-      const activeProjId = projectId || this.getActiveSite().id;
-      const params = new URLSearchParams({
-        projectId: activeProjId || '',
-        type: 'operator',
-      });
+      const pId = projectId || this.getActiveSite().id;
+      const params = new URLSearchParams();
       if (date) params.append('date', date);
       if (supervisorId) params.append('supervisorId', supervisorId);
-
-      const res = await apiFetch(`${API_URL}/employees/site-pool?${params.toString()}`);
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/tenants/${pId}/operator-pool${query}`);
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) return data;
+        return Array.isArray(data) ? data : [];
       }
     } catch (err) {
-      console.warn('Could not fetch site operator pool:', err);
+      console.warn('Could not fetch operator pool:', err);
     }
     return [];
   },
 
-  // ── 2.1 Fetch Site Equipment Pool (Zero-Conflict Handover) ───────────────────
   async fetchSiteEquipmentPool(projectId?: string, date?: string): Promise<SitePoolEquipmentItem[]> {
     try {
-      const activeProjId = projectId || this.getActiveSite().id;
-      const url = `${API_URL}/equipment/site-pool?projectId=${encodeURIComponent(activeProjId || '')}${date ? `&date=${encodeURIComponent(date)}` : ''}`;
+      const pId = projectId || this.getActiveSite().id;
+      const url = date ? `${API_URL}/tenants/${pId}/equipment-pool?date=${encodeURIComponent(date)}` : `${API_URL}/tenants/${pId}/equipment-pool`;
       const res = await apiFetch(url);
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
-          return data;
-        }
+        return Array.isArray(data) ? data : [];
       }
     } catch (err) {
-      console.warn('Could not fetch site equipment pool:', err);
+      console.warn('Could not fetch equipment pool:', err);
     }
     return [];
   },
 
-  // ── 2.2 Check if Equipment Pool Mode is Enabled for Project ────────────────
   async isEquipmentPoolModeEnabled(projectId?: string): Promise<boolean> {
     try {
       const activeProjId = projectId || this.getActiveSite().id;
-      if (!activeProjId) return false;
+      if (!activeProjId || activeProjId === 'site-default') return false;
       const res = await apiFetch(`${API_URL}/tenants/${activeProjId}`);
       if (res.ok) {
         const data = await res.json();
-        return !!data.equipmentAssignBySupervisor;
+        return Boolean(data?.equipmentAssignBySupervisor);
       }
     } catch (err) {
-      console.warn('Could not check equipment pool mode:', err);
+      console.warn('Could not verify equipment pool mode:', err);
     }
     return false;
   },
 
-  createEquipmentLogEntryFromPool(
-    item: SitePoolEquipmentItem,
-    currentUserId?: string,
-    currentUserName?: string
-  ): EquipmentLogEntry {
-    const primaryUnit: EquipmentRatingUnit = normalizeRatingUnit(item.primaryUnit);
+  createEquipmentLogEntryFromPool(item: SitePoolEquipmentItem): EquipmentLogEntry {
+    const rawUnit = item.primaryUnit || 'Hrs';
+    const primaryUnit = normalizeRatingUnit(rawUnit);
+    const availableUnits = (item.availableUnits && item.availableUnits.length > 0)
+      ? item.availableUnits.map(normalizeRatingUnit)
+      : [primaryUnit];
 
-    // Only consider usages by OTHER supervisors
-    const otherUsages = (item.existingUsages || []).filter((u) => {
-      if (currentUserId && u.supervisorId === currentUserId) return false;
-      if (currentUserName && u.supervisorName && u.supervisorName.trim().toLowerCase() === currentUserName.trim().toLowerCase()) return false;
-      return true;
-    });
+    const initialWorking = 0;
+    const initialTotal = 0;
 
-    const otherSupervisors = Array.from(new Set(otherUsages.map((u) => u.supervisorName)));
-    let otherLoggedDays = 0;
-    let otherLoggedHours = 0;
-    for (const u of otherUsages) {
-      const uCode = (u.unitCode || item.primaryUnit || '').toLowerCase();
-      const uUtil = u.totalUtilization ?? 0;
-      if (uCode === 'days' || uCode === 'day') {
-        otherLoggedDays += uUtil;
-      } else if (uCode === 'hrs' || uCode === 'hr' || uCode === 'ex.hrs') {
-        otherLoggedHours += (u.workingHours || uUtil);
-      } else if (uUtil <= 1.5 && (primaryUnit.toLowerCase() === 'days' || primaryUnit.toLowerCase() === 'mth')) {
-        otherLoggedDays += uUtil;
-      } else {
-        otherLoggedHours += (u.workingHours || uUtil);
+    let otherClaimTotalDays = 0;
+    let otherClaimTotalHours = 0;
+    const otherUsages = item.existingUsages;
+    if (Array.isArray(otherUsages)) {
+      for (const u of otherUsages) {
+        const uCode = String(u.unitCode || '').trim().toLowerCase();
+        const uQty = Number(u.totalUtilization ?? 0);
+        if (uCode === 'days' || uCode === 'day') {
+          otherClaimTotalDays += uQty;
+        } else {
+          otherClaimTotalHours += uQty;
+        }
       }
     }
 
+    const hasOtherDays = otherClaimTotalDays > 0;
+    const remainingDayCapacity = Math.max(0, 1.0 - otherClaimTotalDays);
+    const defaultDaysVal = primaryUnit === 'Days'
+      ? (initialTotal > 0 ? initialTotal : (hasOtherDays ? Math.min(1.0, remainingDayCapacity) : 1.0))
+      : undefined;
+
     return {
       id: item.id,
-      code: item.code || item.name,
+      code: item.code || item.vehicleNo || item.magaNo,
       name: item.name,
       type: item.type || 'Equipment',
       vehicleNo: item.vehicleNo || item.code,
       magaNo: item.magaNo || item.code,
       condition: item.condition || 'DRY',
       primaryUnit,
-      availableUnits: item.availableUnits || [primaryUnit],
+      availableUnits,
       activeUnit: primaryUnit,
+      additionalUnit: null,
+      daysValue: defaultDaysVal,
+      hoursValue: primaryUnit === 'Hrs' ? (initialWorking > 0 ? initialWorking : undefined) : undefined,
       startMeter: item.latestMeter || 0,
       endMeter: item.latestMeter || 0,
-      startMileage: item.latestMileage || 0,
-      endMileage: item.latestMileage || 0,
-      totalMileage: 0,
-      netHours: 0,
-      workingHours: 0,
+      netHours: initialWorking,
+      workingHours: initialWorking,
       idleHours: 0,
       breakdownHours: 0,
       fuelIssuedLiters: 0,
+      totalMileage: item.totalLoggedMileage || 0,
+      startMileage: item.latestMileage || 0,
+      endMileage: item.latestMileage || 0,
       activitySplits: [],
       activities: [],
-      status: 'draft',
-      lastSavedAt: new Date().toISOString(),
-      // Multi-supervisor sharing & smart handover context
-      isSharedToday: otherUsages.length > 0,
-      sharedSupervisors: otherSupervisors,
-      existingLoggedDays: Number(otherLoggedDays.toFixed(2)),
-      existingLoggedHours: Number(otherLoggedHours.toFixed(1)),
-      previousFinalMeter: item.latestMeter || 0,
-      previousEndMileage: item.latestMileage || 0,
-      existingActivities: otherUsages
-        .flatMap((u) => (u.activities || []).map((a) => a.code))
-        .filter(Boolean),
+      remarks: item.currentSupervisors && item.currentSupervisors.length > 0 ? `Claimed under ${item.currentSupervisors.join(', ')}` : '',
+      status: (initialWorking > 0 || initialTotal > 0) ? 'done' : 'pending',
     };
   },
 
-  // ── 3. Laborers (Admin-Assigned to Supervisor for Date - Single Source of Truth) ──
-  getLaborers(_date: string): LaborerEntry[] {
-    return [];
-  },
-
-  // Real data fetch directly from backend (No localStorage draft overrides)
+  // ── 4. Assigned Laborers & Time Entries (Direct from Database) ───────────
   async getAssignedEmployees(supervisorId: string, date: string): Promise<LaborerEntry[]> {
     try {
       const [resAssigned, resEntries] = await Promise.all([
@@ -665,7 +602,13 @@ export const supervisorStorage = {
             }));
 
           const hasTimes = Boolean(backendInTime || backendOutTime || backendActivities.length > 0);
-          const status: 'draft' | 'pending' | 'done' = hasTimes ? 'draft' : 'pending';
+          const serverStatus = myEntries[0]?.status;
+          let status: 'draft' | 'pending' | 'done' = 'pending';
+          if (serverStatus === 'approved' || serverStatus === 'submitted' || serverStatus === 'done') {
+            status = 'done';
+          } else if (hasTimes) {
+            status = 'draft';
+          }
 
           return {
             id: emp.id,
@@ -699,15 +642,7 @@ export const supervisorStorage = {
     return [];
   },
 
-  saveLaborers(_date: string, _laborers: LaborerEntry[]) {
-    // In-memory / live API sync is now handled by syncLaborersToBackend
-  },
-
-  // ── 4. Operators (Single Source of Truth from Backend) ─────────────────────
-  getOperators(_date: string): OperatorEntry[] {
-    return [];
-  },
-
+  // ── 5. Machine Operators (Direct from Database) ──────────────────────────
   async fetchOperators(supervisorId: string, date: string): Promise<OperatorEntry[]> {
     try {
       const res = await apiFetch(
@@ -729,7 +664,7 @@ export const supervisorStorage = {
 
           const hasTimes = !!(backendInTime && backendOutTime);
           let status: 'draft' | 'pending' | 'done' = 'pending';
-          if (te?.status === 'done' || hasTimes) {
+          if (te?.status === 'done' || te?.status === 'approved' || hasTimes) {
             status = 'done';
           } else if (te?.status) {
             status = te.status;
@@ -768,38 +703,7 @@ export const supervisorStorage = {
     return [];
   },
 
-  saveOperators(_date: string, _operators: OperatorEntry[]) {
-    // In-memory / live API sync is now handled by syncOperatorsToBackend
-  },
-
-  // ── 5. Equipment Logs (Single Source of Truth) ───────────────────────────
-  getEquipment(_date: string): EquipmentLogEntry[] {
-    return [];
-  },
-
-  saveEquipment(_date: string, _equipment: EquipmentLogEntry[]) {
-    // In-memory / live API sync is now handled by syncEquipmentToBackend
-  },
-
   // ── 6. Day Lock Status & Server Lifecycle ────────────────────────────────
-  isDayLocked(_date: string): boolean {
-    return false;
-  },
-
-  lockDay(_date: string) {},
-
-  unlockDay(_date: string) {},
-
-  getDayStatus(_date: string): SupervisorDayStatus {
-    return {
-      status: 'draft',
-      isLocked: false,
-      submittedAt: null,
-      approvedAt: null,
-      remarks: null,
-    };
-  },
-
   async fetchDayStatus(supervisorId: string, date: string): Promise<SupervisorDayStatus> {
     try {
       const res = await apiFetch(
@@ -832,125 +736,73 @@ export const supervisorStorage = {
     };
   },
 
-  queueOfflineSubmission(_date: string) {},
-
-  clearOfflineSubmission(_date: string) {},
-
-  getQueuedSubmissions(): string[] {
-    return [];
-  },
-
-  // ── 7. Offline Sync Queue ─────────────────────────────────────────────────
-  getPendingSyncCount(): number {
-    try {
-      return parseInt(localStorage.getItem(SYNC_QUEUE_KEY) || '0', 10);
-    } catch {
-      return 0;
-    }
-  },
-
-  incrementPendingSync() {
-    const count = this.getPendingSyncCount() + 1;
-    localStorage.setItem(SYNC_QUEUE_KEY, count.toString());
-  },
-
-  resetPendingSync() {
-    localStorage.setItem(SYNC_QUEUE_KEY, '0');
-  },
-
-  // ── 7.1 Clear Local Shift Draft Entries ──────────────────────────────────
-  clearShiftTimeEntries(date?: string) {
-    try {
-      const keysToRemove: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (!k) continue;
-        if (date) {
-          if (k.startsWith(STORAGE_PREFIX) && k.endsWith(`_${date}`)) {
-            keysToRemove.push(k);
-          }
-        } else {
-          if (
-            k.startsWith(STORAGE_PREFIX) &&
-            (/\d{4}-\d{2}-\d{2}$/.test(k) || k === `${STORAGE_PREFIX}offline_submits_queue` || k === 'maga_supervisor_sync_queue')
-          ) {
-            keysToRemove.push(k);
-          }
-        }
-      }
-      keysToRemove.forEach((k) => localStorage.removeItem(k));
-      this.resetPendingSync();
-    } catch (e) {
-      console.warn('Failed to clear shift entries:', e);
-    }
-  },
-
-  // ── 8. Direct Backend Sync Pipelines (Single Source of Truth) ─────────────
+  // ── 7. Direct Backend Sync Pipelines (Single Source of Truth) ─────────────
   async syncLaborersToBackend(supervisorId: string, date: string, laborers: LaborerEntry[]): Promise<boolean> {
     try {
-      const allActivities = await this.getActivityCodes();
-      const defaultActivityId = allActivities[0]?.id;
-      const zidleAct = allActivities.find((a) => a.code?.toUpperCase() === 'ZIDLE');
-      const zidleId = zidleAct?.id || 'ZIDLE';
+      const validLaborers = laborers.filter((l) => !l.isAbsent);
+      const masterActivities = await this.getActivityCodes();
+      const codeToIdMap = new Map<string, string>();
+      masterActivities.forEach((a) => {
+        if (a.code) codeToIdMap.set(a.code.trim().toUpperCase(), a.id || '');
+      });
 
-      const bulkLaborEntries: Array<{
-        employeeId: string;
-        activityId: string;
-        hours: number;
-        inTime?: string;
-        outTime?: string;
-        remarks?: string;
-      }> = [];
+      const zidleId = codeToIdMap.get('ZIDLE') || masterActivities.find((a) => a.code.toUpperCase() === 'ZIDLE')?.id;
+      const defaultId = masterActivities[0]?.id;
 
-      for (const lab of laborers) {
+      const entries = [];
+      for (const lab of validLaborers) {
         const totalShift = Number(lab.shiftHours) || 0;
         let sumAssigned = 0;
 
         if (lab.activities && lab.activities.length > 0) {
           for (const act of lab.activities) {
-            const actObj = allActivities.find(
-              (a) => a.code?.trim().toLowerCase() === act.activityCode?.trim().toLowerCase() || a.id === act.activityCode
-            );
-            const resolvedActId = actObj?.id || act.activityCode || defaultActivityId;
-            let actHours = Number(act.hours) || 0;
+            const rawHours = Number(act.hours) || 0;
+            if (rawHours <= 0) continue;
 
+            let actHours = rawHours;
             if (totalShift > 0 && sumAssigned + actHours > totalShift) {
-              actHours = Math.max(0, Math.round((totalShift - sumAssigned) * 10) / 10);
+              actHours = Math.max(0, totalShift - sumAssigned);
             }
 
+            const resolvedActId = codeToIdMap.get(act.activityCode?.trim().toUpperCase()) || defaultId;
             if (resolvedActId && actHours > 0) {
-              sumAssigned += actHours;
-              bulkLaborEntries.push({
+              entries.push({
                 employeeId: lab.id,
                 activityId: resolvedActId,
                 hours: actHours,
                 inTime: lab.inTime || undefined,
                 outTime: lab.outTime || undefined,
+                otHours: lab.otHours || undefined,
+                status: lab.status || 'draft',
               });
+              sumAssigned += actHours;
             }
           }
         }
 
+        // Auto-balance Idle hours
         if (totalShift > sumAssigned && zidleId) {
-          const idleHours = Math.max(0, Math.round((totalShift - sumAssigned) * 10) / 10);
+          const idleHours = Math.round((totalShift - sumAssigned) * 100) / 100;
           if (idleHours > 0) {
-            bulkLaborEntries.push({
+            entries.push({
               employeeId: lab.id,
               activityId: zidleId,
               hours: idleHours,
               inTime: lab.inTime || undefined,
               outTime: lab.outTime || undefined,
-              remarks: 'Unallocated shift hours (ZIDLE)',
+              otHours: lab.otHours || undefined,
+              status: lab.status || 'draft',
             });
           }
-        } else if (sumAssigned === 0 && (lab.inTime || lab.outTime)) {
-          bulkLaborEntries.push({
+        } else if (entries.filter((e) => e.employeeId === lab.id).length === 0 && (lab.inTime || lab.outTime)) {
+          entries.push({
             employeeId: lab.id,
-            activityId: zidleId,
-            hours: lab.shiftHours || 0,
+            activityId: zidleId || defaultId,
+            hours: totalShift > 0 ? totalShift : 0,
             inTime: lab.inTime || undefined,
             outTime: lab.outTime || undefined,
-            remarks: 'Unallocated shift hours (ZIDLE)',
+            otHours: lab.otHours || undefined,
+            status: lab.status || 'draft',
           });
         }
       }
@@ -958,130 +810,109 @@ export const supervisorStorage = {
       const res = await apiFetch(`${API_URL}/time-entries/labor/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          supervisorId,
-          date,
-          entries: bulkLaborEntries,
-          activeEmployeeIds: laborers.map((l) => l.id),
-        }),
+        body: JSON.stringify({ supervisorId, date, entries }),
       });
 
       return res.ok;
     } catch (err) {
-      console.error('Failed to sync laborers to backend:', err);
+      console.warn('Backend sync failed for laborers:', err);
       return false;
     }
   },
 
   async syncOperatorsToBackend(supervisorId: string, date: string, operators: OperatorEntry[]): Promise<boolean> {
     try {
-      const payloadOps: any[] = [];
-      const validOps = (operators || []).filter((o) => o.inTime || o.outTime || (o.equipmentSplits && o.equipmentSplits.length > 0) || o.assignedEquipmentId);
+      const validOps = operators.filter((o) => !!o.id);
+      const entries = [];
 
       for (const op of validOps) {
-        const shiftH = Number(op.shiftHours) || 0;
+        const shiftHours = Number(op.shiftHours) || 0;
         const splits = (op.equipmentSplits && op.equipmentSplits.length > 0)
-          ? op.equipmentSplits.filter((s) => s.equipmentId && Number(s.hours) > 0)
+          ? op.equipmentSplits
+              .filter((s) => Boolean(s.equipmentId && s.equipmentId !== 'ZXQOPRIDLE'))
+              .map((s) => ({
+                equipmentId: s.equipmentId,
+                hours: Number(s.hours) || 0,
+              }))
           : (op.assignedEquipmentId && op.assignedEquipmentId !== 'ZXQOPRIDLE'
-              ? [{ id: '1', equipmentId: op.assignedEquipmentId, hours: shiftH, remarks: '' }]
+              ? [{ equipmentId: op.assignedEquipmentId, hours: shiftHours }]
               : []);
 
-        const sumOperating = splits.reduce((acc, s) => acc + (Number(s.hours) || 0), 0);
-        const idleRemainder = Math.max(0, Math.round((shiftH - sumOperating) * 10) / 10);
-        const primaryMachineId = splits.length > 0 ? splits[0].equipmentId : (op.assignedEquipmentId || 'ZXQOPRIDLE');
-
-        const noteParts: string[] = [];
-        if (op.notes) noteParts.push(op.notes);
         if (splits.length > 1) {
-          noteParts.push(`Splits: ${splits.map((s) => `${s.equipmentId}: ${s.hours}h`).join(', ')}`);
-        }
-        if (idleRemainder > 0 || splits.length === 0) {
-          const idleH = splits.length === 0 ? shiftH : idleRemainder;
-          noteParts.push(`Exter. Equipment Operator Idle (ZXQOPRIDLE: ${idleH}h)`);
+          const totalAllocated = splits.reduce((sum, s) => sum + s.hours, 0);
+          const idleRemainder = Math.max(0, Math.round((shiftHours - totalAllocated) * 100) / 100);
+          if (idleRemainder > 0 || splits.length === 0) {
+            splits.push({ equipmentId: 'ZXQOPRIDLE', hours: idleRemainder });
+          }
         }
 
-        payloadOps.push({
-          operatorId: op.id,
-          equipmentId: primaryMachineId,
-          assignedEquipmentId: primaryMachineId,
+        entries.push({
+          id: op.id,
           inTime: op.inTime || undefined,
           outTime: op.outTime || undefined,
-          shiftHours: shiftH,
-          hours: shiftH,
-          otHours: op.otHours || 0,
-          overtimeHours: op.otHours || 0,
-          notes: noteParts.length > 0 ? noteParts.join(' | ') : undefined,
+          shiftHours,
+          otHours: op.otHours || undefined,
+          assignedEquipmentId: op.assignedEquipmentId || (splits[0]?.equipmentId !== 'ZXQOPRIDLE' ? splits[0]?.equipmentId : undefined),
+          splits: splits.length > 0 ? splits : undefined,
+          notes: op.notes || undefined,
           status: op.status || 'draft',
-          splits,
-          equipmentSplits: splits,
         });
       }
 
       const res = await apiFetch(`${API_URL}/time-entries/operators/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          supervisorId,
-          date,
-          entries: payloadOps,
-        }),
+        body: JSON.stringify({ supervisorId, date, entries }),
       });
 
       return res.ok;
     } catch (err) {
-      console.error('Failed to sync operators to backend:', err);
+      console.warn('Backend sync failed for operators:', err);
       return false;
     }
   },
 
   async syncEquipmentToBackend(supervisorId: string, date: string, equipment: EquipmentLogEntry[]): Promise<boolean> {
     try {
-      const payloadEq = (equipment || []).map((eq: any) => {
-        const normPrimary = normalizeRatingUnit(eq.primaryUnit);
-        const isDayRate = normPrimary === 'Days' || normPrimary === 'mth';
-        const defaultQty = isDayRate
-          ? (Number(eq.daysValue) || 1)
-          : (Number(eq.hoursValue) || Number(eq.workingHours) || Number(eq.netHours) || 0);
-
+      const entries = equipment.map((eq) => {
+        const isDays = eq.primaryUnit === 'Days' || eq.primaryUnit === 'mth';
         return {
           id: eq.id,
-          operatorId: eq.operatorId || null,
-          condition: eq.condition || 'DRY',
-          startMeter: Number(eq.startMeter || 0),
-          endMeter: Number(eq.endMeter || 0),
-          netHours: Number(eq.netHours) || Number(eq.hoursValue) || Number(eq.workingHours) || 0,
-          daysValue: eq.daysValue,
-          hoursValue: eq.hoursValue,
-          workingHours: Number(eq.workingHours) || Number(eq.hoursValue) || Number(eq.netHours) || 0,
+          equipmentId: eq.id,
+          operatorId: eq.operatorId || undefined,
+          daysValue: isDays ? Number(eq.daysValue || eq.workingHours || 0) : undefined,
+          hoursValue: !isDays ? Number(eq.hoursValue || eq.workingHours || 0) : undefined,
+          startMeter: eq.startMeter !== undefined ? Number(eq.startMeter) : undefined,
+          endMeter: eq.endMeter !== undefined ? Number(eq.endMeter) : undefined,
+          netHours: Number(eq.netHours || eq.workingHours || 0),
+          workingHours: Number(eq.workingHours || eq.netHours || 0),
           idleHours: Number(eq.idleHours || 0),
           breakdownHours: Number(eq.breakdownHours || 0),
           fuelIssuedLiters: Number(eq.fuelIssuedLiters || 0),
           totalMileage: Number(eq.totalMileage || 0),
-          startMileage: Number(eq.startMileage || 0),
-          endMileage: Number(eq.endMileage || 0),
-          totalUtilization: defaultQty,
-          remarks: eq.remarks,
+          startMileage: eq.startMileage !== undefined ? Number(eq.startMileage) : undefined,
+          endMileage: eq.endMileage !== undefined ? Number(eq.endMileage) : undefined,
+          remarks: eq.remarks || undefined,
           status: eq.status || 'draft',
-          activityCode: eq.activityCode || 'ZOTHE',
-          activitySplits: eq.activitySplits && eq.activitySplits.length > 0
-            ? eq.activitySplits.map((s: any) => ({ ...s, activityCode: s.activityCode || 'ZOTHE', unit: normalizeRatingUnit(s.unit) }))
-            : [{ activityCode: eq.activityCode || 'ZOTHE', unit: normPrimary, utilization: defaultQty }],
+          splits: (eq.activitySplits && eq.activitySplits.length > 0)
+            ? eq.activitySplits.map((s) => ({
+                activityCode: s.activityCode,
+                unit: s.unit || eq.primaryUnit || 'Hrs',
+                utilization: Number(s.utilization || 0),
+              }))
+            : undefined,
         };
       });
 
       const res = await apiFetch(`${API_URL}/time-entries/equipment/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          supervisorId,
-          date,
-          entries: payloadEq,
-        }),
+        body: JSON.stringify({ supervisorId, date, entries }),
       });
 
       return res.ok;
     } catch (err) {
-      console.error('Failed to sync equipment to backend:', err);
+      console.warn('Backend sync failed for equipment:', err);
       return false;
     }
   },
@@ -1089,33 +920,35 @@ export const supervisorStorage = {
   async syncToBackend(
     supervisorId: string,
     date: string,
-    laborers: LaborerEntry[] = [],
-    operators: OperatorEntry[] = [],
-    equipment: EquipmentLogEntry[] = []
-  ): Promise<boolean> {
+    laborers: LaborerEntry[],
+    operators: OperatorEntry[],
+    equipment: EquipmentLogEntry[]
+  ): Promise<{ success: boolean; errors: string[] }> {
     const tasks: Promise<boolean>[] = [];
+
     if (laborers.length > 0) tasks.push(this.syncLaborersToBackend(supervisorId, date, laborers));
     if (operators.length > 0) tasks.push(this.syncOperatorsToBackend(supervisorId, date, operators));
     if (equipment.length > 0) tasks.push(this.syncEquipmentToBackend(supervisorId, date, equipment));
-    if (tasks.length === 0) return true;
+
     const results = await Promise.all(tasks);
-    this.resetPendingSync();
-    return results.every(Boolean);
+    const allOk = results.every(Boolean);
+
+    return {
+      success: allOk,
+      errors: allOk ? [] : ['Some records could not be synchronized with the database.'],
+    };
   },
 
-  // ── 9. Submit & Lock Day on Backend ──────────────────────────────────────
   async submitDayToBackend(
     supervisorId: string,
     date: string,
-    laborers: LaborerEntry[] = [],
-    operators: OperatorEntry[] = [],
-    equipment: EquipmentLogEntry[] = []
-  ): Promise<{ success: boolean; offline: boolean; message?: string }> {
+    laborers: LaborerEntry[],
+    operators: OperatorEntry[],
+    equipment: EquipmentLogEntry[]
+  ): Promise<{ success: boolean; offline?: boolean; message?: string }> {
     try {
-      // 1. Sync current state to backend first
       await this.syncToBackend(supervisorId, date, laborers, operators, equipment);
 
-      // 2. Submit day on backend
       const res = await apiFetch(`${API_URL}/time-entries/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1127,7 +960,6 @@ export const supervisorStorage = {
         throw new Error(err?.error || 'Failed to submit and lock day on backend');
       }
 
-      this.resetPendingSync();
       return { success: true, offline: false };
     } catch (err: any) {
       console.error('Submit error:', err);
@@ -1135,13 +967,8 @@ export const supervisorStorage = {
     }
   },
 
-  async flushQueuedSubmissions(_supervisorId: string): Promise<string[]> {
-    return [];
-  },
-
   /**
-   * Fetch recent past gangs for a supervisor across the past N working days before currentDate.
-   * Scans local drafts first, falls back to backend /time-entries/assigned.
+   * Fetch recent past gangs for a supervisor across the past N working days before currentDate directly from Backend.
    */
   async getPastGangsForSupervisor(
     supervisorId: string,
@@ -1149,7 +976,7 @@ export const supervisorStorage = {
     daysCount: number = 5
   ): Promise<Array<{ date: string; dayName: string; workerIds: string[]; workerCount: number }>> {
     const results: Array<{ date: string; dayName: string; workerIds: string[]; workerCount: number }> = [];
-    if (!currentDate) return results;
+    if (!currentDate || !supervisorId) return results;
 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -1166,36 +993,21 @@ export const supervisorStorage = {
       const dt = new Date(Date.UTC(y, m - 1, d));
       const dayName = dayNames[dt.getUTCDay()];
 
-      // 1. Try local storage
-      const localWorkers = this.getLaborers(pastDate);
-      if (localWorkers && localWorkers.length > 0) {
-        results.push({
-          date: pastDate,
-          dayName,
-          workerIds: localWorkers.map((w) => w.id),
-          workerCount: localWorkers.length,
-        });
-        continue;
-      }
-
-      // 2. Try backend
-      if (supervisorId) {
-        try {
-          const res = await apiFetch(`${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(pastDate)}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
-              results.push({
-                date: pastDate,
-                dayName,
-                workerIds: data.map((emp: any) => emp.id),
-                workerCount: data.length,
-              });
-            }
+      try {
+        const res = await apiFetch(`${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(supervisorId)}&date=${encodeURIComponent(pastDate)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            results.push({
+              date: pastDate,
+              dayName,
+              workerIds: data.map((emp: any) => emp.id),
+              workerCount: data.length,
+            });
           }
-        } catch {
-          // ignore network hiccups
         }
+      } catch {
+        // ignore network hiccups
       }
     }
 
@@ -1203,8 +1015,7 @@ export const supervisorStorage = {
   },
 
   /**
-   * Fetch recent past operators for a supervisor across the past N working days before currentDate.
-   * Scans local drafts first, falls back to backend /assignments/operator.
+   * Fetch recent past operators for a supervisor across the past N working days before currentDate directly from Backend.
    */
   async getPastOperatorsForSupervisor(
     supervisorId: string,
@@ -1212,7 +1023,7 @@ export const supervisorStorage = {
     daysCount: number = 5
   ): Promise<Array<{ date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }>> {
     const results: Array<{ date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }> = [];
-    if (!currentDate) return results;
+    if (!currentDate || !supervisorId) return results;
 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -1229,52 +1040,36 @@ export const supervisorStorage = {
       const dt = new Date(Date.UTC(y, m - 1, d));
       const dayName = dayNames[dt.getUTCDay()];
 
-      // 1. Try local storage
-      const localOperators = this.getOperators(pastDate);
-      if (localOperators && localOperators.length > 0) {
-        results.push({
-          date: pastDate,
-          dayName,
-          operatorIds: localOperators.map((o) => o.id),
-          operatorCount: localOperators.length,
-          operators: localOperators,
-        });
-        continue;
-      }
-
-      // 2. Try backend
-      if (supervisorId) {
-        try {
-          const res = await apiFetch(`${API_URL}/assignments/operator?date=${encodeURIComponent(pastDate)}&supervisorId=${encodeURIComponent(supervisorId)}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
-              const mapped: OperatorEntry[] = data.map((asgn: any) => ({
-                id: asgn.operatorId || asgn.id,
-                callingName: asgn.operatorName || asgn.callingName || 'Operator',
-                employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
-                licenseNo: asgn.licenseNo || '',
-                designation: asgn.operatorTrade || 'Machine Operator',
-                inTime: '',
-                outTime: '',
-                shiftHours: 0,
-                otHours: 0,
-                assignedEquipmentId: asgn.equipmentId || '',
-                equipmentSplits: asgn.equipmentId ? [{ id: '1', equipmentId: asgn.equipmentId, hours: 0 }] : [],
-                status: 'pending',
-              }));
-              results.push({
-                date: pastDate,
-                dayName,
-                operatorIds: mapped.map((o) => o.id),
-                operatorCount: mapped.length,
-                operators: mapped,
-              });
-            }
+      try {
+        const res = await apiFetch(`${API_URL}/assignments/operator?date=${encodeURIComponent(pastDate)}&supervisorId=${encodeURIComponent(supervisorId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const mapped: OperatorEntry[] = data.map((asgn: any) => ({
+              id: asgn.operatorId || asgn.id,
+              callingName: asgn.operatorName || asgn.callingName || 'Operator',
+              employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
+              licenseNo: asgn.licenseNo || '',
+              designation: asgn.operatorTrade || 'Machine Operator',
+              inTime: '',
+              outTime: '',
+              shiftHours: 0,
+              otHours: 0,
+              assignedEquipmentId: asgn.equipmentId || '',
+              equipmentSplits: asgn.equipmentId ? [{ id: '1', equipmentId: asgn.equipmentId, hours: 0 }] : [],
+              status: 'pending',
+            }));
+            results.push({
+              date: pastDate,
+              dayName,
+              operatorIds: mapped.map((o) => o.id),
+              operatorCount: mapped.length,
+              operators: mapped,
+            });
           }
-        } catch {
-          // ignore network hiccups
         }
+      } catch {
+        // ignore network hiccups
       }
     }
 

@@ -39,7 +39,7 @@ export default function SupervisorMobileApp() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Sync state
-  const [pendingSyncCount, setPendingSyncCount] = useState<number>(() => supervisorStorage.getPendingSyncCount());
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState(false);
 
   // Admin Reminders & Notifications state
@@ -147,19 +147,16 @@ export default function SupervisorMobileApp() {
     });
   };
 
-  // Auto-flush queued offline submissions when network reconnects
+  // Network online listener to re-verify state
   useEffect(() => {
     const handleOnline = async () => {
       if (!user?.id) return;
       try {
-        const flushed = await supervisorStorage.flushQueuedSubmissions(user.id);
-        if (flushed.includes(selectedDate)) {
-          const fresh = await supervisorStorage.fetchDayStatus(user.id, selectedDate);
-          setDayStatus(fresh);
-          setIsDayLocked(fresh.isLocked);
-        }
+        const fresh = await supervisorStorage.fetchDayStatus(user.id, selectedDate);
+        setDayStatus(fresh);
+        setIsDayLocked(fresh.isLocked);
       } catch (err) {
-        console.warn('Could not flush queued submissions:', err);
+        console.warn('Could not refresh day status on reconnect:', err);
       }
     };
 
