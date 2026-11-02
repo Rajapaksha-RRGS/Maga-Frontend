@@ -561,6 +561,37 @@ export function OperatorEntryView({
     onSaveOperators(updated);
   };
 
+  const handleRemoveOperator = (operatorId: string) => {
+    const op = operators.find((o) => o.id === operatorId);
+    if (!op) return;
+    const name = op.callingName || op.employeeNumber || 'this operator';
+    const hasData = Boolean(op.inTime || op.outTime || (op.equipmentSplits && op.equipmentSplits.length > 0));
+    if (hasData) {
+      if (!window.confirm(`Are you sure you want to remove ${name} from today's list?`)) {
+        return;
+      }
+    }
+    const updated = operators.filter((o) => o.id !== operatorId);
+    onSaveOperators(updated);
+    setSelectedOperatorIds((prev) => prev.filter((id) => id !== operatorId));
+    if (expandedId === operatorId) {
+      setExpandedId(null);
+    }
+  };
+
+  const handleBatchRemoveOperators = () => {
+    if (selectedOperatorIds.length === 0) return;
+    if (window.confirm(`Remove ${selectedOperatorIds.length} selected operator(s) from today's list?`)) {
+      const removeSet = new Set(selectedOperatorIds);
+      const updated = operators.filter((o) => !removeSet.has(o.id));
+      onSaveOperators(updated);
+      setSelectedOperatorIds([]);
+      if (expandedId && removeSet.has(expandedId)) {
+        setExpandedId(null);
+      }
+    }
+  };
+
   const isAllFilteredSelected = 
     filteredOperators.length > 0 && 
     filteredOperators.every((o) => selectedOperatorIds.includes(o.id));
@@ -652,7 +683,7 @@ export function OperatorEntryView({
             title={`Copy operators from ${recentPastGang.date} (${recentPastGang.dayName})`}
           >
             <History size={14} className="text-indigo-600 dark:text-indigo-400" />
-            <span className="hidden md:inline">Past (${recentPastGang.dayName})</span>
+            <span className="hidden md:inline">Past ({recentPastGang.dayName})</span>
             <span className="md:hidden">Past</span>
           </button>
         )}
@@ -813,15 +844,29 @@ export function OperatorEntryView({
               <span>{isAllFilteredSelected ? 'Deselect All' : `Select All (${filteredOperators.length})`}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleApplyBatchIn}
-              disabled={selectedOperatorIds.length === 0}
-              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98]"
-            >
-              <Check size={14} />
-              <span>Apply In-Time ({selectedOperatorIds.length})</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedOperatorIds.length > 0 && !isDayLocked && (
+                <button
+                  type="button"
+                  onClick={handleBatchRemoveOperators}
+                  className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
+                  title={`Remove ${selectedOperatorIds.length} selected operator(s) from today`}
+                >
+                  <Trash2 size={13} />
+                  <span>Remove ({selectedOperatorIds.length})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleApplyBatchIn}
+                disabled={selectedOperatorIds.length === 0}
+                className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
+              >
+                <Check size={14} />
+                <span>Apply In-Time ({selectedOperatorIds.length})</span>
+              </button>
+            </div>
           </div>
         </div>
       ) : (
@@ -867,15 +912,29 @@ export function OperatorEntryView({
               <span>{isAllFilteredSelected ? 'Deselect All' : `Select All (${filteredOperators.length})`}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleApplyBatchOut}
-              disabled={selectedOperatorIds.length === 0}
-              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98]"
-            >
-              <Check size={14} />
-              <span>Apply Out-Time ({selectedOperatorIds.length})</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedOperatorIds.length > 0 && !isDayLocked && (
+                <button
+                  type="button"
+                  onClick={handleBatchRemoveOperators}
+                  className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
+                  title={`Remove ${selectedOperatorIds.length} selected operator(s) from today`}
+                >
+                  <Trash2 size={13} />
+                  <span>Remove ({selectedOperatorIds.length})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleApplyBatchOut}
+                disabled={selectedOperatorIds.length === 0}
+                className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
+              >
+                <Check size={14} />
+                <span>Apply Out-Time ({selectedOperatorIds.length})</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1037,6 +1096,21 @@ export function OperatorEntryView({
                       >
                         <Check size={11} className="stroke-[3]" />
                         <span>Done</span>
+                      </button>
+                    )}
+
+                    {/* Remove Operator button */}
+                    {!isDayLocked && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveOperator(operator.id);
+                        }}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                        title={`Remove ${operator.callingName || operator.employeeNumber} from today's list`}
+                      >
+                        <Trash2 size={14} />
                       </button>
                     )}
 
@@ -1274,11 +1348,24 @@ export function OperatorEntryView({
                     </div>
 
                     {/* ── Auto-save Status & Done Button ── */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-[10px]">
-                        <Check size={13} className="text-emerald-500" />
-                        <span>Auto-saved</span>
-                      </span>
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-[10px]">
+                          <Check size={13} className="text-emerald-500" />
+                          <span>Auto-saved</span>
+                        </span>
+                        {!isDayLocked && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveOperator(operator.id)}
+                            className="flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-0.5 rounded-lg transition-colors cursor-pointer"
+                            title="Remove this operator from today's shift"
+                          >
+                            <Trash2 size={12} />
+                            <span>Remove</span>
+                          </button>
+                        )}
+                      </div>
                       {!isDayLocked && (
                         <button
                           type="button"
