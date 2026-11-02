@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { SiteOperatorPoolModal } from '../components/SiteOperatorPoolModal';
+import { SearchableEquipmentSelect } from '../components/SearchableEquipmentSelect';
 import { supervisorStorage } from '../services/supervisorStorageService';
 import { 
   HardHat, 
@@ -1247,22 +1248,13 @@ export function OperatorEntryView({
                               >
                                 {/* Row 1: Equipment Select & Hours Input */}
                                 <div className="flex items-center gap-1.5 w-full min-w-0">
-                                  <select
+                                  <SearchableEquipmentSelect
+                                    disabled={isDayLocked}
                                     value={split.equipmentId}
-                                    onChange={(e) => handleUpdateEquipmentSplit(operator.id, split.id, 'equipmentId', e.target.value)}
-                                    className="flex-1 min-w-0 w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 truncate"
-                                  >
-                                    <option value="">-- Choose Equipment (Site Pool) --</option>
-                                    {allEquipmentOptions.map((eq) => {
-                                      const lh = eq.loggedHours;
-                                      const lhStr = lh > 0 ? ` · [${lh}h logged]` : '';
-                                      return (
-                                        <option key={eq.id} value={eq.id}>
-                                          {eq.code} · {eq.name} {eq.vehicleNo ? `(${eq.vehicleNo})` : ''}{lhStr}
-                                        </option>
-                                      );
-                                    })}
-                                  </select>
+                                    onChange={(eqId) => handleUpdateEquipmentSplit(operator.id, split.id, 'equipmentId', eqId)}
+                                    options={allEquipmentOptions}
+                                    placeholder="Search & choose vehicle..."
+                                  />
 
                                   <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 shrink-0">
                                     <input
