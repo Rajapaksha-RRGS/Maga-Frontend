@@ -1361,10 +1361,11 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
             });
           } else {
             const existing = opMap.get(te.employee.id)!;
-            // Fallback only: Only use time entry equipment if equipmentAssignments had NO equipment for this operator
-            if (existing.equipmentDisplays.length === 0 && teEqDisplay) {
+            if (teEqDisplay && !existing.equipmentDisplays.includes(teEqDisplay)) {
               existing.equipmentDisplays.push(teEqDisplay);
-              if (te.equipmentId) existing.equipmentIds.push(te.equipmentId);
+            }
+            if (te.equipmentId && !existing.equipmentIds.includes(te.equipmentId)) {
+              existing.equipmentIds.push(te.equipmentId);
             }
           }
         }
@@ -2034,53 +2035,9 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
         validSplits.push({ equipmentId: validEquipmentId, hours: Number(item.hours || item.shiftHours || 0) });
       }
 
-      // 1. Reconcile Equipment Assignments: Clear operator link from any machines not in current splits
+      // Operator machine assignments are recorded directly on the operator's time entry splits.
+      // Do NOT auto-create DailyEquipmentAssignment / EquipmentDailyLog records here so they do not pollute the Equipment tab or Admin Plant & Equipment logs.
       const activeEqIds = validSplits.map((s) => s.equipmentId);
-      await prisma.mF_OP_DailyEquipmentAssignment.updateMany({
-        where: {
-          dailySheetId: dailySheet.id,
-          operatorId: opId,
-          ...(activeEqIds.length > 0 ? { equipmentId: { notIn: activeEqIds } } : {}),
-        },
-        data: {
-          operatorId: null,
-        },
-      });
-
-      // Upsert Equipment Assignments & Logs for each assigned machine
-      for (const split of validSplits) {
-        const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
-          where: {
-            dailySheetId_equipmentId: {
-              dailySheetId: dailySheet.id,
-              equipmentId: split.equipmentId,
-            },
-          },
-          update: {
-            operatorId: opId,
-          },
-          create: {
-            dailySheetId: dailySheet.id,
-            operatorId: opId,
-            equipmentId: split.equipmentId,
-          },
-        });
-
-        // Ensure a daily log stub exists if not already present, without overwriting machine's logged workingHours / utilization
-        const existingLog = await prisma.mF_OP_EquipmentDailyLog.findUnique({
-          where: { assignmentId: assignment.id },
-        });
-
-        if (!existingLog) {
-          await prisma.mF_OP_EquipmentDailyLog.create({
-            data: {
-              assignmentId: assignment.id,
-              workingHours: 0,
-              status: item.status || 'draft',
-            },
-          });
-        }
-      }
 
       // 2. Upsert Operator Shift Time Entry with In/Out Times
       if (item.inTime || item.outTime || item.shiftHours || validSplits.length > 0) {
