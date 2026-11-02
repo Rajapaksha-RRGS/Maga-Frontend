@@ -19,22 +19,28 @@ export const getSupervisorActiveSite = async (req: Request, res: Response): Prom
     const supervisorId = (req.query.supervisorId as string) || (req.query.userId as string);
     let tenantId = (req.query.tenantId as string);
 
+    // If tenantId is 'GLOBAL' or empty, clear it so it doesn't query id = 'GLOBAL'
+    if (!tenantId || tenantId.trim().toUpperCase() === 'GLOBAL') {
+      tenantId = '';
+    }
+
     if (!tenantId && supervisorId) {
       const user = await prisma.mF_P_User.findUnique({
         where: { id: supervisorId },
         select: { projectId: true },
       });
-      if (user) {
+      if (user && user.projectId) {
         tenantId = user.projectId;
       }
     }
 
-    if (!tenantId) {
-      tenantId = req.resolvedTenantId || (await getDefaultTenantId());
+    if (!tenantId || tenantId.trim().toUpperCase() === 'GLOBAL') {
+      const rId = req.resolvedTenantId;
+      tenantId = (rId && rId.toUpperCase() !== 'GLOBAL') ? rId : (await getDefaultTenantId());
     }
 
-    // Direct indexed Project lookup — no secondary corporate catalog scans needed
-    const project = await prisma.mF_P_Project.findUnique({
+    // Direct indexed Project lookup — with automatic fallback to default active project
+    let project = await prisma.mF_P_Project.findUnique({
       where: { id: tenantId },
       select: {
         id: true,
@@ -49,6 +55,23 @@ export const getSupervisorActiveSite = async (req: Request, res: Response): Prom
     });
 
     if (!project) {
+      const fallbackId = await getDefaultTenantId();
+      project = await prisma.mF_P_Project.findUnique({
+        where: { id: fallbackId },
+        select: {
+          id: true,
+          projectName: true,
+          projectCode: true,
+          subdomain: true,
+          projectManager: true,
+          addressCode: true,
+          addressLine1: true,
+          addressLine2: true,
+        },
+      });
+    }
+
+    if (!project) {
       res.status(404).json({ error: 'Tenant/Site not found' });
       return;
     }
@@ -61,9 +84,33 @@ export const getSupervisorActiveSite = async (req: Request, res: Response): Prom
       projectManager: project.projectManager ? `Eng. ${project.projectManager}` : 'Eng. Project Lead',
     };
 
+    // Also fetch all active projects for the drawer site switcher (especially for superadmin)
+    const allProjects = await prisma.mF_P_Project.findMany({
+      where: { status: 'active' },
+      select: {
+        id: true,
+        projectName: true,
+        projectCode: true,
+        subdomain: true,
+        projectManager: true,
+        addressCode: true,
+        addressLine1: true,
+        addressLine2: true,
+      },
+      orderBy: { projectName: 'asc' },
+    });
+
+    const availableSites = allProjects.map((p) => ({
+      id: p.id,
+      name: p.projectName,
+      code: p.projectCode || p.subdomain,
+      location: p.addressCode || p.addressLine1 || p.addressLine2 || 'Site Base Office',
+      projectManager: p.projectManager ? `Eng. ${p.projectManager}` : 'Eng. Project Lead',
+    }));
+
     res.json({
       activeSite,
-      availableSites: [activeSite],
+      availableSites: availableSites.length > 0 ? availableSites : [activeSite],
     });
   } catch (error) {
     console.error('Error fetching supervisor active site:', error);
