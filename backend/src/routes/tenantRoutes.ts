@@ -10,6 +10,8 @@ import {
   getCorporateProjectsCatalog,
   updateEquipmentAssignMode,
 } from '../controllers/tenantController';
+import { getSiteEquipmentPool } from '../controllers/equipmentController';
+import { getSiteEmployeePool } from '../controllers/employeeController';
 import { requireAdmin, requireSuperAdmin } from '../middleware/authMiddleware';
 
 const router = Router();
@@ -23,5 +25,21 @@ router.patch('/:id/status', requireAdmin, updateTenantStatus);
 router.patch('/:id/equipment-mode', updateEquipmentAssignMode);
 router.post('/:id/reset-admin-password', requireAdmin, resetTenantAdminPassword);
 router.get('/by-subdomain/:subdomain', getTenantBySubdomain);
+
+// Aliases for Site Resource Pools scoped under /api/tenants/:id/
+router.get('/:id/equipment-pool', (req, res) => {
+  req.query.projectId = req.params.id;
+  return getSiteEquipmentPool(req, res);
+});
+router.get('/:id/labor-pool', (req, res) => {
+  req.query.projectId = req.params.id;
+  req.query.type = 'labor';
+  return getSiteEmployeePool(req, res);
+});
+router.get('/:id/operator-pool', (req, res) => {
+  req.query.projectId = req.params.id;
+  req.query.type = 'operator';
+  return getSiteEmployeePool(req, res);
+});
 
 export default router;

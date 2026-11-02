@@ -449,10 +449,12 @@ export const supervisorStorage = {
     try {
       const pId = projectId || this.getActiveSite().id;
       const params = new URLSearchParams();
+      params.append('type', 'labor');
       if (date) params.append('date', date);
       if (supervisorId) params.append('supervisorId', supervisorId);
+      if (pId) params.append('projectId', pId);
       const query = params.toString() ? `?${params.toString()}` : '';
-      const res = await apiFetch(`${API_URL}/tenants/${pId}/labor-pool${query}`);
+      const res = await apiFetch(`${API_URL}/employees/site-pool${query}`);
       if (res.ok) {
         const data = await res.json();
         return Array.isArray(data) ? data : [];
@@ -467,10 +469,12 @@ export const supervisorStorage = {
     try {
       const pId = projectId || this.getActiveSite().id;
       const params = new URLSearchParams();
+      params.append('type', 'operator');
       if (date) params.append('date', date);
       if (supervisorId) params.append('supervisorId', supervisorId);
+      if (pId) params.append('projectId', pId);
       const query = params.toString() ? `?${params.toString()}` : '';
-      const res = await apiFetch(`${API_URL}/tenants/${pId}/operator-pool${query}`);
+      const res = await apiFetch(`${API_URL}/employees/site-pool${query}`);
       if (res.ok) {
         const data = await res.json();
         return Array.isArray(data) ? data : [];
@@ -484,8 +488,11 @@ export const supervisorStorage = {
   async fetchSiteEquipmentPool(projectId?: string, date?: string): Promise<SitePoolEquipmentItem[]> {
     try {
       const pId = projectId || this.getActiveSite().id;
-      const url = date ? `${API_URL}/tenants/${pId}/equipment-pool?date=${encodeURIComponent(date)}` : `${API_URL}/tenants/${pId}/equipment-pool`;
-      const res = await apiFetch(url);
+      const params = new URLSearchParams();
+      if (date) params.append('date', date);
+      if (pId) params.append('projectId', pId);
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/equipment/site-pool${query}`);
       if (res.ok) {
         const data = await res.json();
         return Array.isArray(data) ? data : [];

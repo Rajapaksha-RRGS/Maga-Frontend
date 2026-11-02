@@ -17,6 +17,7 @@ import {
 import { useAuth } from '../../../context/AuthContext';
 
 interface SiteEquipmentPoolModalProps {
+  projectId?: string;
   isOpen: boolean;
   onClose: () => void;
   selectedDate: string;
@@ -30,6 +31,7 @@ export function SiteEquipmentPoolModal({
   selectedDate,
   currentEquipment,
   onAddEquipment,
+  projectId,
 }: SiteEquipmentPoolModalProps) {
   const { user } = useAuth();
   const [search, setSearch] = useState('');
@@ -41,11 +43,11 @@ export function SiteEquipmentPoolModal({
     if (!isOpen) return;
     setIsLoading(true);
     supervisorStorage
-      .fetchSiteEquipmentPool(undefined, selectedDate)
+      .fetchSiteEquipmentPool(projectId, selectedDate)
       .then((items) => setPoolItems(items))
       .catch((err) => console.warn('Could not load pool items:', err))
       .finally(() => setIsLoading(false));
-  }, [isOpen, selectedDate]);
+  }, [isOpen, selectedDate, projectId]);
 
   // Set of IDs already in the current supervisor's daily list
   const currentIds = useMemo(() => {
