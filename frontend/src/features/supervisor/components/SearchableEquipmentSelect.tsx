@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, ChevronDown, Check, X, Truck, Ban, Gauge } from 'lucide-react';
+import { Search, ChevronDown, Check, X, Truck, Ban, Gauge, Sparkles } from 'lucide-react';
 
 export interface EquipmentOptionItem {
   id: string;
@@ -21,6 +21,8 @@ interface SearchableEquipmentSelectProps {
   placeholder?: string;
 }
 
+type FilterTab = 'all' | 'logged' | 'vehicles' | 'plant';
+
 export function SearchableEquipmentSelect({
   value,
   onChange,
@@ -31,6 +33,7 @@ export function SearchableEquipmentSelect({
 }: SearchableEquipmentSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Find currently selected item
@@ -38,18 +41,42 @@ export function SearchableEquipmentSelect({
     return options.find((opt) => opt.id === value);
   }, [options, value]);
 
-  // Filtered options based on search query
+  // Count how many equipment have logged hours today
+  const loggedCount = useMemo(() => {
+    return options.filter((opt) => opt.loggedHours && opt.loggedHours > 0).length;
+  }, [options]);
+
+  // Filtered options based on search query and active tab
   const filteredOptions = useMemo(() => {
+    let result = options;
+
+    // Filter by tab
+    if (activeTab === 'logged') {
+      result = result.filter((opt) => opt.loggedHours && opt.loggedHours > 0);
+    } else if (activeTab === 'vehicles') {
+      result = result.filter((opt) => {
+        const text = `${opt.code} ${opt.name} ${opt.type || ''}`.toLowerCase();
+        return text.includes('cab') || text.includes('crew') || text.includes('truck') || text.includes('cycle') || text.includes('lorry') || text.includes('van');
+      });
+    } else if (activeTab === 'plant') {
+      result = result.filter((opt) => {
+        const text = `${opt.code} ${opt.name} ${opt.type || ''}`.toLowerCase();
+        return text.includes('roller') || text.includes('rammer') || text.includes('excavator') || text.includes('compressor') || text.includes('mixer') || text.includes('loader') || text.includes('grader');
+      });
+    }
+
+    // Filter by search text
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return options;
-    return options.filter(
+    if (!q) return result;
+
+    return result.filter(
       (opt) =>
         opt.code.toLowerCase().includes(q) ||
         (opt.name && opt.name.toLowerCase().includes(q)) ||
         (opt.vehicleNo && opt.vehicleNo.toLowerCase().includes(q)) ||
         (opt.type && opt.type.toLowerCase().includes(q))
     );
-  }, [options, searchQuery]);
+  }, [options, searchQuery, activeTab]);
 
   // Lock body scroll when modal is open
   useEffect(() => {
@@ -67,10 +94,11 @@ export function SearchableEquipmentSelect({
     if (isOpen) {
       const timer = setTimeout(() => {
         searchInputRef.current?.focus();
-      }, 50);
+      }, 100);
       return () => clearTimeout(timer);
     } else {
       setSearchQuery('');
+      setActiveTab('all');
     }
   }, [isOpen]);
 
@@ -100,7 +128,7 @@ export function SearchableEquipmentSelect({
 
   return (
     <div className={`relative min-w-0 flex-1 ${className}`}>
-      {/* Trigger Button */}
+      {/* Trigger Button inside Operator Card */}
       <button
         type="button"
         disabled={disabled}
@@ -154,37 +182,41 @@ export function SearchableEquipmentSelect({
         </div>
       </button>
 
-      {/* Mobile Responsive Modal / Bottom Sheet rendered in React Portal (document.body) */}
+      {/* Top-up Popup Page / Bottom-Sheet Modal (Rendered outside the card directly in document.body via Portal) */}
       {isOpen &&
+        typeof document !== 'undefined' &&
         createPortal(
           <div
             role="dialog"
             aria-modal="true"
-            className="fixed inset-0 z-[9999] flex flex-col justify-end sm:justify-center items-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-150"
+            className="fixed inset-0 z-[99999] flex flex-col justify-end sm:justify-center items-center bg-slate-950/75 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-150"
             onClick={() => setIsOpen(false)}
           >
-            {/* Modal Sheet Box */}
+            {/* Modal Sheet Container */}
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-h-[88vh] sm:max-h-[80vh] sm:max-w-lg bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-4 duration-200"
+              className="w-full h-[90vh] max-h-[92vh] sm:h-auto sm:max-h-[82vh] sm:max-w-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 rounded-t-3xl sm:rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-200"
             >
-              {/* Mobile Drag Indicator */}
-              <div className="pt-2.5 pb-1 sm:hidden flex justify-center">
-                <div className="w-10 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
+              {/* Mobile Drag Indicator Pill */}
+              <div className="pt-2.5 pb-1 sm:hidden flex justify-center shrink-0">
+                <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700" />
               </div>
 
               {/* Modal Header */}
-              <div className="px-4 py-3 sm:px-5 sm:py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 bg-white dark:bg-slate-900">
+              <div className="px-4 py-3 sm:px-5 sm:py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 bg-white dark:bg-slate-900 shrink-0">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 flex items-center justify-center shrink-0">
                     <Truck size={18} />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      Select Machine / Vehicle
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <span>Select Machine / Vehicle</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
+                        {options.length} Total
+                      </span>
                     </h3>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      {options.length} machine{options.length === 1 ? '' : 's'} available in site pool
+                      Tap any vehicle from the site pool to assign
                     </p>
                   </div>
                 </div>
@@ -192,15 +224,16 @@ export function SearchableEquipmentSelect({
                 <button
                   type="button"
                   onClick={() => setIsOpen(false)}
-                  className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
+                  className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 flex items-center justify-center transition-colors cursor-pointer"
                   aria-label="Close"
                 >
                   <X size={16} />
                 </button>
               </div>
 
-              {/* Search Bar Input */}
-              <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850/70">
+              {/* Search Bar & Quick Filter Chips */}
+              <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-850/80 shrink-0 space-y-2">
+                {/* Search Input Box */}
                 <div className="relative flex items-center">
                   <Search size={16} className="absolute left-3 text-blue-600 dark:text-blue-400 pointer-events-none" />
                   <input
@@ -222,42 +255,102 @@ export function SearchableEquipmentSelect({
                   )}
                 </div>
 
-                {/* Quick Unassign Action if already selected */}
+                {/* Quick Filter Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('all')}
+                    className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
+                      activeTab === 'all'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    All ({options.length})
+                  </button>
+
+                  {loggedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('logged')}
+                      className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors flex items-center gap-1 ${
+                        activeTab === 'logged'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                      }`}
+                    >
+                      <Sparkles size={11} />
+                      <span>Logged Today ({loggedCount})</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('plant')}
+                    className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
+                      activeTab === 'plant'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    Plant / Machinery
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('vehicles')}
+                    className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
+                      activeTab === 'vehicles'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    Vehicles / Transport
+                  </button>
+                </div>
+
+                {/* Currently Assigned Banner */}
                 {value && (
-                  <div className="mt-2 flex items-center justify-between">
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Currently assigned: <strong className="text-blue-700 dark:text-blue-400 font-mono">{selectedItem?.code || value}</strong>
+                  <div className="pt-1 flex items-center justify-between text-[11px] border-t border-slate-200/60 dark:border-slate-750">
+                    <span className="text-slate-500 dark:text-slate-400 truncate">
+                      Selected: <strong className="text-blue-700 dark:text-blue-400 font-mono">{selectedItem?.code || value}</strong>
+                      {selectedItem?.name ? ` (${selectedItem.name})` : ''}
                     </span>
                     <button
                       type="button"
                       onClick={handleClear}
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 dark:text-red-400 hover:underline cursor-pointer"
+                      className="inline-flex items-center gap-1 font-bold text-red-600 dark:text-red-400 hover:underline cursor-pointer shrink-0 ml-2"
                     >
                       <Ban size={12} />
-                      <span>Unassign Machine</span>
+                      <span>Unassign</span>
                     </button>
                   </div>
                 )}
               </div>
 
-              {/* Options List */}
-              <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80 p-1 sm:p-2 scrollbar-thin">
+              {/* Machine Cards List (Scrollable) */}
+              <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80 p-2 scrollbar-thin">
                 {filteredOptions.length === 0 ? (
                   <div className="py-12 px-4 text-center">
-                    <Truck size={32} className="mx-auto text-slate-300 dark:text-slate-600 mb-2" />
+                    <Truck size={36} className="mx-auto text-slate-300 dark:text-slate-600 mb-2" />
                     <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                      No machines found matching "{searchQuery}"
+                      No machines match your criteria
                     </p>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Try searching with machine code (e.g. MRVI), plate number or machine name.
+                    <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
+                      {searchQuery
+                        ? `No results for "${searchQuery}". Try searching by code (MRVI) or name.`
+                        : 'No machines in this category.'}
                     </p>
-                    {searchQuery && (
+                    {(searchQuery || activeTab !== 'all') && (
                       <button
                         type="button"
-                        onClick={() => setSearchQuery('')}
+                        onClick={() => {
+                          setSearchQuery('');
+                          setActiveTab('all');
+                        }}
                         className="mt-3 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 transition-colors"
                       >
-                        Clear Search Filter
+                        Reset All Filters
                       </button>
                     )}
                   </div>
@@ -272,28 +365,28 @@ export function SearchableEquipmentSelect({
                         type="button"
                         onClick={() => handleSelect(opt.id)}
                         className={[
-                          'w-full px-3.5 py-3 text-left flex items-center justify-between gap-3 rounded-xl transition-all cursor-pointer',
+                          'w-full p-3 text-left flex items-center justify-between gap-3 rounded-xl transition-all cursor-pointer mb-1',
                           isSelected
-                            ? 'bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 shadow-2xs'
-                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/70 border border-transparent'
+                            ? 'bg-blue-50 dark:bg-blue-950/70 border border-blue-300 dark:border-blue-700 shadow-2xs ring-1 ring-blue-400/30'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/80 border border-transparent'
                         ].join(' ')}
                       >
                         <div className="min-w-0 flex-1">
-                          {/* Machine Code & Badges Row */}
-                          <div className="flex items-center gap-2 flex-wrap">
+                          {/* Machine Code, Vehicle No & Status Badges */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-mono font-bold text-sm text-blue-700 dark:text-blue-400">
                               {opt.code}
                             </span>
 
                             {opt.vehicleNo && opt.vehicleNo !== opt.code && (
-                              <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                                 {opt.vehicleNo}
                               </span>
                             )}
 
                             {opt.condition && (
                               <span
-                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${
                                   opt.condition === 'WET'
                                     ? 'bg-cyan-50 dark:bg-cyan-950/50 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800'
                                     : 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
@@ -306,19 +399,19 @@ export function SearchableEquipmentSelect({
                             {Boolean(lh && lh > 0) && (
                               <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                                 <Gauge size={10} />
-                                <span>{lh}h Logged Today</span>
+                                <span>{lh}h Logged</span>
                               </span>
                             )}
                           </div>
 
-                          {/* Machine Name & Type */}
+                          {/* Machine Name & Category Type */}
                           <p className="text-xs text-slate-800 dark:text-slate-200 font-semibold mt-1 truncate">
                             {opt.name || opt.code}
                             {opt.type && opt.type !== 'Equipment' ? ` · ${opt.type}` : ''}
                           </p>
                         </div>
 
-                        {/* Selected Indicator */}
+                        {/* Selection Checkmark Button */}
                         <div className="shrink-0 flex items-center">
                           {isSelected ? (
                             <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-xs">
@@ -337,9 +430,9 @@ export function SearchableEquipmentSelect({
               </div>
 
               {/* Modal Footer */}
-              <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 flex items-center justify-between">
+              <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 flex items-center justify-between shrink-0">
                 <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                  {filteredOptions.length} of {options.length} machine{options.length === 1 ? '' : 's'}
+                  Showing {filteredOptions.length} of {options.length} machine{options.length === 1 ? '' : 's'}
                 </span>
                 <button
                   type="button"

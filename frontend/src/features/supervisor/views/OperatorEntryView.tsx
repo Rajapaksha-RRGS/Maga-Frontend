@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { SiteOperatorPoolModal } from '../components/SiteOperatorPoolModal';
-import { SearchableEquipmentSelect } from '../components/SearchableEquipmentSelect';
+import { SearchableEquipmentSelect, type EquipmentOptionItem } from '../components/SearchableEquipmentSelect';
 import { supervisorStorage } from '../services/supervisorStorageService';
 import { 
   HardHat, 
@@ -86,8 +86,8 @@ export function OperatorEntryView({
   }, [projectId, selectedDate]);
 
   // Combined options of ALL equipment at the site (Site Equipment Pool + Supervisor daily logged equipment)
-  const allEquipmentOptions = useMemo(() => {
-    const map = new Map<string, { id: string; code: string; name: string; vehicleNo?: string; loggedHours: number }>();
+  const allEquipmentOptions = useMemo<EquipmentOptionItem[]>(() => {
+    const map = new Map<string, EquipmentOptionItem>();
 
     // 1. Add all vehicles from Site Equipment Pool
     sitePoolEquipment.forEach((p) => {
@@ -100,6 +100,8 @@ export function OperatorEntryView({
         code: p.code,
         name: p.name,
         vehicleNo: p.vehicleNo,
+        type: (p as any).type || (p as any).equipmentType,
+        condition: (p as any).condition,
         loggedHours: usageSum,
       });
     });
@@ -113,6 +115,8 @@ export function OperatorEntryView({
         code: eq.code,
         name: eq.name,
         vehicleNo: eq.vehicleNo || existing?.vehicleNo,
+        type: eq.type || existing?.type,
+        condition: eq.condition || existing?.condition,
         loggedHours: lh > 0 ? lh : (existing?.loggedHours || 0),
       });
     });
