@@ -428,21 +428,21 @@ export const supervisorStorage = {
               activeUnit: resolvedActiveUnit,
               additionalUnit: existing?.additionalUnit ? normalizeRatingUnit(existing.additionalUnit) : null,
               // Local draft takes priority; fallback to backend dailyLog if no local draft
-              daysValue: existing?.daysValue !== undefined ? existing.daysValue : (logDays && logDays > 0 ? logDays : undefined),
-              hoursValue: existing?.hoursValue !== undefined ? existing.hoursValue : (logHours && logHours > 0 ? logHours : undefined),
+              daysValue: (existing?.daysValue !== undefined && Number(existing.daysValue) > 0) ? existing.daysValue : (logDays && logDays > 0 ? logDays : undefined),
+              hoursValue: (existing?.hoursValue !== undefined && Number(existing.hoursValue) > 0) ? existing.hoursValue : (logHours && logHours > 0 ? logHours : undefined),
               extraHoursValue: existing?.extraHoursValue,
               areaValue: existing?.areaValue,
               startMeter: existing?.startMeter ?? log?.startMeter ?? 0,
               endMeter: existing?.endMeter ?? log?.endMeter ?? 0,
-              netHours: existing?.netHours ?? log?.netHours ?? 0,
-              workingHours: existing?.workingHours ?? log?.workingHours ?? 0,
+              netHours: (existing?.netHours && existing.netHours > 0) ? existing.netHours : (log?.netHours ?? 0),
+              workingHours: (existing?.workingHours && existing.workingHours > 0) ? existing.workingHours : (log?.workingHours ?? 0),
               idleHours: existing?.idleHours ?? log?.idleHours ?? 0,
               breakdownHours: existing?.breakdownHours ?? log?.breakdownHours ?? 0,
               fuelIssuedLiters: existing?.fuelIssuedLiters ?? log?.fuelIssuedLiters ?? 0,
               totalMileage: existing?.totalMileage ?? log?.totalMileage ?? 0,
               startMileage: existing?.startMileage ?? log?.startMileage ?? 0,
               endMileage: existing?.endMileage ?? log?.endMileage ?? 0,
-              operatorId: existing?.operatorId,
+              operatorId: existing?.operatorId || asgn.operatorId,
               activityCode: existing?.activityCode || log?.activityCode || (log?.activitySplits?.[0]?.activityCode ?? ''),
               // ✅ Local draft splits first, then backend saved splits with normalized units, then empty
               activitySplits: (existing?.activitySplits && existing.activitySplits.length > 0)
@@ -459,7 +459,7 @@ export const supervisorStorage = {
               remarks: existing?.remarks ?? log?.remarks,
               status: (log?.status === 'submitted' || log?.status === 'approved')
                 ? log.status
-                : ((existing as any)?.status === 'submitted' ? 'draft' : (existing?.status ?? log?.status ?? 'pending')),
+                : ((existing?.status && existing.status !== 'pending') ? existing.status : (log?.status ?? 'pending')),
               lastSavedAt: existing?.lastSavedAt,
             };
           });
@@ -686,8 +686,9 @@ export const supervisorStorage = {
         const existingLocal = this.getLaborers(date);
         const localMap = new Map<string, LaborerEntry>(existingLocal.map((l) => [l.id, l]));
 
-        // Map assigned workers with attendance, hours, and activity splits
-        const laborList: LaborerEntry[] = (assignedList || []).map((emp: any) => {
+        // Map assigned workers (excluding operators) with attendance, hours, and activity splits
+        const laborOnlyList = (assignedList || []).filter((emp: any) => !emp.isOperator && !emp.corporateEmployee?.isOperator);
+        const laborList: LaborerEntry[] = laborOnlyList.map((emp: any) => {
           const myEntries = timeEntryList.filter((e: any) => e.employeeId === emp.id);
           const localDraft = localMap.get(emp.id);
 
@@ -817,25 +818,67 @@ export const supervisorStorage = {
           const opId = asgn.operatorId || asgn.id;
           const existing = localMap.get(opId);
           const te = asgn.timeEntry;
+          const backendInTime = te?.inTime || '';
+          const backendOutTime = te?.outTime || '';
+          const backendShift = Number(te?.shiftHours || 0);
+          const backendOt = Number(te?.otHours || 0);
+          const backendEqId = te?.assignedEquipmentId || asgn.equipmentId || '';
+          const backendSplits = (te?.equipmentSplits && te.equipmentSplits.length > 0)
+            ? te.equipmentSplits
+            : (backendEqId ? [{ id: '1', equipmentId: backendEqId, hours: backendShift }] : []);
+
+          // Prefer user's active local edits if times exist; otherwise fallback to backend server state
+          const inTime = isLockedOrApproved
+            ? (backendInTime || existing?.inTime || '')
+            : (existing?.inTime ? existing.inTime : backendInTime);
+
+          const outTime = isLockedOrApproved
+            ? (backendOutTime || existing?.outTime || '')
+            : (existing?.outTime ? existing.outTime : backendOutTime);
+
+          const shiftHours = isLockedOrApproved
+            ? (backendShift || existing?.shiftHours || 0)
+            : (existing?.shiftHours && existing.shiftHours > 0 ? existing.shiftHours : backendShift);
+
+          const otHours = isLockedOrApproved
+            ? (backendOt || existing?.otHours || 0)
+            : (existing?.otHours && existing.otHours > 0 ? existing.otHours : backendOt);
+
+          const assignedEquipmentId = isLockedOrApproved
+            ? (backendEqId || existing?.assignedEquipmentId || '')
+            : (existing?.assignedEquipmentId || backendEqId);
+
+          const equipmentSplits = (existing?.equipmentSplits && existing.equipmentSplits.length > 0)
+            ? existing.equipmentSplits
+            : backendSplits;
+
+          const hasTimes = !!(inTime && outTime);
+          let status: 'draft' | 'pending' | 'done' = 'pending';
+          if (isLockedOrApproved) {
+            status = 'done';
+          } else if (existing?.status && existing.status !== 'pending') {
+            status = existing.status;
+          } else if (te?.status === 'done' || hasTimes) {
+            status = 'done';
+          } else if (te?.status) {
+            status = te.status;
+          } else if (existing?.status) {
+            status = existing.status;
+          }
+
           return {
             id: opId,
             callingName: asgn.operatorName || asgn.callingName || 'Operator',
             employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
             licenseNo: asgn.licenseNo || '',
             designation: asgn.operatorTrade || 'Machine Operator',
-            inTime: isLockedOrApproved ? (te?.inTime || existing?.inTime || '') : (existing?.inTime !== undefined ? existing.inTime : (te?.inTime || '')),
-            outTime: isLockedOrApproved ? (te?.outTime || existing?.outTime || '') : (existing?.outTime !== undefined ? existing.outTime : (te?.outTime || '')),
-            shiftHours: isLockedOrApproved ? (te?.shiftHours || existing?.shiftHours || 0) : (existing?.shiftHours !== undefined && existing?.shiftHours > 0 ? existing.shiftHours : (te?.shiftHours || 0)),
-            otHours: isLockedOrApproved ? (te?.otHours || existing?.otHours || 0) : (existing?.otHours !== undefined && existing?.otHours > 0 ? existing.otHours : (te?.otHours || 0)),
-            assignedEquipmentId: isLockedOrApproved ? (te?.assignedEquipmentId || existing?.assignedEquipmentId || asgn.equipmentId || '') : (existing?.assignedEquipmentId || te?.assignedEquipmentId || asgn.equipmentId || ''),
-            equipmentSplits: (existing?.equipmentSplits && existing.equipmentSplits.length > 0)
-              ? existing.equipmentSplits
-              : ((te?.equipmentSplits && te.equipmentSplits.length > 0)
-                  ? te.equipmentSplits
-                  : (te?.assignedEquipmentId ? [{ id: '1', equipmentId: te.assignedEquipmentId, hours: te.shiftHours || 0 }] : (asgn.equipmentId ? [{ id: '1', equipmentId: asgn.equipmentId, hours: te?.shiftHours || 0 }] : []))),
-            status: isLockedOrApproved
-              ? 'done'
-              : (existing?.status ? existing.status : (te?.status === 'done' || (te?.inTime && te?.outTime) ? 'done' : (te ? 'draft' : 'pending'))),
+            inTime,
+            outTime,
+            shiftHours,
+            otHours,
+            assignedEquipmentId,
+            equipmentSplits,
+            status,
             notes: existing?.notes || te?.notes || '',
             claimedBySupervisor: asgn.claimedBySupervisor,
             claimedSupervisorId: asgn.claimedSupervisorId,

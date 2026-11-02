@@ -302,13 +302,17 @@ export const getAssignedEmployees = async (req: Request, res: Response): Promise
     });
     const isPoolMode = !!project?.equipmentAssignBySupervisor;
 
-    // 2. Fetch explicit assignments for this supervisor
+    // 2. Fetch explicit assignments for this supervisor (excluding operators)
     const assignedRecords = await prisma.mF_OP_DailyAssignment.findMany({
       where: {
         dailySheet: {
           projectId,
           supervisorId,
           date: targetDate,
+        },
+        employee: {
+          isOperator: false,
+          corporateEmployee: { isOperator: false },
         },
       },
       select: {
@@ -338,13 +342,17 @@ export const getAssignedEmployees = async (req: Request, res: Response): Promise
       }
     }
 
-    // Also include any employees this supervisor has already recorded entries for on this date
+    // Also include any employees this supervisor has already recorded entries for on this date (excluding operators)
     if (supervisorId) {
       const myRecordedEntries = await prisma.mF_OP_TimeEntry.findMany({
         where: {
           projectId,
           date: targetDate,
           dailySheet: { supervisorId },
+          employee: {
+            isOperator: false,
+            corporateEmployee: { isOperator: false },
+          },
         },
         select: {
           employee: {
