@@ -2074,13 +2074,14 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
     const dateTo = qStr(req.query.dateTo);
     const month = qStr(req.query.month);
     const condition = qStr(req.query.condition);
-    const activityCode = qStr(req.query.activityCode) || 'ZOTHE';
+    const activityCodeParam = qStr(req.query.activityCode);
+    const defaultActivityCode = activityCodeParam || 'ZOTHE';
 
     let from = dateFrom;
     let to = dateTo;
     let uploadDateFormatted = '31-10-2026';
 
-    if (month) {
+    if (month && (!from || !to)) {
       const [y, m] = month.split('-');
       const lastDay = new Date(parseInt(y, 10), parseInt(m, 10), 0).getDate();
       from = `${month}-01`;
@@ -2097,32 +2098,44 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
 
     const dateFilter = buildDateFilter(from, to);
 
-    const equipmentList = await prisma.mF_P_Equipment.findMany({
+    // Fetch daily equipment assignments in the specified date range
+    const assignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
       where: {
-        projectId,
-        status: 'active',
-        ...(condition
-          ? { condition: { equals: condition, mode: 'insensitive' } }
-          : {}),
+        dailySheet: {
+          projectId,
+          ...(dateFilter ? { date: dateFilter } : {}),
+        },
+        equipment: {
+          projectId,
+          status: 'active',
+          ...(condition
+            ? { condition: { equals: condition, mode: 'insensitive' } }
+            : {}),
+        },
       },
       include: {
-        corporateEquipment: true,
-        dailyAssignments: {
-          where: dateFilter ? { dailySheet: { date: dateFilter } } : undefined,
-          include: { 
-            dailyLog: {
+        dailySheet: {
+          select: { date: true, status: true },
+        },
+        equipment: {
+          include: {
+            corporateEquipment: true,
+            meterUnit: true,
+          },
+        },
+        dailyLog: {
+          include: {
+            activities: {
               include: {
-                activities: {
-                  include: {
-                    activityCode: true,
-                  },
-                },
+                activityCode: true,
               },
             },
           },
         },
       },
-      orderBy: [{ corporateEquipment: { standardEquipmentNumber: 'asc' } }],
+      orderBy: [
+        { dailySheet: { date: 'asc' } },
+      ],
     });
 
     const rows: Array<{
@@ -2134,89 +2147,102 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
       utilization: string;
     }> = [];
 
-    equipmentList.forEach((eq) => {
-      const logs = eq.dailyAssignments
-        .map((a) => a.dailyLog)
-        .filter((l): l is NonNullable<typeof l> => Boolean(l));
-      if (logs.length === 0) return; // Skip equipment with no logs (zero utilization)
+    assignments.forEach((assignment) => {
+      const l = assignment.dailyLog;
+      if (!l) return;
 
-      const primaryUnit = (eq.meterUnitCode || eq.corporateEquipment.unit || 'hrs').toLowerCase();
-      const erpCode = eq.corporateEquipment.standardEquipmentNumber || eq.corporateEquipment.vehicleNo || 'EQUIP';
+      const eq = assignment.equipment;
+      const primaryUnit = (l.unitCode || eq.meterUnitCode || eq.corporateEquipment?.unit || 'hrs').toLowerCase();
+      const erpCode = eq.corporateEquipment?.standardEquipmentNumber || eq.corporateEquipment?.vehicleNo || 'EQUIP';
+      const eqCondition = (eq.condition || 'DRY').toUpperCase();
 
-      // Aggregate hours / days / quantities per activity
-      const activityMap = new Map<string, number>();
+      // Format date to DD-MM-YYYY (matching exact transaction day)
+      const dObj = assignment.dailySheet.date;
+      const dStr = dObj instanceof Date ? dObj.toISOString().slice(0, 10) : String(dObj).slice(0, 10);
+      const [yyyy, mm, dd] = dStr.split('-');
+      const formattedDate = `${dd}-${mm}-${yyyy}`;
 
-      logs.forEach((l) => {
-        if (l.activities && l.activities.length > 0) {
-          l.activities.forEach((act) => {
-            const code = act.activityCode?.code || activityCode;
-            const q = Number(act.utilization) || 0;
-            activityMap.set(code, (activityMap.get(code) || 0) + q);
-          });
-        } else {
-          const code = activityCode;
-          let q = 0;
-          if (primaryUnit === 'km') {
-            q = Number(l.totalMileage) || 0;
-          } else if (primaryUnit === 'mth' || primaryUnit === 'day' || primaryUnit === 'days') {
-            q = Number(l.totalUtilization) > 0 ? Number(l.totalUtilization) : 1;
-          } else {
-            q = Number(l.netRunningHours) || (Number(l.workingHours) || 0) + (Number(l.idleHours) || 0);
+      let addedAnyActivity = false;
+
+      // 1. Activity splits on this specific date
+      if (l.activities && l.activities.length > 0) {
+        l.activities.forEach((act) => {
+          const code = act.activityCode?.code || defaultActivityCode;
+          if (activityCodeParam && code.toLowerCase() !== activityCodeParam.toLowerCase()) {
+            return;
           }
-          activityMap.set(code, (activityMap.get(code) || 0) + q);
-        }
-      });
-
-      const totalAggregated = Array.from(activityMap.values()).reduce((sum, v) => sum + v, 0);
-      if (totalAggregated <= 0) return; // Exclude zero utilization
-
-      if (primaryUnit === 'mth') {
-        // Option A: Threshold check (> 0 days => 1.00 mth), split proportionally by activity days
-        const MIN_DAYS_FOR_MONTH_RATE = 0;
-        const totalMonthFraction = totalAggregated > MIN_DAYS_FOR_MONTH_RATE ? 1.0 : 0.0;
-        if (totalMonthFraction <= 0) return;
-
-        const entries = Array.from(activityMap.entries());
-        let allocatedSum = 0;
-
-        entries.forEach(([actKey, qty], index) => {
-          let val: number;
-          if (index === entries.length - 1) {
-            val = entries.length === 1
-              ? totalMonthFraction
-              : Math.max(0, Number((totalMonthFraction - allocatedSum).toFixed(2)));
-          } else {
-            val = Number(((qty / totalAggregated) * totalMonthFraction).toFixed(2));
-            allocatedSum += val;
+          const q = Number(act.utilization) || Number(act.hours) || 0;
+          if (q > 0) {
+            addedAnyActivity = true;
+            rows.push({
+              equipment: erpCode,
+              condition: eqCondition,
+              unit: primaryUnit,
+              date: formattedDate,
+              activity: code,
+              utilization: q.toFixed(2),
+            });
           }
-
-          rows.push({
-            equipment: erpCode,
-            condition: (eq.condition || 'DRY').toUpperCase(),
-            unit: 'mth',
-            date: uploadDateFormatted,
-            activity: actKey,
-            utilization: val.toFixed(2),
-          });
-        });
-      } else {
-        // Hourly, Daily, or KM unit splits
-        activityMap.forEach((qty, actKey) => {
-          rows.push({
-            equipment: erpCode,
-            condition: (eq.condition || 'DRY').toUpperCase(),
-            unit: primaryUnit,
-            date: uploadDateFormatted,
-            activity: actKey,
-            utilization: qty.toFixed(2),
-          });
         });
       }
+
+      // 2. Direct log utilization if no activities were explicitly entered
+      if (!addedAnyActivity) {
+        let q = 0;
+        if (primaryUnit === 'km') {
+          q = Number(l.totalMileage) || 0;
+        } else if (primaryUnit === 'mth' || primaryUnit === 'day' || primaryUnit === 'days') {
+          q = Number(l.totalUtilization) > 0 ? Number(l.totalUtilization) : 1;
+        } else {
+          q = Number(l.workingHours) || Number(l.netRunningHours) || 0;
+        }
+
+        if (q > 0) {
+          const code = defaultActivityCode;
+          if (!activityCodeParam || code.toLowerCase() === activityCodeParam.toLowerCase()) {
+            rows.push({
+              equipment: erpCode,
+              condition: eqCondition,
+              unit: primaryUnit,
+              date: formattedDate,
+              activity: code,
+              utilization: q.toFixed(2),
+            });
+          }
+        }
+      }
+
+      // 3. Idle Hours (matching Labor ERP's ZIDLE logic)
+      const idleH = Number(l.idleHours) || 0;
+      if (idleH > 0 && primaryUnit !== 'km' && primaryUnit !== 'mth') {
+        if (!activityCodeParam || activityCodeParam.toUpperCase() === 'ZIDLE') {
+          rows.push({
+            equipment: erpCode,
+            condition: eqCondition,
+            unit: primaryUnit,
+            date: formattedDate,
+            activity: 'ZIDLE',
+            utilization: idleH.toFixed(2),
+          });
+        }
+      }
+    });
+
+    // Sort rows: Date ascending (chronological), then Equipment code ascending, then Activity ascending
+    rows.sort((a, b) => {
+      const [d1, m1, y1] = a.date.split('-');
+      const [d2, m2, y2] = b.date.split('-');
+      const t1 = new Date(`${y1}-${m1}-${d1}`).getTime();
+      const t2 = new Date(`${y2}-${m2}-${d2}`).getTime();
+      if (t1 !== t2) return t1 - t2;
+      const eqCmp = a.equipment.localeCompare(b.equipment);
+      if (eqCmp !== 0) return eqCmp;
+      return a.activity.localeCompare(b.activity);
     });
 
     res.json({
       date: uploadDateFormatted,
-      activityCode,
+      activityCode: defaultActivityCode,
       totalRows: rows.length,
       rows,
     });

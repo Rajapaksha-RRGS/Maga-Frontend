@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useAuth } from '../../../context/AuthContext';
 import { SiteOperatorPoolModal } from '../components/SiteOperatorPoolModal';
 import { SearchableEquipmentSelect, type EquipmentOptionItem } from '../components/SearchableEquipmentSelect';
 import { supervisorStorage } from '../services/supervisorStorageService';
@@ -48,6 +49,7 @@ interface OperatorEntryViewProps {
   isDayLocked?: boolean;
   selectedDate?: string;
   projectId?: string;
+  supervisorId?: string;
 }
 
 // Helper to get logged working hours on a machine from equipment logs
@@ -70,7 +72,10 @@ export function OperatorEntryView({
   isDayLocked = false,
   selectedDate = '',
   projectId,
+  supervisorId,
 }: OperatorEntryViewProps) {
+  const { user } = useAuth();
+  const effectiveSupervisorId = supervisorId || user?.id || '';
   const [isOperatorPoolModalOpen, setIsOperatorPoolModalOpen] = useState(false);
   const [isPoolMode, setIsPoolMode] = useState(false);
   const [sitePoolEquipment, setSitePoolEquipment] = useState<SitePoolEquipmentItem[]>([]);
@@ -133,7 +138,7 @@ export function OperatorEntryView({
   const [recentPastGang, setRecentPastGang] = useState<{ date: string; dayName: string; operatorCount: number } | null>(null);
 
   useEffect(() => {
-    supervisorStorage.getPastOperatorsForSupervisor('', selectedDate, 1)
+    supervisorStorage.getPastOperatorsForSupervisor(effectiveSupervisorId, selectedDate, 1)
       .then((gangs) => {
         if (gangs && gangs.length > 0) {
           setRecentPastGang(gangs[0]);
@@ -142,7 +147,7 @@ export function OperatorEntryView({
         }
       })
       .catch(() => setRecentPastGang(null));
-  }, [selectedDate]);
+  }, [selectedDate, effectiveSupervisorId]);
 
   const handleAddOperatorFromPool = (newOp: OperatorEntry) => {
     const exists = operators.some((o) => o.id === newOp.id);
