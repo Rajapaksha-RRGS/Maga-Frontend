@@ -11,7 +11,7 @@
  *      - Back to Hub button + Category quick-switcher
  *      - Dedicated sub-reports per category (Time Cards, Running Charts, Attendance Matrices, ERP exports)
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { 
   Download, 
   Users, 
@@ -63,6 +63,14 @@ export default function ReportsPage() {
 
   // Active Category State: 'labor' | 'operator' | 'equipment'
   const [selectedCategory, setSelectedCategory] = useState<ReportCategory>('labor');
+
+  // Ensure filters.workerType is strictly synchronized with selectedCategory on mount & changes
+  useEffect(() => {
+    const targetWorkerType = selectedCategory === 'operator' ? 'operator' : selectedCategory === 'labor' ? 'labor' : '';
+    if (targetWorkerType && filters.workerType !== targetWorkerType) {
+      updateFilter('workerType', targetWorkerType);
+    }
+  }, [selectedCategory, filters.workerType, updateFilter]);
 
   // Handle category selection
   const handleSelectCategory = useCallback((category: ReportCategory) => {

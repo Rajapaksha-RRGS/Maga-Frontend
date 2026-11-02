@@ -57,6 +57,12 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
   const { user } = useAuth();
   const [selectedMonth, setSelectedMonth] = useState(initialMonth);
   const [workerType, setWorkerType] = useState<'all' | 'labor' | 'operator'>(defaultWorkerType);
+
+  useEffect(() => {
+    if (defaultWorkerType && defaultWorkerType !== workerType) {
+      setWorkerType(defaultWorkerType);
+    }
+  }, [defaultWorkerType]);
   const [selectedBp, setSelectedBp] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   

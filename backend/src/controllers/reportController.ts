@@ -173,7 +173,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
-    const workerType = qStr(req.query.workerType);
+    const workerType = qStr(req.query.workerType) || 'labor';
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
@@ -259,7 +259,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
     }
 
     // Also include operators assigned to equipment
-    if (workerType === 'operator' || !workerType) {
+    if (workerType === 'operator') {
       const opAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
         where: {
           dailySheet: {
@@ -434,7 +434,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
-    const workerType = qStr(req.query.workerType);
+    const workerType = qStr(req.query.workerType) || 'labor';
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
@@ -588,7 +588,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     const dateTo = qStr(req.query.dateTo);
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
-    const workerType = qStr(req.query.workerType);
+    const workerType = qStr(req.query.workerType) || 'labor';
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
@@ -669,7 +669,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     }
 
     // Also include operators if applicable
-    if (workerType === 'operator' || !workerType) {
+    if (workerType === 'operator') {
       const opAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
         where: {
           dailySheet: {
@@ -886,8 +886,10 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
     const employeeQuery = qStr(req.query.employeeQuery);
     const activityCode = qStr(req.query.activityCode);
     const businessPartner = qStr(req.query.businessPartner);
+    const workerType = qStr(req.query.workerType) || 'labor';
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
 
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
@@ -895,20 +897,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
         status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(activityCode ? { activity: { code: activityCode } } : {}),
-        ...(businessPartner
-          ? { employee: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
-          : {}),
-        ...(employeeQuery
-          ? {
-              employee: {
-                OR: [
-                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
-                  { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
-                ],
-              },
-            }
-          : {}),
+        ...(empFilter ? { employee: empFilter } : {}),
       },
       include: {
         employee: {
@@ -1089,7 +1078,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
     const activityCode = qStr(req.query.activityCode);
-    const workerType = qStr(req.query.workerType);
+    const workerType = qStr(req.query.workerType) || 'operator';
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
@@ -1244,7 +1233,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       });
     }
 
-    if (workerType === 'operator' || !workerType) {
+    if (workerType === 'operator') {
       const opAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
         where: {
           dailySheet: {

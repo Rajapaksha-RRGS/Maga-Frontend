@@ -27,7 +27,7 @@ import { cacheManager } from '../../../utils/cacheManager';
 import { useAuth } from '../../../context/AuthContext';
 import { getTenantById } from '../../auth/services/authService';
 
-function getDefaultFilters(): ReportFilters {
+function getDefaultFilters(defaultWorkerType: 'labor' | 'operator' = 'labor'): ReportFilters {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -38,6 +38,7 @@ function getDefaultFilters(): ReportFilters {
     employeeQuery: '',
     businessPartner: '',
     activityCode: '',
+    workerType: defaultWorkerType,
   };
 }
 
@@ -108,11 +109,12 @@ export function useReports() {
 
   // Reset all filters to default
   const resetFilters = useCallback(() => {
-    const defaults = getDefaultFilters();
+    const currentWorkerType = (filters.workerType as 'labor' | 'operator') || 'labor';
+    const defaults = getDefaultFilters(currentWorkerType);
     setFilters(defaults);
     cacheManager.set('reports:active-filters', defaults);
     setHasQueried(false);
-  }, []);
+  }, [filters.workerType]);
 
   // Switch tab — keep hasQueried based on whether current tab has data in state
   const handleTabChange = useCallback((tab: ReportType) => {
