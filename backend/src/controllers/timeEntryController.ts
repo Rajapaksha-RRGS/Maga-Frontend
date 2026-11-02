@@ -2027,20 +2027,20 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           },
         });
 
-        await prisma.mF_OP_EquipmentDailyLog.upsert({
+        // Ensure a daily log stub exists if not already present, without overwriting machine's logged workingHours / utilization
+        const existingLog = await prisma.mF_OP_EquipmentDailyLog.findUnique({
           where: { assignmentId: assignment.id },
-          update: {
-            workingHours: split.hours,
-            remarks: item.notes || undefined,
-            status: item.status || undefined,
-          },
-          create: {
-            assignmentId: assignment.id,
-            workingHours: split.hours,
-            remarks: item.notes || null,
-            status: item.status || 'draft',
-          },
         });
+
+        if (!existingLog) {
+          await prisma.mF_OP_EquipmentDailyLog.create({
+            data: {
+              assignmentId: assignment.id,
+              workingHours: 0,
+              status: item.status || 'draft',
+            },
+          });
+        }
       }
 
       // 2. Upsert Operator Shift Time Entry with In/Out Times
