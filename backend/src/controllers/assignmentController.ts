@@ -892,7 +892,7 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
               activitySplits: a.dailyLog.activities.map((act) => ({
                 id: act.id,
                 activityCode: act.activityCode?.code || '',
-                unit: act.activityCode?.unit || a.dailyLog?.unitCode || primaryUnit,
+                unit: a.dailyLog?.unitCode || primaryUnit || act.activityCode?.unit || "Hrs",
                 utilization: Number(act.utilization || 0),
               })),
             }

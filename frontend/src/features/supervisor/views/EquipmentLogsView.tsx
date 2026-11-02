@@ -351,7 +351,11 @@ export function EquipmentLogsView({
     const allocated = existingSplits.reduce((sum, s) => sum + (Number(s.utilization) || 0), 0);
     let remaining = Math.max(0, parseFloat((totalTarget - allocated).toFixed(2)));
 
-    let updatedExistingSplits = [...(eq.activitySplits || [])];
+    // Scope existing splits: only retain other-unit splits if machine supports additional units
+    const validOtherSplits = eq.additionalUnit
+      ? (eq.activitySplits || []).filter((s) => normalizeRatingUnit(s.unit) !== unit)
+      : [];
+    let updatedExistingSplits = [...validOtherSplits, ...existingSplits];
 
     // If first activity took the full amount (e.g. 1.0 Day) and supervisor adds 2nd activity,
     // split 50/50 so first becomes 0.5 and new gets remaining 0.5!

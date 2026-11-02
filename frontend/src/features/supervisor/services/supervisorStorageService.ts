@@ -401,6 +401,7 @@ export const supervisorStorage = {
           const assignedData = await res.json();
           const existingLocal = this.getEquipment(date);
           const localMap = new Map<string, EquipmentLogEntry>(existingLocal.map((e) => [e.id, e]));
+          const isLockedOrApproved = this.isDayLocked(date);
 
           const mapped: EquipmentLogEntry[] = (assignedData || []).map((asgn: any) => {
             const existing = localMap.get(asgn.equipmentId) || localMap.get(asgn.id);
@@ -444,17 +445,24 @@ export const supervisorStorage = {
               endMileage: existing?.endMileage ?? log?.endMileage ?? 0,
               operatorId: existing?.operatorId || asgn.operatorId,
               activityCode: existing?.activityCode || log?.activityCode || (log?.activitySplits?.[0]?.activityCode ?? ''),
-              // ✅ Local draft splits first, then backend saved splits with normalized units, then empty
-              activitySplits: (existing?.activitySplits && existing.activitySplits.length > 0)
-                ? existing.activitySplits
-                : (Array.isArray(log?.activitySplits) && log.activitySplits.length > 0
-                    ? log.activitySplits.map((s: any) => ({
-                        id: s.id || `split-${Math.random()}`,
-                        activityCode: s.activityCode,
-                        unit: normalizeRatingUnit(s.unit || resolvedActiveUnit || dbPrimaryUnit),
-                        utilization: Number(s.utilization ?? 0),
-                      }))
-                    : []),
+              // ✅ Backend saved splits take priority over stale cache; local edits take priority only if active draft
+              activitySplits: (() => {
+                const backendSplits = (Array.isArray(log?.activitySplits) && log.activitySplits.length > 0)
+                  ? log.activitySplits.map((s: any) => ({
+                      id: s.id || `split-${Math.random()}`,
+                      activityCode: s.activityCode,
+                      unit: normalizeRatingUnit(s.unit || resolvedActiveUnit || dbPrimaryUnit),
+                      utilization: Number(s.utilization ?? 0),
+                    }))
+                  : [];
+                if (isLockedOrApproved) {
+                  return backendSplits.length > 0 ? backendSplits : (existing?.activitySplits || []);
+                }
+                if (existing?.status === 'draft' && existing?.activitySplits && existing.activitySplits.length > 0) {
+                  return existing.activitySplits;
+                }
+                return backendSplits.length > 0 ? backendSplits : (existing?.activitySplits || []);
+              })(),
               activities: existing?.activities ?? [],
               remarks: existing?.remarks ?? log?.remarks,
               status: (log?.status === 'submitted' || log?.status === 'approved')
