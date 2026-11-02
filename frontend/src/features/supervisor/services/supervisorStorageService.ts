@@ -443,11 +443,18 @@ export const supervisorStorage = {
               startMileage: existing?.startMileage ?? log?.startMileage ?? 0,
               endMileage: existing?.endMileage ?? log?.endMileage ?? 0,
               operatorId: existing?.operatorId,
-              activityCode: existing?.activityCode,
-              // ✅ Local draft splits first, then backend saved splits, then empty
+              activityCode: existing?.activityCode || log?.activityCode || (log?.activitySplits?.[0]?.activityCode ?? ''),
+              // ✅ Local draft splits first, then backend saved splits with normalized units, then empty
               activitySplits: (existing?.activitySplits && existing.activitySplits.length > 0)
                 ? existing.activitySplits
-                : (log?.activitySplits ?? []),
+                : (Array.isArray(log?.activitySplits) && log.activitySplits.length > 0
+                    ? log.activitySplits.map((s: any) => ({
+                        id: s.id || `split-${Math.random()}`,
+                        activityCode: s.activityCode,
+                        unit: normalizeRatingUnit(s.unit || resolvedActiveUnit || dbPrimaryUnit),
+                        utilization: Number(s.utilization ?? 0),
+                      }))
+                    : []),
               activities: existing?.activities ?? [],
               remarks: existing?.remarks ?? log?.remarks,
               status: (log?.status === 'submitted' || log?.status === 'approved')
@@ -820,11 +827,15 @@ export const supervisorStorage = {
             outTime: isLockedOrApproved ? (te?.outTime || existing?.outTime || '') : (existing?.outTime !== undefined ? existing.outTime : (te?.outTime || '')),
             shiftHours: isLockedOrApproved ? (te?.shiftHours || existing?.shiftHours || 0) : (existing?.shiftHours !== undefined && existing?.shiftHours > 0 ? existing.shiftHours : (te?.shiftHours || 0)),
             otHours: isLockedOrApproved ? (te?.otHours || existing?.otHours || 0) : (existing?.otHours !== undefined && existing?.otHours > 0 ? existing.otHours : (te?.otHours || 0)),
-            assignedEquipmentId: isLockedOrApproved ? (te?.assignedEquipmentId || existing?.assignedEquipmentId || '') : (existing?.assignedEquipmentId || te?.assignedEquipmentId || ''),
-            equipmentSplits: (existing?.equipmentSplits && existing.equipmentSplits.length > 0) ? existing.equipmentSplits : (existing?.assignedEquipmentId ? [{ id: '1', equipmentId: existing.assignedEquipmentId, hours: existing.shiftHours || 0 }] : (te?.assignedEquipmentId ? [{ id: '1', equipmentId: te.assignedEquipmentId, hours: te.shiftHours || 0 }] : [])),
+            assignedEquipmentId: isLockedOrApproved ? (te?.assignedEquipmentId || existing?.assignedEquipmentId || asgn.equipmentId || '') : (existing?.assignedEquipmentId || te?.assignedEquipmentId || asgn.equipmentId || ''),
+            equipmentSplits: (existing?.equipmentSplits && existing.equipmentSplits.length > 0)
+              ? existing.equipmentSplits
+              : ((te?.equipmentSplits && te.equipmentSplits.length > 0)
+                  ? te.equipmentSplits
+                  : (te?.assignedEquipmentId ? [{ id: '1', equipmentId: te.assignedEquipmentId, hours: te.shiftHours || 0 }] : (asgn.equipmentId ? [{ id: '1', equipmentId: asgn.equipmentId, hours: te?.shiftHours || 0 }] : []))),
             status: isLockedOrApproved
               ? 'done'
-              : (existing?.status ? existing.status : (te?.status === 'submitted' || te?.status === 'approved' ? 'draft' : 'pending')),
+              : (existing?.status ? existing.status : (te?.status === 'done' || (te?.inTime && te?.outTime) ? 'done' : (te ? 'draft' : 'pending'))),
             notes: existing?.notes || te?.notes || '',
             claimedBySupervisor: asgn.claimedBySupervisor,
             claimedSupervisorId: asgn.claimedSupervisorId,

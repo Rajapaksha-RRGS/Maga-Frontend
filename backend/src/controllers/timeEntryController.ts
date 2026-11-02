@@ -2092,6 +2092,36 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           ? dailySheet.status
           : (item.status === 'done' ? 'draft' : (item.status || 'draft'));
 
+        // Reconcile operator time entries: delete stale draft entries for this operator on this date under this sheet
+        // that are not part of current valid splits
+        const activeEqIds = validSplits.map((s) => s.equipmentId);
+        if (activeEqIds.length > 0) {
+          await prisma.mF_OP_TimeEntry.deleteMany({
+            where: {
+              projectId,
+              dailySheetId: dailySheet.id,
+              employeeId: opId,
+              date: targetDate,
+              status: 'draft',
+              OR: [
+                { equipmentId: null },
+                { equipmentId: { notIn: activeEqIds } },
+              ],
+            },
+          });
+        } else {
+          await prisma.mF_OP_TimeEntry.deleteMany({
+            where: {
+              projectId,
+              dailySheetId: dailySheet.id,
+              employeeId: opId,
+              date: targetDate,
+              status: 'draft',
+              equipmentId: { not: null },
+            },
+          });
+        }
+
         if (validSplits.length > 0) {
           // Persist a time entry per machine split for granular ERP reporting
           for (let sIdx = 0; sIdx < validSplits.length; sIdx++) {
@@ -2294,11 +2324,7 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
         for (const split of item.activitySplits) {
           let actCodeId = split.activityCodeId;
           if (!actCodeId && split.activityCode) {
-            const act = await prisma.mF_P_ActivityCode.findFirst({
-              where: { projectId, code: split.activityCode },
-              select: { id: true },
-            });
-            actCodeId = act?.id;
+            actCodeId = await resolveProjectActivityId(split.activityCode, projectId);
           }
 
           if (actCodeId) {

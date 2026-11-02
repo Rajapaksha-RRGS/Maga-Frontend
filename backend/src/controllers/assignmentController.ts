@@ -478,6 +478,43 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
     const seen = new Set<string>();
     const formatted: any[] = [];
 
+    // Query my supervisor's operator time entries to attach timeEntry object
+    const myOpEntries = supervisorId ? await prisma.mF_OP_TimeEntry.findMany({
+      where: {
+        projectId,
+        date: targetDate,
+        dailySheet: { supervisorId },
+        employee: {
+          OR: [
+            { isOperator: true },
+            { corporateEmployee: { isOperator: true } },
+          ],
+        },
+      },
+      include: {
+        employee: {
+          include: {
+            corporateEmployee: true,
+            tradeGroup: true,
+            businessPartner: true,
+          },
+        },
+        equipment: {
+          include: { corporateEquipment: true },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    }) : [];
+
+    const myOpByEmp = new Map<string, typeof myOpEntries>();
+    for (const me of myOpEntries) {
+      if (!me.employeeId || !me.employee) continue;
+      if (!myOpByEmp.has(me.employeeId)) {
+        myOpByEmp.set(me.employeeId, []);
+      }
+      myOpByEmp.get(me.employeeId)!.push(me);
+    }
+
     // Map pre-assignments
     for (const a of assignments) {
       if (!a.operator || !a.operatorId) continue;
@@ -488,6 +525,23 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
       const claims = opClaimsMap.get(a.operatorId) || [];
       const otherClaim = claims.find((c) => c.supervisorId !== supervisorId);
       const myClaim = claims.find((c) => c.supervisorId === supervisorId);
+
+      const empEntries = myOpByEmp.get(a.operatorId);
+      const firstTe = empEntries && empEntries.length > 0 ? empEntries[0] : null;
+      const timeEntry = firstTe ? {
+        inTime: firstTe.inTime || undefined,
+        outTime: firstTe.outTime || undefined,
+        shiftHours: Number(firstTe.shiftHours || 0) || empEntries!.reduce((sum, e) => sum + Number(e.hours || 0), 0),
+        otHours: empEntries!.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0),
+        assignedEquipmentId: firstTe.equipmentId || a.equipmentId || undefined,
+        equipmentSplits: empEntries!.filter((e) => e.equipmentId).map((e) => ({
+          id: e.id,
+          equipmentId: e.equipmentId!,
+          hours: Number(e.hours || e.shiftHours || 0),
+        })),
+        status: firstTe.status,
+        notes: firstTe.remarks || '',
+      } : undefined;
 
       formatted.push({
         id: a.id,
@@ -509,59 +563,50 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
         claimedOutTime: otherClaim?.outTime || undefined,
         claimedHours: otherClaim?.hours,
         claimedMachineCodes: claims.map((c) => c.machineCode).filter(Boolean),
-        claimedByMe: !!myClaim,
+        claimedByMe: !!myClaim || !!timeEntry,
+        timeEntry,
       });
     }
 
-    // Also include any operators this supervisor has already recorded entries for on this date
+    // Also include any operators this supervisor has already recorded entries for on this date (e.g. added from pool)
     if (supervisorId) {
-      const myOpEntries = await prisma.mF_OP_TimeEntry.findMany({
-        where: {
-          projectId,
-          date: targetDate,
-          dailySheet: { supervisorId },
-          employee: {
-            OR: [
-              { isOperator: true },
-              { corporateEmployee: { isOperator: true } },
-            ],
-          },
-        },
-        include: {
-          employee: {
-            include: {
-              corporateEmployee: true,
-              tradeGroup: true,
-              businessPartner: true,
-            },
-          },
-          equipment: {
-            include: { corporateEquipment: true },
-          },
-        },
-      });
-
-      for (const me of myOpEntries) {
-        if (!me.employee) continue;
-        const key = `${supervisorId}_${me.employeeId}`;
+      for (const [empId, empEntries] of myOpByEmp.entries()) {
+        const key = `${supervisorId}_${empId}`;
         if (seen.has(key)) continue;
         seen.add(key);
 
+        const firstTe = empEntries[0];
+        const timeEntry = {
+          inTime: firstTe.inTime || undefined,
+          outTime: firstTe.outTime || undefined,
+          shiftHours: Number(firstTe.shiftHours || 0) || empEntries.reduce((sum, e) => sum + Number(e.hours || 0), 0),
+          otHours: empEntries.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0),
+          assignedEquipmentId: firstTe.equipmentId || undefined,
+          equipmentSplits: empEntries.filter((e) => e.equipmentId).map((e) => ({
+            id: e.id,
+            equipmentId: e.equipmentId!,
+            hours: Number(e.hours || e.shiftHours || 0),
+          })),
+          status: firstTe.status,
+          notes: firstTe.remarks || '',
+        };
+
         formatted.push({
-          id: `op-entry-${me.id}`,
+          id: `op-entry-${firstTe.id}`,
           date: dateStr,
           supervisorId,
-          operatorId: me.employeeId,
-          equipmentId: me.equipmentId || '',
+          operatorId: empId,
+          equipmentId: firstTe.equipmentId || '',
           supervisorName: '',
-          operatorName: me.employee.callingName || me.employee.corporateEmployee.fullName,
-          operatorCode: me.employee.corporateEmployee.employeeCode,
-          operatorTrade: me.employee.tradeGroup?.name || 'Operator',
-          equipmentCode: me.equipment?.corporateEquipment?.standardEquipmentNumber || '',
-          equipmentName: me.equipment?.corporateEquipment?.equipmentName || '',
-          vehicleNo: me.equipment?.corporateEquipment?.vehicleNo || '',
-          businessPartner: me.employee.businessPartner?.name || 'Direct',
+          operatorName: firstTe.employee.callingName || firstTe.employee.corporateEmployee.fullName,
+          operatorCode: firstTe.employee.corporateEmployee.employeeCode,
+          operatorTrade: firstTe.employee.tradeGroup?.name || 'Operator',
+          equipmentCode: firstTe.equipment?.corporateEquipment?.standardEquipmentNumber || '',
+          equipmentName: firstTe.equipment?.corporateEquipment?.equipmentName || '',
+          vehicleNo: firstTe.equipment?.corporateEquipment?.vehicleNo || '',
+          businessPartner: firstTe.employee.businessPartner?.name || 'Direct',
           claimedByMe: true,
+          timeEntry,
         });
       }
     }
@@ -795,7 +840,7 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
           include: {
             activities: {
               include: {
-                activityCode: { select: { id: true, code: true, description: true } },
+                activityCode: { select: { id: true, code: true, description: true, unit: true } },
               },
             },
           },
@@ -843,13 +888,16 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
                 : undefined,
               remarks: a.dailyLog.remarks,
               status: a.dailyLog.status,
+              activityCode: a.dailyLog.activities[0]?.activityCode?.code || '',
               activitySplits: a.dailyLog.activities.map((act) => ({
                 id: act.id,
                 activityCode: act.activityCode?.code || '',
+                unit: act.activityCode?.unit || a.dailyLog?.unitCode || primaryUnit,
                 utilization: Number(act.utilization || 0),
               })),
             }
           : null,
+        activityCode: a.dailyLog?.activities[0]?.activityCode?.code || '',
       };
     });
 
