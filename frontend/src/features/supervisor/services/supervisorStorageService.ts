@@ -926,6 +926,15 @@ export const supervisorStorage = {
           splits: (eq.activitySplits && eq.activitySplits.length > 0)
             ? eq.activitySplits.map((s) => ({
                 activityCode: s.activityCode,
+                activityCodeId: s.id,
+                unit: s.unit || eq.primaryUnit || 'Hrs',
+                utilization: Number(s.utilization || 0),
+              }))
+            : undefined,
+          activitySplits: (eq.activitySplits && eq.activitySplits.length > 0)
+            ? eq.activitySplits.map((s) => ({
+                activityCode: s.activityCode,
+                activityCodeId: s.id,
                 unit: s.unit || eq.primaryUnit || 'Hrs',
                 utilization: Number(s.utilization || 0),
               }))

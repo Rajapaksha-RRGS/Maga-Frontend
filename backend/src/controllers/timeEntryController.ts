@@ -2332,15 +2332,22 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
         },
       });
 
-      if (Array.isArray(item.activitySplits) && item.activitySplits.length > 0) {
+      const rawSplits = (Array.isArray(item.activitySplits) && item.activitySplits.length > 0)
+        ? item.activitySplits
+        : (Array.isArray(item.splits) && item.splits.length > 0)
+        ? item.splits
+        : [];
+
+      if (rawSplits.length > 0) {
         await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({
           where: { dailyLogId: dailyLog.id },
         });
 
-        for (const split of item.activitySplits) {
-          let actCodeId = split.activityCodeId;
-          if (!actCodeId && split.activityCode) {
-            actCodeId = await resolveProjectActivityId(split.activityCode, projectId);
+        for (const split of rawSplits) {
+          let actCodeId = split.activityCodeId || split.activityId;
+          const rawCode = split.activityCode || split.code || split.activityId;
+          if (!actCodeId && rawCode) {
+            actCodeId = await resolveProjectActivityId(rawCode, projectId);
           }
 
           if (actCodeId) {
@@ -2348,7 +2355,34 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
               data: {
                 dailyLogId: dailyLog.id,
                 activityCodeId: actCodeId,
-                utilization: split.utilization ? Number(split.utilization) : 0,
+                utilization: split.utilization ? Number(split.utilization) : (split.hours ? Number(split.hours) : 0),
+              },
+            });
+          }
+        }
+      } else if (loggedQty > 0 || effectiveWorkingHours > 0) {
+        // Fallback: If equipment has logged hours/days but no explicit split was picked, auto-assign default activity
+        const existingCount = await prisma.mF_OP_EquipmentDailyLogActivity.count({
+          where: { dailyLogId: dailyLog.id },
+        });
+        if (existingCount === 0) {
+          const opTe = await prisma.mF_OP_TimeEntry.findFirst({
+            where: {
+              projectId,
+              dailySheetId: dailySheet.id,
+              equipmentId: eqId,
+              date: targetDate,
+            },
+            select: { activityId: true },
+          });
+
+          const defaultActId = opTe?.activityId || (await getOrCreateDefaultActivityId(projectId));
+          if (defaultActId) {
+            await prisma.mF_OP_EquipmentDailyLogActivity.create({
+              data: {
+                dailyLogId: dailyLog.id,
+                activityCodeId: defaultActId,
+                utilization: loggedQty > 0 ? loggedQty : effectiveWorkingHours,
               },
             });
           }

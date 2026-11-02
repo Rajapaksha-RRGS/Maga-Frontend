@@ -238,15 +238,39 @@ export function EquipmentLogsView({
   // ── Operating Hours (Hrs) Handler ──
   const handleHoursChange = (id: string, hours: number) => {
     const safeHours = Math.max(0, hours);
-    const updated = equipment.map((eq) => 
-      eq.id === id ? { 
-        ...eq, 
-        hoursValue: safeHours, 
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+
+      let splits = eq.activitySplits || [];
+      const hrSplits = splits.filter((s) => normalizeRatingUnit(s.unit) === 'Hrs');
+
+      if (hrSplits.length === 1) {
+        splits = splits.map((s) =>
+          normalizeRatingUnit(s.unit) === 'Hrs'
+            ? { ...s, utilization: safeHours, unit: 'Hrs' }
+            : s
+        );
+      } else if (hrSplits.length === 0 && safeHours > 0) {
+        splits = [
+          ...splits,
+          {
+            id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            activityCode: activityOptions[0]?.code || '',
+            unit: 'Hrs',
+            utilization: safeHours,
+          },
+        ];
+      }
+
+      return {
+        ...eq,
+        hoursValue: safeHours,
         netHours: safeHours,
         workingHours: safeHours,
-        status: (safeHours > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
-      } : eq
-    );
+        activitySplits: splits,
+        status: (safeHours > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
+      };
+    });
     onSaveEquipment(updated);
   };
 
@@ -284,6 +308,26 @@ export function EquipmentLogsView({
       const working = eq.workingHours === eq.netHours || eq.workingHours === 0 ? net : eq.workingHours;
       const idle = Math.max(0, parseFloat((net - working).toFixed(1)));
 
+      let splits = eq.activitySplits || [];
+      const mthSplits = splits.filter((s) => normalizeRatingUnit(s.unit) === 'mth' || normalizeRatingUnit(s.unit) === 'Hrs');
+      if (mthSplits.length === 1) {
+        splits = splits.map((s) =>
+          (normalizeRatingUnit(s.unit) === 'mth' || normalizeRatingUnit(s.unit) === 'Hrs')
+            ? { ...s, utilization: working, unit: normalizeRatingUnit(eq.primaryUnit || 'Hrs') }
+            : s
+        );
+      } else if (mthSplits.length === 0 && working > 0) {
+        splits = [
+          ...splits,
+          {
+            id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            activityCode: activityOptions[0]?.code || '',
+            unit: normalizeRatingUnit(eq.primaryUnit || 'Hrs'),
+            utilization: working,
+          },
+        ];
+      }
+
       return {
         ...eq,
         startMeter: start,
@@ -291,6 +335,7 @@ export function EquipmentLogsView({
         netHours: net,
         workingHours: working,
         idleHours: idle,
+        activitySplits: splits,
         status: (net > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
     });
