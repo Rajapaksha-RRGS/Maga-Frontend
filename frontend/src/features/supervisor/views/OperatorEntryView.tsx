@@ -1244,7 +1244,7 @@ export function OperatorEntryView({
                             return (
                               <div 
                                 key={split.id || sIdx}
-                                className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-700 flex flex-col gap-2 max-w-full overflow-hidden"
+                                className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-700 flex flex-col gap-2 max-w-full"
                               >
                                 {/* Row 1: Equipment Select & Hours Input */}
                                 <div className="flex items-center gap-1.5 w-full min-w-0">
