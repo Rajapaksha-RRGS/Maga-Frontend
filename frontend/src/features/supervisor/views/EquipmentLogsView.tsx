@@ -1255,10 +1255,17 @@ export function EquipmentLogsView({
                 ].join(' ')}
               >
                 {/* Accordion Header */}
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => toggleExpand(eq.id)}
-                  className="w-full text-left p-3.5 flex items-center justify-between gap-3 focus:outline-none"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      toggleExpand(eq.id);
+                    }
+                  }}
+                  className="w-full text-left p-3.5 flex items-center justify-between gap-3 focus:outline-none cursor-pointer select-none"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 font-bold flex items-center justify-center text-sm flex-shrink-0 border border-emerald-200 dark:border-emerald-800">
@@ -1378,7 +1385,7 @@ export function EquipmentLogsView({
                       {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                     </div>
                   </div>
-                </button>
+                </div>
 
                 {/* ── Expanded Content ── */}
                 {isExpanded && (
