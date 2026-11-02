@@ -1944,7 +1944,7 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
 // 10. POST /api/time-entries/operators/bulk — Save bulk operator entries
 export const saveBulkOperatorEntries = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { entries, date, supervisorId } = req.body || {};
+    const { entries, date, supervisorId, activeEmployeeIds } = req.body || {};
     if (!Array.isArray(entries) || !date) {
       res.status(400).json({ error: 'entries array and date are required' });
       return;
@@ -2252,6 +2252,25 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
 
     const dailySheet = await getOrCreateDailySheet(projectId, effectiveSupId, targetDate);
 
+    // Reconcile: delete stale draft equipment assignments removed by supervisor
+    const incomingEqIds = (entries || []).map((item: any) => item.id || item.equipmentId).filter(Boolean);
+    const staleAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
+      where: {
+        dailySheetId: dailySheet.id,
+        ...(incomingEqIds.length > 0 ? { equipmentId: { notIn: incomingEqIds } } : {}),
+      },
+      include: { dailyLog: true },
+    });
+    for (const asgn of staleAssignments) {
+      if (!asgn.dailyLog || asgn.dailyLog.status === 'draft') {
+        if (asgn.dailyLog) {
+          await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({ where: { dailyLogId: asgn.dailyLog.id } });
+          await prisma.mF_OP_EquipmentDailyLog.delete({ where: { id: asgn.dailyLog.id } });
+        }
+        await prisma.mF_OP_DailyEquipmentAssignment.delete({ where: { id: asgn.id } });
+      }
+    }
+
     for (const item of entries) {
       const eqId = item.id || item.equipmentId;
       if (!eqId) continue;
@@ -2358,7 +2377,7 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
 // 12. POST /api/time-entries/labor/bulk — Save bulk labor time entries
 export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { entries, date, supervisorId } = req.body || {};
+    const { entries, date, supervisorId, activeEmployeeIds } = req.body || {};
     if (!Array.isArray(entries) || !date) {
       res.status(400).json({ error: 'entries array and date are required' });
       return;
@@ -2384,6 +2403,16 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
     }
 
     const dailySheet = effectiveSupId ? await getOrCreateDailySheet(projectId, effectiveSupId, targetDate) : null;
+
+    if (Array.isArray(activeEmployeeIds) && dailySheet) {
+      await prisma.mF_OP_TimeEntry.deleteMany({
+        where: {
+          dailySheetId: dailySheet.id,
+          status: 'draft',
+          employeeId: { notIn: activeEmployeeIds },
+        },
+      });
+    }
     const activityResolutionCache = new Map<string, string>();
     const equipmentValidationCache = new Map<string, string | null>();
 

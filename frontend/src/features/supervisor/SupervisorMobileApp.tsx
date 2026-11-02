@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   supervisorStorage, 
@@ -67,6 +67,19 @@ export default function SupervisorMobileApp() {
     remarks: null,
   });
 
+  // Live debounced auto-save refs (Single Source of Truth)
+  const laborSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const operatorSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const equipmentSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (laborSaveTimeoutRef.current) clearTimeout(laborSaveTimeoutRef.current);
+      if (operatorSaveTimeoutRef.current) clearTimeout(operatorSaveTimeoutRef.current);
+      if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
+    };
+  }, []);
+
   // Load supervisor active site on mount or when user changes
   useEffect(() => {
     supervisorStorage.fetchActiveSite(user?.id, (user as any)?.tenantId)
@@ -79,56 +92,37 @@ export default function SupervisorMobileApp() {
       .catch((err) => console.warn('Could not fetch active site for supervisor:', err));
   }, [user?.id, (user as any)?.tenantId]);
 
-  // Load data whenever selectedDate changes (Offline-First: cached first, then fresh backend)
+  // Load data whenever selectedDate changes (Direct from Backend - Single Source of Truth)
   useEffect(() => {
-    // 1. Instant render from local cache
-    const loadedLaborers = supervisorStorage.getLaborers(selectedDate);
-    const loadedOperators = supervisorStorage.getOperators(selectedDate);
-    const loadedEquipment = supervisorStorage.getEquipment(selectedDate);
-    const cachedStatus = supervisorStorage.getDayStatus(selectedDate);
+    if (!user?.id) return;
 
-    setLaborers(loadedLaborers);
-    setOperators(loadedOperators);
-    setEquipment(loadedEquipment);
-    setDayStatus(cachedStatus);
-    setIsDayLocked(cachedStatus.isLocked);
-    setPendingSyncCount(supervisorStorage.getPendingSyncCount());
+    // Reset view states while fetching fresh records from Database
+    let isCancelled = false;
 
-    // 2. Fetch fresh real data from backend (Admin assigned workers, entries & day status)
-    if (user?.id) {
-      supervisorStorage.fetchDayStatus(user.id, selectedDate)
-        .then((freshStatus) => {
-          setDayStatus(freshStatus);
-          setIsDayLocked(freshStatus.isLocked);
-        })
-        .catch(() => {});
+    Promise.all([
+      supervisorStorage.fetchDayStatus(user.id, selectedDate),
+      supervisorStorage.getAssignedEmployees(user.id, selectedDate),
+      supervisorStorage.fetchOperators(user.id, selectedDate),
+      supervisorStorage.fetchEquipment(user.id, selectedDate),
+      fetchSupervisorReminders(user.id, selectedDate).catch(() => []),
+    ]).then(([freshStatus, freshLaborers, freshOperators, freshEquipment, freshReminders]) => {
+      if (isCancelled) return;
+      setDayStatus(freshStatus);
+      setIsDayLocked(freshStatus.isLocked);
+      setLaborers(freshLaborers);
+      setOperators(freshOperators);
+      setEquipment(freshEquipment);
+      setReminders(freshReminders);
+      setPendingSyncCount(0);
+    }).catch((err) => {
+      if (!isCancelled) {
+        console.warn('Error loading shift data from backend:', err);
+      }
+    });
 
-      supervisorStorage.getAssignedEmployees(user.id, selectedDate)
-        .then((freshLaborers) => {
-          setLaborers(freshLaborers);
-          setIsDayLocked(supervisorStorage.isDayLocked(selectedDate));
-        })
-        .catch((err) => console.warn('Could not fetch assigned laborers:', err));
-
-      supervisorStorage.fetchOperators(user.id, selectedDate)
-        .then((freshOperators) => {
-          setOperators(freshOperators);
-        })
-        .catch(() => {});
-
-      supervisorStorage.fetchEquipment(user.id, selectedDate)
-        .then((freshEquipment) => {
-          setEquipment(freshEquipment);
-        })
-        .catch((err) => console.warn('Could not fetch assigned equipment:', err));
-
-      // Fetch head office / admin reminders for this supervisor on selectedDate
-      fetchSupervisorReminders(user.id, selectedDate)
-        .then((freshReminders) => {
-          setReminders(freshReminders);
-        })
-        .catch((err) => console.warn('Could not fetch supervisor reminders:', err));
-    }
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedDate, user?.id]);
 
   const handleMarkReminderAsRead = (id: string) => {
@@ -184,7 +178,24 @@ export default function SupervisorMobileApp() {
     if (!user?.id || isDayLocked) return;
     setIsSyncing(true);
     try {
-      await supervisorStorage.syncToBackend(user.id, selectedDate);
+      if (laborSaveTimeoutRef.current) clearTimeout(laborSaveTimeoutRef.current);
+      if (operatorSaveTimeoutRef.current) clearTimeout(operatorSaveTimeoutRef.current);
+      if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
+
+      await supervisorStorage.syncToBackend(user.id, selectedDate, laborers, operators, equipment);
+      
+      // Re-fetch fresh state directly from backend to guarantee synchronization
+      const [freshStatus, freshLaborers, freshOperators, freshEquipment] = await Promise.all([
+        supervisorStorage.fetchDayStatus(user.id, selectedDate),
+        supervisorStorage.getAssignedEmployees(user.id, selectedDate),
+        supervisorStorage.fetchOperators(user.id, selectedDate),
+        supervisorStorage.fetchEquipment(user.id, selectedDate),
+      ]);
+      setDayStatus(freshStatus);
+      setIsDayLocked(freshStatus.isLocked);
+      setLaborers(freshLaborers);
+      setOperators(freshOperators);
+      setEquipment(freshEquipment);
       setPendingSyncCount(0);
     } catch (err: any) {
       console.error('Sync failed:', err);
@@ -193,32 +204,63 @@ export default function SupervisorMobileApp() {
     }
   };
 
-  // Data update handlers
+  // Live Auto-Save Data update handlers (Debounced to Backend API)
   const handleSaveLaborers = (updated: LaborerEntry[]) => {
     setLaborers(updated);
-    supervisorStorage.saveLaborers(selectedDate, updated);
-    setPendingSyncCount(supervisorStorage.getPendingSyncCount());
+    if (!user?.id || isDayLocked) return;
+    setPendingSyncCount(1);
+    if (laborSaveTimeoutRef.current) clearTimeout(laborSaveTimeoutRef.current);
+    laborSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await supervisorStorage.syncLaborersToBackend(user.id, selectedDate, updated);
+        setPendingSyncCount(0);
+      } catch (err) {
+        console.warn('Auto-save laborers error:', err);
+      }
+    }, 800);
   };
 
   const handleSaveOperators = (updated: OperatorEntry[]) => {
     setOperators(updated);
-    supervisorStorage.saveOperators(selectedDate, updated);
-    setPendingSyncCount(supervisorStorage.getPendingSyncCount());
+    if (!user?.id || isDayLocked) return;
+    setPendingSyncCount(1);
+    if (operatorSaveTimeoutRef.current) clearTimeout(operatorSaveTimeoutRef.current);
+    operatorSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await supervisorStorage.syncOperatorsToBackend(user.id, selectedDate, updated);
+        setPendingSyncCount(0);
+      } catch (err) {
+        console.warn('Auto-save operators error:', err);
+      }
+    }, 800);
   };
 
   const handleSaveEquipment = (updated: EquipmentLogEntry[]) => {
     setEquipment(updated);
-    supervisorStorage.saveEquipment(selectedDate, updated);
-    setPendingSyncCount(supervisorStorage.getPendingSyncCount());
+    if (!user?.id || isDayLocked) return;
+    setPendingSyncCount(1);
+    if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
+    equipmentSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await supervisorStorage.syncEquipmentToBackend(user.id, selectedDate, updated);
+        setPendingSyncCount(0);
+      } catch (err) {
+        console.warn('Auto-save equipment error:', err);
+      }
+    }, 800);
   };
 
   const handleLockDay = async () => {
     if (!user?.id) return;
     try {
-      const result = await supervisorStorage.submitDayToBackend(user.id, selectedDate);
-      const freshStatus = supervisorStorage.getDayStatus(selectedDate);
+      if (laborSaveTimeoutRef.current) clearTimeout(laborSaveTimeoutRef.current);
+      if (operatorSaveTimeoutRef.current) clearTimeout(operatorSaveTimeoutRef.current);
+      if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
+
+      const result = await supervisorStorage.submitDayToBackend(user.id, selectedDate, laborers, operators, equipment);
+      const freshStatus = await supervisorStorage.fetchDayStatus(user.id, selectedDate);
       setDayStatus(freshStatus);
-      setIsDayLocked(true);
+      setIsDayLocked(freshStatus.isLocked);
       setPendingSyncCount(0);
       if (result.offline && result.message) {
         alert(result.message);
@@ -228,7 +270,6 @@ export default function SupervisorMobileApp() {
       throw err;
     }
   };
-
 
   // Compute badge counts for Bottom Nav (checks all unit modalities)
   const isEquipmentLogged = (e: EquipmentLogEntry): boolean => {
