@@ -123,11 +123,13 @@ async function resolveProjectActivityId(
   // 0. Dedicated resolution for ZIDLE (Idle Hours)
   if (clean.toUpperCase() === 'ZIDLE') {
     let idleAct = await prisma.mF_P_ActivityCode.findFirst({
-      where: { projectId, code: 'ZIDLE' },
+      where: { projectId, code: { equals: 'ZIDLE', mode: 'insensitive' } },
       select: { id: true },
     });
     if (!idleAct) {
-      let corpIdle = await prisma.mF_G_ActivityCode.findUnique({ where: { code: 'ZIDLE' } });
+      let corpIdle = await prisma.mF_G_ActivityCode.findFirst({
+        where: { code: { equals: 'ZIDLE', mode: 'insensitive' } },
+      });
       if (!corpIdle) {
         corpIdle = await prisma.mF_G_ActivityCode.create({
           data: { code: 'ZIDLE', description: 'Idle / Unallocated Hours', unit: 'hrs' },
@@ -158,9 +160,9 @@ async function resolveProjectActivityId(
     return directMatch.id;
   }
 
-  // 2. Check if clean matches code in MF_P_ActivityCode for this project
+  // 2. Check if clean matches code in MF_P_ActivityCode for this project (case-insensitive)
   const codeMatch = await prisma.mF_P_ActivityCode.findFirst({
-    where: { projectId, code: clean },
+    where: { projectId, code: { equals: clean, mode: 'insensitive' } },
     select: { id: true },
   });
   if (codeMatch) {
@@ -175,7 +177,7 @@ async function resolveProjectActivityId(
   });
   if (corpById) {
     let projectAct = await prisma.mF_P_ActivityCode.findFirst({
-      where: { projectId, code: corpById.code },
+      where: { projectId, code: { equals: corpById.code, mode: 'insensitive' } },
       select: { id: true },
     });
     if (!projectAct) {
@@ -194,14 +196,14 @@ async function resolveProjectActivityId(
     return projectAct.id;
   }
 
-  // 4. Check if clean matches a code in corporate activity catalog (MF_G_ActivityCode)
-  const corpByCode = await prisma.mF_G_ActivityCode.findUnique({
-    where: { code: clean },
+  // 4. Check if clean matches a code in corporate activity catalog (MF_G_ActivityCode) (case-insensitive)
+  const corpByCode = await prisma.mF_G_ActivityCode.findFirst({
+    where: { code: { equals: clean, mode: 'insensitive' } },
     select: { id: true, code: true, description: true, unit: true },
   });
   if (corpByCode) {
     let projectAct = await prisma.mF_P_ActivityCode.findFirst({
-      where: { projectId, code: corpByCode.code },
+      where: { projectId, code: { equals: corpByCode.code, mode: 'insensitive' } },
       select: { id: true },
     });
     if (!projectAct) {
@@ -227,7 +229,7 @@ async function resolveProjectActivityId(
   });
   if (anyProjectMatch) {
     let localAct = await prisma.mF_P_ActivityCode.findFirst({
-      where: { projectId, code: anyProjectMatch.code },
+      where: { projectId, code: { equals: anyProjectMatch.code, mode: 'insensitive' } },
       select: { id: true },
     });
     if (!localAct) {
@@ -245,7 +247,30 @@ async function resolveProjectActivityId(
     return localAct.id;
   }
 
-  // 6. Fallback: default activity for this project
+  // 6. If clean is not found in master catalogs, create it in MF_P_ActivityCode instead of mapping to a wrong default activity
+  try {
+    const createdCustom = await prisma.mF_P_ActivityCode.create({
+      data: {
+        projectId,
+        code: clean,
+        description: clean,
+      },
+      select: { id: true },
+    });
+    if (cache) cache.set(cacheKey, createdCustom.id);
+    return createdCustom.id;
+  } catch {
+    const retryFind = await prisma.mF_P_ActivityCode.findFirst({
+      where: { projectId, code: { equals: clean, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (retryFind) {
+      if (cache) cache.set(cacheKey, retryFind.id);
+      return retryFind.id;
+    }
+  }
+
+  // 7. Fallback: default activity for this project
   const defId = await getOrCreateDefaultActivityId(projectId);
   if (cache) cache.set(cacheKey, defId);
   return defId;
@@ -2328,126 +2353,163 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
     const activityResolutionCache = new Map<string, string>();
     const equipmentValidationCache = new Map<string, string | null>();
 
+    // Group incoming entries by employeeId
+    const entriesByEmployee = new Map<string, typeof entries>();
     for (const item of entries) {
-      const { employeeId, activityId, hours, inTime, outTime, remarks, equipmentId } = item;
+      const { employeeId, activityId } = item;
       if (!employeeId || !activityId) continue;
+      if (!entriesByEmployee.has(employeeId)) {
+        entriesByEmployee.set(employeeId, []);
+      }
+      entriesByEmployee.get(employeeId)!.push(item);
+    }
 
-      const resolvedActivityId = await resolveProjectActivityId(activityId, projectId, activityResolutionCache);
-
-      let validEquipmentId: string | null = null;
-      if (equipmentId) {
-        if (equipmentValidationCache.has(equipmentId)) {
-          validEquipmentId = equipmentValidationCache.get(equipmentId)!;
-        } else {
-          const eqExists = await prisma.mF_P_Equipment.findUnique({
-            where: { id: equipmentId },
-            select: { id: true },
-          });
-          validEquipmentId = eqExists ? eqExists.id : null;
-          equipmentValidationCache.set(equipmentId, validEquipmentId);
-        }
+    for (const [employeeId, empEntries] of entriesByEmployee.entries()) {
+      // Pre-resolve all incoming activity IDs for this employee
+      const incomingResolvedActivityIds = new Set<string>();
+      for (const item of empEntries) {
+        const resId = await resolveProjectActivityId(item.activityId, projectId, activityResolutionCache);
+        incomingResolvedActivityIds.add(resId);
       }
 
-      const numHours = hours !== undefined ? parseFloat(hours) : 0;
-      const finalInTime = inTime ?? null;
-      const finalOutTime = outTime ?? null;
-
-      let shiftHoursVal: number | null = null;
-      let overtimeHours = 0;
-      let breakHours = 0;
-
-      if (finalInTime && finalOutTime) {
-        const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, standardHoursCap, isAllOvertime);
-        shiftHoursVal = calc.shiftHours;
-        overtimeHours = calc.otHours;
-        breakHours = calc.breakHours;
-      } else {
-        breakHours = computeBreakHours(finalInTime, finalOutTime);
-        overtimeHours = isAllOvertime ? numHours : numHours > standardHoursCap ? numHours - standardHoursCap : 0;
+      // Reconcile: delete any stale draft entries for this employee under this dailySheet/supervisor on this date
+      // that are no longer part of the incoming activity splits
+      const staleFilter: any = {
+        projectId,
+        employeeId,
+        date: targetDate,
+        status: 'draft',
+        activityId: { notIn: Array.from(incomingResolvedActivityIds) },
+      };
+      if (dailySheet) {
+        staleFilter.dailySheetId = dailySheet.id;
+      } else if (effectiveSupId) {
+        staleFilter.recordedById = effectiveSupId;
       }
 
-      // Conflict Protection: Check if worker has an active overlapping shift logged by another supervisor
-      if (finalInTime && finalOutTime) {
-        const otherSupEntries = await prisma.mF_OP_TimeEntry.findMany({
-          where: {
-            projectId,
-            employeeId,
-            date: targetDate,
-            dailySheetId: { not: dailySheet?.id },
-            inTime: { not: null },
-            outTime: { not: null },
-          },
-          include: {
-            dailySheet: {
-              select: {
-                supervisor: { select: { fullName: true, username: true } },
-              },
-            },
-          },
-        });
-
-        const conflicting = otherSupEntries.find((oe) => {
-          if (!oe.inTime || !oe.outTime) return false;
-          return finalInTime < oe.outTime && finalOutTime > oe.inTime;
-        });
-
-        if (conflicting) {
-          const supName = conflicting.dailySheet?.supervisor?.fullName || conflicting.dailySheet?.supervisor?.username || 'another supervisor';
-          res.status(409).json({
-            error: `Time conflict: Worker is already recorded by Supervisor ${supName} from ${conflicting.inTime} to ${conflicting.outTime}. Overlapping shifts cannot overwrite existing attendance.`,
-          });
-          return;
-        }
-      }
-
-      // Strictly scope to current supervisor dailySheet to prevent overwriting other supervisors
-      const existing = await prisma.mF_OP_TimeEntry.findFirst({
-        where: {
-          projectId,
-          dailySheetId: dailySheet ? dailySheet.id : null,
-          employeeId,
-          activityId: resolvedActivityId,
-          date: targetDate,
-        },
+      await prisma.mF_OP_TimeEntry.deleteMany({
+        where: staleFilter,
       });
 
-      if (existing) {
-        if (existing.status !== 'submitted' && existing.status !== 'approved') {
-          await prisma.mF_OP_TimeEntry.update({
-            where: { id: existing.id },
+      for (const item of empEntries) {
+        const { activityId, hours, inTime, outTime, remarks, equipmentId } = item;
+        const resolvedActivityId = await resolveProjectActivityId(activityId, projectId, activityResolutionCache);
+
+        let validEquipmentId: string | null = null;
+        if (equipmentId) {
+          if (equipmentValidationCache.has(equipmentId)) {
+            validEquipmentId = equipmentValidationCache.get(equipmentId)!;
+          } else {
+            const eqExists = await prisma.mF_P_Equipment.findUnique({
+              where: { id: equipmentId },
+              select: { id: true },
+            });
+            validEquipmentId = eqExists ? eqExists.id : null;
+            equipmentValidationCache.set(equipmentId, validEquipmentId);
+          }
+        }
+
+        const numHours = hours !== undefined ? parseFloat(hours) : 0;
+        const finalInTime = inTime ?? null;
+        const finalOutTime = outTime ?? null;
+
+        let shiftHoursVal: number | null = null;
+        let overtimeHours = 0;
+        let breakHours = 0;
+
+        if (finalInTime && finalOutTime) {
+          const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, standardHoursCap, isAllOvertime);
+          shiftHoursVal = calc.shiftHours;
+          overtimeHours = calc.otHours;
+          breakHours = calc.breakHours;
+        } else {
+          breakHours = computeBreakHours(finalInTime, finalOutTime);
+          overtimeHours = isAllOvertime ? numHours : numHours > standardHoursCap ? numHours - standardHoursCap : 0;
+        }
+
+        // Conflict Protection: Check if worker has an active overlapping shift logged by another supervisor
+        if (finalInTime && finalOutTime) {
+          const otherSupEntries = await prisma.mF_OP_TimeEntry.findMany({
+            where: {
+              projectId,
+              employeeId,
+              date: targetDate,
+              dailySheetId: { not: dailySheet?.id },
+              inTime: { not: null },
+              outTime: { not: null },
+            },
+            include: {
+              dailySheet: {
+                select: {
+                  supervisor: { select: { fullName: true, username: true } },
+                },
+              },
+            },
+          });
+
+          const conflicting = otherSupEntries.find((oe) => {
+            if (!oe.inTime || !oe.outTime) return false;
+            return finalInTime < oe.outTime && finalOutTime > oe.inTime;
+          });
+
+          if (conflicting) {
+            const supName = conflicting.dailySheet?.supervisor?.fullName || conflicting.dailySheet?.supervisor?.username || 'another supervisor';
+            res.status(409).json({
+              error: `Time conflict: Worker is already recorded by Supervisor ${supName} from ${conflicting.inTime} to ${conflicting.outTime}. Overlapping shifts cannot overwrite existing attendance.`,
+            });
+            return;
+          }
+        }
+
+        // Strictly scope to current supervisor dailySheet to prevent overwriting other supervisors
+        const existing = await prisma.mF_OP_TimeEntry.findFirst({
+          where: {
+            projectId,
+            dailySheetId: dailySheet ? dailySheet.id : null,
+            employeeId,
+            activityId: resolvedActivityId,
+            date: targetDate,
+          },
+        });
+
+        if (existing) {
+          if (existing.status !== 'submitted' && existing.status !== 'approved') {
+            await prisma.mF_OP_TimeEntry.update({
+              where: { id: existing.id },
+              data: {
+                hours: numHours,
+                shiftHours: shiftHoursVal,
+                overtimeHours,
+                breakHours,
+                inTime: finalInTime,
+                outTime: finalOutTime,
+                equipmentId: validEquipmentId ?? existing.equipmentId,
+                remarks: remarks ?? existing.remarks,
+              },
+            });
+          }
+        } else {
+          await prisma.mF_OP_TimeEntry.create({
             data: {
+              projectId,
+              dailySheetId: dailySheet?.id || null,
+              employeeId,
+              recordedById: effectiveSupId || null,
+              date: targetDate,
+              activityId: resolvedActivityId,
+              equipmentId: validEquipmentId,
+              effectiveDayTypeId,
+              inTime: finalInTime,
+              outTime: finalOutTime,
               hours: numHours,
               shiftHours: shiftHoursVal,
               overtimeHours,
               breakHours,
-              inTime: finalInTime,
-              outTime: finalOutTime,
-              equipmentId: validEquipmentId ?? existing.equipmentId,
-              remarks: remarks ?? existing.remarks,
+              remarks: remarks || null,
+              status: 'draft',
             },
           });
         }
-      } else {
-        await prisma.mF_OP_TimeEntry.create({
-          data: {
-            projectId,
-            dailySheetId: dailySheet?.id || null,
-            employeeId,
-            recordedById: effectiveSupId || null,
-            date: targetDate,
-            activityId: resolvedActivityId,
-            equipmentId: validEquipmentId,
-            effectiveDayTypeId,
-            inTime: finalInTime,
-            outTime: finalOutTime,
-            hours: numHours,
-            shiftHours: shiftHoursVal,
-            overtimeHours,
-            breakHours,
-            remarks: remarks || null,
-            status: 'draft',
-          },
-        });
       }
     }
 

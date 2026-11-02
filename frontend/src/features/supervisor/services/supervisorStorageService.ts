@@ -1056,8 +1056,10 @@ export const supervisorStorage = {
 
         if (lab.activities && lab.activities.length > 0) {
           for (const act of lab.activities) {
-            const actObj = allActivities.find((a) => a.code === act.activityCode);
-            const resolvedActId = actObj?.id || defaultActivityId;
+            const actObj = allActivities.find(
+              (a) => a.code?.trim().toLowerCase() === act.activityCode?.trim().toLowerCase() || a.id === act.activityCode
+            );
+            const resolvedActId = actObj?.id || act.activityCode || defaultActivityId;
             let actHours = Number(act.hours) || 0;
 
             // STRICT GUARANTEE: Never allow activity hours to exceed remaining shift hours!
