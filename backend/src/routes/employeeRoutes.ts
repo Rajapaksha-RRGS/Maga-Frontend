@@ -26,9 +26,9 @@ router.get('/pending', requireAdmin, getPendingCorporateEmployees);
 router.post('/:id/approve', requireAdmin, approveCorporateEmployee);
 router.post('/:id/reject', requireAdmin, rejectCorporateEmployee);
 
-// Cross-tenant & Transfer routes (protected with authorization)
-router.get('/corporate-master', requireAdmin, getCorporateEmployeesCatalog);
-router.post('/cross-tenant-status', requireAdmin, getCrossTenantEmployeeStatus);
+// Cross-tenant & Transfer routes (catalog is open for read; mutations require admin)
+router.get('/corporate-master', getCorporateEmployeesCatalog);
+router.post('/cross-tenant-status', getCrossTenantEmployeeStatus);
 router.post('/transfer', requireAdmin, transferEmployee);
 
 // Standard routes matching frontend expectations

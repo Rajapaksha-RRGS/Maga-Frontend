@@ -58,14 +58,16 @@ export default function EmployeeImportView({
 }: EmployeeImportViewProps) {
   const [crossTenantStatusMap, setCrossTenantStatusMap] = useState<Record<string, CrossTenantStatus>>({});
   const [catalog, setCatalog] = useState<CorporateEmployee[]>([]);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
   const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [transferRemarks, setTransferRemarks] = useState('');
   const [transferSuccessMessage, setTransferSuccessMessage] = useState<string | null>(null);
 
-  const loadCatalog = async () => {
+  const loadCatalog = async (force = false) => {
     setIsRefreshing(true);
+    setIsLoadingCatalog(true);
     try {
-      const data = await fetchCorporateEmployees();
+      const data = await fetchCorporateEmployees(force);
       setCatalog(data);
       
       // Fetch cross-tenant status
@@ -78,6 +80,7 @@ export default function EmployeeImportView({
       console.error(e);
     } finally {
       setIsRefreshing(false);
+      setIsLoadingCatalog(false);
     }
   };
 
@@ -233,7 +236,7 @@ export default function EmployeeImportView({
   };
 
   const handleRefresh = () => {
-    loadCatalog();
+    loadCatalog(true);
   };
 
   // Bulk import
@@ -654,10 +657,21 @@ export default function EmployeeImportView({
 
           {/* Table Body (Clean White with distinct cell borders) */}
           <tbody className="divide-y divide-slate-200 bg-white">
-            {paginatedCatalog.length === 0 ? (
+            {isLoadingCatalog ? (
               <tr>
                 <td colSpan={9} className="py-12 text-center text-slate-400 text-xs bg-white">
-                  No employees found matching &quot;{globalSearch}&quot;.
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 size={16} className="animate-spin text-blue-600" />
+                    <span>Loading corporate employee catalog...</span>
+                  </div>
+                </td>
+              </tr>
+            ) : paginatedCatalog.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="py-12 text-center text-slate-400 text-xs bg-white">
+                  {globalSearch.trim()
+                    ? `No employees found matching "${globalSearch}".`
+                    : 'No corporate employees found in master catalog.'}
                 </td>
               </tr>
             ) : (

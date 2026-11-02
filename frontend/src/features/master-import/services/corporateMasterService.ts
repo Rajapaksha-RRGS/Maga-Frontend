@@ -1467,15 +1467,15 @@ export function getUniqueCategories(items: { type?: string; tradeGroup?: string;
 }
 
 import { cacheManager } from '../../../utils/cacheManager';
+import { API_URL, getTenantHeaders } from '../../../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 const getHeaders = (): Record<string, string> => {
-  const token = localStorage.getItem('token');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  return headers;
+  const headers = getTenantHeaders({ 'Content-Type': 'application/json' });
+  const headersObj: Record<string, string> = {};
+  headers.forEach((val, key) => {
+    headersObj[key] = val;
+  });
+  return headersObj;
 };
 
 export const fetchCorporateBusinessPartners = async (): Promise<CorporateBusinessPartner[]> => {
@@ -1561,6 +1561,7 @@ export const fetchCorporateEmployees = async (forceRefresh = false): Promise<Cor
       return [];
     } catch (error) {
       console.error('Error fetching corporate employees:', error);
+      cacheManager.invalidate('corporate:employees:catalog');
       return [];
     }
   }, 5 * 60 * 1000, forceRefresh);
