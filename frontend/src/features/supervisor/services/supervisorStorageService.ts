@@ -1095,6 +1095,33 @@ export const supervisorStorage = {
     localStorage.setItem(SYNC_QUEUE_KEY, '0');
   },
 
+  // ── 7.1 Clear Local Shift Draft Entries ──────────────────────────────────
+  clearShiftTimeEntries(date?: string) {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (date) {
+          if (k.startsWith(STORAGE_PREFIX) && k.endsWith(`_${date}`)) {
+            keysToRemove.push(k);
+          }
+        } else {
+          if (
+            k.startsWith(STORAGE_PREFIX) &&
+            (/\d{4}-\d{2}-\d{2}$/.test(k) || k === `${STORAGE_PREFIX}offline_submits_queue` || k === 'maga_supervisor_sync_queue')
+          ) {
+            keysToRemove.push(k);
+          }
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+      this.resetPendingSync();
+    } catch (e) {
+      console.warn('Failed to clear shift entries:', e);
+    }
+  },
+
   // ── 8. Sync Pending Drafts to Backend ──────────────────────────────────────
   async syncToBackend(supervisorId: string, date: string): Promise<boolean> {
     const laborers = this.getLaborers(date);
