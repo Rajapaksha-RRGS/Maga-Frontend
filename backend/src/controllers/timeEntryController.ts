@@ -1127,6 +1127,14 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
                 businessPartner: { select: { name: true } },
               },
             },
+            equipment: {
+              select: {
+                id: true,
+                corporateEquipment: {
+                  select: { standardEquipmentNumber: true, vehicleNo: true, equipmentName: true },
+                },
+              },
+            },
             activity: { select: { code: true, description: true } },
             activitySplits: {
               include: {
@@ -1340,12 +1348,22 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
 
       for (const te of sheet.timeEntries) {
         if (te.employee && operatorEmpIds.has(te.employee.id)) {
+          const teEqDisplay =
+            (te as any).equipment?.corporateEquipment?.standardEquipmentNumber ||
+            (te as any).equipment?.corporateEquipment?.vehicleNo ||
+            (te as any).equipment?.corporateEquipment?.equipmentName ||
+            '';
           if (!opMap.has(te.employee.id)) {
             opMap.set(te.employee.id, {
               operator: te.employee,
-              equipmentDisplays: [],
+              equipmentDisplays: teEqDisplay ? [teEqDisplay] : [],
               equipmentIds: te.equipmentId ? [te.equipmentId] : [],
             });
+          } else {
+            const existing = opMap.get(te.employee.id)!;
+            if (teEqDisplay && !existing.equipmentDisplays.includes(teEqDisplay)) {
+              existing.equipmentDisplays.push(teEqDisplay);
+            }
           }
         }
       }
@@ -2281,14 +2299,8 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
       const eqId = item.id || item.equipmentId;
       if (!eqId) continue;
 
-      let opId = item.operatorId || null;
-      if (!opId) {
-        const firstOp = await prisma.mF_P_Employee.findFirst({
-          where: { projectId, isOperator: true, status: 'active' },
-          select: { id: true },
-        });
-        opId = firstOp?.id || null;
-      }
+      // Do NOT fallback to firstOp! Never hijack all machines to the first operator.
+      const explicitOpId = item.operatorId || null;
 
       const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
         where: {
@@ -2298,11 +2310,11 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
           },
         },
         update: {
-          ...(opId ? { operatorId: opId } : {}),
+          ...(explicitOpId ? { operatorId: explicitOpId } : {}),
         },
         create: {
           dailySheetId: dailySheet.id,
-          operatorId: opId,
+          operatorId: explicitOpId,
           equipmentId: eqId,
         },
       });
