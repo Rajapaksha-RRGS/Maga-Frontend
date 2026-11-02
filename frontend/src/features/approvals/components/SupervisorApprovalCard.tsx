@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -138,12 +138,24 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const workersTotal = group.counts?.laborAssigned ?? group.assignedCount ?? 0;
   const operatorsCount = group.counts?.operatorsWorked ?? (group.operators?.length || 0);
   const operatorsTotal = group.counts?.operatorsAssigned ?? (group.operators?.length || 0);
-  const equipmentCount = group.counts?.equipmentRunning ?? (group.equipment?.length || 0);
-  const equipmentTotal = group.counts?.equipmentAssigned ?? (group.equipment?.length || 0);
 
   const workerHours = (group.totals?.laborHours ?? group.totalHours ?? 0).toFixed(1);
   const workerOt = (group.totals?.laborOvertime ?? group.totalOvertime ?? 0).toFixed(1);
   const equipmentFuel = group.totals?.equipmentFuel ?? 0;
+
+  // Method 2: Only show logged equipment (machines with actual hours/usage logged)
+  const loggedEquipment = useMemo(() => {
+    return (group.equipment || []).filter(
+      (eq) =>
+        eq.netHours > 0 ||
+        eq.workingHours > 0 ||
+        eq.loggedQuantity > 0 ||
+        eq.fuelLiters > 0 ||
+        eq.status === 'approved' ||
+        eq.status === 'logged' ||
+        (eq.splits && eq.splits.length > 0 && eq.splits.some((s) => s.utilization > 0))
+    );
+  }, [group.equipment]);
 
   console.log("Current op data:", group.operators);
   console.log(group.counts);
@@ -193,7 +205,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 
               <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-100 font-medium">
                 <Truck size={12} className="text-amber-600" />
-                <span>Equipment: <strong>{equipmentCount}/{equipmentTotal}</strong> ({equipmentFuel}L Fuel)</span>
+                <span>Equipment: <strong>{loggedEquipment.length}</strong> ({equipmentFuel}L Fuel)</span>
               </div>
 
               {group.submittedAt && (
@@ -292,7 +304,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               }`}
             >
               <Truck size={14} />
-              <span>Plant & Equipment ({group.equipment?.length || 0})</span>
+              <span>Plant & Equipment ({loggedEquipment.length})</span>
             </button>
           </div>
 
@@ -650,7 +662,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-semibold text-slate-500">
-                  Assigned Plant & Equipment Daily Logs ({group.equipment?.length || 0})
+                  Logged Plant & Equipment Daily Logs ({loggedEquipment.length})
                 </span>
               </div>
 
@@ -668,14 +680,14 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {!group.equipment || group.equipment.length === 0 ? (
+                    {loggedEquipment.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="py-6 text-center text-slate-400">
-                          No plant & equipment assigned for this supervisor.
+                          No plant & equipment logged for this supervisor.
                         </td>
                       </tr>
                     ) : (
-                      group.equipment.map((eq) => {
+                      loggedEquipment.map((eq) => {
                         const isWorking = eq.condition === 'WORKING';
                         const isBreakdown = eq.condition === 'BREAKDOWN';
                         const isLogged = eq.netHours > 0 || eq.loggedQuantity > 0;
@@ -789,7 +801,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                     : 'bg-amber-50 text-amber-700 border-amber-200'
                                 }`}
                               >
-                                {eq.status === 'approved' ? 'Approved' : isLogged ? 'Logged' : 'Assigned'}
+                                {eq.status === 'approved' ? 'Approved' : 'Logged'}
                               </span>
                             </td>
                           </tr>

@@ -1389,8 +1389,8 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         };
       });
 
-      // 3. Equipment details
-      const equipmentDetails = sheet.equipmentAssignments.map((ea) => {
+      // 3. Equipment details (Method 2: Show only equipment that have actual logged hours/usage)
+      const allEquipmentDetails = sheet.equipmentAssignments.map((ea) => {
         const eq = ea.equipment;
         const corp = eq?.corporateEquipment;
         const log = ea.dailyLog;
@@ -1413,6 +1413,8 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           utilization: Number(act.utilization || 0),
         }));
 
+        const isLogged = netHours > 0 || workingHours > 0 || loggedQuantity > 0 || fuelLiters > 0 || splits.length > 0;
+
         return {
           equipmentId: ea.equipmentId,
           equipmentCode: corp?.standardEquipmentNumber || corp?.vehicleNo || '—',
@@ -1430,10 +1432,14 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           fuelLiters,
           totalMileage,
           remarks: log?.remarks || '',
-          status: log?.status || (netHours > 0 || loggedQuantity > 0 ? 'draft' : 'pending'),
+          status: log?.status === 'approved' ? 'approved' : (isLogged ? 'logged' : 'assigned'),
+          isLogged,
           splits,
         };
       });
+
+      // Filter only machines that were actually logged by supervisor
+      const equipmentDetails = allEquipmentDetails.filter((e) => e.isLogged || e.status === 'approved');
 
       const laborHours = workerDetails.reduce((sum, w) => sum + Number(w.hours || 0), 0);
       const laborOvertime = workerDetails.reduce((sum, w) => sum + Number(w.otHours || 0), 0);

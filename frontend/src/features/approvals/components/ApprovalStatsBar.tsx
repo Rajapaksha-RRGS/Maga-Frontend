@@ -23,7 +23,6 @@ export const ApprovalStatsBar: React.FC<ApprovalStatsBarProps> = ({
   const opMapped = stats.operators?.mappedCount ?? 0;
 
   const eqRunning = stats.equipment?.runningCount ?? 0;
-  const eqAssigned = stats.equipment?.totalAssigned ?? 0;
   const eqDays = stats.equipment?.totalDays ?? 0;
   const eqFuel = stats.equipment?.totalFuelLiters ?? 0;
 
@@ -93,7 +92,7 @@ export const ApprovalStatsBar: React.FC<ApprovalStatsBarProps> = ({
               <span>Plant & Equipment</span>
             </span>
             <span className="text-[11px] font-semibold text-slate-500">
-              {eqRunning}/{eqAssigned} Running
+              {eqRunning} Logged
             </span>
           </div>
           <div className="mt-2.5 flex items-baseline gap-2">
