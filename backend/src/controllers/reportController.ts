@@ -2138,7 +2138,7 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
       ],
     });
 
-    const rows: Array<{
+    let rows: Array<{
       equipment: string;
       condition: string;
       unit: string;
@@ -2146,6 +2146,15 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
       activity: string;
       utilization: string;
     }> = [];
+
+    // Group mth equipment entries by (Equipment + Calendar Month) so each month independently totals max 1.00 mth
+    const mthEntriesByEquipmentAndMonth = new Map<string, {
+      erpCode: string;
+      condition: string;
+      unit: string;
+      monthKey: string;
+      entries: Array<{ date: string; activity: string; rawQty: number }>;
+    }>();
 
     assignments.forEach((assignment) => {
       const l = assignment.dailyLog;
@@ -2161,72 +2170,140 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
       const dStr = dObj instanceof Date ? dObj.toISOString().slice(0, 10) : String(dObj).slice(0, 10);
       const [yyyy, mm, dd] = dStr.split('-');
       const formattedDate = `${dd}-${mm}-${yyyy}`;
+      const monthKey = `${yyyy}-${mm}`; // E.g., "2026-08", "2026-09"
 
-      let addedAnyActivity = false;
-
-      // 1. Activity splits on this specific date
-      if (l.activities && l.activities.length > 0) {
-        l.activities.forEach((act) => {
-          const code = act.activityCode?.code || defaultActivityCode;
-          if (activityCodeParam && code.toLowerCase() !== activityCodeParam.toLowerCase()) {
-            return;
-          }
-          const q = Number(act.utilization) || Number(act.hours) || 0;
-          if (q > 0) {
-            addedAnyActivity = true;
-            rows.push({
-              equipment: erpCode,
-              condition: eqCondition,
-              unit: primaryUnit,
-              date: formattedDate,
-              activity: code,
-              utilization: q.toFixed(2),
-            });
-          }
-        });
-      }
-
-      // 2. Direct log utilization if no activities were explicitly entered
-      if (!addedAnyActivity) {
-        let q = 0;
-        if (primaryUnit === 'km') {
-          q = Number(l.totalMileage) || 0;
-        } else if (primaryUnit === 'mth' || primaryUnit === 'day' || primaryUnit === 'days') {
-          q = Number(l.totalUtilization) > 0 ? Number(l.totalUtilization) : 1;
-        } else {
-          q = Number(l.workingHours) || Number(l.netRunningHours) || 0;
-        }
-
-        if (q > 0) {
-          const code = defaultActivityCode;
-          if (!activityCodeParam || code.toLowerCase() === activityCodeParam.toLowerCase()) {
-            rows.push({
-              equipment: erpCode,
-              condition: eqCondition,
-              unit: primaryUnit,
-              date: formattedDate,
-              activity: code,
-              utilization: q.toFixed(2),
-            });
-          }
-        }
-      }
-
-      // 3. Idle Hours (matching Labor ERP's ZIDLE logic)
-      const idleH = Number(l.idleHours) || 0;
-      if (idleH > 0 && primaryUnit !== 'km' && primaryUnit !== 'mth') {
-        if (!activityCodeParam || activityCodeParam.toUpperCase() === 'ZIDLE') {
-          rows.push({
-            equipment: erpCode,
+      if (primaryUnit === 'mth') {
+        // Collect mth entries grouped by equipment AND month
+        const groupKey = `${erpCode}___${monthKey}`;
+        if (!mthEntriesByEquipmentAndMonth.has(groupKey)) {
+          mthEntriesByEquipmentAndMonth.set(groupKey, {
+            erpCode,
             condition: eqCondition,
-            unit: primaryUnit,
-            date: formattedDate,
-            activity: 'ZIDLE',
-            utilization: idleH.toFixed(2),
+            unit: 'mth',
+            monthKey,
+            entries: [],
           });
+        }
+        const group = mthEntriesByEquipmentAndMonth.get(groupKey)!;
+
+        let addedSplits = false;
+        if (l.activities && l.activities.length > 0) {
+          l.activities.forEach((act) => {
+            const code = act.activityCode?.code || defaultActivityCode;
+            const q = Number(act.utilization) || Number(act.hours) || 0;
+            if (q > 0) {
+              addedSplits = true;
+              group.entries.push({ date: formattedDate, activity: code, rawQty: q });
+            }
+          });
+        }
+
+        if (!addedSplits) {
+          const q = Number(l.totalUtilization) > 0 ? Number(l.totalUtilization) : 1;
+          group.entries.push({ date: formattedDate, activity: defaultActivityCode, rawQty: q });
+        }
+      } else {
+        // Non-mth equipment: day-by-day (hrs, day, km)
+        let addedAnyActivity = false;
+
+        if (l.activities && l.activities.length > 0) {
+          l.activities.forEach((act) => {
+            const code = act.activityCode?.code || defaultActivityCode;
+            const q = Number(act.utilization) || Number(act.hours) || 0;
+            if (q > 0) {
+              addedAnyActivity = true;
+              rows.push({
+                equipment: erpCode,
+                condition: eqCondition,
+                unit: primaryUnit,
+                date: formattedDate,
+                activity: code,
+                utilization: q.toFixed(2),
+              });
+            }
+          });
+        }
+
+        if (!addedAnyActivity) {
+          let q = 0;
+          if (primaryUnit === 'km') {
+            q = Number(l.totalMileage) || 0;
+          } else if (primaryUnit === 'day' || primaryUnit === 'days') {
+            q = Number(l.totalUtilization) > 0 ? Number(l.totalUtilization) : 1;
+          } else {
+            q = Number(l.workingHours) || Number(l.netRunningHours) || 0;
+          }
+
+          if (q > 0) {
+            rows.push({
+              equipment: erpCode,
+              condition: eqCondition,
+              unit: primaryUnit,
+              date: formattedDate,
+              activity: defaultActivityCode,
+              utilization: q.toFixed(2),
+            });
+          }
         }
       }
     });
+
+    // Process mth equipment per calendar month so EACH month independently totals max 1.00 mth
+    mthEntriesByEquipmentAndMonth.forEach((grp) => {
+      const totalRaw = grp.entries.reduce((sum, e) => sum + e.rawQty, 0);
+      if (totalRaw <= 0) return;
+
+      const targetTotal = 1.00; // Cap/normalize to exactly 1.00 mth for this specific calendar month
+      let allocatedSum = 0;
+      const scaledRows: Array<{
+        equipment: string;
+        condition: string;
+        unit: string;
+        date: string;
+        activity: string;
+        utilizationVal: number;
+        rawQty: number;
+      }> = [];
+
+      grp.entries.forEach((e) => {
+        const val = Number(((e.rawQty / totalRaw) * targetTotal).toFixed(2));
+        allocatedSum += val;
+        scaledRows.push({
+          equipment: grp.erpCode,
+          condition: grp.condition,
+          unit: 'mth',
+          date: e.date,
+          activity: e.activity,
+          utilizationVal: val,
+          rawQty: e.rawQty,
+        });
+      });
+
+      // Handle 2-decimal rounding difference to ensure month sum equals exactly 1.00
+      const diff = Number((targetTotal - allocatedSum).toFixed(2));
+      if (diff !== 0 && scaledRows.length > 0) {
+        let maxItem = scaledRows[0];
+        for (const item of scaledRows) {
+          if (item.rawQty > maxItem.rawQty) maxItem = item;
+        }
+        maxItem.utilizationVal = Math.max(0, Number((maxItem.utilizationVal + diff).toFixed(2)));
+      }
+
+      scaledRows.forEach((r) => {
+        rows.push({
+          equipment: r.equipment,
+          condition: r.condition,
+          unit: r.unit,
+          date: r.date,
+          activity: r.activity,
+          utilization: r.utilizationVal.toFixed(2),
+        });
+      });
+    });
+    // If an activity code filter was supplied, filter matching rows
+    if (activityCodeParam) {
+      rows = rows.filter((r) => r.activity.toLowerCase() === activityCodeParam.toLowerCase());
+    }
 
     // Sort rows: Date ascending (chronological), then Equipment code ascending, then Activity ascending
     rows.sort((a, b) => {
