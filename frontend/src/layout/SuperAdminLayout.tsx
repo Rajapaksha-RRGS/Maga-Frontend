@@ -31,7 +31,6 @@ import {
   Crown,
   ChevronLeft,
   GitMerge,
-  Settings2,
   HardHat,
   PanelLeftClose,
   PanelLeftOpen,
@@ -71,7 +70,6 @@ const NAV_SECTIONS: NavSection[] = [
     sectionLabel: 'OPERATIONS',
     items: [
       { label: 'Transfers', to: '/super-admin/transfers', icon: <GitMerge size={17} /> },
-      { label: 'Settings', to: '/super-admin/settings', icon: <Settings2 size={17} /> },
     ],
   },
 ];

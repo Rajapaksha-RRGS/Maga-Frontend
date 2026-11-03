@@ -50,7 +50,6 @@ import SAEquipmentPage from './pages/superadmin/SAEquipmentPage';
 import SATradeGroupsPage from './pages/superadmin/SATradeGroupsPage';
 import SAActivityCodesPage from './pages/superadmin/SAActivityCodesPage';
 import SATransfersPage from './pages/superadmin/SATransfersPage';
-import SASettingsPage from './pages/superadmin/SASettingsPage';
 
 //usertable 
 import UseTable from './components/user';
@@ -152,7 +151,7 @@ export default function App() {
               <Route path="trade-groups"    element={<SATradeGroupsPage />} />
               <Route path="activity-codes"  element={<SAActivityCodesPage />} />
               <Route path="transfers"       element={<SATransfersPage />} />
-              <Route path="settings"        element={<SASettingsPage />} />
+              <Route path="settings"        element={<Navigate to="/super-admin" replace />} />
             </Route>
           </Route>
 
