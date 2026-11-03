@@ -13,7 +13,8 @@
     "prisma:push": "prisma db push",
     "seed": "tsx prisma/seed.ts",
     "clean:all": "tsx prisma/clean-all.ts",
-    "test:equipment-erp": "tsx scripts/test_equipment_erp_upload.ts"
+    "test:equipment-erp": "tsx scripts/test_equipment_erp_upload.ts",
+    "upload:labor": "tsx scripts/UPLODSCRIP.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

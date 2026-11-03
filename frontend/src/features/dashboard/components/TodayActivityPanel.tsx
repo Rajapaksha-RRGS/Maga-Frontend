@@ -4,8 +4,14 @@
  * Pastel Theme Analytics Panel: "Hours by Activity Code"
  * Harmonized with the dashboard's light pastel aesthetic.
  * Strictly scoped to the current tenant/project's actual activity codes and logged time entries.
+ *
+ * Features:
+ * - Period filtering: Today (Live), Current Month (MTD), Current Year (YTD)
+ * - Fixed height card with internal sleek vertical scrolling for activity codes
+ * - Dual visual modes: Horizontal Bar Chart & Proportional Treemap
+ * - KPI summary for Total Hours, OT Hours, and Workers
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   BarChart3, 
   LayoutGrid, 
@@ -14,10 +20,14 @@ import {
   Users, 
   Activity,
   ArrowUpRight,
-  Plus
+  Plus,
+  Loader2
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { BackendTimeEntry, ActivityCode } from '../../time-entries/services/timeEntryService';
+import * as timeEntrySvc from '../../time-entries/services/timeEntryService';
+
+export type ActivityTimePeriod = 'today' | 'month' | 'year';
 
 interface SupervisorStatus {
   id: string;
@@ -86,11 +96,80 @@ const COLOR_PALETTES = [
   },
 ];
 
+function getPeriodRange(period: ActivityTimePeriod): { startDate: string; endDate: string; label: string } {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+
+  if (period === 'today') {
+    return { startDate: todayStr, endDate: todayStr, label: 'Today' };
+  }
+  if (period === 'month') {
+    const monthStart = `${yyyy}-${mm}-01`;
+    const monthName = now.toLocaleString('en-US', { month: 'short' });
+    return { startDate: monthStart, endDate: todayStr, label: `${monthName} ${yyyy}` };
+  }
+  return { startDate: `${yyyy}-01-01`, endDate: todayStr, label: `Year ${yyyy}` };
+}
+
+function formatHours(val: number): string {
+  if (val >= 1000) {
+    return val.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  }
+  return val.toFixed(1);
+}
+
 export default function TodayActivityPanel({
   todayEntries = [],
   activityCodes = [],
 }: Props) {
   const [viewMode, setViewMode] = useState<'bar' | 'treemap'>('bar');
+  const [period, setPeriod] = useState<ActivityTimePeriod>('today');
+  const [periodEntries, setPeriodEntries] = useState<BackendTimeEntry[]>([]);
+  const [isLoadingPeriod, setIsLoadingPeriod] = useState<boolean>(false);
+  const cacheRef = useRef<Record<string, BackendTimeEntry[]>>({});
+
+  const periodRange = useMemo(() => getPeriodRange(period), [period]);
+
+  // Fetch entries for Month or Year if not in cache
+  useEffect(() => {
+    if (period === 'today') {
+      return;
+    }
+
+    if (cacheRef.current[period]) {
+      setPeriodEntries(cacheRef.current[period]);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingPeriod(true);
+
+    const range = getPeriodRange(period);
+    timeEntrySvc.getTimeEntries(undefined, undefined, range.startDate, range.endDate)
+      .then((data) => {
+        if (!isMounted) return;
+        const entries = Array.isArray(data) ? data : [];
+        cacheRef.current[period] = entries;
+        setPeriodEntries(entries);
+      })
+      .catch((err) => {
+        console.error(`Failed to fetch ${period} activity entries:`, err);
+        if (isMounted) setPeriodEntries([]);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingPeriod(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [period]);
+
+  // Determine active entries to aggregate
+  const currentEntries = period === 'today' ? todayEntries : periodEntries;
 
   // Map project activity codes for easy title/description lookup
   const activityCodeMap = useMemo(() => {
@@ -106,7 +185,7 @@ export default function TodayActivityPanel({
     return map;
   }, [activityCodes]);
 
-  // Aggregate live todayEntries by Activity Code strictly for the project/tenant
+  // Aggregate currentEntries by Activity Code strictly for the project/tenant
   const { isLive, items, totalHours, totalOtHours, totalWorkers } = useMemo(() => {
     const map = new Map<string, {
       code: string;
@@ -119,7 +198,7 @@ export default function TodayActivityPanel({
       workerIds: Set<string>;
     }>();
 
-    (todayEntries || []).forEach((entry) => {
+    (currentEntries || []).forEach((entry) => {
       const rawCode = entry.activity?.code || (entry.activityId ? `ACT-${entry.activityId.slice(0, 4)}` : '');
       const code = rawCode || 'GENERAL';
       const name =
@@ -181,8 +260,8 @@ export default function TodayActivityPanel({
       };
     }
 
-    // If no live logged hours today, show the project's configured activity codes with 0h
-    const projectCodesList = (activityCodes || []).slice(0, 6).map((ac, idx) => {
+    // If no live logged hours, show the project's configured activity codes with 0h
+    const projectCodesList = (activityCodes || []).slice(0, 8).map((ac, idx) => {
       const theme = COLOR_PALETTES[idx % COLOR_PALETTES.length];
       return {
         code: ac.code,
@@ -204,14 +283,14 @@ export default function TodayActivityPanel({
       totalOtHours: 0,
       totalWorkers: 0,
     };
-  }, [todayEntries, activityCodes, activityCodeMap]);
+  }, [currentEntries, activityCodes, activityCodeMap]);
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col gap-4 transition-colors">
+    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col h-[480px] transition-colors">
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 flex-shrink-0 mb-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
               <Activity size={16} className="text-emerald-600" />
               Hours by Activity Code
@@ -221,7 +300,7 @@ export default function TodayActivityPanel({
                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80'
                 : 'bg-slate-100 text-slate-600 border border-slate-200/80'
             }`}>
-              {isLive ? '● Live Entries' : 'Project Codes (0h Today)'}
+              {isLive ? `● ${periodRange.label}` : `${periodRange.label} (0h)`}
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
@@ -229,14 +308,55 @@ export default function TodayActivityPanel({
           </p>
         </div>
 
-        {/* View Switcher (Bar Chart vs Treemap) */}
-        {items.length > 0 && (
+        {/* Action Controls: Period Selector + View Switcher */}
+        <div className="flex items-center gap-2 flex-wrap self-end sm:self-auto">
+          {/* Period Tabs: Today / Month / Year */}
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200/80 text-[11px] font-semibold">
+            <button
+              type="button"
+              onClick={() => setPeriod('today')}
+              className={`px-2.5 py-1 rounded-lg transition-all ${
+                period === 'today'
+                  ? 'bg-white text-slate-800 shadow-2xs font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="Today's live hours"
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriod('month')}
+              className={`px-2.5 py-1 rounded-lg transition-all ${
+                period === 'month'
+                  ? 'bg-white text-slate-800 shadow-2xs font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="Current month hours"
+            >
+              Month
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriod('year')}
+              className={`px-2.5 py-1 rounded-lg transition-all ${
+                period === 'year'
+                  ? 'bg-white text-slate-800 shadow-2xs font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="Current year hours"
+            >
+              Year
+            </button>
+          </div>
+
+          {/* View Switcher (Bar Chart vs Treemap) */}
           <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200/80">
             <button
               type="button"
               onClick={() => setViewMode('bar')}
               className={[
-                'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all',
+                'flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold transition-all',
                 viewMode === 'bar'
                   ? 'bg-white text-slate-800 shadow-2xs'
                   : 'text-slate-500 hover:text-slate-800'
@@ -244,13 +364,13 @@ export default function TodayActivityPanel({
               title="Horizontal Bar Chart View"
             >
               <BarChart3 size={13} />
-              <span className="hidden sm:inline">Bars</span>
+              <span className="hidden md:inline">Bars</span>
             </button>
             <button
               type="button"
               onClick={() => setViewMode('treemap')}
               className={[
-                'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all',
+                'flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold transition-all',
                 viewMode === 'treemap'
                   ? 'bg-white text-slate-800 shadow-2xs'
                   : 'text-slate-500 hover:text-slate-800'
@@ -258,60 +378,68 @@ export default function TodayActivityPanel({
               title="Proportional Treemap View"
             >
               <LayoutGrid size={13} />
-              <span className="hidden sm:inline">Treemap</span>
+              <span className="hidden md:inline">Treemap</span>
             </button>
           </div>
-        )}
+        </div>
       </div>
 
       {/* ── KPI Summary Bar in Soft Pastel Tones ────────────────────────── */}
-      <div className="grid grid-cols-3 gap-2.5 p-2.5 rounded-xl bg-slate-50/70 border border-slate-100 text-xs">
-        <div className="flex items-center gap-2">
+      <div className="grid grid-cols-3 gap-2.5 p-2.5 rounded-xl bg-slate-50/70 border border-slate-100 text-xs flex-shrink-0 mb-3">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center justify-center flex-shrink-0">
             <Clock size={14} />
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="text-[10px] text-slate-400 block leading-tight font-medium">Total Hours</span>
-            <span className="font-bold text-slate-800 font-mono text-sm leading-tight">
-              {totalHours.toFixed(1)}h
+            <span className="font-bold text-slate-800 font-mono text-sm leading-tight truncate block">
+              {formatHours(totalHours)}h
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-700 border border-amber-100 flex items-center justify-center flex-shrink-0">
             <Zap size={14} />
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="text-[10px] text-slate-400 block leading-tight font-medium">Total OT</span>
-            <span className="font-bold text-amber-700 font-mono text-sm leading-tight">
-              +{totalOtHours.toFixed(1)}h
+            <span className="font-bold text-amber-700 font-mono text-sm leading-tight truncate block">
+              +{formatHours(totalOtHours)}h
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 flex items-center justify-center flex-shrink-0">
             <Users size={14} />
           </div>
-          <div>
-            <span className="text-[10px] text-slate-400 block leading-tight font-medium">Deployed</span>
-            <span className="font-bold text-slate-800 font-mono text-sm leading-tight">
+          <div className="min-w-0">
+            <span className="text-[10px] text-slate-400 block leading-tight font-medium">
+              {period === 'today' ? 'Deployed' : 'Active'}
+            </span>
+            <span className="font-bold text-slate-800 font-mono text-sm leading-tight truncate block">
               {totalWorkers} workers
             </span>
           </div>
         </div>
       </div>
 
-      {/* ── Empty State if no project activity codes configured & no entries ── */}
-      {items.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-8 px-4 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+      {/* ── Middle Scrollable Visualization Area (Fixed Height with Internal Scroll) ── */}
+      {isLoadingPeriod ? (
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-10 gap-2">
+          <Loader2 size={24} className="text-emerald-500 animate-spin" />
+          <p className="text-xs text-slate-500 font-medium">Loading {periodRange.label} data...</p>
+        </div>
+      ) : items.length === 0 ? (
+        /* Empty State if no project activity codes configured & no entries */
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-8 px-4 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
           <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center mb-2.5 shadow-2xs">
             <Activity size={18} className="text-slate-400" />
           </div>
-          <p className="text-xs font-bold text-slate-700">No Activity Codes in This Project</p>
+          <p className="text-xs font-bold text-slate-700">No Activity Hours Recorded</p>
           <p className="text-[11px] text-slate-400 mt-1 max-w-xs">
-            Configure or import activity codes for this project so supervisors can record daily hours.
+            No logged hours found for {periodRange.label}.
           </p>
           <Link
             to="/admin/activity-codes"
@@ -322,10 +450,10 @@ export default function TodayActivityPanel({
           </Link>
         </div>
       ) : (
-        <>
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1.5 custom-scrollbar">
           {/* ── Visualization: Bar Chart View (Soft Pastel) ─────────────────── */}
           {viewMode === 'bar' && (
-            <div className="space-y-3 pt-1">
+            <div className="space-y-3 pt-0.5 pb-2">
               {items.map((act, index) => {
                 const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
                 return (
@@ -342,11 +470,11 @@ export default function TodayActivityPanel({
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0 font-mono text-right">
                         <span className="font-bold text-slate-800 text-xs">
-                          {act.hours.toFixed(1)}h
+                          {formatHours(act.hours)}h
                         </span>
                         {act.otHours > 0 && (
                           <span className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200/60 px-1.5 py-0.2 rounded-full font-semibold hidden sm:inline">
-                            +{act.otHours.toFixed(1)}h OT
+                            +{formatHours(act.otHours)}h OT
                           </span>
                         )}
                         <span className="text-[10px] text-slate-400 w-8 text-right font-semibold">
@@ -370,10 +498,10 @@ export default function TodayActivityPanel({
 
           {/* ── Visualization: Treemap View (Soft Pastel Cards) ─────────────── */}
           {viewMode === 'treemap' && (
-            <div className="flex flex-wrap gap-2.5 pt-1 min-h-[160px]">
+            <div className="flex flex-wrap gap-2.5 pt-0.5 pb-2 content-start">
               {items.map((act) => {
                 const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
-                const flexBasis = totalHours > 0 ? Math.max(120, Math.min(260, pct * 4)) : 140;
+                const flexBasis = totalHours > 0 ? Math.max(120, Math.min(240, pct * 4)) : 140;
 
                 return (
                   <div
@@ -401,11 +529,11 @@ export default function TodayActivityPanel({
 
                     <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-xs">
                       <span className="font-extrabold text-slate-800 font-mono">
-                        {act.hours.toFixed(1)} hrs
+                        {formatHours(act.hours)} hrs
                       </span>
                       {act.otHours > 0 && (
                         <span className="text-[9px] font-bold text-amber-700 bg-amber-100/70 border border-amber-200/60 px-1.5 py-0.2 rounded-md">
-                          +{act.otHours.toFixed(1)}h OT
+                          +{formatHours(act.otHours)}h OT
                         </span>
                       )}
                     </div>
@@ -414,15 +542,15 @@ export default function TodayActivityPanel({
               })}
             </div>
           )}
-        </>
+        </div>
       )}
 
-      {/* ── Footer Link ─────────────────────────────────────────────────── */}
-      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+      {/* ── Footer Link (Pinned at Bottom) ─────────────────────────────────── */}
+      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs flex-shrink-0 mt-auto">
         <span className="text-[11px] text-slate-400">
           {isLive
-            ? `Showing ${items.length} active project tasks today`
-            : `${items.length} project activity codes configured`}
+            ? `Showing ${items.length} active tasks (${periodRange.label})`
+            : `${items.length} project codes configured`}
         </span>
         <div className="flex items-center gap-3">
           <Link

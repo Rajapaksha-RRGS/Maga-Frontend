@@ -1346,6 +1346,35 @@ export const createCorporateEquipment = async (req: Request, res: Response): Pro
       },
     });
 
+    // Auto-provision to site project (MF_L_EQUIPMENT) if project assigned
+    if (resolvedProjectId) {
+      const unitMaster = unit ? await prisma.mF_G_UnitMaster.findUnique({ where: { code: unit } }) : null;
+      await prisma.mF_P_Equipment.upsert({
+        where: {
+          projectId_corporateEquipmentId: {
+            projectId: resolvedProjectId,
+            corporateEquipmentId: created.id,
+          },
+        },
+        update: {
+          condition: created.condition,
+          costRate: created.costRate,
+          status: 'active',
+          meterUnitCode: unitMaster ? unitMaster.code : null,
+          ownerPartnerId: resolvedBpId,
+        },
+        create: {
+          projectId: resolvedProjectId,
+          corporateEquipmentId: created.id,
+          condition: created.condition,
+          costRate: created.costRate,
+          status: 'active',
+          meterUnitCode: unitMaster ? unitMaster.code : null,
+          ownerPartnerId: resolvedBpId,
+        },
+      });
+    }
+
     res.status(201).json({
       success: true,
       message: 'Global equipment created successfully',
@@ -1450,17 +1479,14 @@ export const updateCorporateEquipment = async (req: Request, res: Response): Pro
       },
     });
 
-    // Also update any site equipment referencing this corporate equipment so descriptions and rates sync
+    // Also update any site equipment referencing this corporate equipment so condition and rates sync
     await prisma.mF_P_Equipment.updateMany({
       where: { corporateEquipmentId: id },
       data: {
-        ...(equipmentName ? { name: equipmentName.trim() } : {}),
         ...(condition ? { condition } : {}),
-        ...(type !== undefined ? { type: type || null } : {}),
-        ...(vehicleNo !== undefined ? { vehicleNo: vehicleNo ? vehicleNo.trim() : null } : {}),
         ...(costRate !== undefined && costRate !== '' && !isNaN(Number(costRate)) ? { costRate: Number(costRate) } : {}),
-        ...(unit !== undefined ? { primaryUnit: unit || 'Hrs' } : {}),
         ...(status ? { status } : {}),
+        ...(resolvedBpId !== undefined ? { ownerPartnerId: resolvedBpId } : {}),
       },
     });
 
@@ -2490,6 +2516,18 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
       ]);
       const resolvedProj = resolveProjectByCode(rawProject, allProjects);
 
+      if (rawProject && !resolvedProj) {
+        errors.push({
+          row: rowNum,
+          code,
+          name,
+          field: 'Current Working Project',
+          reason: `Project site '${rawProject}' was not found in the system.`,
+          suggestion: 'Provide a valid Project Code (e.g. PRJ531, PRJ001) or leave it blank for Head Office pool.',
+        });
+        continue;
+      }
+
       ops.push({
         rowNum,
         code,
@@ -2634,10 +2672,11 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
       )
       .filter(Boolean);
 
-    // Pre-cache Business Partners, Unit Master, and Existing Equipment for fast O(1) relational lookups
-    const [allPartners, allUnits, existingEquipment] = await Promise.all([
+    // Pre-cache Business Partners, Unit Master, Projects, and Existing Equipment for fast O(1) relational lookups
+    const [allPartners, allUnits, allProjects, existingEquipment] = await Promise.all([
       prisma.mF_G_BusinessPartner.findMany({ select: { id: true, code: true, name: true } }),
       prisma.mF_G_UnitMaster.findMany({ select: { id: true, code: true, name: true } }),
+      prisma.mF_P_Project.findMany({ select: { id: true, projectCode: true, projectName: true, subdomain: true } }),
       standardNumbers.length > 0
         ? prisma.mF_G_Equipment.findMany({
             where: { standardEquipmentNumber: { in: standardNumbers } },
@@ -2698,6 +2737,7 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
       costRate: number | null;
       vehicleNo: string | null;
       resolvedBpId: string | null;
+      targetProjects: typeof allProjects;
       existing?: (typeof existingEquipment)[0];
     }
 
@@ -2805,6 +2845,59 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
         }
       }
 
+      // Resolve project assignment (support single project e.g. 531/PRJ531, comma-separated, or ALL)
+      const rawProject = getFieldVal(item, [
+        'currentWorkingProject',
+        'currentProject',
+        'workingProject',
+        'projectCode',
+        'project',
+        'site',
+        'workingPlace',
+        'siteCode',
+      ]);
+
+      let targetProjects: typeof allProjects = [];
+      if (rawProject) {
+        const cleanProject = rawProject.trim().toUpperCase();
+        if (cleanProject === 'ALL' || cleanProject === '*') {
+          targetProjects = allProjects;
+        } else {
+          const parts = rawProject.split(/[,;|]/).map((p: string) => p.trim()).filter(Boolean);
+          for (const part of parts) {
+            const resolved = resolveProjectByCode(part, allProjects);
+            if (resolved) {
+              const fullProj = allProjects.find((p) => p.id === resolved.id);
+              if (fullProj && !targetProjects.some((tp) => tp.id === fullProj.id)) {
+                targetProjects.push(fullProj);
+              }
+            } else {
+              errors.push({
+                row: rowNum,
+                code: standardNumber,
+                name,
+                field: 'Current Working Project',
+                reason: `Project site '${part}' was not found in the system.`,
+                suggestion: 'Provide a valid Project Code (e.g. PRJ531, 531) or leave blank for Head Office pool.',
+              });
+            }
+          }
+        }
+      }
+
+      // If duplicate in batch, merge target projects instead of throwing error
+      const existingOp = ops.find((o) => o.standardNumber === standardNumber);
+      if (existingOp) {
+        if (targetProjects.length > 0) {
+          for (const tp of targetProjects) {
+            if (!existingOp.targetProjects.some((p) => p.id === tp.id)) {
+              existingOp.targetProjects.push(tp);
+            }
+          }
+        }
+        continue;
+      }
+
       ops.push({
         rowNum,
         standardNumber,
@@ -2816,6 +2909,7 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
         costRate,
         vehicleNo,
         resolvedBpId,
+        targetProjects,
         existing: existingMap.get(standardNumber),
       });
     }
@@ -2824,8 +2918,11 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
     await Promise.all(
       ops.map(async (op) => {
         try {
+          let savedEquipmentId: string;
+          const primaryProjectId = op.targetProjects.length > 0 ? op.targetProjects[0].id : null;
+
           if (op.existing) {
-            await prisma.mF_G_Equipment.update({
+            const updated = await prisma.mF_G_Equipment.update({
               where: { id: op.existing.id },
               data: {
                 equipmentName: op.name,
@@ -2836,12 +2933,14 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
                 costRate: op.costRate !== null ? op.costRate : op.existing.costRate,
                 vehicleNo: op.vehicleNo || op.existing.vehicleNo,
                 businessPartnerId: op.resolvedBpId !== null ? op.resolvedBpId : op.existing.businessPartnerId,
+                currentProjectId: primaryProjectId || op.existing.currentProjectId,
                 status: 'active',
               },
             });
+            savedEquipmentId = updated.id;
             updatedCount++;
           } else {
-            await prisma.mF_G_Equipment.create({
+            const created = await prisma.mF_G_Equipment.create({
               data: {
                 standardEquipmentNumber: op.standardNumber,
                 equipmentName: op.name,
@@ -2852,11 +2951,43 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
                 costRate: op.costRate,
                 vehicleNo: op.vehicleNo,
                 businessPartnerId: op.resolvedBpId,
+                currentProjectId: primaryProjectId,
                 currency: 'LKR',
                 status: 'active',
               },
             });
+            savedEquipmentId = created.id;
             insertedCount++;
+          }
+
+          // Auto-provision to site if project(s) specified (MF_L_EQUIPMENT)
+          if (op.targetProjects && op.targetProjects.length > 0) {
+            for (const proj of op.targetProjects) {
+              await prisma.mF_P_Equipment.upsert({
+                where: {
+                  projectId_corporateEquipmentId: {
+                    projectId: proj.id,
+                    corporateEquipmentId: savedEquipmentId,
+                  },
+                },
+                update: {
+                  condition: op.condition,
+                  costRate: op.costRate,
+                  status: 'active',
+                  meterUnitCode: unitSet.has(op.unit) ? op.unit : null,
+                  ownerPartnerId: op.resolvedBpId,
+                },
+                create: {
+                  projectId: proj.id,
+                  corporateEquipmentId: savedEquipmentId,
+                  condition: op.condition,
+                  costRate: op.costRate,
+                  status: 'active',
+                  meterUnitCode: unitSet.has(op.unit) ? op.unit : null,
+                  ownerPartnerId: op.resolvedBpId,
+                },
+              });
+            }
           }
         } catch (err: any) {
           const translated = translateError(err, 'equipment', op.standardNumber);
@@ -2899,6 +3030,10 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
       .map((item: any) => getFieldVal(item, ['code', 'activityCode', 'activity', 'codeNo']).trim())
       .filter(Boolean);
 
+    const allProjects = await prisma.mF_P_Project.findMany({
+      select: { id: true, projectCode: true, projectName: true, subdomain: true },
+    });
+
     const existingCodes = codes.length > 0
       ? await prisma.mF_G_ActivityCode.findMany({
           where: { code: { in: codes } },
@@ -2926,6 +3061,7 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
       code: string;
       description: string;
       unit: string;
+      targetProjects: typeof allProjects;
       existing?: (typeof existingCodes)[0];
     }
 
@@ -2955,15 +3091,57 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
       }
 
       const lowerCode = code.toLowerCase();
-      if (seenCodesInBatch.has(lowerCode)) {
-        errors.push({
-          row: rowNum,
-          code,
-          name: description,
-          field: 'Activity Code',
-          reason: `Duplicate activity code '${code}' found within the uploaded spreadsheet.`,
-          suggestion: 'Ensure each row has a unique Activity Code.',
-        });
+      const existingOp = ops.find((o) => o.code.toLowerCase() === lowerCode);
+
+      // Auto-assign to projects if currentWorkingProject / projectCode specified
+      const rawProject = getFieldVal(item, [
+        'currentWorkingProject',
+        'currentProject',
+        'workingProject',
+        'projectCode',
+        'project',
+        'site',
+        'workingPlace',
+        'siteCode',
+      ]);
+
+      let targetProjects: typeof allProjects = [];
+      if (rawProject) {
+        const cleanProject = rawProject.trim().toUpperCase();
+        if (cleanProject === 'ALL' || cleanProject === '*') {
+          targetProjects = allProjects;
+        } else {
+          const parts = rawProject.split(/[,;|]/).map((p: string) => p.trim()).filter(Boolean);
+          for (const part of parts) {
+            const resolved = resolveProjectByCode(part, allProjects);
+            if (resolved) {
+              const fullProj = allProjects.find((p) => p.id === resolved.id);
+              if (fullProj && !targetProjects.some((tp) => tp.id === fullProj.id)) {
+                targetProjects.push(fullProj);
+              }
+            } else {
+              errors.push({
+                row: rowNum,
+                code,
+                name: description,
+                field: 'Current Working Project',
+                reason: `Project site '${part}' was not found in the system.`,
+                suggestion: 'Provide a valid Project Code (e.g. PRJ531, 531) or "ALL" to assign to all projects.',
+              });
+            }
+          }
+        }
+      }
+
+      // If this code was already seen in an earlier row, merge its target projects without throwing a duplicate error!
+      if (existingOp) {
+        if (targetProjects.length > 0) {
+          for (const tp of targetProjects) {
+            if (!existingOp.targetProjects.some((p) => p.id === tp.id)) {
+              existingOp.targetProjects.push(tp);
+            }
+          }
+        }
         continue;
       }
       seenCodesInBatch.add(lowerCode);
@@ -2973,6 +3151,7 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
         code,
         description,
         unit,
+        targetProjects,
         existing: existingMap.get(lowerCode),
       });
     }
@@ -2981,8 +3160,9 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
     await Promise.all(
       ops.map(async (op) => {
         try {
+          let corpRecord: any;
           if (op.existing) {
-            await prisma.mF_G_ActivityCode.update({
+            corpRecord = await prisma.mF_G_ActivityCode.update({
               where: { id: op.existing.id },
               data: {
                 description: op.description,
@@ -2991,7 +3171,7 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
             });
             updatedCount++;
           } else {
-            await prisma.mF_G_ActivityCode.create({
+            corpRecord = await prisma.mF_G_ActivityCode.create({
               data: {
                 code: op.code,
                 description: op.description,
@@ -2999,6 +3179,32 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
               },
             });
             insertedCount++;
+          }
+
+          // If target projects specified, auto-assign/upsert into site projects (MF_L_ACTIVITY_CODE)
+          if (op.targetProjects && op.targetProjects.length > 0) {
+            for (const proj of op.targetProjects) {
+              await prisma.mF_P_ActivityCode.upsert({
+                where: {
+                  projectId_code: {
+                    projectId: proj.id,
+                    code: op.code,
+                  },
+                },
+                update: {
+                  description: op.description,
+                  unit: op.unit,
+                  corporateActivityCodeId: corpRecord.id,
+                },
+                create: {
+                  projectId: proj.id,
+                  code: op.code,
+                  description: op.description,
+                  unit: op.unit,
+                  corporateActivityCodeId: corpRecord.id,
+                },
+              });
+            }
           }
         } catch (err: any) {
           const translated = translateError(err, 'activity code', op.code);

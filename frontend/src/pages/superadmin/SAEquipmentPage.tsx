@@ -30,6 +30,7 @@ const EQ_SAMPLE_HEADERS = [
   'costRate',
   'vehicleNo',
   'businessPartner',
+  'currentWorkingProject',
 ];
 const EQ_SAMPLE_DATA = [
   {
@@ -42,6 +43,7 @@ const EQ_SAMPLE_DATA = [
     costRate: '12000',
     vehicleNo: 'MACM0075',
     businessPartner: 'BP1002885',
+    currentWorkingProject: 'PRJ531',
   },
   {
     standardEquipmentNumber: 'MEXC0012',
@@ -53,6 +55,7 @@ const EQ_SAMPLE_DATA = [
     costRate: '45000',
     vehicleNo: 'CAT 320D',
     businessPartner: 'BP1002885',
+    currentWorkingProject: 'PRJ531',
   },
 ];
 const EQ_REQUIRED_FIELDS = ['standardEquipmentNumber', 'equipmentName'];
@@ -814,6 +817,7 @@ export default function SAEquipmentPage() {
           costRate: 'Cost Rate (LKR)',
           vehicleNo: 'Vehicle / Registration No',
           businessPartner: 'Business Partner Code',
+          currentWorkingProject: 'Current Working Project (e.g. PRJ531)',
         }}
         onSuccess={() => {
           loadData();

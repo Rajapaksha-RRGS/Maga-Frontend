@@ -884,6 +884,8 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
 export const getTimeEntries = async (req: Request, res: Response): Promise<void> => {
   try {
     const { date, supervisorId, employeeId, status } = req.query;
+    const startDate = (req.query.startDate || req.query.dateFrom) as string | undefined;
+    const endDate = (req.query.endDate || req.query.dateTo) as string | undefined;
     const projectId =
       req.resolvedProjectId ||
       req.resolvedTenantId ||
@@ -894,6 +896,14 @@ export const getTimeEntries = async (req: Request, res: Response): Promise<void>
     const where: Record<string, any> = { projectId };
     if (date && typeof date === 'string') {
       where.date = parseDate(date);
+    } else if (startDate || endDate) {
+      where.date = {};
+      if (startDate && typeof startDate === 'string') {
+        where.date.gte = parseDate(startDate);
+      }
+      if (endDate && typeof endDate === 'string') {
+        where.date.lte = parseDate(endDate);
+      }
     }
     if (supervisorId && typeof supervisorId === 'string') {
       where.OR = [

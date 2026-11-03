@@ -39,6 +39,7 @@ const EMP_SAMPLE_HEADERS = [
   'epfNo',
   'employeeType',
   'businessPartnerCode',
+  'currentWorkingProject',
 ];
 const EMP_SAMPLE_DATA: Record<string, string>[] = [
   {
@@ -51,6 +52,7 @@ const EMP_SAMPLE_DATA: Record<string, string>[] = [
     epfNo: '',
     employeeType: 'external',
     businessPartnerCode: 'BP1002885',
+    currentWorkingProject: 'PRJ531',
   },
   {
     employeeCode: 'R8562',
@@ -62,6 +64,7 @@ const EMP_SAMPLE_DATA: Record<string, string>[] = [
     epfNo: '74493',
     employeeType: 'external',
     businessPartnerCode: 'BP1002885',
+    currentWorkingProject: 'PRJ531',
   },
   {
     employeeCode: 'HI101',
@@ -73,6 +76,7 @@ const EMP_SAMPLE_DATA: Record<string, string>[] = [
     epfNo: 'EPF-9021',
     employeeType: 'internal',
     businessPartnerCode: '',
+    currentWorkingProject: 'PRJ001',
   },
   {
     employeeCode: 'HK030',
@@ -84,6 +88,7 @@ const EMP_SAMPLE_DATA: Record<string, string>[] = [
     epfNo: '',
     employeeType: 'external',
     businessPartnerCode: 'BP1020469',
+    currentWorkingProject: '',
   },
 ];
 const EMP_REQUIRED_FIELDS = ['employeeCode', 'fullName', 'nicNo', 'tradeGroup'];
@@ -1562,6 +1567,8 @@ export default function SAEmployeesPage() {
           isOperator: 'Is Machine Operator (true/false)',
           epfNo: 'EPF Number',
           businessPartnerCode: 'Business Partner Code',
+          employeeType: 'Employee Type (internal/external)',
+          currentWorkingProject: 'Current Working Project (e.g. PRJ531)',
         }}
         onSuccess={() => {
           loadData(false);

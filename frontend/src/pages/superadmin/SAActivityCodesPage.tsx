@@ -21,10 +21,10 @@ import {
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
 
-const ACT_SAMPLE_HEADERS = ['code', 'description', 'unit'];
+const ACT_SAMPLE_HEADERS = ['code', 'description', 'unit', 'currentWorkingProject'];
 const ACT_SAMPLE_DATA = [
-  { code: '01-10-10-00', description: 'Excavation & Earthwork', unit: 'm3' },
-  { code: '01-20-10-00', description: 'Concrete Work - Substructure', unit: 'm3' },
+  { code: '01-10-10-00', description: 'Excavation & Earthwork', unit: 'm3', currentWorkingProject: 'PRJ531' },
+  { code: '01-20-10-00', description: 'Concrete Work - Substructure', unit: 'm3', currentWorkingProject: 'ALL' },
   { code: '02-10-10-00', description: 'Formwork - Superstructure', unit: 'm2' },
   { code: '02-20-10-00', description: 'Rebar & Steel Reinforcement', unit: 'Kg' },
   { code: '00-00-10-00', description: 'General Site Overheads', unit: 'hrs' },

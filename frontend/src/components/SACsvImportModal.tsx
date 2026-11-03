@@ -776,7 +776,7 @@ export default function SACsvImportModal({
                         <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 text-slate-600">
                           <tr>
                             <th className="px-3 py-2 font-semibold w-12 text-center">#</th>
-                            {parsedHeaders.slice(0, 6).map((header) => (
+                            {parsedHeaders.map((header) => (
                               <th key={header} className="px-3 py-2 font-semibold">
                                 {columnLabels[header] || header}
                                 {requiredFields.includes(header) && (
@@ -799,7 +799,7 @@ export default function SACsvImportModal({
                                 <td className="px-3 py-2 text-center text-slate-400 font-mono text-[11px]">
                                   {idx + 1}
                                 </td>
-                                {parsedHeaders.slice(0, 6).map((header) => (
+                                {parsedHeaders.map((header) => (
                                   <td
                                     key={header}
                                     className={`px-3 py-2 font-mono text-[11px] truncate max-w-[160px] ${

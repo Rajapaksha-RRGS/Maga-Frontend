@@ -182,12 +182,16 @@ export interface SubmitDayResponse {
  */
 export async function getTimeEntries(
   supervisorId?: string,
-  date?: string
+  date?: string,
+  startDate?: string,
+  endDate?: string
 ): Promise<BackendTimeEntry[]> {
   try {
     const params = new URLSearchParams();
     if (supervisorId) params.append('supervisorId', supervisorId);
     if (date) params.append('date', date);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
 
     const query = params.toString() ? `?${params.toString()}` : '';
     const res = await apiFetch(`${API_URL}/time-entries${query}`);
