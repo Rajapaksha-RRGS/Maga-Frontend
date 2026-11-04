@@ -784,7 +784,7 @@ export function LaborEntryView({
 
     // Real-time backend unassign
     if (selectedDate) {
-      assignmentService.unassign(selectedDate, laborerId).catch((err) => {
+      assignmentService.unassign(selectedDate, laborerId, effectiveSupervisorId).catch((err: any) => {
         console.warn('[LaborEntryView] Background unassign error:', err);
       });
     }
@@ -805,7 +805,7 @@ export function LaborEntryView({
       // Real-time backend unassign for each
       if (selectedDate) {
         idsToRemove.forEach((id) => {
-          assignmentService.unassign(selectedDate, id).catch((err) => {
+          assignmentService.unassign(selectedDate, id, effectiveSupervisorId).catch((err: any) => {
             console.warn('[LaborEntryView] Background batch unassign error:', err);
           });
         });

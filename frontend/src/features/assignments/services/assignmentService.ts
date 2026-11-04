@@ -75,8 +75,12 @@ export async function assign(date: string, supervisorId: string, employeeIds: st
   return data.assignments || [];
 }
 
-export async function unassign(_date: string, assignmentId: string): Promise<void> {
-  const res = await apiFetch(`${API_URL}/assignments/${encodeURIComponent(assignmentId)}`, {
+export async function unassign(date: string, assignmentId: string, supervisorId?: string): Promise<void> {
+  const params = new URLSearchParams();
+  if (date) params.append('date', date);
+  if (supervisorId) params.append('supervisorId', supervisorId);
+  const q = params.toString() ? `?${params.toString()}` : '';
+  const res = await apiFetch(`${API_URL}/assignments/${encodeURIComponent(assignmentId)}${q}`, {
     method: 'DELETE',
   });
   if (!res.ok) {
@@ -213,8 +217,12 @@ export async function assignOperators(date: string, supervisorId: string, operat
   return data.assignments || [];
 }
 
-export async function unassignOperator(assignmentId: string): Promise<void> {
-  const res = await apiFetch(`${API_URL}/assignments/operator/${encodeURIComponent(assignmentId)}`, {
+export async function unassignOperator(assignmentId: string, date?: string, supervisorId?: string): Promise<void> {
+  const params = new URLSearchParams();
+  if (date) params.append('date', date);
+  if (supervisorId) params.append('supervisorId', supervisorId);
+  const q = params.toString() ? `?${params.toString()}` : '';
+  const res = await apiFetch(`${API_URL}/assignments/operator/${encodeURIComponent(assignmentId)}${q}`, {
     method: 'DELETE',
   });
   if (!res.ok) {

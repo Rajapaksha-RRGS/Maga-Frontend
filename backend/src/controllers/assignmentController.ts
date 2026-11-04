@@ -258,14 +258,49 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
 export const unassignEmployee = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
+    const dateStr = (req.query.date as string) || (req.body?.date as string);
+    const supervisorId = (req.query.supervisorId as string) || (req.body?.supervisorId as string);
+    const targetDate = dateStr ? parseDate(dateStr) : undefined;
+
+    const existingAsgn = await prisma.mF_OP_DailyAssignment.findFirst({
+      where: {
+        OR: [{ id }, { employeeId: id }],
+      },
+      select: { id: true, employeeId: true },
+    });
+    const targetEmpId = existingAsgn?.employeeId || id;
+
+    // 1. Delete from DailyAssignment
     await prisma.mF_OP_DailyAssignment.deleteMany({
       where: {
         OR: [
           { id },
           { employeeId: id },
+          ...(targetEmpId ? [{ employeeId: targetEmpId }] : []),
         ],
+        ...(targetDate || supervisorId ? {
+          dailySheet: {
+            ...(targetDate ? { date: targetDate } : {}),
+            ...(supervisorId ? { supervisorId } : {}),
+          },
+        } : {}),
       },
     });
+
+    // 2. Also delete any non-approved time entries for this employee
+    await prisma.mF_OP_TimeEntry.deleteMany({
+      where: {
+        OR: [
+          { employeeId: id },
+          { id },
+          ...(targetEmpId ? [{ employeeId: targetEmpId }] : []),
+        ],
+        status: { not: 'approved' },
+        ...(targetDate ? { date: targetDate } : {}),
+        ...(supervisorId ? { dailySheet: { supervisorId } } : {}),
+      },
+    });
+
     res.json({ success: true, message: 'Employee unassigned successfully' });
   } catch (error: any) {
     console.error('Error unassigning employee:', error);
@@ -688,14 +723,49 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
 export const unassignOperator = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
+    const dateStr = (req.query.date as string) || (req.body?.date as string);
+    const supervisorId = (req.query.supervisorId as string) || (req.body?.supervisorId as string);
+    const targetDate = dateStr ? parseDate(dateStr) : undefined;
+
+    const existingAsgn = await prisma.mF_OP_DailyEquipmentAssignment.findFirst({
+      where: {
+        OR: [{ id }, { operatorId: id }],
+      },
+      select: { id: true, operatorId: true },
+    });
+    const targetOpId = existingAsgn?.operatorId || id;
+
+    // 1. Delete from DailyEquipmentAssignment
     await prisma.mF_OP_DailyEquipmentAssignment.deleteMany({
       where: {
         OR: [
           { id },
           { operatorId: id },
+          ...(targetOpId ? [{ operatorId: targetOpId }] : []),
         ],
+        ...(targetDate || supervisorId ? {
+          dailySheet: {
+            ...(targetDate ? { date: targetDate } : {}),
+            ...(supervisorId ? { supervisorId } : {}),
+          },
+        } : {}),
       },
     });
+
+    // 2. Also delete any non-approved operator time entries
+    await prisma.mF_OP_TimeEntry.deleteMany({
+      where: {
+        OR: [
+          { employeeId: id },
+          { id },
+          ...(targetOpId ? [{ employeeId: targetOpId }] : []),
+        ],
+        status: { not: 'approved' },
+        ...(targetDate ? { date: targetDate } : {}),
+        ...(supervisorId ? { dailySheet: { supervisorId } } : {}),
+      },
+    });
+
     res.json({ success: true, message: 'Operator unassigned successfully' });
   } catch (error: any) {
     console.error('Error unassigning operator:', error);

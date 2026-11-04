@@ -1,14 +1,15 @@
-import { useState } from 'react';
-import { Building2, CheckCircle2, Plus, Clock, HardHat } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Building2, Plus, Clock, HardHat, XCircle } from 'lucide-react';
 import { useBusinessPartners } from '../features/business-partners/hooks/useBusinessPartners';
 import BusinessPartnerTable from '../features/business-partners/components/BusinessPartnerTable';
 import BusinessPartnerCardList from '../features/business-partners/components/BusinessPartnerCardList';
 import BusinessPartnerForm from '../features/business-partners/components/BusinessPartnerForm';
 import DirectSitePartnerRegisterModal from '../features/business-partners/components/DirectSitePartnerRegisterModal';
+import MasterImportModal, { type ColumnDef } from '../features/master-import/components/MasterImportModal';
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
-import EmptyState from '../components/EmptyState';
 import Breadcrumb from '../components/Breadcrumb';
+import * as bpService from '../features/business-partners/services/businessPartnerService';
 import type {
   BusinessPartner,
   BusinessPartnerFormData,
@@ -25,6 +26,7 @@ export default function BusinessPartnersPage() {
     setStatusFilter,
     addPartner,
     addPartnerDirectly,
+    assignCorporatePartners,
     updatePartner,
     deletePartner,
     checkUniqueCode,
@@ -35,6 +37,75 @@ export default function BusinessPartnersPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingPartner, setEditingPartner] = useState<BusinessPartner | null>(null);
   const [isDirectRegisterModalOpen, setIsDirectRegisterModalOpen] = useState(false);
+
+  // Corporate Master selection modal state
+  const [corporateModalOpen, setCorporateModalOpen] = useState(false);
+  const [corporateCatalog, setCorporateCatalog] = useState<BusinessPartner[]>([]);
+
+  useEffect(() => {
+    if (corporateModalOpen) {
+      bpService
+        .fetchCorporateCatalog()
+        .then((data) => setCorporateCatalog(data))
+        .catch((err) => console.error('Failed to load corporate business partners:', err));
+    }
+  }, [corporateModalOpen]);
+
+  const existingCodes = useMemo(() => {
+    return new Set(partners.map((p) => p.code.toUpperCase()));
+  }, [partners]);
+
+  const corporateColumns: ColumnDef<BusinessPartner>[] = [
+    {
+      key: 'code',
+      header: 'Code',
+      width: '110px',
+      render: (item) => (
+        <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200">
+          {item.code}
+        </span>
+      ),
+    },
+    {
+      key: 'name',
+      header: 'Partner / Company Name',
+      render: (item) => (
+        <div>
+          <span className="font-medium text-slate-800 text-xs block">{item.name}</span>
+          {item.brNumber && (
+            <span className="text-[10px] text-slate-400 font-mono">BR: {item.brNumber}</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'type',
+      header: 'Category',
+      width: '130px',
+      render: (item) => (
+        <span className="text-xs text-slate-600 capitalize">
+          {(item.type || 'Subcontractor').replace(/_/g, ' ')}
+        </span>
+      ),
+    },
+    {
+      key: 'contact',
+      header: 'Contact',
+      width: '180px',
+      render: (item) => (
+        <div className="text-xs text-slate-600">
+          <div>{item.contactPerson || '—'}</div>
+          {item.phone && <div className="text-slate-400 font-mono text-[11px]">{item.phone}</div>}
+        </div>
+      ),
+    },
+  ];
+
+  const handleAssignCorporate = async (selected: BusinessPartner[]) => {
+    const ids = selected.map((s) => s.id);
+    await assignCorporatePartners(ids);
+    setCorporateModalOpen(false);
+  };
 
   const openEdit = (partner: BusinessPartner) => {
     setEditingPartner(partner);
@@ -60,9 +131,14 @@ export default function BusinessPartnersPage() {
     closePanel();
   };
 
-  const activeOnSiteCount = partners.filter((bp) => bp.isActiveOnSite || (bp.siteWorkerCount && bp.siteWorkerCount > 0)).length;
-  const activeCount = partners.filter((bp) => bp.status === 'active').length;
+  const activeOnSiteCount = partners.filter(
+    (bp) =>
+      bp.isActiveOnSite ||
+      (bp.siteWorkerCount && bp.siteWorkerCount > 0) ||
+      (bp.siteEquipmentCount && bp.siteEquipmentCount > 0)
+  ).length;
   const pendingCount = partners.filter((bp) => bp.status === 'pending_approval').length;
+  const inactiveCount = partners.filter((bp) => bp.status === 'inactive').length;
 
   return (
     <div className="px-4 md:px-6 py-5">
@@ -73,18 +149,28 @@ export default function BusinessPartnersPage() {
             <Building2 size={20} className="text-blue-700" />
             Business Partners & Subcontractors
           </h1>
-          <Breadcrumb items={[{ label: 'Master Data' }, { label: 'Business Partners' }]} className="mt-1" />
+          <Breadcrumb items={[{ label: 'Master Data' }, { label: 'Site Business Partners' }]} className="mt-1" />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            id="bp-corporate-select-btn"
+            type="button"
+            onClick={() => setCorporateModalOpen(true)}
+            className="flex items-center gap-1.5 bg-white border border-slate-300 text-slate-700 font-semibold text-xs rounded-lg px-3.5 py-2.5 hover:bg-slate-50 transition-colors cursor-pointer shadow-2xs"
+          >
+            <Building2 size={15} className="text-blue-700" />
+            <span>+ Select from Corporate Master</span>
+          </button>
+
           <button
             id="bp-direct-register-btn"
             type="button"
             onClick={() => setIsDirectRegisterModalOpen(true)}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-blue-700 to-blue-800 text-white font-semibold text-xs rounded-lg px-4 py-2.5 hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
+            className="flex items-center gap-1.5 bg-gradient-to-r from-blue-700 to-blue-800 text-white font-semibold text-xs rounded-lg px-3.5 py-2.5 hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
           >
             <Plus size={15} />
-            <span>+ Direct Site Register Subcontractor</span>
+            <span>+ Direct Site Register (Gate)</span>
           </button>
         </div>
       </div>
@@ -92,8 +178,8 @@ export default function BusinessPartnersPage() {
       {/* Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <div className="bg-white rounded-lg border border-slate-200 p-3 flex flex-col gap-0.5 shadow-2xs">
-          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-            Total Directory
+          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide flex items-center gap-1">
+            <Building2 size={12} /> Total Site Partners
           </span>
           <span className="text-lg font-semibold text-slate-800 tabular-nums">
             {partners.length}
@@ -120,10 +206,10 @@ export default function BusinessPartnersPage() {
 
         <div className="bg-white rounded-lg border border-slate-200 p-3 flex flex-col gap-0.5 shadow-2xs">
           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide flex items-center gap-1">
-            <CheckCircle2 size={12} /> Corporate Active
+            <XCircle size={12} /> Inactive
           </span>
           <span className="text-lg font-semibold text-slate-700 tabular-nums">
-            {activeCount}
+            {inactiveCount}
           </span>
         </div>
       </div>
@@ -134,18 +220,17 @@ export default function BusinessPartnersPage() {
           <SearchInput
             value={search}
             onChange={setSearch}
-            placeholder="Search partners by name, code, contact person..."
+            placeholder="Search site partners by name, code, contact person..."
           />
         </div>
 
         {/* Status Filter Tabs */}
         <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg self-start sm:self-auto border border-slate-200 flex-wrap">
           {[
-            { key: 'all', label: 'All Partners' },
+            { key: 'all', label: `All Site Partners (${partners.length})` },
             { key: 'active_on_site', label: `Active on Site (${activeOnSiteCount})` },
             { key: 'pending_approval', label: `Pending HO (${pendingCount})` },
-            { key: 'active', label: 'Corporate Active' },
-            { key: 'inactive', label: 'Inactive' },
+            { key: 'inactive', label: `Inactive (${inactiveCount})` },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -167,12 +252,42 @@ export default function BusinessPartnersPage() {
       {/* Table / Cards / Empty State */}
       {isLoading && (
         <div className="py-12 text-center text-sm text-slate-400">
-          Loading business partners…
+          Loading site business partners…
         </div>
       )}
 
       {!isLoading && filteredPartners.length === 0 && (
-        <EmptyState message="No business partners found matching your filters." />
+        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center my-4">
+          <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
+            <Building2 size={24} />
+          </div>
+          <h3 className="text-sm font-semibold text-slate-800 mb-1">
+            {search ? 'No Matching Partners' : 'No Business Partners on This Site'}
+          </h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto mb-4">
+            {search
+              ? 'No business partners matched your search query on this site.'
+              : 'Select an approved partner from the Corporate Master Directory or register a walk-in subcontractor at the gate.'}
+          </p>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setCorporateModalOpen(true)}
+              className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              <Building2 size={13} className="text-blue-700" />
+              <span>+ Select from Corporate Master</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsDirectRegisterModalOpen(true)}
+              className="px-3.5 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              <Plus size={13} />
+              <span>+ Direct Site Register Subcontractor</span>
+            </button>
+          </div>
+        </div>
       )}
 
       {!isLoading && filteredPartners.length > 0 && (
@@ -186,7 +301,7 @@ export default function BusinessPartnersPage() {
             onCardClick={openEdit}
           />
           <p className="mt-3 text-xs text-slate-400">
-            Showing {filteredPartners.length} of {partners.length} business partners
+            Showing {filteredPartners.length} of {partners.length} business partners on this site
           </p>
         </>
       )}
@@ -215,6 +330,23 @@ export default function BusinessPartnersPage() {
           addPartnerDirectly(newPartner);
           refresh(true);
         }}
+      />
+
+      {/* Corporate Master Selection Modal */}
+      <MasterImportModal<BusinessPartner>
+        isOpen={corporateModalOpen}
+        onClose={() => setCorporateModalOpen(false)}
+        title="Select Business Partners from Corporate Master"
+        subtitle="Assign approved corporate subcontractors and equipment vendors to this site"
+        entityName="Business Partners"
+        catalog={corporateCatalog}
+        existingCodes={existingCodes}
+        getItemCode={(item) => item.code}
+        getItemName={(item) => item.name}
+        getItemCategory={(item) => item.type || 'Subcontractor'}
+        getItemSourceProject={() => 'Corporate Master'}
+        columns={corporateColumns}
+        onImport={handleAssignCorporate}
       />
     </div>
   );

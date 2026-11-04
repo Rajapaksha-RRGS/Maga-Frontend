@@ -29,8 +29,11 @@ export interface BusinessPartner {
   status: 'active' | 'inactive' | 'pending_approval' | 'rejected' | string;
   createdAt?: string;
   employeeCount?: number;
+  equipmentCount?: number;
   siteWorkerCount?: number;
+  siteEquipmentCount?: number;
   isActiveOnSite?: boolean;
+  type?: string;
 }
 
 export interface BusinessPartnerFormData {
@@ -65,8 +68,10 @@ function mapPartner(raw: any): BusinessPartner {
     status: raw.status || 'active',
     createdAt: raw.createdAt || raw.created_at || undefined,
     employeeCount: raw.employeeCount ?? raw._count?.employees ?? undefined,
+    equipmentCount: raw.equipmentCount ?? raw._count?.equipment ?? undefined,
     siteWorkerCount: raw.siteWorkerCount ?? 0,
-    isActiveOnSite: raw.isActiveOnSite ?? false,
+    siteEquipmentCount: raw.siteEquipmentCount ?? 0,
+    isActiveOnSite: raw.isActiveOnSite ?? (Boolean(raw.siteWorkerCount > 0 || raw.siteEquipmentCount > 0)),
   };
 }
 
@@ -79,9 +84,11 @@ export async function getNextPartnerCode(): Promise<string> {
   return 'BP1001001';
 }
 
-export async function getAll(): Promise<BusinessPartner[]> {
-  return cacheManager.fetchWithCache('business-partners:list', async () => {
-    const res = await apiFetch(`${API_URL}/business-partners`);
+export async function getAll(scope?: 'site' | 'corporate'): Promise<BusinessPartner[]> {
+  const cacheKey = scope === 'corporate' ? 'business-partners:corporate' : 'business-partners:list';
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    const url = scope === 'corporate' ? `${API_URL}/business-partners?scope=corporate` : `${API_URL}/business-partners`;
+    const res = await apiFetch(url);
     if (!res.ok) {
       const err = await res.json().catch(() => null);
       throw new Error(err?.error || `Failed to fetch business partners (${res.status})`);
@@ -161,4 +168,42 @@ export async function toggleStatus(id: string, currentStatus: 'active' | 'inacti
   cacheManager.invalidate('reports');
   return mapPartner(await res.json());
 }
+
+export async function fetchCorporateCatalog(): Promise<BusinessPartner[]> {
+  const res = await apiFetch(`${API_URL}/business-partners/corporate-master`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || `Failed to fetch corporate business partners (${res.status})`);
+  }
+  const data = await res.json();
+  if (Array.isArray(data)) return data.map(mapPartner);
+  return [];
+}
+
+export async function assignToSite(partnerIds: string[] | string): Promise<{ success: boolean; count: number }> {
+  const ids = Array.isArray(partnerIds) ? partnerIds : [partnerIds];
+  const res = await apiFetch(`${API_URL}/business-partners/assign-site`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ partnerIds: ids }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to assign partner to site');
+  }
+  cacheManager.invalidate('business-partners');
+  return res.json();
+}
+
+export async function unassignFromSite(partnerId: string): Promise<void> {
+  const res = await apiFetch(`${API_URL}/business-partners/${encodeURIComponent(partnerId)}/site-assignment`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to remove partner from site');
+  }
+  cacheManager.invalidate('business-partners');
+}
+
 

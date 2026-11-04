@@ -836,10 +836,11 @@ export const supervisorStorage = {
         }
       }
 
+      const activeEmployeeIds = validLaborers.map((l) => l.id);
       const res = await apiFetch(`${API_URL}/time-entries/labor/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ supervisorId, date, entries }),
+        body: JSON.stringify({ supervisorId, date, entries, activeEmployeeIds }),
       });
 
       return res.ok;
@@ -888,10 +889,11 @@ export const supervisorStorage = {
         });
       }
 
+      const activeEmployeeIds = validOps.map((o) => o.id);
       const res = await apiFetch(`${API_URL}/time-entries/operators/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ supervisorId, date, entries }),
+        body: JSON.stringify({ supervisorId, date, entries, activeEmployeeIds }),
       });
 
       return res.ok;
@@ -962,8 +964,8 @@ export const supervisorStorage = {
   ): Promise<{ success: boolean; errors: string[] }> {
     const tasks: Promise<boolean>[] = [];
 
-    if (laborers.length > 0) tasks.push(this.syncLaborersToBackend(supervisorId, date, laborers));
-    if (operators.length > 0) tasks.push(this.syncOperatorsToBackend(supervisorId, date, operators));
+    tasks.push(this.syncLaborersToBackend(supervisorId, date, laborers));
+    tasks.push(this.syncOperatorsToBackend(supervisorId, date, operators));
     if (equipment.length > 0) tasks.push(this.syncEquipmentToBackend(supervisorId, date, equipment));
 
     const results = await Promise.all(tasks);

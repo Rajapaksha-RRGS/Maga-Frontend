@@ -636,7 +636,7 @@ export function OperatorEntryView({
     }
 
     // Real-time backend unassign
-    assignmentService.unassignOperator(operatorId).catch((err) => {
+    assignmentService.unassignOperator(operatorId, selectedDate, supervisorId || user?.id).catch((err: any) => {
       console.warn('[OperatorEntryView] Background unassign error:', err);
     });
   };
@@ -655,7 +655,7 @@ export function OperatorEntryView({
 
       // Real-time backend unassign for each operator
       idsToRemove.forEach((id) => {
-        assignmentService.unassignOperator(id).catch((err) => {
+        assignmentService.unassignOperator(id, selectedDate, supervisorId || user?.id).catch((err: any) => {
           console.warn('[OperatorEntryView] Background batch unassign error:', err);
         });
       });

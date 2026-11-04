@@ -2009,6 +2009,22 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
 
     const dailySheet = await getOrCreateDailySheet(projectId, effectiveSupId, targetDate);
 
+    if (Array.isArray(activeEmployeeIds) && dailySheet) {
+      await prisma.mF_OP_TimeEntry.deleteMany({
+        where: {
+          dailySheetId: dailySheet.id,
+          status: { not: 'approved' },
+          employeeId: { notIn: activeEmployeeIds },
+        },
+      });
+      await prisma.mF_OP_DailyEquipmentAssignment.deleteMany({
+        where: {
+          dailySheetId: dailySheet.id,
+          operatorId: { not: null, notIn: activeEmployeeIds },
+        },
+      });
+    }
+
     for (const item of entries) {
       const opId = item.operatorId || item.id;
       if (!opId) continue;
