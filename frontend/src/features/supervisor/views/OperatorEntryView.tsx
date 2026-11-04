@@ -131,7 +131,7 @@ export function OperatorEntryView({
   }, [sitePoolEquipment, equipment]);
 
   useEffect(() => {
-    supervisorStorage.isEquipmentPoolModeEnabled(projectId)
+    supervisorStorage.isOperatorPoolModeEnabled(projectId)
       .then(setIsPoolMode)
       .catch(() => setIsPoolMode(false));
   }, [projectId]);
@@ -151,11 +151,7 @@ export function OperatorEntryView({
   }, [selectedDate, effectiveSupervisorId]);
 
   const handleAddOperatorFromPool = (newOp: OperatorEntry) => {
-    const exists = operators.some((o) => o.id === newOp.id);
-    if (!exists) {
-      const updated = [...operators, newOp];
-      onSaveOperators(updated);
-    }
+    handleAddMultipleOperatorsFromPool([newOp]);
   };
 
   const handleAddMultipleOperatorsFromPool = async (newOps: OperatorEntry[]) => {

@@ -2054,6 +2054,36 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           operatorId: { not: null, notIn: activeEmployeeIds },
         },
       });
+
+      // Synchronize MF_OP_DailyAssignment for operators on sync
+      await prisma.mF_OP_DailyAssignment.deleteMany({
+        where: {
+          dailySheetId: dailySheet.id,
+          employeeId: { notIn: activeEmployeeIds },
+          employee: {
+            OR: [
+              { isOperator: true },
+              { corporateEmployee: { isOperator: true } },
+            ],
+          },
+        },
+      });
+
+      for (const opId of activeEmployeeIds) {
+        await prisma.mF_OP_DailyAssignment.upsert({
+          where: {
+            dailySheetId_employeeId: {
+              dailySheetId: dailySheet.id,
+              employeeId: opId,
+            },
+          },
+          update: {},
+          create: {
+            dailySheetId: dailySheet.id,
+            employeeId: opId,
+          },
+        });
+      }
     }
 
     for (const item of entries) {
@@ -2503,6 +2533,34 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
           employeeId: { notIn: activeEmployeeIds },
         },
       });
+
+      // Synchronize MF_OP_DailyAssignment for laborers on sync
+      await prisma.mF_OP_DailyAssignment.deleteMany({
+        where: {
+          dailySheetId: dailySheet.id,
+          employeeId: { notIn: activeEmployeeIds },
+          employee: {
+            isOperator: false,
+            corporateEmployee: { isOperator: false },
+          },
+        },
+      });
+
+      for (const empId of activeEmployeeIds) {
+        await prisma.mF_OP_DailyAssignment.upsert({
+          where: {
+            dailySheetId_employeeId: {
+              dailySheetId: dailySheet.id,
+              employeeId: empId,
+            },
+          },
+          update: {},
+          create: {
+            dailySheetId: dailySheet.id,
+            employeeId: empId,
+          },
+        });
+      }
     }
     const activityResolutionCache = new Map<string, string>();
     const equipmentValidationCache = new Map<string, string | null>();
