@@ -393,7 +393,7 @@ export const getAssignedEmployees = async (req: Request, res: Response): Promise
         dailySheet: {
           select: {
             supervisorId: true,
-            supervisor: { select: { id: true, fullName: true, username: true } },
+            supervisor: { select: { id: true, fullName: true, username: true, role: true } },
           },
         },
       },
@@ -1520,6 +1520,19 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         equipment: equipmentDetails,
       };
 
+      // Skip completely empty draft sheets (e.g. admin test view or supervisor with 0 gang/logs)
+      const hasAnyActivity =
+        sheet.assignments.length > 0 ||
+        sheet.timeEntries.length > 0 ||
+        sheet.equipmentAssignments.length > 0 ||
+        workerDetails.length > 0 ||
+        operatorDetails.length > 0 ||
+        allEquipmentDetails.length > 0;
+
+      if (!hasAnyActivity && sheet.status === 'draft') {
+        continue;
+      }
+
       if (sheet.status === 'approved') {
         approved.push(groupData);
       } else if (sheet.status === 'submitted') {
@@ -1542,7 +1555,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
       notSubmitted,
       approved,
       stats: {
-        totalSupervisors: dailySheets.length,
+        totalSupervisors: allGroups.length,
         submittedCount: submitted.length,
         notSubmittedCount: notSubmitted.length,
         approvedCount: approved.length,
