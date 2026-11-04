@@ -1191,7 +1191,8 @@ export function OperatorEntryView({
                       <span className="font-bold text-xs text-slate-900 dark:text-slate-100 font-mono">
                         {operator.employeeNumber}
                       </span>
-                      <span className="text-xs text-slate-700 dark:text-slate-300 truncate font-semibold">
+                      <span className="text-slate-400 dark:text-slate-600 font-bold">·</span>
+                      <span className="text-xs text-slate-800 dark:text-slate-200 truncate font-bold">
                         {operator.callingName}
                       </span>
                       {isDone && (
@@ -1201,10 +1202,6 @@ export function OperatorEntryView({
                         </span>
                       )}
                     </div>
-
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                      {operator.designation} {operator.licenseNo ? `· Lic: ${operator.licenseNo}` : ''}
-                    </p>
 
                     {operator.claimedBySupervisor && !operator.claimedByMe && (
                       <div className="mt-1 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[10px] text-amber-900 dark:text-amber-200 font-semibold">
