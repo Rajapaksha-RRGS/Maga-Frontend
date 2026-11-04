@@ -88,7 +88,7 @@ export function LaborEntryView({
     }
   };
   // Mode: In Time or Out Time (matching hand-drawn sketch)
-  const [tabMode, setTabMode] = useState<'in' | 'out'>('in');
+  const [statusFilterChip, setStatusFilterChip] = useState<'all' | 'in_site' | 'done' | 'pending_in' | 'absent'>('all');
 
   // Internal search and filters
   const [localSearch, setLocalSearch] = useState('');
@@ -212,6 +212,20 @@ export function LaborEntryView({
         return !!(l.inTime && l.outTime && l.activities.length > 0);
       }
 
+      // Smart Status Filter Chips
+      if (statusFilterChip === 'in_site') {
+        return !l.isAbsent && !!l.inTime && !l.outTime;
+      }
+      if (statusFilterChip === 'done') {
+        return !l.isAbsent && !!l.inTime && !!l.outTime;
+      }
+      if (statusFilterChip === 'pending_in') {
+        return !l.isAbsent && !l.inTime;
+      }
+      if (statusFilterChip === 'absent') {
+        return !!l.isAbsent;
+      }
+
       return true;
     }).sort((a, b) => {
       const nameCompare = (a.callingName || '').localeCompare(b.callingName || '', undefined, { numeric: true, sensitivity: 'base' });
@@ -223,8 +237,12 @@ export function LaborEntryView({
   }, [laborers, effectiveSearch, selectedTradeFilter, selectedShiftFilter, batchOutTime, effectiveStatus]);
 
   // Stats
-  const inMarkedCount = laborers.filter((l) => !!l.inTime).length;
-  const outMarkedCount = laborers.filter((l) => !!l.outTime).length;
+  const inMarkedCount = laborers.filter((l) => !l.isAbsent && !!l.inTime).length;
+  const outMarkedCount = laborers.filter((l) => !l.isAbsent && !!l.outTime).length;
+  const completedCount = laborers.filter((l) => !l.isAbsent && !!l.inTime && !!l.outTime).length;
+  const inSiteCount = laborers.filter((l) => !l.isAbsent && !!l.inTime && !l.outTime).length;
+  const pendingInCount = laborers.filter((l) => !l.isAbsent && !l.inTime).length;
+  const absentCount = laborers.filter((l) => !!l.isAbsent).length;
 
   // Only the selected worker IDs that are currently visible/filtered
   const selectedFilteredWorkerIds = useMemo(() => {
@@ -283,6 +301,46 @@ export function LaborEntryView({
     onSaveLaborers(updated);
     // Automatically clear worker selection after applying
     setSelectedWorkerIds([]);
+  };
+
+  // ── APPLY BATCH FULL SHIFT (IN + OUT + ACTIVITIES) ──
+  const handleApplyBatchFullShift = () => {
+    const targetIds = selectedFilteredWorkerIds;
+    if (targetIds.length === 0) return;
+
+    const { shift, ot } = computeHours(batchInTime, batchOutTime);
+
+    const updated = laborers.map((l) => {
+      if (!targetIds.includes(l.id)) return l;
+
+      const newSplits: ActivitySplit[] = batchActivities
+        .filter((ba) => ba.activityCode && ba.activityCode.trim() !== '')
+        .map((ba) => ({
+          id: `split-${Date.now()}-${l.id}-${ba.id}`,
+          activityCode: ba.activityCode,
+          hours: ba.hours,
+        }));
+
+      return {
+        ...l,
+        inTime: batchInTime,
+        outTime: batchOutTime,
+        shiftHours: shift,
+        otHours: ot,
+        activities: newSplits,
+        isAbsent: false,
+        status: 'done' as const,
+        lastSavedAt: `Full: ${batchInTime}-${batchOutTime}`,
+      };
+    });
+
+    onSaveLaborers(updated);
+    setSelectedWorkerIds([]);
+  };
+
+  const handleSetPreset = (inVal: string, outVal: string) => {
+    setBatchInTime(inVal);
+    handleBatchOutTimeChange(outVal);
   };
 
   // ── DYNAMIC OUT-TIME CHANGE HANDLER ──
@@ -824,47 +882,107 @@ export function LaborEntryView({
         </div>
       )}
 
-      {/* ── IN / OUT Dual Tabs (Matches Hand-Drawn Sketch) ───────────────────── */}
-      <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-200/70 dark:bg-slate-900/90 rounded-2xl border border-slate-300/80 dark:border-slate-800 shadow-inner">
-        <button
-          type="button"
-          onClick={() => setTabMode('in')}
-          className={[
-            'py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all',
-            tabMode === 'in'
-              ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-500/20'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          ].join(' ')}
-        >
-          <LogIn size={15} />
-          <span>IN TIME</span>
-          <span className={[
-            'px-1.5 py-0.2 rounded-full text-[10px] font-mono',
-            tabMode === 'in' ? 'bg-emerald-700/80 text-emerald-100' : 'bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-          ].join(' ')}>
-            {inMarkedCount}/{laborers.length}
-          </span>
-        </button>
+      {/* ── 1. Shift Metrics & Status Filter Chips (Unified View) ────────────────── */}
+      <div className="p-2.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200/90 dark:border-slate-800 shadow-2xs space-y-2.5">
+        {/* Quick Shift Counter Badges */}
+        <div className="flex items-center justify-between text-xs px-1 flex-wrap gap-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+              Assigned: <strong className="font-mono text-slate-900 dark:text-white">{laborers.length}</strong>
+            </span>
+            <span className="text-slate-300 dark:text-slate-700">•</span>
+            <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+              In: <strong className="font-mono">{inMarkedCount}</strong>
+            </span>
+            <span className="text-slate-300 dark:text-slate-700">•</span>
+            <span className="text-[11px] font-bold text-blue-700 dark:text-blue-400">
+              Out: <strong className="font-mono">{outMarkedCount}</strong>
+            </span>
+          </div>
 
-        <button
-          type="button"
-          onClick={() => setTabMode('out')}
-          className={[
-            'py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all',
-            tabMode === 'out'
-              ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-500/20'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          ].join(' ')}
-        >
-          <LogOut size={15} />
-          <span>OUT TIME</span>
-          <span className={[
-            'px-1.5 py-0.2 rounded-full text-[10px] font-mono',
-            tabMode === 'out' ? 'bg-blue-700/80 text-blue-100' : 'bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-          ].join(' ')}>
-            {outMarkedCount}/{laborers.length}
-          </span>
-        </button>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+              <CheckCircle2 size={11} />
+              <span>{completedCount} Done</span>
+            </span>
+            {absentCount > 0 && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                <UserX size={11} />
+                <span>{absentCount} Absent</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Status Filter Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+          <button
+            type="button"
+            onClick={() => setStatusFilterChip('all')}
+            className={[
+              'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
+              statusFilterChip === 'all'
+                ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-xs font-bold'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
+            ].join(' ')}
+          >
+            All ({laborers.length})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilterChip('in_site')}
+            className={[
+              'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
+              statusFilterChip === 'in_site'
+                ? 'bg-emerald-600 text-white shadow-xs font-bold'
+                : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800/60'
+            ].join(' ')}
+          >
+            🟢 In-Site ({inSiteCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilterChip('done')}
+            className={[
+              'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
+              statusFilterChip === 'done'
+                ? 'bg-blue-600 text-white shadow-xs font-bold'
+                : 'bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 hover:bg-blue-100 border border-blue-200 dark:border-blue-800/60'
+            ].join(' ')}
+          >
+            ⭐ Done ({completedCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilterChip('pending_in')}
+            className={[
+              'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
+              statusFilterChip === 'pending_in'
+                ? 'bg-amber-600 text-white shadow-xs font-bold'
+                : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 border border-amber-200 dark:border-amber-800/60'
+            ].join(' ')}
+          >
+            🕒 Pending In ({pendingInCount})
+          </button>
+
+          {absentCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setStatusFilterChip('absent')}
+              className={[
+                'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
+                statusFilterChip === 'absent'
+                  ? 'bg-rose-600 text-white shadow-xs font-bold'
+                  : 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 hover:bg-rose-100 border border-rose-200 dark:border-rose-800/60'
+              ].join(' ')}
+            >
+              Absent ({absentCount})
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── 3. Search Bar & Add from Pool ───────────────────────────────────────── */}
@@ -1007,247 +1125,247 @@ export function LaborEntryView({
         </div>
       </div>
 
-      {/* ── 5. Action Bar (Dynamic for IN mode or OUT mode) ────────────────────── */}
-      {tabMode === 'in' ? (
-        /* ── IN MODE ACTION BAR ── */
-        <div className="p-3.5 rounded-2xl bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 shadow-2xs space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center flex-shrink-0">
-                <LogIn size={15} />
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-emerald-950 dark:text-emerald-200">
-                  Morning In-Time 
-                </h3>
-              </div>
+      {/* ── 5. Unified Batch Action Bar (IN, OUT & Activities Combined) ────────── */}
+      <div className="p-3.5 rounded-2xl bg-slate-900/5 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3">
+        {/* Header & Quick Shift Presets */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0 shadow-2xs">
+              <Clock size={15} />
             </div>
-
-            {/* Quick in-time input */}
-            <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 shadow-2xs">
-              <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-300 uppercase">In:</span>
-              <input
-                type="time"
-                value={batchInTime}
-                onChange={(e) => setBatchInTime(e.target.value)}
-                className="text-xs font-bold text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none"
-              />
+            <div>
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                Shift & Task Batch Apply
+              </h3>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                Set In/Out times & assign tasks to selected workers in 1-tap.
+              </p>
             </div>
           </div>
 
-          {/* Selection Controls & Action Button */}
-          <div className="flex items-center justify-between gap-2 pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60">
+          {/* Quick 1-Tap Presets */}
+          <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={handleToggleSelectAll}
-              className="flex items-center gap-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300 hover:underline cursor-pointer"
+              onClick={() => handleSetPreset('07:00', '17:00')}
+              className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 transition-colors cursor-pointer"
+              title="Set Batch In to 07:00 and Out to 17:00 (Standard 9.0h shift)"
             >
-              {isAllFilteredSelected ? (
-                <CheckSquare size={16} className="text-emerald-600" />
-              ) : (
-                <Square size={16} className="text-emerald-600" />
-              )}
-              <span>{isAllFilteredSelected ? 'Deselect All' : `Select All (${filteredLaborers.length})`}</span>
+              Std Day (07-17)
             </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('07:00', '12:00')}
+              className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+              title="Set Batch In to 07:00 and Out to 12:00 (Half Day 5.0h)"
+            >
+              Half Day (07-12)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('07:00', '19:00')}
+              className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+              title="Set Batch In to 07:00 and Out to 19:00 (OT Shift 11.0h)"
+            >
+              OT (07-19)
+            </button>
+          </div>
+        </div>
 
-            <div className="flex items-center gap-2">
-              {selectedFilteredCount > 0 && !isDayLocked && (
+        {/* Dual In & Out Pickers Side-by-Side */}
+        <div className="grid grid-cols-2 gap-2.5">
+          <div className="flex items-center justify-between gap-1.5 bg-emerald-50/70 dark:bg-emerald-950/30 px-2.5 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800/60 shadow-2xs">
+            <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-300 uppercase flex items-center gap-1">
+              <LogIn size={12} /> In:
+            </span>
+            <input
+              type="time"
+              value={batchInTime}
+              onChange={(e) => setBatchInTime(e.target.value)}
+              className="text-xs font-bold text-emerald-950 dark:text-emerald-100 bg-transparent focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-1.5 bg-blue-50/70 dark:bg-blue-950/30 px-2.5 py-1.5 rounded-xl border border-blue-200 dark:border-blue-800/60 shadow-2xs">
+            <span className="text-[10px] font-bold text-blue-800 dark:text-blue-300 uppercase flex items-center gap-1">
+              <LogOut size={12} /> Out:
+            </span>
+            <input
+              type="time"
+              value={batchOutTime}
+              onChange={(e) => handleBatchOutTimeChange(e.target.value)}
+              className="text-xs font-bold text-blue-950 dark:text-blue-100 bg-transparent focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Master Activity Code Splits for Batch */}
+        <div className="space-y-2 bg-white dark:bg-slate-800/90 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1">
+              <Briefcase size={12} className="text-blue-600" />
+              Activity Codes Split 
+              <span className="text-[10px] text-slate-500 font-normal ml-1">
+                (Target: <strong className="text-blue-700 dark:text-blue-300 font-mono">{formatHhmm(targetShiftHours)}h</strong>)
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={handleAddBatchActivityRow}
+              className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
+            >
+              <Plus size={13} /> Add Activity
+            </button>
+          </div>
+
+          {batchActivities.map((row) => (
+            <div key={row.id} className="flex items-center gap-1.5 w-full">
+              <SearchableActivitySelect
+                value={row.activityCode}
+                onChange={(code) => handleUpdateBatchActivityRow(row.id, 'activityCode', code)}
+                options={activityOptions}
+                placeholder="Search activity code..."
+              />
+
+              <div className="w-16 flex-shrink-0">
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  max="24"
+                  value={row.hours}
+                  onChange={(e) => handleUpdateBatchActivityRow(row.id, 'hours', parseFloat(e.target.value) || 0)}
+                  placeholder="Hrs"
+                  className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-center text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleRemoveBatchActivityRow(row.id)}
+                title={batchActivities.length > 1 ? "Remove activity row" : "Clear activity code"}
+                className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+
+          {/* Live Hours Balance Indicator */}
+          {(() => {
+            const currentSum = sumHhmm(batchActivities.map((b) => b.hours));
+            const diffMinutes = hhmmToMinutes(currentSum) - hhmmToMinutes(targetShiftHours);
+            const isBalanced = Math.abs(diffMinutes) < 1;
+            const diffHhmm = minutesToHhmm(Math.abs(diffMinutes));
+
+            return (
+              <div className="flex items-center justify-between text-[11px] px-1 pt-1.5 border-t border-slate-200/60 dark:border-slate-800">
+                <span className="text-slate-600 dark:text-slate-400">
+                  Allocated: <strong className={isBalanced ? 'text-emerald-700 dark:text-emerald-300 font-bold' : 'text-amber-700 dark:text-amber-300 font-bold'}>{formatHhmm(currentSum)}h</strong> / {formatHhmm(targetShiftHours)}h Target
+                </span>
+                {isBalanced ? (
+                  <span className="text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1 text-[10px]">
+                    <CheckCircle2 size={12} /> Balanced
+                  </span>
+                ) : diffMinutes < 0 ? (
+                  <span className="text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 text-[10px]">
+                    <PauseCircle size={12} className="text-amber-600" /> Auto-Idle (ZIDLE): {formatHhmm(diffHhmm)}h
+                  </span>
+                ) : (
+                  <span className="text-red-600 dark:text-red-400 font-semibold flex items-center gap-1 text-[10px]">
+                    <AlertTriangle size={12} /> +{formatHhmm(diffHhmm)}h Excess
+                  </span>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Selection Controls & Unified Actions */}
+        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200 dark:border-slate-800 flex-wrap">
+          <button
+            type="button"
+            onClick={handleToggleSelectAll}
+            className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+          >
+            {isAllFilteredSelected ? (
+              <CheckSquare size={16} className="text-blue-600" />
+            ) : (
+              <Square size={16} className="text-slate-400" />
+            )}
+            <span>{isAllFilteredSelected ? 'Deselect All' : `Select All (${filteredLaborers.length})`}</span>
+          </button>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {selectedFilteredCount > 0 && !isDayLocked && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleBatchResetToDraft}
+                  className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+                  title="Revert selected workers to Draft"
+                >
+                  <RotateCcw size={12} />
+                  <span>Draft</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleBatchClearActivities}
+                  className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
+                  title="Clear all tasks for selected workers"
+                >
+                  <Trash2 size={12} />
+                  <span>Clear Tasks</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={handleBatchRemoveLaborers}
-                  className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
+                  className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
                   title={`Remove ${selectedFilteredCount} selected worker(s) from today`}
                 >
-                  <Trash2 size={13} />
+                  <Trash2 size={12} />
                   <span>Remove ({selectedFilteredCount})</span>
                 </button>
-              )}
+              </>
+            )}
 
-              <button
-                type="button"
-                onClick={handleApplyBatchIn}
-                disabled={isDayLocked || selectedFilteredCount === 0}
-                className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
-              >
-                <Check size={14} />
-                <span>Apply In-Time to {selectedFilteredCount} Workers</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* ── OUT & ACTIVITIES MODE ACTION BAR ── */
-        <div className="p-3.5 rounded-2xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 shadow-2xs space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0">
-                <LogOut size={15} />
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-blue-950 dark:text-blue-200">
-                  Evening Out-Time & Activity Allocation
-                </h3>
-              </div>
-            </div>
-
-            {/* Out Time Picker */}
-            <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-blue-300 dark:border-blue-700 shadow-2xs">
-              <span className="text-[10px] font-bold text-blue-800 dark:text-blue-300 uppercase">Out:</span>
-              <input
-                type="time"
-                value={batchOutTime}
-                onChange={(e) => handleBatchOutTimeChange(e.target.value)}
-                className="text-xs font-bold text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none"
-              />
-            </div>
-          </div>
-
-          {/* Master Activity Code Splits for Batch */}
-          <div className="space-y-2 bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-xl border border-blue-200/80 dark:border-blue-800/60">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1">
-                <Briefcase size={12} className="text-blue-600" />
-                Activity Codes Split 
-                <span className="text-[10px] text-slate-500 font-normal ml-1">
-                  (Target: <strong className="text-blue-700 dark:text-blue-300 font-mono">{formatHhmm(targetShiftHours)}h</strong>)
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={handleAddBatchActivityRow}
-                className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
-              >
-                <Plus size={13} /> Add Activity
-              </button>
-            </div>
-
-            {batchActivities.map((row) => (
-              <div key={row.id} className="flex items-center gap-1.5 w-full">
-                <SearchableActivitySelect
-                  value={row.activityCode}
-                  onChange={(code) => handleUpdateBatchActivityRow(row.id, 'activityCode', code)}
-                  options={activityOptions}
-                  placeholder="Search activity code..."
-                />
-
-                <div className="w-16 flex-shrink-0">
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="0"
-                    max="24"
-                    value={row.hours}
-                    onChange={(e) => handleUpdateBatchActivityRow(row.id, 'hours', parseFloat(e.target.value) || 0)}
-                    placeholder="Hrs"
-                    className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-center text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleRemoveBatchActivityRow(row.id)}
-                  title={batchActivities.length > 1 ? "Remove activity row" : "Clear activity code"}
-                  className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-
-            {/* Live Hours Balance Indicator */}
-            {(() => {
-              const currentSum = sumHhmm(batchActivities.map((b) => b.hours));
-              const diffMinutes = hhmmToMinutes(currentSum) - hhmmToMinutes(targetShiftHours);
-              const isBalanced = Math.abs(diffMinutes) < 1;
-              const diffHhmm = minutesToHhmm(Math.abs(diffMinutes));
-
-              return (
-                <div className="flex items-center justify-between text-[11px] px-1 pt-1.5 border-t border-slate-200/60 dark:border-slate-800">
-                  <span className="text-slate-600 dark:text-slate-400">
-                    Allocated: <strong className={isBalanced ? 'text-emerald-700 dark:text-emerald-300 font-bold' : 'text-amber-700 dark:text-amber-300 font-bold'}>{formatHhmm(currentSum)}h</strong> / {formatHhmm(targetShiftHours)}h Target
-                  </span>
-                  {isBalanced ? (
-                    <span className="text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1 text-[10px]">
-                      <CheckCircle2 size={12} /> Balanced
-                    </span>
-                  ) : diffMinutes < 0 ? (
-                    <span className="text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 text-[10px]">
-                      <PauseCircle size={12} className="text-amber-600" /> Auto-Idle (ZIDLE): {formatHhmm(diffHhmm)}h
-                    </span>
-                  ) : (
-                    <span className="text-red-600 dark:text-red-400 font-semibold flex items-center gap-1 text-[10px]">
-                      <AlertTriangle size={12} /> +{formatHhmm(diffHhmm)}h Excess
-                    </span>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-
-          {/* Selection Controls & Apply Button */}
-          <div className="flex items-center justify-between gap-2 pt-1 border-t border-blue-200/60 dark:border-blue-800/60 flex-wrap">
             <button
               type="button"
-              onClick={handleToggleSelectAll}
-              className="flex items-center gap-1.5 text-xs font-semibold text-blue-800 dark:text-blue-300 hover:underline cursor-pointer"
+              onClick={handleApplyBatchIn}
+              disabled={isDayLocked || selectedFilteredCount === 0}
+              className="flex items-center gap-1 py-1.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-2xs active:scale-[0.98] cursor-pointer"
+              title={`Set In-Time (${batchInTime}) only`}
             >
-              {isAllFilteredSelected ? (
-                <CheckSquare size={16} className="text-blue-600" />
-              ) : (
-                <Square size={16} className="text-blue-600" />
-              )}
-              <span>{isAllFilteredSelected ? 'Deselect All' : `Select All (${filteredLaborers.length})`}</span>
+              <LogIn size={12} />
+              <span>In Only</span>
             </button>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleBatchResetToDraft}
-                disabled={isDayLocked || selectedFilteredCount === 0}
-                className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-40"
-                title="Mark selected workers as Draft (removes green Done border)"
-              >
-                <Clock size={13} />
-                <span>Mark Draft</span>
-              </button>
+            <button
+              type="button"
+              onClick={handleApplyBatchOut}
+              disabled={isDayLocked || selectedFilteredCount === 0}
+              className="flex items-center gap-1 py-1.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-2xs active:scale-[0.98] cursor-pointer"
+              title={`Set Out-Time (${batchOutTime}) & Activities only`}
+            >
+              <LogOut size={12} />
+              <span>Out & Tasks</span>
+            </button>
 
-              <button
-                type="button"
-                onClick={handleBatchClearActivities}
-                disabled={isDayLocked || selectedFilteredCount === 0}
-                className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-40"
-                title="Clear all activities for selected workers"
-              >
-                <Trash2 size={13} />
-                <span>Clear Activities</span>
-              </button>
-
-              {!isDayLocked && (
-                <button
-                  type="button"
-                  onClick={handleBatchRemoveLaborers}
-                  disabled={selectedFilteredCount === 0}
-                  className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-red-300 dark:border-red-800 bg-red-100/80 dark:bg-red-950/60 hover:bg-red-200 text-red-700 dark:text-red-300 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-40"
-                  title="Remove selected workers from today's shift"
-                >
-                  <Trash2 size={13} />
-                  <span>Remove ({selectedFilteredCount})</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={handleApplyBatchOut}
-                disabled={isDayLocked || selectedFilteredCount === 0}
-                className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
-              >
-                <Check size={14} />
-                <span>Apply to {selectedFilteredCount} Workers</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleApplyBatchFullShift}
+              disabled={isDayLocked || selectedFilteredCount === 0}
+              className="flex items-center gap-1.5 py-1.5 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold text-xs transition-colors shadow-xs active:scale-[0.98] cursor-pointer"
+              title={`Apply both ${batchInTime} - ${batchOutTime} and Tasks to ${selectedFilteredCount} workers`}
+            >
+              <Check size={13} className="stroke-[3]" />
+              <span>Apply Both ({selectedFilteredCount})</span>
+            </button>
           </div>
         </div>
-      )}
+      </div>
 
       {/* ── 6. Worker Cards List (Matches Hand-Drawn Sketch) ───────────────────── */}
       <div className="space-y-2">
@@ -1351,147 +1469,118 @@ export function LaborEntryView({
                   </div>
 
                   {/* Times & Direct Controls */}
-                  <div className="flex items-center gap-1.5 flex-shrink-0 text-right">
-                    {tabMode === 'in' ? (
-                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        {worker.isAbsent ? (
-                          <div className="flex items-center gap-1">
-                            <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-800 px-2 py-0.5 rounded-lg flex items-center gap-1">
-                              <UserX size={11} className="text-rose-600" />
-                              Absent
-                            </span>
-                            {!isDayLocked && (
-                              <button
-                                type="button"
-                                onClick={() => handleToggleAbsent(worker.id)}
-                                className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                                title="Unmark Absent (Make Pending)"
-                              >
-                                <X size={13} />
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <>
-                            <div className="relative">
-                              <input
-                                type="time"
-                                disabled={isDayLocked}
-                                value={worker.inTime || ''}
-                                onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
-                                className={[
-                                  'w-[80px] text-xs font-bold rounded-lg px-1.5 py-1 border transition-all text-center focus:outline-none focus:ring-2 cursor-pointer',
-                                  worker.inTime
-                                    ? 'text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 focus:ring-emerald-500'
-                                    : 'text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/80 border-dashed border-slate-300 dark:border-slate-700 hover:border-emerald-400 focus:ring-blue-500'
-                                ].join(' ')}
-                                title={worker.inTime ? 'Edit In-Time' : 'Choose custom In-Time'}
-                              />
-                            </div>
-
-                            {!worker.inTime ? (
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  disabled={isDayLocked}
-                                  onClick={() => handleIndividualTimeChange(worker.id, batchInTime, worker.outTime)}
-                                  className="flex items-center gap-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:opacity-40 px-2 py-1 rounded-lg shadow-2xs transition-all cursor-pointer"
-                                  title={`Quick In at ${batchInTime}`}
-                                >
-                                  <LogIn size={11} />
-                                  <span>In</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isDayLocked}
-                                  onClick={() => handleToggleAbsent(worker.id)}
-                                  className="flex items-center gap-0.5 text-[10px] font-semibold text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 hover:border-rose-300 px-1.5 py-1 rounded-lg transition-colors cursor-pointer"
-                                  title="Mark as Absent"
-                                >
-                                  <UserX size={11} />
-                                  <span>Abs</span>
-                                </button>
-                              </div>
-                            ) : (
-                              !isDayLocked && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleIndividualTimeChange(worker.id, '', worker.outTime)}
-                                  className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-md transition-colors cursor-pointer"
-                                  title="Clear In-Time"
-                                >
-                                  <X size={13} />
-                                </button>
-                              )
-                            )}
-                          </>
+                  <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {worker.isAbsent ? (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-800 px-2.5 py-1 rounded-xl flex items-center gap-1 shadow-2xs">
+                          <UserX size={12} className="text-rose-600" />
+                          Absent
+                        </span>
+                        {!isDayLocked && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAbsent(worker.id)}
+                            className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                            title="Unmark Absent (Make Pending)"
+                          >
+                            <X size={14} />
+                          </button>
                         )}
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <div>
-                          {worker.isAbsent ? (
-                            <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold bg-rose-50 dark:bg-rose-950/60 px-2 py-0.5 rounded border border-rose-200 dark:border-rose-800 flex items-center gap-0.5">
-                              <UserX size={10} />
-                              Absent
-                            </span>
-                          ) : isDone ? (
-                            <div className="flex flex-col items-end">
-                              <button
-                                type="button"
-                                disabled={isDayLocked}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleToggleIndividualDone(worker.id);
-                                }}
-                                className="inline-flex items-center gap-1.5 text-xs font-extrabold text-emerald-800 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-900/80 hover:bg-emerald-200 dark:hover:bg-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-400 dark:border-emerald-600 shadow-2xs transition-all active:scale-95 cursor-pointer"
-                                title="Worker marked as Done! Click to revert back to Draft"
-                              >
-                                <CheckCircle2 size={13} className="text-emerald-600 dark:text-emerald-400" />
-                                <span>Done</span>
-                              </button>
-                              <div className="text-[10px] mt-0.5 text-emerald-700 dark:text-emerald-400 font-medium font-mono">
-                                {worker.inTime} – {worker.outTime || batchOutTime || '17:00'}
-                              </div>
-                            </div>
-                          ) : worker.inTime ? (
-                            <div>
-                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-700/80 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-600">
-                                In: {worker.inTime}
-                              </span>
-                              <div className="text-[10px] mt-0.5 text-slate-400">
-                                {worker.outTime ? (
-                                  <span className="font-medium text-slate-700 dark:text-slate-300">Out: {worker.outTime}</span>
-                                ) : (
-                                  <span>Pending Out</span>
-                                )}
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
-                                Pending In
-                              </span>
-                              <div className="text-[10px] mt-0.5 text-slate-400">
-                                <span>Pending Out</span>
-                              </div>
-                            </div>
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                        {/* IN TIME INPUT */}
+                        <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-850 px-1.5 py-0.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                          <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 uppercase">IN:</span>
+                          <input
+                            type="time"
+                            disabled={isDayLocked}
+                            value={worker.inTime || ''}
+                            onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
+                            className={[
+                              'w-[74px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
+                              worker.inTime
+                                ? 'text-emerald-800 dark:text-emerald-200 font-mono'
+                                : 'text-slate-400 dark:text-slate-500'
+                            ].join(' ')}
+                            title={worker.inTime ? 'In-Time (click to edit)' : 'Click to choose In-Time'}
+                          />
+                          {!worker.inTime && !isDayLocked && (
+                            <button
+                              type="button"
+                              onClick={() => handleIndividualTimeChange(worker.id, batchInTime, worker.outTime)}
+                              className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
+                              title={`Quick set In to ${batchInTime}`}
+                            >
+                              In
+                            </button>
                           )}
                         </div>
 
-                        {/* Quick Done button in header if not already done and not absent */}
-                        {!isDayLocked && !worker.isAbsent && !isDone && (
+                        {/* OUT TIME INPUT */}
+                        <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-850 px-1.5 py-0.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                          <span className="text-[9px] font-bold text-blue-700 dark:text-blue-400 uppercase">OUT:</span>
+                          <input
+                            type="time"
+                            disabled={isDayLocked}
+                            value={worker.outTime || ''}
+                            onChange={(e) => handleIndividualTimeChange(worker.id, worker.inTime, e.target.value)}
+                            className={[
+                              'w-[74px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
+                              worker.outTime
+                                ? 'text-blue-800 dark:text-blue-200 font-mono'
+                                : 'text-slate-400 dark:text-slate-500'
+                            ].join(' ')}
+                            title={worker.outTime ? 'Out-Time (click to edit)' : 'Click to choose Out-Time'}
+                          />
+                          {!worker.outTime && !isDayLocked && (
+                            <button
+                              type="button"
+                              onClick={() => handleIndividualTimeChange(worker.id, worker.inTime || batchInTime, batchOutTime)}
+                              className="text-[9px] font-bold px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
+                              title={`Quick set Out to ${batchOutTime}`}
+                            >
+                              Out
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Net Shift & OT Hours Badge */}
+                        {worker.inTime && worker.outTime && (
+                          <span className="text-[11px] font-bold font-mono px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shrink-0" title={`Computed shift: ${worker.shiftHours}h (OT: ${worker.otHours}h)`}>
+                            {formatHhmm(worker.shiftHours)}h
+                            {worker.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">+{worker.otHours}h</span>}
+                          </span>
+                        )}
+
+                        {/* Quick Absent Button */}
+                        {!isDayLocked && !worker.isAbsent && !worker.inTime && !worker.outTime && (
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMarkIndividualDone(worker.id);
-                            }}
-                            className="flex items-center gap-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 px-3 py-1 rounded-xl shadow-xs transition-all cursor-pointer"
-                            title="Quick mark Done"
+                            onClick={() => handleToggleAbsent(worker.id)}
+                            className="text-[10px] font-semibold text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 hover:border-rose-300 px-1.5 py-1 rounded-lg transition-colors cursor-pointer"
+                            title="Mark as Absent"
                           >
-                            <Check size={12} className="stroke-[3]" />
-                            <span>Done</span>
+                            <UserX size={11} className="inline mr-0.5" />
+                            <span>Abs</span>
+                          </button>
+                        )}
+
+                        {/* Quick Done / Revert Toggle Button */}
+                        {!isDayLocked && !worker.isAbsent && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleIndividualDone(worker.id)}
+                            className={[
+                              'inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-xl shadow-2xs transition-all active:scale-95 cursor-pointer',
+                              isDone
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-700 hover:bg-emerald-200'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            ].join(' ')}
+                            title={isDone ? 'Marked as Done. Click to revert back to Draft' : 'Mark card as Done'}
+                          >
+                            <Check size={12} className={isDone ? 'stroke-[2.5]' : 'stroke-[3]'} />
+                            <span>{isDone ? 'Done' : 'Done'}</span>
                           </button>
                         )}
                       </div>
@@ -1504,7 +1593,7 @@ export function LaborEntryView({
                         e.stopPropagation();
                         setExpandedId(isExpanded ? null : worker.id);
                       }}
-                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer focus:outline-none"
+                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer focus:outline-none shrink-0"
                       aria-label={isExpanded ? "Collapse worker details" : "Expand worker details"}
                       title={isExpanded ? "Collapse details" : "Expand details"}
                     >
@@ -1513,57 +1602,62 @@ export function LaborEntryView({
                   </div>
                 </div>
 
-                {/* Compact Activity Splits / Auto-Idle Preview (Only visible when on OUT mode and collapsed) */}
-                {tabMode === 'out' && !isExpanded && (worker.activities.length > 0 || (worker.inTime && worker.outTime)) && (
-                  <div className="px-3.5 pb-2.5 pt-0.5 flex items-center gap-1.5 flex-wrap">
-                    {worker.activities.length > 0 ? (
-                      <>
-                        <span className="text-[10px] uppercase font-bold text-slate-400">Activities:</span>
-                        {worker.activities.map((act) => (
-                          <span
-                            key={act.id}
-                            className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
-                          >
-                            <span>{act.activityCode}: {act.hours}h</span>
-                            {!isDayLocked && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveIndividualActivitySplit(worker.id, act.id);
-                                }}
-                                className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
-                                title={`Delete ${act.activityCode}`}
-                              >
-                                <X size={10} />
-                              </button>
-                            )}
-                          </span>
-                        ))}
-                        {!isDayLocked && worker.activities.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleClearAllActivities(worker.id);
-                            }}
-                            className="text-[10px] text-red-500 hover:underline font-semibold ml-1 cursor-pointer"
-                          >
-                            Clear All
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
-                        <PauseCircle size={11} className="text-amber-600" />
-                        <span>Auto-Idle (ZIDLE): {formatHhmm(worker.shiftHours)}h</span>
-                      </span>
-                    )}
-                    {worker.shiftHours > 0 && (
-                      <span className="text-[10px] font-bold ml-auto text-blue-700 dark:text-blue-300">
-                        {formatHhmm(worker.shiftHours)}h Shift
-                      </span>
-                    )}
+                {/* Compact Activity Splits / Auto-Idle Preview (Collapsed View) */}
+                {!isExpanded && !worker.isAbsent && (worker.activities.length > 0 || (worker.inTime && worker.outTime)) && (
+                  <div className="px-3.5 pb-2.5 pt-0.5 flex items-center justify-between gap-1.5 flex-wrap border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/40 dark:bg-slate-900/20">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {worker.activities.length > 0 ? (
+                        <>
+                          <span className="text-[10px] uppercase font-bold text-slate-400">Tasks:</span>
+                          {worker.activities.map((act) => (
+                            <span
+                              key={act.id}
+                              className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
+                            >
+                              <span>{act.activityCode}: {act.hours}h</span>
+                              {!isDayLocked && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRemoveIndividualActivitySplit(worker.id, act.id);
+                                  }}
+                                  className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
+                                  title={`Delete ${act.activityCode}`}
+                                >
+                                  <X size={10} />
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          {!isDayLocked && worker.activities.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleClearAllActivities(worker.id);
+                              }}
+                              className="text-[10px] text-red-500 hover:underline font-semibold ml-1 cursor-pointer"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                          <PauseCircle size={11} className="text-amber-600" />
+                          <span>Auto-Idle (ZIDLE): {formatHhmm(worker.shiftHours)}h</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(worker.id)}
+                      className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 ml-auto cursor-pointer"
+                    >
+                      Edit Tasks ({worker.activities.length}) →
+                    </button>
                   </div>
                 )}
 
