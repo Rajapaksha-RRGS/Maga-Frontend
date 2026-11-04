@@ -2,12 +2,16 @@
  * AdminSettingsPage.tsx — Site Admin Settings
  *
  * Operational and site configuration for the Site Admin:
- *  - Equipment Assignment Mode: Site Pool (Supervisor Self-Assign) vs Classic Admin Pre-Assignment
+ *  - Labour Pool Mode: Supervisor Self-Assign from Pool vs Admin Pre-Assignment
+ *  - Operator Pool Mode: Supervisor Self-Assign from Pool vs Admin Pre-Assignment
+ *  - Equipment Pool Mode: Supervisor Self-Assign from Yard vs Admin Pre-Assignment
  *  - Site profile and active project parameters
  */
 import { useState, useEffect } from 'react';
 import {
   Settings,
+  HardHat,
+  Cog,
   Tractor,
   CheckCircle2,
   AlertCircle,
@@ -17,12 +21,14 @@ import Breadcrumb from '../components/Breadcrumb';
 import { useAuth } from '../context/AuthContext';
 import {
   getTenantById,
-  updateEquipmentAssignMode,
+  updatePoolModes,
   fetchCorporateProjects,
   type CorporateProjectOption,
   type TenantRecord,
 } from '../features/tenants/services/tenantService';
 import { notifyPoolModeChanged } from '../features/assignments/hooks/useEquipmentPoolMode';
+
+type ResourceType = 'labour' | 'operator' | 'equipment';
 
 export default function AdminSettingsPage() {
   const { user } = useAuth();
@@ -30,7 +36,7 @@ export default function AdminSettingsPage() {
   const [corporateProjects, setCorporateProjects] = useState<CorporateProjectOption[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>(user?.tenantId || '');
   const [isLoading, setIsLoading] = useState(true);
-  const [isUpdating, setIsUpdating] = useState(false);
+  const [updatingResource, setUpdatingResource] = useState<ResourceType | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
 
@@ -69,32 +75,61 @@ export default function AdminSettingsPage() {
     }
   }, [user?.tenantId]);
 
-  const handleModeChange = async (enablePoolMode: boolean) => {
-    if (!selectedProjectId || isUpdating) return;
-    setIsUpdating(true);
+  const handleToggleMode = async (resource: ResourceType, nextState: boolean) => {
+    if (!selectedProjectId || updatingResource) return;
+    setUpdatingResource(resource);
     setSuccessToast(null);
     setErrorToast(null);
 
+    const payload = {
+      ...(resource === 'labour' ? { laborAssignBySupervisor: nextState } : {}),
+      ...(resource === 'operator' ? { operatorAssignBySupervisor: nextState } : {}),
+      ...(resource === 'equipment' ? { equipmentAssignBySupervisor: nextState } : {}),
+    };
+
     try {
-      await updateEquipmentAssignMode(selectedProjectId, enablePoolMode);
-      notifyPoolModeChanged(selectedProjectId, enablePoolMode);
-      setProject((prev) =>
-        prev ? { ...prev, equipmentAssignBySupervisor: enablePoolMode } : null
-      );
-      setSuccessToast(
-        enablePoolMode
-          ? 'Site Pool Mode Enabled: Supervisors can now pick machinery directly from the site yard.'
-          : 'Classic Admin Pre-Assign Enforced: Supervisors must be pre-assigned equipment daily.'
-      );
+      await updatePoolModes(selectedProjectId, payload);
+      notifyPoolModeChanged(selectedProjectId, {
+        [resource === 'labour' ? 'labor' : resource]: nextState,
+      });
+
+      setProject((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          ...(resource === 'labour' ? { laborAssignBySupervisor: nextState } : {}),
+          ...(resource === 'operator' ? { operatorAssignBySupervisor: nextState } : {}),
+          ...(resource === 'equipment' ? { equipmentAssignBySupervisor: nextState } : {}),
+        };
+      });
+
+      const messages: Record<ResourceType, { enabled: string; disabled: string }> = {
+        labour: {
+          enabled: 'Labour Pool Mode Enabled: Supervisors can directly pick site workers from the labour pool.',
+          disabled: 'Classic Admin Pre-Assign Enforced: Site labourers must be assigned by Admin daily.',
+        },
+        operator: {
+          enabled: 'Operator Pool Mode Enabled: Supervisors can directly claim plant operators from the pool.',
+          disabled: 'Classic Admin Pre-Assign Enforced: Operators must be pre-assigned by Admin daily.',
+        },
+        equipment: {
+          enabled: 'Equipment Pool Mode Enabled: Supervisors can directly select machinery from the site yard.',
+          disabled: 'Classic Admin Pre-Assign Enforced: Machinery must be pre-assigned by Admin daily.',
+        },
+      };
+
+      setSuccessToast(nextState ? messages[resource].enabled : messages[resource].disabled);
       setTimeout(() => setSuccessToast(null), 4000);
     } catch (err: any) {
-      setErrorToast(err.message || 'Failed to update equipment assignment mode.');
+      setErrorToast(err.message || `Failed to update ${resource} assignment mode.`);
     } finally {
-      setIsUpdating(false);
+      setUpdatingResource(null);
     }
   };
 
-  const isPoolMode = !!project?.equipmentAssignBySupervisor;
+  const isLabourPool = !!project?.laborAssignBySupervisor;
+  const isOperatorPool = !!project?.operatorAssignBySupervisor;
+  const isEquipmentPool = !!project?.equipmentAssignBySupervisor;
 
   return (
     <div className="px-4 md:px-6 py-5 flex flex-col gap-6 min-h-0 pb-16">
@@ -110,7 +145,7 @@ export default function AdminSettingsPage() {
               <h1 className="text-xl font-bold text-slate-900 tracking-tight">Site Settings</h1>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Configure operational dispatch rules and machinery assignment policies for this project site.
+              Configure operational dispatch rules and assignment modes (Pool Mode vs Admin Pre-Assignment) for site resources.
             </p>
           </div>
 
@@ -159,12 +194,139 @@ export default function AdminSettingsPage() {
         </div>
       ) : (
         <div className="space-y-4 max-w-3xl">
-          {/* ── Site Resource Pool Mode (Self-Dispatch Mode) Setting Card ── */}
+          {/* Section Subtitle */}
+          <div className="border-b border-slate-200/80 pb-2">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              Site Resource Assignment Modes (Pool vs Pre-Assign)
+            </h2>
+          </div>
+
+          {/* ── 1. Labour Pool Mode Card ── */}
           <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3.5">
               <div
                 className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
-                  isPoolMode
+                  isLabourPool
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                <HardHat size={18} />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Labour Pool Mode
+                  </h3>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      isLabourPool
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    {isLabourPool ? 'Pool Mode Active' : 'Classic Mode'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed max-w-xl">
+                  Allow field supervisors to directly search and pull site workers from the central site labour pool into their daily work sheets without requiring daily manual pre-assignment by Site Admin.
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle switch */}
+            <div className="flex items-center gap-2.5 self-end sm:self-center flex-shrink-0">
+              <span className="text-xs font-semibold text-slate-600 hidden sm:inline">
+                {isLabourPool ? 'Active' : 'Disabled'}
+              </span>
+              <button
+                type="button"
+                disabled={updatingResource !== null}
+                onClick={() => handleToggleMode('labour', !isLabourPool)}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden disabled:opacity-50 ${
+                  isLabourPool ? 'bg-emerald-500' : 'bg-slate-300 hover:bg-slate-400'
+                }`}
+                title={isLabourPool ? 'Disable Labour Pool Mode' : 'Enable Labour Pool Mode'}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
+                    isLabourPool ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                >
+                  {updatingResource === 'labour' && (
+                    <Loader2 size={10} className="animate-spin text-emerald-600" />
+                  )}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* ── 2. Operator Pool Mode Card ── */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+                  isOperatorPool
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                <Cog size={18} />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Operator Pool Mode
+                  </h3>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      isOperatorPool
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    {isOperatorPool ? 'Pool Mode Active' : 'Classic Mode'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed max-w-xl">
+                  Allow field supervisors to claim plant and vehicle operators directly from the project operator pool. Includes real-time claiming badges and cross-supervisor conflict protection.
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle switch */}
+            <div className="flex items-center gap-2.5 self-end sm:self-center flex-shrink-0">
+              <span className="text-xs font-semibold text-slate-600 hidden sm:inline">
+                {isOperatorPool ? 'Active' : 'Disabled'}
+              </span>
+              <button
+                type="button"
+                disabled={updatingResource !== null}
+                onClick={() => handleToggleMode('operator', !isOperatorPool)}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden disabled:opacity-50 ${
+                  isOperatorPool ? 'bg-blue-500' : 'bg-slate-300 hover:bg-slate-400'
+                }`}
+                title={isOperatorPool ? 'Disable Operator Pool Mode' : 'Enable Operator Pool Mode'}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
+                    isOperatorPool ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                >
+                  {updatingResource === 'operator' && (
+                    <Loader2 size={10} className="animate-spin text-blue-600" />
+                  )}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* ── 3. Equipment Pool Mode Card ── */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+                  isEquipmentPool
                     ? 'bg-amber-100 text-amber-700'
                     : 'bg-slate-100 text-slate-600'
                 }`}
@@ -178,16 +340,16 @@ export default function AdminSettingsPage() {
                   </h3>
                   <span
                     className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                      isPoolMode
+                      isEquipmentPool
                         ? 'bg-amber-50 text-amber-700 border-amber-200'
                         : 'bg-slate-100 text-slate-600 border-slate-200'
                     }`}
                   >
-                    {isPoolMode ? 'Pool Mode Active' : 'Classic Mode'}
+                    {isEquipmentPool ? 'Pool Mode Active' : 'Classic Mode'}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed max-w-xl">
-                  Allow supervisors to directly access and log all site resources (Labour, Subcontractors, Operators, and Equipment) from the site pool without requiring daily manual pre-assignment by Site Admin. Includes multi-supervisor claiming badges and time overwrite protection.
+                  Allow supervisors to select and log machinery, vehicles, and equipment directly from the site yard without requiring daily manual pre-assignment by Site Admin.
                 </p>
               </div>
             </div>
@@ -195,31 +357,29 @@ export default function AdminSettingsPage() {
             {/* Toggle switch */}
             <div className="flex items-center gap-2.5 self-end sm:self-center flex-shrink-0">
               <span className="text-xs font-semibold text-slate-600 hidden sm:inline">
-                {isPoolMode ? 'Active' : 'Disabled'}
+                {isEquipmentPool ? 'Active' : 'Disabled'}
               </span>
               <button
                 type="button"
-                disabled={isUpdating}
-                onClick={() => handleModeChange(!isPoolMode)}
+                disabled={updatingResource !== null}
+                onClick={() => handleToggleMode('equipment', !isEquipmentPool)}
                 className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden disabled:opacity-50 ${
-                  isPoolMode ? 'bg-amber-500' : 'bg-slate-300 hover:bg-slate-400'
+                  isEquipmentPool ? 'bg-amber-500' : 'bg-slate-300 hover:bg-slate-400'
                 }`}
-                title={isPoolMode ? 'Disable Site Pool Mode' : 'Enable Site Pool Mode'}
+                title={isEquipmentPool ? 'Disable Equipment Pool Mode' : 'Enable Equipment Pool Mode'}
               >
                 <span
                   className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
-                    isPoolMode ? 'translate-x-5' : 'translate-x-0'
+                    isEquipmentPool ? 'translate-x-5' : 'translate-x-0'
                   }`}
                 >
-                  {isUpdating && (
+                  {updatingResource === 'equipment' && (
                     <Loader2 size={10} className="animate-spin text-amber-600" />
                   )}
                 </span>
               </button>
             </div>
           </div>
-
-          {/* More settings can be added here easily as additional compact cards */}
         </div>
       )}
     </div>

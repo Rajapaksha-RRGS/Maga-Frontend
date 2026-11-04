@@ -525,6 +525,36 @@ export const supervisorStorage = {
     return [];
   },
 
+  async isLaborPoolModeEnabled(projectId?: string): Promise<boolean> {
+    try {
+      const activeProjId = projectId || this.getActiveSite().id || getCurrentTenantId();
+      if (!activeProjId || activeProjId === 'site-default') return false;
+      const res = await apiFetch(`${API_URL}/tenants/${activeProjId}`);
+      if (res.ok) {
+        const data = await res.json();
+        return Boolean(data?.laborAssignBySupervisor);
+      }
+    } catch (err) {
+      console.warn('Could not verify labor pool mode:', err);
+    }
+    return false;
+  },
+
+  async isOperatorPoolModeEnabled(projectId?: string): Promise<boolean> {
+    try {
+      const activeProjId = projectId || this.getActiveSite().id || getCurrentTenantId();
+      if (!activeProjId || activeProjId === 'site-default') return false;
+      const res = await apiFetch(`${API_URL}/tenants/${activeProjId}`);
+      if (res.ok) {
+        const data = await res.json();
+        return Boolean(data?.operatorAssignBySupervisor);
+      }
+    } catch (err) {
+      console.warn('Could not verify operator pool mode:', err);
+    }
+    return false;
+  },
+
   async isEquipmentPoolModeEnabled(projectId?: string): Promise<boolean> {
     try {
       const activeProjId = projectId || this.getActiveSite().id || getCurrentTenantId();

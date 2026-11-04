@@ -5,7 +5,7 @@
  */
 import DataTable, { type Column } from '../../../components/DataTable';
 import type { BusinessPartner } from '../services/businessPartnerService';
-import { Building2, Phone, Mail, Clock, HardHat } from 'lucide-react';
+import { Building2, Phone, Mail, Clock, HardHat, Truck } from 'lucide-react';
 
 interface Props {
   data: BusinessPartner[];
@@ -94,19 +94,40 @@ const columns: Column<BusinessPartner>[] = [
     ),
   },
   {
-    header: 'Workers on Site',
+    header: 'Site Resources',
     accessor: 'siteWorkerCount',
-    className: 'w-[130px] text-center',
-    render: (bp) => (
-      (bp.siteWorkerCount && bp.siteWorkerCount > 0) ? (
-        <span className="inline-flex items-center gap-1 font-semibold text-xs px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-          <HardHat size={12} className="text-blue-600" />
-          <span>{bp.siteWorkerCount} active</span>
-        </span>
-      ) : (
-        <span className="text-slate-400 text-xs font-mono">—</span>
-      )
-    ),
+    className: 'w-[160px] text-center',
+    render: (bp) => {
+      const hasWorkers = Boolean(bp.siteWorkerCount && bp.siteWorkerCount > 0);
+      const hasEquipment = Boolean(bp.siteEquipmentCount && bp.siteEquipmentCount > 0);
+
+      if (!hasWorkers && !hasEquipment) {
+        return <span className="text-slate-400 text-xs font-mono">—</span>;
+      }
+
+      return (
+        <div className="flex items-center justify-center gap-1.5 flex-wrap">
+          {hasWorkers && (
+            <span
+              className="inline-flex items-center gap-1 font-semibold text-[11px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200"
+              title={`${bp.siteWorkerCount} active subcontractor workers deployed on this site`}
+            >
+              <HardHat size={11} className="text-blue-600" />
+              <span>{bp.siteWorkerCount} lab.</span>
+            </span>
+          )}
+          {hasEquipment && (
+            <span
+              className="inline-flex items-center gap-1 font-semibold text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300"
+              title={`${bp.siteEquipmentCount} machinery / equipment active on this site`}
+            >
+              <Truck size={11} className="text-amber-600" />
+              <span>{bp.siteEquipmentCount} eq.</span>
+            </span>
+          )}
+        </div>
+      );
+    },
   },
   {
     header: 'Status',

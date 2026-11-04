@@ -30,6 +30,8 @@ export interface TenantRecord {
   fax?: string;
   email?: string;
   status: 'active' | 'suspended';
+  laborAssignBySupervisor?: boolean;
+  operatorAssignBySupervisor?: boolean;
   equipmentAssignBySupervisor?: boolean;
   createdAt: string;
   userCount?: number;
@@ -225,3 +227,26 @@ export async function updateEquipmentAssignMode(
   throw new Error(err.error || 'Failed to update equipment assignment mode');
 }
 
+export interface PoolModesPayload {
+  laborAssignBySupervisor?: boolean;
+  operatorAssignBySupervisor?: boolean;
+  equipmentAssignBySupervisor?: boolean;
+}
+
+export async function updatePoolModes(
+  id: string,
+  modes: PoolModesPayload
+): Promise<TenantRecord> {
+  const res = await apiFetch(`${API_URL}/tenants/${id}/pool-modes`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(modes),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    cacheManager.clear();
+    return data;
+  }
+  const err = await res.json().catch(() => ({}));
+  throw new Error(err.error || 'Failed to update site pool modes');
+}

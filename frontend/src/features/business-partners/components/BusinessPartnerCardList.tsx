@@ -4,7 +4,7 @@
  * Mobile card list view for Business Partners (visible below md breakpoint).
  */
 import type { BusinessPartner } from '../services/businessPartnerService';
-import { Building2, Phone, ChevronRight } from 'lucide-react';
+import { Building2, Phone, ChevronRight, HardHat, Truck } from 'lucide-react';
 
 interface Props {
   data: BusinessPartner[];
@@ -44,6 +44,22 @@ export default function BusinessPartnerCardList({ data, onCardClick }: Props) {
                   </span>
                 )}
               </div>
+              {((bp.siteWorkerCount && bp.siteWorkerCount > 0) || (bp.siteEquipmentCount && bp.siteEquipmentCount > 0)) && (
+                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                  {bp.siteWorkerCount && bp.siteWorkerCount > 0 ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                      <HardHat size={10} />
+                      {bp.siteWorkerCount} workers
+                    </span>
+                  ) : null}
+                  {bp.siteEquipmentCount && bp.siteEquipmentCount > 0 ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                      <Truck size={10} />
+                      {bp.siteEquipmentCount} eq.
+                    </span>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
 

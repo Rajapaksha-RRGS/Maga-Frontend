@@ -115,22 +115,24 @@ function SidebarContent({ tenantName, onNavClick, isCollapsed = false, onToggleC
     });
   };
 
-  const { isPoolMode } = useEquipmentPoolMode();
+  const { isLabourPoolMode, isOperatorPoolMode, isEquipmentPoolMode } = useEquipmentPoolMode();
 
   const visibleNavItems = useMemo(() => {
     return NAV_ITEMS.map((item) => {
       if (item.label === 'Assign' && item.children) {
-        if (isPoolMode) {
-          // When Pool Mode is active, Site Admin does not pre-assign equipment/operators
-          return {
-            ...item,
-            children: item.children.filter((c) => c.to.includes('/labour')),
-          };
-        }
+        return {
+          ...item,
+          children: item.children.filter((c) => {
+            if (c.to.includes('/labour') && isLabourPoolMode) return false;
+            if (c.to.includes('/operator') && isOperatorPoolMode) return false;
+            if (c.to.includes('/equipment') && isEquipmentPoolMode) return false;
+            return true;
+          }),
+        };
       }
       return item;
     });
-  }, [isPoolMode]);
+  }, [isLabourPoolMode, isOperatorPoolMode, isEquipmentPoolMode]);
 
   // Shared class builder for nav links
   const navLinkClass = (isActive: boolean) =>

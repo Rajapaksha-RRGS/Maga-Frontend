@@ -11,14 +11,14 @@ import type {
 import * as bpService from '../services/businessPartnerService';
 import { cacheManager } from '../../../utils/cacheManager';
 
-export type PartnerStatusFilter = 'all' | 'active_on_site' | 'active' | 'inactive' | 'pending_approval';
+export type PartnerStatusFilter = 'all' | 'active_on_site' | 'pending_approval' | 'inactive';
 
-export function useBusinessPartners() {
+export function useBusinessPartners(initialFilter: PartnerStatusFilter = 'all') {
   const cached = cacheManager.get<BusinessPartner[]>('business-partners:list');
   const [partners, setPartners] = useState<BusinessPartner[]>(() => cached || []);
   const [isLoading, setIsLoading] = useState<boolean>(() => !cached);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<PartnerStatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<PartnerStatusFilter>(initialFilter);
 
   const load = useCallback(async (forceRefresh = false) => {
     if (forceRefresh) {
@@ -53,7 +53,11 @@ export function useBusinessPartners() {
       statusFilter === 'all'
         ? true
         : statusFilter === 'active_on_site'
-        ? Boolean(bp.isActiveOnSite || (bp.siteWorkerCount && bp.siteWorkerCount > 0))
+        ? Boolean(
+            bp.isActiveOnSite ||
+            (bp.siteWorkerCount && bp.siteWorkerCount > 0) ||
+            (bp.siteEquipmentCount && bp.siteEquipmentCount > 0)
+          )
         : bp.status === statusFilter;
 
     return matchesSearch && matchesStatus;
@@ -103,6 +107,16 @@ export function useBusinessPartners() {
     setPartners((prev) => [newPartner, ...prev.filter((p) => p.id !== newPartner.id)]);
   };
 
+  const assignCorporatePartners = async (partnerIds: string[]) => {
+    await bpService.assignToSite(partnerIds);
+    await load(true);
+  };
+
+  const unassignPartner = async (id: string) => {
+    await bpService.unassignFromSite(id);
+    await load(true);
+  };
+
   return {
     partners,
     filteredPartners,
@@ -113,6 +127,8 @@ export function useBusinessPartners() {
     setStatusFilter,
     addPartner,
     addPartnerDirectly,
+    assignCorporatePartners,
+    unassignPartner,
     updatePartner,
     deletePartner,
     togglePartnerStatus,

@@ -1,20 +1,20 @@
 /**
  * TodayActivityPanel.tsx
  *
- * Pastel Theme Analytics Panel: "Hours by Activity Code"
+ * Analytics Panel: "Hours by Activity Code"
  * Harmonized with the dashboard's light pastel aesthetic.
  * Strictly scoped to the current tenant/project's actual activity codes and logged time entries.
  *
  * Features:
- * - Period filtering: Today (Live), Current Month (MTD), Current Year (YTD)
- * - Fixed height card with internal sleek vertical scrolling for activity codes
- * - Dual visual modes: Horizontal Bar Chart & Proportional Treemap
- * - KPI summary for Total Hours, OT Hours, and Workers
+ * - Period selection: Any Day, Any Month, Any Year with navigation buttons (< >)
+ * - Horizontal Bar Chart view with internal vertical scrolling and fixed panel height
+ * - Instant caching for fast date/month/year switching
+ * - Dynamic KPI summary for Total Hours, OT Hours, and Workers
  */
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { 
-  BarChart3, 
-  LayoutGrid, 
+  ChevronLeft,
+  ChevronRight,
   Clock, 
   Zap, 
   Users, 
@@ -27,7 +27,7 @@ import { Link } from 'react-router-dom';
 import type { BackendTimeEntry, ActivityCode } from '../../time-entries/services/timeEntryService';
 import * as timeEntrySvc from '../../time-entries/services/timeEntryService';
 
-export type ActivityTimePeriod = 'today' | 'month' | 'year';
+export type ActivityTimePeriod = 'day' | 'month' | 'year';
 
 interface SupervisorStatus {
   id: string;
@@ -96,22 +96,44 @@ const COLOR_PALETTES = [
   },
 ];
 
-function getPeriodRange(period: ActivityTimePeriod): { startDate: string; endDate: string; label: string } {
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const todayStr = `${yyyy}-${mm}-${dd}`;
+function formatDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
-  if (period === 'today') {
-    return { startDate: todayStr, endDate: todayStr, label: 'Today' };
-  }
-  if (period === 'month') {
-    const monthStart = `${yyyy}-${mm}-01`;
-    const monthName = now.toLocaleString('en-US', { month: 'short' });
-    return { startDate: monthStart, endDate: todayStr, label: `${monthName} ${yyyy}` };
-  }
-  return { startDate: `${yyyy}-01-01`, endDate: todayStr, label: `Year ${yyyy}` };
+function formatMonth(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+}
+
+function formatDateDisplay(dateStr: string): string {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatMonthDisplay(monthStr: string): string {
+  if (!monthStr) return '';
+  const [y, m] = monthStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, 1);
+  return dt.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+}
+
+function stepDay(current: string, delta: number): string {
+  const [y, m, d] = current.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + delta);
+  return formatDate(date);
+}
+
+function stepMonth(current: string, delta: number): string {
+  const [y, m] = current.split('-').map(Number);
+  const date = new Date(y, m - 1 + delta, 1);
+  return formatMonth(date);
 }
 
 function formatHours(val: number): string {
@@ -125,53 +147,113 @@ export default function TodayActivityPanel({
   todayEntries = [],
   activityCodes = [],
 }: Props) {
-  const [viewMode, setViewMode] = useState<'bar' | 'treemap'>('bar');
-  const [period, setPeriod] = useState<ActivityTimePeriod>('today');
-  const [periodEntries, setPeriodEntries] = useState<BackendTimeEntry[]>([]);
-  const [isLoadingPeriod, setIsLoadingPeriod] = useState<boolean>(false);
+  const todayStr = useMemo(() => formatDate(new Date()), []);
+  const currentMonthStr = useMemo(() => formatMonth(new Date()), []);
+  const currentYear = useMemo(() => new Date().getFullYear(), []);
+
+  // Filter States
+  const [period, setPeriod] = useState<ActivityTimePeriod>('day');
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
+  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+
+  // Data States
+  const [entries, setEntries] = useState<BackendTimeEntry[]>(todayEntries || []);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const cacheRef = useRef<Record<string, BackendTimeEntry[]>>({});
 
-  const periodRange = useMemo(() => getPeriodRange(period), [period]);
+  // Dynamic Year Options (past 4 years up to next year)
+  const yearOptions = useMemo(() => {
+    const years: number[] = [];
+    for (let y = currentYear + 1; y >= currentYear - 4; y--) {
+      years.push(y);
+    }
+    return years;
+  }, [currentYear]);
 
-  // Fetch entries for Month or Year if not in cache
+  // Compute Active Query Range & Display Label
+  const { startDate, endDate, displayLabel, isCurrentDay } = useMemo(() => {
+    if (period === 'day') {
+      const isToday = selectedDate === todayStr;
+      return {
+        startDate: selectedDate,
+        endDate: selectedDate,
+        displayLabel: isToday ? 'Today' : formatDateDisplay(selectedDate),
+        isCurrentDay: isToday,
+      };
+    }
+
+    if (period === 'month') {
+      const [y, m] = selectedMonth.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      return {
+        startDate: `${selectedMonth}-01`,
+        endDate: `${selectedMonth}-${String(lastDay).padStart(2, '0')}`,
+        displayLabel: formatMonthDisplay(selectedMonth),
+        isCurrentDay: false,
+      };
+    }
+
+    // period === 'year'
+    return {
+      startDate: `${selectedYear}-01-01`,
+      endDate: `${selectedYear}-12-31`,
+      displayLabel: `Year ${selectedYear}`,
+      isCurrentDay: false,
+    };
+  }, [period, selectedDate, selectedMonth, selectedYear, todayStr]);
+
+  // Fetch Data on period / date / month / year changes
   useEffect(() => {
-    if (period === 'today') {
+    // If Day mode viewing Today and we already have todayEntries from props
+    if (period === 'day' && selectedDate === todayStr && todayEntries && todayEntries.length > 0) {
+      setEntries(todayEntries);
+      setIsLoading(false);
       return;
     }
 
-    if (cacheRef.current[period]) {
-      setPeriodEntries(cacheRef.current[period]);
+    const cacheKey = `${period}_${startDate}_${endDate}`;
+    if (cacheRef.current[cacheKey]) {
+      setEntries(cacheRef.current[cacheKey]);
+      setIsLoading(false);
       return;
     }
 
     let isMounted = true;
-    setIsLoadingPeriod(true);
+    setIsLoading(true);
 
-    const range = getPeriodRange(period);
-    timeEntrySvc.getTimeEntries(undefined, undefined, range.startDate, range.endDate)
+    const fetchPromise = period === 'day'
+      ? timeEntrySvc.getTimeEntries(undefined, startDate)
+      : timeEntrySvc.getTimeEntries(undefined, undefined, startDate, endDate);
+
+    fetchPromise
       .then((data) => {
         if (!isMounted) return;
-        const entries = Array.isArray(data) ? data : [];
-        cacheRef.current[period] = entries;
-        setPeriodEntries(entries);
+        const list = Array.isArray(data) ? data : [];
+        cacheRef.current[cacheKey] = list;
+        setEntries(list);
       })
       .catch((err) => {
-        console.error(`Failed to fetch ${period} activity entries:`, err);
-        if (isMounted) setPeriodEntries([]);
+        console.error('Failed to fetch activity code entries:', err);
+        if (isMounted) setEntries([]);
       })
       .finally(() => {
-        if (isMounted) setIsLoadingPeriod(false);
+        if (isMounted) setIsLoading(false);
       });
 
     return () => {
       isMounted = false;
     };
-  }, [period]);
+  }, [period, startDate, endDate, selectedDate, todayStr, todayEntries]);
 
-  // Determine active entries to aggregate
-  const currentEntries = period === 'today' ? todayEntries : periodEntries;
+  // Sync todayEntries when props update while viewing today
+  useEffect(() => {
+    if (period === 'day' && selectedDate === todayStr && todayEntries && todayEntries.length > 0) {
+      setEntries(todayEntries);
+    }
+  }, [todayEntries, period, selectedDate, todayStr]);
 
-  // Map project activity codes for easy title/description lookup
+  // Map project activity codes for title/description lookup
   const activityCodeMap = useMemo(() => {
     const map = new Map<string, string>();
     (activityCodes || []).forEach((ac) => {
@@ -185,7 +267,7 @@ export default function TodayActivityPanel({
     return map;
   }, [activityCodes]);
 
-  // Aggregate currentEntries by Activity Code strictly for the project/tenant
+  // Aggregate entries by Activity Code
   const { isLive, items, totalHours, totalOtHours, totalWorkers } = useMemo(() => {
     const map = new Map<string, {
       code: string;
@@ -198,7 +280,7 @@ export default function TodayActivityPanel({
       workerIds: Set<string>;
     }>();
 
-    (currentEntries || []).forEach((entry) => {
+    (entries || []).forEach((entry) => {
       const rawCode = entry.activity?.code || (entry.activityId ? `ACT-${entry.activityId.slice(0, 4)}` : '');
       const code = rawCode || 'GENERAL';
       const name =
@@ -283,7 +365,7 @@ export default function TodayActivityPanel({
       totalOtHours: 0,
       totalWorkers: 0,
     };
-  }, [currentEntries, activityCodes, activityCodeMap]);
+  }, [entries, activityCodes, activityCodeMap]);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col h-[480px] transition-colors">
@@ -295,34 +377,26 @@ export default function TodayActivityPanel({
               <Activity size={16} className="text-emerald-600" />
               Hours by Activity Code
             </h2>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-              isLive
-                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80'
-                : 'bg-slate-100 text-slate-600 border border-slate-200/80'
-            }`}>
-              {isLive ? `● ${periodRange.label}` : `${periodRange.label} (0h)`}
-            </span>
+            
           </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Man-hours distribution across site construction tasks
-          </p>
+          
         </div>
 
-        {/* Action Controls: Period Selector + View Switcher */}
+        {/* Action Controls: Period Mode Selector & Specific Date/Month/Year Navigators */}
         <div className="flex items-center gap-2 flex-wrap self-end sm:self-auto">
-          {/* Period Tabs: Today / Month / Year */}
+          {/* Period Mode Switcher (Day / Month / Year) */}
           <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200/80 text-[11px] font-semibold">
             <button
               type="button"
-              onClick={() => setPeriod('today')}
+              onClick={() => setPeriod('day')}
               className={`px-2.5 py-1 rounded-lg transition-all ${
-                period === 'today'
+                period === 'day'
                   ? 'bg-white text-slate-800 shadow-2xs font-bold'
                   : 'text-slate-500 hover:text-slate-800'
               }`}
-              title="Today's live hours"
+              title="Filter by specific day"
             >
-              Today
+              Day
             </button>
             <button
               type="button"
@@ -332,7 +406,7 @@ export default function TodayActivityPanel({
                   ? 'bg-white text-slate-800 shadow-2xs font-bold'
                   : 'text-slate-500 hover:text-slate-800'
               }`}
-              title="Current month hours"
+              title="Filter by specific month"
             >
               Month
             </button>
@@ -344,43 +418,128 @@ export default function TodayActivityPanel({
                   ? 'bg-white text-slate-800 shadow-2xs font-bold'
                   : 'text-slate-500 hover:text-slate-800'
               }`}
-              title="Current year hours"
+              title="Filter by specific year"
             >
               Year
             </button>
           </div>
 
-          {/* View Switcher (Bar Chart vs Treemap) */}
-          <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200/80">
-            <button
-              type="button"
-              onClick={() => setViewMode('bar')}
-              className={[
-                'flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold transition-all',
-                viewMode === 'bar'
-                  ? 'bg-white text-slate-800 shadow-2xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              ].join(' ')}
-              title="Horizontal Bar Chart View"
-            >
-              <BarChart3 size={13} />
-              <span className="hidden md:inline">Bars</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('treemap')}
-              className={[
-                'flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold transition-all',
-                viewMode === 'treemap'
-                  ? 'bg-white text-slate-800 shadow-2xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              ].join(' ')}
-              title="Proportional Treemap View"
-            >
-              <LayoutGrid size={13} />
-              <span className="hidden md:inline">Treemap</span>
-            </button>
-          </div>
+          {/* ── Specific Period Picker & Step Controls ──────────────────── */}
+          {period === 'day' && (
+            <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-xl px-1.5 py-0.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setSelectedDate((d) => stepDay(d, -1))}
+                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
+                title="Previous day"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+                className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:outline-none cursor-pointer px-1 py-0.5"
+              />
+              <button
+                type="button"
+                onClick={() => setSelectedDate((d) => stepDay(d, 1))}
+                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
+                title="Next day"
+              >
+                <ChevronRight size={14} />
+              </button>
+              {selectedDate !== todayStr && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDate(todayStr)}
+                  className="text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60 px-1.5 py-0.5 rounded-md transition-colors ml-0.5"
+                  title="Jump to today"
+                >
+                  Today
+                </button>
+              )}
+            </div>
+          )}
+
+          {period === 'month' && (
+            <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-xl px-1.5 py-0.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setSelectedMonth((m) => stepMonth(m, -1))}
+                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
+                title="Previous month"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => e.target.value && setSelectedMonth(e.target.value)}
+                className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:outline-none cursor-pointer px-1 py-0.5"
+              />
+              <button
+                type="button"
+                onClick={() => setSelectedMonth((m) => stepMonth(m, 1))}
+                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
+                title="Next month"
+              >
+                <ChevronRight size={14} />
+              </button>
+              {selectedMonth !== currentMonthStr && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedMonth(currentMonthStr)}
+                  className="text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60 px-1.5 py-0.5 rounded-md transition-colors ml-0.5"
+                  title="Jump to current month"
+                >
+                  Current
+                </button>
+              )}
+            </div>
+          )}
+
+          {period === 'year' && (
+            <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-xl px-1.5 py-0.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setSelectedYear((y) => y - 1)}
+                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
+                title="Previous year"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:outline-none cursor-pointer px-1 py-0.5"
+              >
+                {yearOptions.map((yr) => (
+                  <option key={yr} value={yr}>
+                    {yr}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setSelectedYear((y) => y + 1)}
+                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
+                title="Next year"
+              >
+                <ChevronRight size={14} />
+              </button>
+              {selectedYear !== currentYear && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedYear(currentYear)}
+                  className="text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60 px-1.5 py-0.5 rounded-md transition-colors ml-0.5"
+                  title="Jump to current year"
+                >
+                  Current
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -416,7 +575,7 @@ export default function TodayActivityPanel({
           </div>
           <div className="min-w-0">
             <span className="text-[10px] text-slate-400 block leading-tight font-medium">
-              {period === 'today' ? 'Deployed' : 'Active'}
+              {isCurrentDay ? 'Deployed' : 'Active'}
             </span>
             <span className="font-bold text-slate-800 font-mono text-sm leading-tight truncate block">
               {totalWorkers} workers
@@ -426,20 +585,20 @@ export default function TodayActivityPanel({
       </div>
 
       {/* ── Middle Scrollable Visualization Area (Fixed Height with Internal Scroll) ── */}
-      {isLoadingPeriod ? (
+      {isLoading ? (
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-10 gap-2">
           <Loader2 size={24} className="text-emerald-500 animate-spin" />
-          <p className="text-xs text-slate-500 font-medium">Loading {periodRange.label} data...</p>
+          <p className="text-xs text-slate-500 font-medium">Loading {displayLabel} data...</p>
         </div>
       ) : items.length === 0 ? (
-        /* Empty State if no project activity codes configured & no entries */
+        /* Empty State */
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-8 px-4 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
           <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center mb-2.5 shadow-2xs">
             <Activity size={18} className="text-slate-400" />
           </div>
           <p className="text-xs font-bold text-slate-700">No Activity Hours Recorded</p>
           <p className="text-[11px] text-slate-400 mt-1 max-w-xs">
-            No logged hours found for {periodRange.label}.
+            No logged hours found for {displayLabel}.
           </p>
           <Link
             to="/admin/activity-codes"
@@ -451,97 +610,48 @@ export default function TodayActivityPanel({
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto pr-1.5 custom-scrollbar">
-          {/* ── Visualization: Bar Chart View (Soft Pastel) ─────────────────── */}
-          {viewMode === 'bar' && (
-            <div className="space-y-3 pt-0.5 pb-2">
-              {items.map((act, index) => {
-                const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
-                return (
-                  <div key={act.code} className="space-y-1.5 group">
-                    <div className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2 min-w-0 pr-2">
-                        <span className="w-4 text-[10px] font-bold text-slate-400">#{index + 1}</span>
-                        <span className="font-mono font-bold text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/60">
-                          {act.code}
-                        </span>
-                        <span className="font-semibold text-slate-700 truncate text-[11px]" title={act.name}>
-                          {act.name}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0 font-mono text-right">
-                        <span className="font-bold text-slate-800 text-xs">
-                          {formatHours(act.hours)}h
-                        </span>
-                        {act.otHours > 0 && (
-                          <span className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200/60 px-1.5 py-0.2 rounded-full font-semibold hidden sm:inline">
-                            +{formatHours(act.otHours)}h OT
-                          </span>
-                        )}
-                        <span className="text-[10px] text-slate-400 w-8 text-right font-semibold">
-                          {pct}%
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Progress Bar with soft pastel gradient */}
-                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden flex">
-                      <div
-                        className={`h-full bg-gradient-to-r ${act.gradient} rounded-full transition-all duration-500`}
-                        style={{ width: `${totalHours > 0 ? Math.max(3, pct) : 0}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* ── Visualization: Treemap View (Soft Pastel Cards) ─────────────── */}
-          {viewMode === 'treemap' && (
-            <div className="flex flex-wrap gap-2.5 pt-0.5 pb-2 content-start">
-              {items.map((act) => {
-                const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
-                const flexBasis = totalHours > 0 ? Math.max(120, Math.min(240, pct * 4)) : 140;
-
-                return (
-                  <div
-                    key={act.code}
-                    style={{ flex: totalHours > 0 ? `${pct} 1 ${flexBasis}px` : '1 1 140px' }}
-                    className={`p-3 rounded-xl border ${act.border} ${act.bgLight} flex flex-col justify-between transition-all duration-200 hover:scale-[1.01] hover:shadow-xs relative overflow-hidden group min-h-[96px]`}
-                  >
-                    <div className="flex items-start justify-between gap-1">
-                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-white/90 text-slate-700 shadow-2xs border border-slate-200/50">
+          {/* ── Visualization: Horizontal Bar Chart View ── */}
+          <div className="space-y-3 pt-0.5 pb-2">
+            {items.map((act, index) => {
+              const pct = totalHours > 0 ? Math.round((act.hours / totalHours) * 100) : 0;
+              return (
+                <div key={act.code} className="space-y-1.5 group">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                      <span className="w-4 text-[10px] font-bold text-slate-400">#{index + 1}</span>
+                      <span className="font-mono font-bold text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/60">
                         {act.code}
                       </span>
-                      <span className={`text-[11px] font-extrabold ${act.textColor} font-mono`}>
-                        {totalHours > 0 ? `${pct}%` : '0%'}
+                      <span className="font-semibold text-slate-700 truncate text-[11px]" title={act.name}>
+                        {act.name}
                       </span>
                     </div>
-
-                    <div className="my-1.5">
-                      <p className="text-xs font-bold text-slate-800 line-clamp-1 group-hover:line-clamp-none transition-all">
-                        {act.name}
-                      </p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">
-                        {act.trade} {act.workers > 0 ? `· ${act.workers} workers` : ''}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-xs">
-                      <span className="font-extrabold text-slate-800 font-mono">
-                        {formatHours(act.hours)} hrs
+                    <div className="flex items-center gap-2 flex-shrink-0 font-mono text-right">
+                      <span className="font-bold text-slate-800 text-xs">
+                        {formatHours(act.hours)}h
                       </span>
                       {act.otHours > 0 && (
-                        <span className="text-[9px] font-bold text-amber-700 bg-amber-100/70 border border-amber-200/60 px-1.5 py-0.2 rounded-md">
+                        <span className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200/60 px-1.5 py-0.2 rounded-full font-semibold hidden sm:inline">
                           +{formatHours(act.otHours)}h OT
                         </span>
                       )}
+                      <span className="text-[10px] text-slate-400 w-8 text-right font-semibold">
+                        {pct}%
+                      </span>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
+
+                  {/* Progress Bar with soft pastel gradient */}
+                  <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden flex">
+                    <div
+                      className={`h-full bg-gradient-to-r ${act.gradient} rounded-full transition-all duration-500`}
+                      style={{ width: `${totalHours > 0 ? Math.max(3, pct) : 0}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -549,7 +659,7 @@ export default function TodayActivityPanel({
       <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs flex-shrink-0 mt-auto">
         <span className="text-[11px] text-slate-400">
           {isLive
-            ? `Showing ${items.length} active tasks (${periodRange.label})`
+            ? `Showing ${items.length} active tasks (${displayLabel})`
             : `${items.length} project codes configured`}
         </span>
         <div className="flex items-center gap-3">

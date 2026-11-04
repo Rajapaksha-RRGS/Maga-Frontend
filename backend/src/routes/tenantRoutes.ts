@@ -9,6 +9,7 @@ import {
   resetTenantAdminPassword,
   getCorporateProjectsCatalog,
   updateEquipmentAssignMode,
+  updatePoolModes,
 } from '../controllers/tenantController';
 import { getSiteEquipmentPool } from '../controllers/equipmentController';
 import { getSiteEmployeePool } from '../controllers/employeeController';
@@ -23,6 +24,7 @@ router.get('/:id', getTenantById);
 router.put('/:id', updateTenant);
 router.patch('/:id/status', requireAdmin, updateTenantStatus);
 router.patch('/:id/equipment-mode', updateEquipmentAssignMode);
+router.patch('/:id/pool-modes', updatePoolModes);
 router.post('/:id/reset-admin-password', requireAdmin, resetTenantAdminPassword);
 router.get('/by-subdomain/:subdomain', getTenantBySubdomain);
 

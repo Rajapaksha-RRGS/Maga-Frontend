@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import prisma from '../config/prisma';
 
 // Helper to extract string param safely
@@ -57,7 +58,15 @@ export const getAllBusinessPartners = async (req: Request, res: Response): Promi
       (req.query.tenantId as string) ||
       (req.headers['x-tenant-id'] as string);
 
+    const isCorporateScope =
+      req.query.scope === 'corporate' ||
+      req.query.all === 'true' ||
+      currentProjectId === 'superadmin' ||
+      currentProjectId === 'GLOBAL';
+
     let siteWorkerCounts: Record<string, number> = {};
+    let siteEquipmentCounts: Record<string, number> = {};
+
     if (currentProjectId && currentProjectId !== 'superadmin' && currentProjectId !== 'GLOBAL') {
       try {
         const siteCounts = await prisma.mF_P_Employee.groupBy({
@@ -77,6 +86,51 @@ export const getAllBusinessPartners = async (req: Request, res: Response): Promi
       } catch (err) {
         console.warn('Could not compute siteWorkerCounts:', err);
       }
+
+      try {
+        const siteEqCounts = await prisma.mF_P_Equipment.groupBy({
+          by: ['ownerPartnerId'],
+          where: {
+            projectId: currentProjectId,
+            status: 'active',
+            ownerPartnerId: { not: null },
+          },
+          _count: { id: true },
+        });
+        siteEqCounts.forEach((sc) => {
+          if (sc.ownerPartnerId) {
+            siteEquipmentCounts[sc.ownerPartnerId] = sc._count.id;
+          }
+        });
+      } catch (err) {
+        console.warn('Could not compute siteEquipmentCounts:', err);
+      }
+
+      // In Site Admin context (not corporate scope), filter strictly to this site's partners
+      if (!isCorporateScope) {
+        try {
+          const assignedRows: any[] = await prisma.$queryRawUnsafe(
+            `SELECT "business_partner_id" FROM "MF_L_BUSINESS_PARTNER" WHERE "project_id" = $1 AND "status" != 'deleted'`,
+            currentProjectId
+          );
+          const sitePartnerIds = new Set<string>(assignedRows.map((r) => r.business_partner_id));
+
+          // Also include partners who currently have active workers or equipment on this site
+          Object.keys(siteWorkerCounts).forEach((id) => sitePartnerIds.add(id));
+          Object.keys(siteEquipmentCounts).forEach((id) => sitePartnerIds.add(id));
+
+          // Also include walk-in registrations pending approval
+          const pendingPartners = await prisma.mF_G_BusinessPartner.findMany({
+            where: { status: 'pending_approval' },
+            select: { id: true },
+          });
+          pendingPartners.forEach((p) => sitePartnerIds.add(p.id));
+
+          where.id = { in: Array.from(sitePartnerIds) };
+        } catch (err) {
+          console.warn('Could not filter by site partner IDs:', err);
+        }
+      }
     }
 
     const partners = await prisma.mF_G_BusinessPartner.findMany({
@@ -85,13 +139,19 @@ export const getAllBusinessPartners = async (req: Request, res: Response): Promi
       orderBy: { code: 'asc' },
     });
 
-    const formatted = partners.map((p) => ({
-      ...p,
-      employeeCount: p._count.employees,
-      equipmentCount: p._count.equipment,
-      siteWorkerCount: siteWorkerCounts[p.id] || 0,
-      isActiveOnSite: Boolean(siteWorkerCounts[p.id] && siteWorkerCounts[p.id] > 0),
-    }));
+    const formatted = partners.map((p) => {
+      const workerCount = siteWorkerCounts[p.id] || 0;
+      const equipmentCount = siteEquipmentCounts[p.id] || 0;
+      const isActiveOnSite = workerCount > 0 || equipmentCount > 0;
+      return {
+        ...p,
+        employeeCount: p._count.employees,
+        equipmentCount: p._count.equipment,
+        siteWorkerCount: workerCount,
+        siteEquipmentCount: equipmentCount,
+        isActiveOnSite,
+      };
+    });
 
     res.json(formatted);
   } catch (error) {
@@ -114,10 +174,36 @@ export const getBusinessPartnerById = async (req: Request, res: Response): Promi
       return;
     }
 
+    const currentProjectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (req.headers['x-tenant-id'] as string);
+
+    let siteWorkerCount = 0;
+    let siteEquipmentCount = 0;
+
+    if (currentProjectId && currentProjectId !== 'superadmin' && currentProjectId !== 'GLOBAL') {
+      try {
+        siteWorkerCount = await prisma.mF_P_Employee.count({
+          where: { projectId: currentProjectId, status: 'active', businessPartnerId: id },
+        });
+        siteEquipmentCount = await prisma.mF_P_Equipment.count({
+          where: { projectId: currentProjectId, status: 'active', ownerPartnerId: id },
+        });
+      } catch (err) {
+        console.warn('Could not compute site counts for partner:', err);
+      }
+    }
+
     res.json({
       ...partner,
       employeeCount: partner._count.employees,
       equipmentCount: partner._count.equipment,
+      siteWorkerCount,
+      siteEquipmentCount,
+      isActiveOnSite: Boolean(siteWorkerCount > 0 || siteEquipmentCount > 0),
     });
   } catch (error) {
     console.error('Error fetching business partner:', error);
@@ -252,10 +338,37 @@ export const createBusinessPartner = async (req: Request, res: Response): Promis
       select: partnerSelectOptimized,
     });
 
+    const currentProjectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (req.headers['x-tenant-id'] as string) ||
+      req.body?.projectId;
+
+    if (currentProjectId && currentProjectId !== 'superadmin' && currentProjectId !== 'GLOBAL') {
+      try {
+        const linkId = crypto.randomUUID();
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO "MF_L_BUSINESS_PARTNER" ("id", "project_id", "business_partner_id", "status")
+           VALUES ($1, $2, $3, 'active')
+           ON CONFLICT ("project_id", "business_partner_id") DO NOTHING`,
+          linkId,
+          currentProjectId,
+          partner.id
+        );
+      } catch (linkErr) {
+        console.warn('Could not associate new partner with current site:', linkErr);
+      }
+    }
+
     res.status(201).json({
       ...partner,
       employeeCount: 0,
       equipmentCount: 0,
+      siteWorkerCount: 0,
+      siteEquipmentCount: 0,
+      isActiveOnSite: false,
     });
   } catch (error: any) {
     console.error('Error creating business partner:', error);
@@ -306,10 +419,36 @@ export const updateBusinessPartner = async (req: Request, res: Response): Promis
       select: partnerSelectOptimized,
     });
 
+    const currentProjectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (req.headers['x-tenant-id'] as string);
+
+    let siteWorkerCount = 0;
+    let siteEquipmentCount = 0;
+
+    if (currentProjectId && currentProjectId !== 'superadmin' && currentProjectId !== 'GLOBAL') {
+      try {
+        siteWorkerCount = await prisma.mF_P_Employee.count({
+          where: { projectId: currentProjectId, status: 'active', businessPartnerId: id },
+        });
+        siteEquipmentCount = await prisma.mF_P_Equipment.count({
+          where: { projectId: currentProjectId, status: 'active', ownerPartnerId: id },
+        });
+      } catch (err) {
+        console.warn('Could not compute site counts for partner:', err);
+      }
+    }
+
     res.json({
       ...partner,
       employeeCount: partner._count.employees,
       equipmentCount: partner._count.equipment,
+      siteWorkerCount,
+      siteEquipmentCount,
+      isActiveOnSite: Boolean(siteWorkerCount > 0 || siteEquipmentCount > 0),
     });
   } catch (error: any) {
     console.error('Error updating business partner:', error);
@@ -380,10 +519,36 @@ export const toggleBusinessPartnerStatus = async (req: Request, res: Response): 
       select: partnerSelectOptimized,
     });
 
+    const currentProjectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (req.headers['x-tenant-id'] as string);
+
+    let siteWorkerCount = 0;
+    let siteEquipmentCount = 0;
+
+    if (currentProjectId && currentProjectId !== 'superadmin' && currentProjectId !== 'GLOBAL') {
+      try {
+        siteWorkerCount = await prisma.mF_P_Employee.count({
+          where: { projectId: currentProjectId, status: 'active', businessPartnerId: id },
+        });
+        siteEquipmentCount = await prisma.mF_P_Equipment.count({
+          where: { projectId: currentProjectId, status: 'active', ownerPartnerId: id },
+        });
+      } catch (err) {
+        console.warn('Could not compute site counts for partner:', err);
+      }
+    }
+
     res.json({
       ...partner,
       employeeCount: partner._count.employees,
       equipmentCount: partner._count.equipment,
+      siteWorkerCount,
+      siteEquipmentCount,
+      isActiveOnSite: Boolean(siteWorkerCount > 0 || siteEquipmentCount > 0),
     });
   } catch (error: any) {
     console.error('Error toggling business partner status:', error);
@@ -521,6 +686,99 @@ export const rejectBusinessPartner = async (req: Request, res: Response): Promis
   } catch (error: any) {
     console.error('Error rejecting business partner:', error);
     res.status(500).json({ error: error.message || 'Failed to reject business partner' });
+  }
+};
+
+// 12. POST /api/business-partners/assign-site — Assign partner(s) to this site
+export const assignBusinessPartnerToSite = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const currentProjectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (req.headers['x-tenant-id'] as string) ||
+      req.body?.projectId;
+
+    if (!currentProjectId || currentProjectId === 'superadmin' || currentProjectId === 'GLOBAL') {
+      res.status(400).json({ error: 'Valid site project ID is required' });
+      return;
+    }
+
+    const { partnerId, partnerIds } = req.body || {};
+    const ids: string[] = Array.isArray(partnerIds) ? partnerIds : partnerId ? [partnerId] : [];
+
+    if (ids.length === 0) {
+      res.status(400).json({ error: 'At least one business partner ID is required' });
+      return;
+    }
+
+    let assignedCount = 0;
+    for (const pId of ids) {
+      const linkId = crypto.randomUUID();
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "MF_L_BUSINESS_PARTNER" ("id", "project_id", "business_partner_id", "status")
+         VALUES ($1, $2, $3, 'active')
+         ON CONFLICT ("project_id", "business_partner_id") DO UPDATE SET "status" = 'active'`,
+        linkId,
+        currentProjectId,
+        pId
+      );
+      assignedCount++;
+    }
+
+    res.json({
+      success: true,
+      count: assignedCount,
+      message: `Successfully assigned ${assignedCount} partner(s) to this site.`,
+    });
+  } catch (error) {
+    console.error('Error assigning partner to site:', error);
+    res.status(500).json({ error: 'Failed to assign partner to site' });
+  }
+};
+
+// 13. DELETE /api/business-partners/:id/site-assignment — Unassign partner from this site
+export const unassignBusinessPartnerFromSite = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = getParam(req.params.id);
+    const currentProjectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (req.headers['x-tenant-id'] as string);
+
+    if (!currentProjectId || currentProjectId === 'superadmin' || currentProjectId === 'GLOBAL') {
+      res.status(400).json({ error: 'Valid site project ID is required' });
+      return;
+    }
+
+    // Check if partner has active employees or equipment on this site
+    const activeEmployees = await prisma.mF_P_Employee.count({
+      where: { projectId: currentProjectId, businessPartnerId: id, status: 'active' },
+    });
+    const activeEquipment = await prisma.mF_P_Equipment.count({
+      where: { projectId: currentProjectId, ownerPartnerId: id, status: 'active' },
+    });
+
+    if (activeEmployees > 0 || activeEquipment > 0) {
+      res.status(400).json({
+        error: `Cannot remove partner: this partner currently has ${activeEmployees} active worker(s) and ${activeEquipment} active equipment assigned on this site.`,
+      });
+      return;
+    }
+
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "MF_L_BUSINESS_PARTNER" WHERE "project_id" = $1 AND "business_partner_id" = $2`,
+      currentProjectId,
+      id
+    );
+
+    res.json({ success: true, message: 'Partner removed from this site successfully' });
+  } catch (error) {
+    console.error('Error unassigning partner from site:', error);
+    res.status(500).json({ error: 'Failed to remove partner from site' });
   }
 };
 

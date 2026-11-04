@@ -40,11 +40,31 @@ function formatTenant(t: any) {
     email: t.email || '',
     status: t.status || 'active',
     equipmentAssignBySupervisor: t.equipmentAssignBySupervisor ?? false,
+    laborAssignBySupervisor: (t as any).laborAssignBySupervisor ?? false,
+    operatorAssignBySupervisor: (t as any).operatorAssignBySupervisor ?? false,
     createdAt: t.createdAt,
     userCount: t._count?.users ?? 0,
     employeeCount: t._count?.employees ?? 0,
     primaryAdmin,
   };
+}
+
+
+async function attachPoolModes(tenant: any, id: string) {
+  try {
+    const rows: any = await prisma.$queryRawUnsafe(
+      'SELECT labor_assign_by_supervisor, operator_assign_by_supervisor, equipment_assign_by_supervisor FROM "MF_PROJECT" WHERE "project_id" = $1',
+      id
+    );
+    if (rows && rows.length > 0) {
+      tenant.laborAssignBySupervisor = Boolean(rows[0].labor_assign_by_supervisor);
+      tenant.operatorAssignBySupervisor = Boolean(rows[0].operator_assign_by_supervisor);
+      tenant.equipmentAssignBySupervisor = Boolean(rows[0].equipment_assign_by_supervisor);
+    }
+  } catch (err) {
+    // fallback
+  }
+  return tenant;
 }
 
 // Common optimized projection for Project / Tenant queries
@@ -109,7 +129,9 @@ export const getTenantById = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    res.json(formatTenant(project));
+    const formatted = formatTenant(project);
+    await attachPoolModes(formatted, id);
+    res.json(formatted);
   } catch (error) {
     console.error('Error fetching tenant by ID:', error);
     res.status(500).json({ error: 'Failed to fetch tenant' });
@@ -136,7 +158,9 @@ export const getTenantBySubdomain = async (req: Request, res: Response): Promise
       return;
     }
 
-    res.json(formatTenant(project));
+    const formatted = formatTenant(project);
+    await attachPoolModes(formatted, project.id);
+    res.json(formatted);
   } catch (error) {
     console.error('Error fetching tenant by subdomain:', error);
     res.status(500).json({ error: 'Failed to fetch tenant' });
@@ -384,16 +408,84 @@ export const updateEquipmentAssignMode = async (req: Request, res: Response): Pr
       return;
     }
 
-    const updated = await prisma.mF_P_Project.update({
+    await prisma.$executeRawUnsafe(
+      'UPDATE "MF_PROJECT" SET "equipment_assign_by_supervisor" = $1 WHERE "project_id" = $2',
+      equipmentAssignBySupervisor,
+      id
+    );
+
+    const updated = await prisma.mF_P_Project.findUnique({
       where: { id },
-      data: { equipmentAssignBySupervisor },
       select: projectSelectOptimized,
     });
 
-    res.json(formatTenant(updated));
+    if (!updated) {
+      res.status(404).json({ error: 'Tenant not found' });
+      return;
+    }
+
+    const formatted = formatTenant(updated);
+    await attachPoolModes(formatted, id);
+    res.json(formatted);
   } catch (error) {
     console.error('Error updating equipment assignment mode:', error);
     res.status(500).json({ error: 'Failed to update equipment assignment mode' });
+  }
+};
+
+// 10. PATCH /api/tenants/:id/pool-modes — Toggle labor, operator, equipment pool modes independently
+export const updatePoolModes = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = getParam(req.params.id);
+    const { laborAssignBySupervisor, operatorAssignBySupervisor, equipmentAssignBySupervisor } = req.body || {};
+
+    if (
+      typeof laborAssignBySupervisor !== 'boolean' &&
+      typeof operatorAssignBySupervisor !== 'boolean' &&
+      typeof equipmentAssignBySupervisor !== 'boolean'
+    ) {
+      res.status(400).json({ error: 'At least one pool mode boolean must be provided.' });
+      return;
+    }
+
+    if (typeof laborAssignBySupervisor === 'boolean') {
+      await prisma.$executeRawUnsafe(
+        'UPDATE "MF_PROJECT" SET "labor_assign_by_supervisor" = $1 WHERE "project_id" = $2',
+        laborAssignBySupervisor,
+        id
+      );
+    }
+    if (typeof operatorAssignBySupervisor === 'boolean') {
+      await prisma.$executeRawUnsafe(
+        'UPDATE "MF_PROJECT" SET "operator_assign_by_supervisor" = $1 WHERE "project_id" = $2',
+        operatorAssignBySupervisor,
+        id
+      );
+    }
+    if (typeof equipmentAssignBySupervisor === 'boolean') {
+      await prisma.$executeRawUnsafe(
+        'UPDATE "MF_PROJECT" SET "equipment_assign_by_supervisor" = $1 WHERE "project_id" = $2',
+        equipmentAssignBySupervisor,
+        id
+      );
+    }
+
+    const updated = await prisma.mF_P_Project.findUnique({
+      where: { id },
+      select: projectSelectOptimized,
+    });
+
+    if (!updated) {
+      res.status(404).json({ error: 'Tenant not found' });
+      return;
+    }
+
+    const formatted = formatTenant(updated);
+    await attachPoolModes(formatted, id);
+    res.json(formatted);
+  } catch (error) {
+    console.error('Error updating pool modes:', error);
+    res.status(500).json({ error: 'Failed to update pool modes' });
   }
 };
 

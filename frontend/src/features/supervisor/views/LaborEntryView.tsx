@@ -80,7 +80,7 @@ export function LaborEntryView({
   const [isPoolMode, setIsPoolMode] = useState(false);
 
   useEffect(() => {
-    supervisorStorage.isEquipmentPoolModeEnabled(projectId)
+    supervisorStorage.isLaborPoolModeEnabled(projectId)
       .then(setIsPoolMode)
       .catch(() => setIsPoolMode(false));
   }, [projectId]);

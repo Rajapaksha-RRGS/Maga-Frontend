@@ -9,7 +9,8 @@ const DEFAULT_DAY_TYPES = [
   { name: 'Saturday',       code: 'SATURDAY',       rateMultiplier: 1.0 },
   { name: 'Sunday',         code: 'SUNDAY',         rateMultiplier: 1.5 },
   { name: 'Shutdown',       code: 'SHUTDOWN',       rateMultiplier: 1.0 },
-  { name: 'Poya / Holiday', code: 'POYA',           rateMultiplier: 2.0 },
+  { name: 'Poya Day',       code: 'POYA',           rateMultiplier: 2.0 },
+  { name: 'Public Holiday', code: 'PUBLIC_HOLIDAY', rateMultiplier: 2.0 },
 ];
 
 function deriveCode(codeOrName: string): string {
@@ -17,7 +18,8 @@ function deriveCode(codeOrName: string): string {
   if (lower.includes('sunday')) return 'SUNDAY';
   if (lower.includes('saturday')) return 'SATURDAY';
   if (lower.includes('shutdown')) return 'SHUTDOWN';
-  if (lower.includes('holiday') || lower.includes('poya')) return 'POYA';
+  if (lower.includes('poya')) return 'POYA';
+  if (lower.includes('holiday')) return 'PUBLIC_HOLIDAY';
   return 'NORMAL';
 }
 
@@ -73,7 +75,7 @@ export async function getDayTypeRulesAndId(projectId: string, date: Date) {
   return {
     effectiveDayTypeId: dayType?.id || '',
     rateMultiplier: mult,
-    isAllOvertime: code === 'SUNDAY' || code === 'POYA',
+    isAllOvertime: code === 'SUNDAY' || code === 'POYA' || code === 'PUBLIC_HOLIDAY' || code === 'HOLIDAY',
     standardHoursCap: code === 'SATURDAY' ? 6.5 : 8.0,
   };
 }
@@ -137,7 +139,7 @@ export const getDayTypes = async (_req: Request, res: Response): Promise<void> =
       code: dt.code.toLowerCase(),
       rateMultiplier: Number(dt.rateMultiplier),
       overtimeAllowed: true,
-      requiresApproval: dt.code === 'POYA' || dt.code === 'SUNDAY',
+      requiresApproval: dt.code === 'POYA' || dt.code === 'PUBLIC_HOLIDAY' || dt.code === 'HOLIDAY' || dt.code === 'SUNDAY',
     }));
 
     res.json(formatted);

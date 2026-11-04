@@ -14,7 +14,7 @@
 export interface DayType {
   id: string;
   name: string;
-  code: 'normal' | 'saturday' | 'sunday' | 'shutdown' | 'public_holiday';
+  code: 'normal' | 'saturday' | 'sunday' | 'shutdown' | 'poya' | 'public_holiday';
   rateMultiplier?: number;
 }
 
@@ -31,6 +31,7 @@ export const FIXED_DAY_TYPES: DayType[] = [
   { id: 'dt-saturday', name: 'Saturday',       code: 'saturday', rateMultiplier: 1.0 },
   { id: 'dt-sunday',   name: 'Sunday',         code: 'sunday',   rateMultiplier: 1.5 },
   { id: 'dt-shutdown', name: 'Shutdown',       code: 'shutdown', rateMultiplier: 1.0 },
+  { id: 'dt-poya',     name: 'Poya Day',       code: 'poya',           rateMultiplier: 2.0 },
   { id: 'dt-holiday',  name: 'Public Holiday', code: 'public_holiday', rateMultiplier: 2.0 },
 ];
 
@@ -63,6 +64,79 @@ function initCalendarForMonth(year: number, month: number) {
 const now = new Date();
 initCalendarForMonth(now.getFullYear(), now.getMonth());
 
+export function normalizeDayTypes(rawTypes: DayType[]): DayType[] {
+  let hasPoya = false;
+  let hasHoliday = false;
+
+  const normalized: DayType[] = [];
+
+  for (const dt of rawTypes) {
+    const code = (dt.code || '').toLowerCase();
+    const name = (dt.name || '').toLowerCase();
+
+    if (code === 'poya' || (name.includes('poya') && !name.includes('holiday'))) {
+      hasPoya = true;
+      normalized.push({
+        ...dt,
+        id: dt.id || 'dt-poya',
+        name: 'Poya Day',
+        code: 'poya',
+        rateMultiplier: 2.0,
+      });
+    } else if (name.includes('poya') && name.includes('holiday')) {
+      // Split the combined "Poya / Holiday" into Poya Day and Public Holiday!
+      hasPoya = true;
+      normalized.push({
+        ...dt,
+        id: dt.id || 'dt-poya',
+        name: 'Poya Day',
+        code: 'poya',
+        rateMultiplier: 2.0,
+      });
+      hasHoliday = true;
+      normalized.push({
+        id: '9ea7fe46-36fd-4c34-896e-14df4f63a64b',
+        name: 'Public Holiday',
+        code: 'public_holiday',
+        rateMultiplier: 2.0,
+      });
+    } else if (code === 'public_holiday' || code === 'holiday' || name.includes('holiday')) {
+      hasHoliday = true;
+      normalized.push({
+        ...dt,
+        id: dt.id || 'dt-holiday',
+        name: 'Public Holiday',
+        code: 'public_holiday',
+        rateMultiplier: 2.0,
+      });
+    } else {
+      normalized.push(dt);
+    }
+  }
+
+  // Ensure Public Holiday exists
+  if (!hasHoliday) {
+    normalized.push({
+      id: 'dt-holiday',
+      name: 'Public Holiday',
+      code: 'public_holiday',
+      rateMultiplier: 2.0,
+    });
+  }
+
+  // Ensure Poya Day exists
+  if (!hasPoya) {
+    normalized.push({
+      id: 'dt-poya',
+      name: 'Poya Day',
+      code: 'poya',
+      rateMultiplier: 2.0,
+    });
+  }
+
+  return normalized;
+}
+
 // ── 1. Day types ─────────────────────────────────────────────────────────────
 
 export async function getDayTypes(): Promise<DayType[]> {
@@ -72,14 +146,14 @@ export async function getDayTypes(): Promise<DayType[]> {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          return data;
+          return normalizeDayTypes(data);
         }
       }
     } catch (err) {
       console.warn('Backend unavailable, using default day types:', err);
     }
 
-    return [...FIXED_DAY_TYPES];
+    return normalizeDayTypes([...FIXED_DAY_TYPES]);
   });
 }
 
@@ -119,10 +193,20 @@ export async function setCalendarDayType(
   dayTypeId: string
 ): Promise<{ success: boolean; recalculatedCount?: number; message?: string }> {
   try {
+    let resolvedDayTypeId = dayTypeId;
+    const types = await getDayTypes();
+    if (dayTypeId === 'dt-holiday' || dayTypeId === 'public_holiday') {
+      const found = types.find((t) => t.code === 'public_holiday' && !t.id.startsWith('dt-'));
+      if (found) resolvedDayTypeId = found.id;
+    } else if (dayTypeId === 'dt-poya' || dayTypeId === 'poya') {
+      const found = types.find((t) => t.code === 'poya' && !t.id.startsWith('dt-'));
+      if (found) resolvedDayTypeId = found.id;
+    }
+
     const res = await apiFetch(`${API_URL}/calendar/set-day`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, dayTypeId }),
+      body: JSON.stringify({ date, dayTypeId: resolvedDayTypeId }),
     });
 
     if (!res.ok) {

@@ -11,6 +11,8 @@ import {
   getPendingBusinessPartners,
   approveBusinessPartner,
   rejectBusinessPartner,
+  assignBusinessPartnerToSite,
+  unassignBusinessPartnerFromSite,
 } from '../controllers/businessPartnerController';
 
 const router = Router();
@@ -19,6 +21,8 @@ const router = Router();
 router.get('/pending', getPendingBusinessPartners);
 router.get('/corporate-master', getCorporateBusinessPartnersCatalog);
 router.get('/next-code', getNextBusinessPartnerCode);
+router.post('/assign-site', assignBusinessPartnerToSite);
+router.delete('/:id/site-assignment', unassignBusinessPartnerFromSite);
 router.get('/', getAllBusinessPartners);
 router.get('/:id', getBusinessPartnerById);
 router.post('/', createBusinessPartner);

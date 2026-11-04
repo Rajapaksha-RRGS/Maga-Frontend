@@ -85,19 +85,27 @@ export default function AssignmentsHubPage({ defaultTab: _defaultTab = 'labour' 
     ? 'equipment'
     : 'labour';
 
-  const { isPoolMode } = useEquipmentPoolMode();
+  const { isLabourPoolMode, isOperatorPoolMode, isEquipmentPoolMode } = useEquipmentPoolMode();
 
-  // If Pool Mode is ON, only Labour assignment is available in the hub
-  const visibleTabs = isPoolMode
-    ? TABS.filter((t) => t.key === 'labour')
-    : TABS;
+  // Each tab is visible only if its pool mode is NOT active (i.e. admin pre-assignment required)
+  const visibleTabs = TABS.filter((t) => {
+    if (t.key === 'labour' && isLabourPoolMode) return false;
+    if (t.key === 'operator' && isOperatorPoolMode) return false;
+    if (t.key === 'equipment' && isEquipmentPoolMode) return false;
+    return true;
+  });
 
-  // Auto-redirect to Labour assign if admin visits operator/equipment while in Pool Mode
+  // Auto-redirect if admin visits a tab that is currently in Pool Mode
   useEffect(() => {
-    if (isPoolMode && (activeTab === 'operator' || activeTab === 'equipment')) {
-      navigate('/admin/assignments/labour', { replace: true });
+    const isCurrentTabHidden =
+      (activeTab === 'labour' && isLabourPoolMode) ||
+      (activeTab === 'operator' && isOperatorPoolMode) ||
+      (activeTab === 'equipment' && isEquipmentPoolMode);
+
+    if (isCurrentTabHidden && visibleTabs.length > 0) {
+      navigate(visibleTabs[0].path, { replace: true });
     }
-  }, [isPoolMode, activeTab, navigate]);
+  }, [isLabourPoolMode, isOperatorPoolMode, isEquipmentPoolMode, activeTab, visibleTabs, navigate]);
 
   // Persistent date across tabs
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -225,10 +233,26 @@ export default function AssignmentsHubPage({ defaultTab: _defaultTab = 'labour' 
           })}
         </div>
 
-        {isPoolMode && (
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 mb-2 sm:mb-0 rounded-lg bg-amber-50 border border-amber-200/80 text-amber-800 text-xs font-semibold self-start sm:self-auto">
-            <Tractor size={14} className="text-amber-600 flex-shrink-0" />
-            <span>Site Resource Pool Mode Active (Supervisors self-dispatch machinery, operators & labour)</span>
+        {(isLabourPoolMode || isOperatorPoolMode || isEquipmentPoolMode) && (
+          <div className="flex items-center gap-2 flex-wrap mb-2 sm:mb-0 text-xs font-semibold">
+            {isLabourPoolMode && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
+                <HardHat size={13} className="text-emerald-600" />
+                Labour Pool Active
+              </span>
+            )}
+            {isOperatorPoolMode && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-800">
+                <Cog size={13} className="text-blue-600" />
+                Operator Pool Active
+              </span>
+            )}
+            {isEquipmentPoolMode && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+                <Tractor size={13} className="text-amber-600" />
+                Equipment Pool Active
+              </span>
+            )}
           </div>
         )}
       </div>

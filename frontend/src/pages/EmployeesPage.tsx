@@ -196,7 +196,7 @@ export default function EmployeesPage() {
   const fetchPartners = async () => {
     setLoadingPartners(true);
     try {
-      const res = await businessPartnerService.getAll();
+      const res = await businessPartnerService.getAll('corporate');
       setRegisteredPartners(res);
     } catch (err) {
       console.error('Failed to load registered partners in EmployeesPage:', err);

@@ -76,7 +76,10 @@ export function getDayTypeRule(
     if (lower.includes('sunday')) {
       return { standardCap: 0.0, isAllOvertime: true, dayTypeLabel: 'Sunday (Full OT)' };
     }
-    if (lower.includes('public holiday') || lower.includes('holiday') || lower.includes('poya')) {
+    if (lower.includes('poya')) {
+      return { standardCap: 0.0, isAllOvertime: true, dayTypeLabel: 'Poya Day (Full OT)' };
+    }
+    if (lower.includes('public holiday') || lower.includes('holiday')) {
       return { standardCap: 0.0, isAllOvertime: true, dayTypeLabel: 'Public Holiday (Full OT)' };
     }
     if (lower.includes('saturday')) {

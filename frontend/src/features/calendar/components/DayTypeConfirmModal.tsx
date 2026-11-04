@@ -20,7 +20,7 @@ function getRuleDescription(dt?: DayType): { cap: string; desc: string; badgeCol
     return {
       cap: '0.0h Cap (100% OT)',
       desc: 'All hours worked are calculated as Overtime',
-      badgeColor: lower.includes('sunday') ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300',
+      badgeColor: lower.includes('sunday') ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : lower.includes('poya') ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-purple-100 text-purple-800 border-purple-300',
     };
   }
   if (lower.includes('saturday')) {
