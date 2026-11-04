@@ -1588,64 +1588,79 @@ export function LaborEntryView({
                   </div>
                 )}
 
-                {/* Compact Activity Splits / Auto-Idle Preview (Collapsed View) */}
-                {!isExpanded && !worker.isAbsent && (worker.activities.length > 0 || (worker.inTime && worker.outTime)) && (
-                  <div className="px-3.5 pb-2.5 pt-0.5 flex items-center justify-between gap-1.5 flex-wrap border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/40 dark:bg-slate-900/20">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {worker.activities.length > 0 ? (
-                        <>
-                          <span className="text-[10px] uppercase font-bold text-slate-400">Tasks:</span>
-                          {worker.activities.map((act) => (
-                            <span
-                              key={act.id}
-                              className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
-                            >
-                              <span>{act.activityCode}: {act.hours}h</span>
-                              {!isDayLocked && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleRemoveIndividualActivitySplit(worker.id, act.id);
-                                  }}
-                                  className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
-                                  title={`Delete ${act.activityCode}`}
-                                >
-                                  <X size={10} />
-                                </button>
-                              )}
-                            </span>
-                          ))}
-                          {!isDayLocked && worker.activities.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleClearAllActivities(worker.id);
-                              }}
-                              className="text-[10px] text-red-500 hover:underline font-semibold ml-1 cursor-pointer"
-                            >
-                              Clear
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
-                          <PauseCircle size={11} className="text-amber-600" />
-                          <span>Auto-Idle (ZIDLE): {formatHhmm(worker.shiftHours)}h</span>
-                        </span>
-                      )}
-                    </div>
+                {/* Compact Activity Splits / Real-Time Idle Preview (Collapsed View) */}
+                {!isExpanded && !worker.isAbsent && (worker.shiftHours > 0 || worker.activities.length > 0) && (() => {
+                  const currentSum = sumHhmm(worker.activities.map((a) => a.hours));
+                  const idleMinutes = Math.max(0, hhmmToMinutes(worker.shiftHours) - hhmmToMinutes(currentSum));
+                  const idleHours = minutesToHhmm(idleMinutes);
+                  const isFullyBalanced = worker.shiftHours > 0 && Math.abs(hhmmToMinutes(worker.shiftHours) - hhmmToMinutes(currentSum)) < 1;
+                  const isOverShift = hhmmToMinutes(currentSum) > hhmmToMinutes(worker.shiftHours);
 
-                    <button
-                      type="button"
-                      onClick={() => setExpandedId(worker.id)}
-                      className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 ml-auto cursor-pointer"
-                    >
-                      Edit Tasks ({worker.activities.length}) →
-                    </button>
-                  </div>
-                )}
+                  return (
+                    <div className="px-3.5 pb-2.5 pt-0.5 flex items-center justify-between gap-1.5 flex-wrap border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/40 dark:bg-slate-900/20">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {worker.activities.length > 0 && (
+                          <>
+                            <span className="text-[10px] uppercase font-bold text-slate-400">Tasks:</span>
+                            {worker.activities.map((act) => (
+                              <span
+                                key={act.id}
+                                className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
+                              >
+                                <span>{act.activityCode}: {act.hours}h</span>
+                                {!isDayLocked && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemoveIndividualActivitySplit(worker.id, act.id);
+                                    }}
+                                    className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
+                                    title={`Delete ${act.activityCode}`}
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                )}
+                              </span>
+                            ))}
+                          </>
+                        )}
+
+                        {/* Always display real-time Auto-Idle if remaining shift hours exist */}
+                        {worker.shiftHours > 0 && idleMinutes > 0 && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800 shadow-2xs">
+                            <PauseCircle size={11} className="text-amber-600" />
+                            <span>Idle (ZIDLE): {formatHhmm(idleHours)}h</span>
+                          </span>
+                        )}
+
+                        {/* 100% Productive */}
+                        {isFullyBalanced && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 shadow-2xs">
+                            <Check size={11} />
+                            <span>100% Active (0h Idle)</span>
+                          </span>
+                        )}
+
+                        {/* Over Shift Warning */}
+                        {isOverShift && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-700 shadow-2xs">
+                            <AlertTriangle size={11} />
+                            <span>+{formatHhmm(minutesToHhmm(hhmmToMinutes(currentSum) - hhmmToMinutes(worker.shiftHours)))}h Over</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(worker.id)}
+                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 ml-auto cursor-pointer"
+                      >
+                        Edit Tasks ({worker.activities.length}) →
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {/* ── Accordion Expanded Content: Individual Worker Fine-Tuning ── */}
                 {isExpanded && (
@@ -1776,38 +1791,50 @@ export function LaborEntryView({
                         )}
                       </div>
 
-                      {/* Discrepancy Notice & ZIDLE Auto-Balance */}
-                      <div className="mt-2 flex items-center justify-between text-xs px-1">
-                        <span className="text-slate-500 dark:text-slate-400">
-                          Total: <strong className="text-slate-800 dark:text-slate-200">{formatHhmm(activitySum)}h</strong> / {formatHhmm(worker.shiftHours)}h
-                        </span>
-                        {(() => {
-                          const diffMinutes = hhmmToMinutes(worker.shiftHours) - hhmmToMinutes(activitySum);
-                          if (diffMinutes > 0) {
-                            const idleHhmm = minutesToHhmm(diffMinutes);
-                            return (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
-                                <PauseCircle size={12} className="text-amber-600" />
-                                <span>Auto-Idle (ZIDLE): {formatHhmm(idleHhmm)}h</span>
+                      {/* Dynamic Shift Balance & Real-time Auto-Idle Deduction */}
+                      {(() => {
+                        const currentSum = sumHhmm(worker.activities.map((a) => a.hours));
+                        const diffMinutes = hhmmToMinutes(worker.shiftHours) - hhmmToMinutes(currentSum);
+                        const idleHhmm = minutesToHhmm(Math.max(0, diffMinutes));
+                        const isBalanced = worker.shiftHours > 0 && Math.abs(diffMinutes) < 1;
+
+                        return (
+                          <div className="space-y-2 pt-1">
+                            {/* Live Dynamic Idle Row when remaining hours exist */}
+                            {worker.shiftHours > 0 && diffMinutes > 0 && (
+                              <div className="p-2.5 rounded-xl bg-amber-50/90 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/80 flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-1.5 text-amber-900 dark:text-amber-200 font-bold">
+                                  <PauseCircle size={14} className="text-amber-600 shrink-0" />
+                                  <span>Remaining Shift Idle (ZIDLE): <strong className="font-mono text-sm">{formatHhmm(idleHhmm)}h</strong></span>
+                                </div>
+                                <span className="text-[10px] text-amber-800/80 dark:text-amber-400 font-medium">
+                                  Auto-decreases as tasks are added
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Total Summary Row */}
+                            <div className="flex items-center justify-between text-xs px-1">
+                              <span className="text-slate-500 dark:text-slate-400">
+                                Tasks: <strong className="text-slate-800 dark:text-slate-200 font-mono">{formatHhmm(currentSum)}h</strong> / Shift: {formatHhmm(worker.shiftHours)}h
                               </span>
-                            );
-                          } else if (diffMinutes < 0) {
-                            const excessHhmm = minutesToHhmm(Math.abs(diffMinutes));
-                            return (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400">
-                                <AlertTriangle size={13} /> +{formatHhmm(excessHhmm)}h Excess
-                              </span>
-                            );
-                          } else if (worker.shiftHours > 0) {
-                            return (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                                <CheckCircle2 size={13} /> Hours Balanced
-                              </span>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </div>
+                              {isBalanced ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                                  <CheckCircle2 size={13} /> 100% Active (0h Idle)
+                                </span>
+                              ) : diffMinutes < 0 ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 dark:text-red-400">
+                                  <AlertTriangle size={13} /> +{formatHhmm(minutesToHhmm(Math.abs(diffMinutes)))}h Excess
+                                </span>
+                              ) : (
+                                <span className="text-amber-700 dark:text-amber-400 font-semibold text-[11px]">
+                                  {formatHhmm(idleHhmm)}h Idle Remaining
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* ── Auto-save Status & Mark as Done button ── */}
