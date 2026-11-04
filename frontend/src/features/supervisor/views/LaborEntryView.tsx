@@ -436,34 +436,13 @@ export function LaborEntryView({
 
   // ── BATCH ACTIVITY ROW HANDLERS (SMART AUTO-BALANCING & STRICT SHIFT CAP) ──
   const handleAddBatchActivityRow = () => {
-    const currentSum = sumHhmm(batchActivities.map((a) => a.hours));
+    const currentSum = sumHhmm(batchActivities.map((b) => b.hours));
     const targetMins = hhmmToMinutes(targetShiftHours);
     const currentMins = hhmmToMinutes(currentSum);
     const diffMins = Math.max(0, targetMins - currentMins);
+    const fillHours = diffMins > 0 ? minutesToHhmm(diffMins) : 0;
 
-    // Case 1: Only 1 activity exists and takes the whole shift -> split 50/50
-    if (batchActivities.length === 1 && Math.abs(currentMins - targetMins) < 1 && targetMins > 0) {
-      const halfMins = Math.round(targetMins / 2);
-      const half = minutesToHhmm(halfMins);
-      const secondHalf = minutesToHhmm(targetMins - halfMins);
-
-      const updatedFirst = { ...batchActivities[0], hours: half };
-      const newRow: BatchActivityItem = {
-        id: `batch-act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-        activityCode: (activityOptions[1 % activityOptions.length] || activityOptions[0]).code,
-        hours: secondHalf,
-      };
-      setBatchActivities([updatedFirst, newRow]);
-      return;
-    }
-
-    // Strictly enforce: Never allow adding beyond targetShiftHours!
-    if (diffMins <= 0) {
-      return;
-    }
-
-    const fillHours = minutesToHhmm(diffMins);
-    const nextActivity = (activityOptions[batchActivities.length % activityOptions.length] || activityOptions[0]).code;
+    const nextActivity = (activityOptions[batchActivities.length % activityOptions.length] || activityOptions[0])?.code || '';
     const newRow: BatchActivityItem = {
       id: `batch-act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       activityCode: nextActivity,
@@ -475,27 +454,8 @@ export function LaborEntryView({
   const handleUpdateBatchActivityRow = (id: string, field: 'activityCode' | 'hours', value: any) => {
     setBatchActivities((prev) => {
       if (field === 'hours') {
-        const rawHours = Math.max(0, parseFloat(value) || 0);
-        const targetMins = hhmmToMinutes(targetShiftHours);
-        const otherMins = prev
-          .filter((a) => a.id !== id)
-          .reduce((sum, a) => sum + hhmmToMinutes(a.hours), 0);
-        const maxAvailMins = Math.max(0, targetMins - otherMins);
-        const maxAvailHours = minutesToHhmm(maxAvailMins);
-        const safeHours = Math.min(rawHours, maxAvailHours);
-
-        if (prev.length === 2) {
-          const otherRow = prev.find((a) => a.id !== id);
-          if (otherRow) {
-            const autoRemainingMins = Math.max(0, targetMins - hhmmToMinutes(safeHours));
-            const autoRemainingHours = minutesToHhmm(autoRemainingMins);
-            return prev.map((a) => {
-              if (a.id === id) return { ...a, hours: safeHours };
-              if (a.id === otherRow.id) return { ...a, hours: autoRemainingHours };
-              return a;
-            });
-          }
-        }
+        const valNum = value === '' ? 0 : parseFloat(value);
+        const safeHours = isNaN(valNum) ? 0 : Math.max(0, valNum);
         return prev.map((a) => (a.id === id ? { ...a, hours: safeHours } : a));
       }
       return prev.map((a) => (a.id === id ? { ...a, [field]: value } : a));
@@ -722,36 +682,18 @@ export function LaborEntryView({
     const allocatedSum = sumHhmm(laborer.activities.map((a) => a.hours));
     const allocatedMins = hhmmToMinutes(allocatedSum);
     const shiftMins = hhmmToMinutes(laborer.shiftHours);
-    let remainingMins = Math.max(0, shiftMins - allocatedMins);
-
-    let updatedExisting = [...laborer.activities];
-
-    // If only 1 activity currently takes the full shift (e.g. 9.0h),
-    // split 50/50 so first becomes 4.5h and new task gets remaining 4.5h
-    if (laborer.activities.length === 1 && remainingMins <= 0 && allocatedMins >= shiftMins && shiftMins > 0) {
-      const halfMins = Math.round(shiftMins / 2);
-      const halfHours = minutesToHhmm(halfMins);
-      const remainingHalf = minutesToHhmm(shiftMins - halfMins);
-      updatedExisting = [{ ...laborer.activities[0], hours: halfHours }];
-      remainingMins = hhmmToMinutes(remainingHalf);
-    }
-
-    // Strictly enforce: Never allow adding task if shift hours are already fully allocated
-    if (remainingMins <= 0) {
-      return;
-    }
-
-    const remaining = minutesToHhmm(remainingMins);
+    const remainingMins = Math.max(0, shiftMins - allocatedMins);
+    const fillHours = remainingMins > 0 ? minutesToHhmm(remainingMins) : 0;
 
     const newSplit: ActivitySplit = {
       id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      activityCode: activityOptions.find((o) => !updatedExisting.some((a) => a.activityCode === o.code))?.code || activityOptions[0]?.code || '',
-      hours: remaining,
+      activityCode: activityOptions.find((o) => !laborer.activities.some((a) => a.activityCode === o.code))?.code || activityOptions[0]?.code || '',
+      hours: fillHours,
     };
 
     const updated = laborers.map((l) => 
       l.id === laborerId 
-        ? { ...l, activities: [...updatedExisting, newSplit], status: 'draft' as const }
+        ? { ...l, activities: [...l.activities, newSplit], status: 'draft' as const }
         : l
     );
     onSaveLaborers(updated);
@@ -762,30 +704,8 @@ export function LaborEntryView({
       if (l.id !== laborerId) return l;
 
       if (field === 'hours') {
-        const rawHours = Math.max(0, parseFloat(value) || 0);
-        const shiftMins = hhmmToMinutes(l.shiftHours);
-        const otherMins = l.activities
-          .filter((a) => a.id !== splitId)
-          .reduce((sum, a) => sum + hhmmToMinutes(a.hours), 0);
-        const maxAvailMins = Math.max(0, shiftMins - otherMins);
-        const maxAvailHours = minutesToHhmm(maxAvailMins);
-        // Strictly cap at max available hours (never allow exceeding shift hours!)
-        const safeHours = Math.min(rawHours, maxAvailHours);
-
-        // Auto-balance if exactly 2 activities exist
-        if (l.activities.length === 2) {
-          const otherAct = l.activities.find((a) => a.id !== splitId);
-          if (otherAct) {
-            const autoRemainingMins = Math.max(0, shiftMins - hhmmToMinutes(safeHours));
-            const autoRemainingHours = minutesToHhmm(autoRemainingMins);
-            const activities = l.activities.map((a) => {
-              if (a.id === splitId) return { ...a, hours: safeHours };
-              if (a.id === otherAct.id) return { ...a, hours: autoRemainingHours };
-              return a;
-            });
-            return { ...l, activities, status: 'draft' as const };
-          }
-        }
+        const valNum = value === '' ? 0 : parseFloat(value);
+        const safeHours = isNaN(valNum) ? 0 : Math.max(0, valNum);
 
         const activities = l.activities.map((a) =>
           a.id === splitId ? { ...a, hours: safeHours } : a
@@ -1799,9 +1719,9 @@ export function LaborEntryView({
                             <button
                               type="button"
                               onClick={() => handleAddIndividualActivitySplit(worker.id)}
-                              disabled={isDayLocked || (worker.shiftHours > 0 && hhmmToMinutes(activitySum) >= hhmmToMinutes(worker.shiftHours) && worker.activities.length > 1)}
+                              disabled={isDayLocked}
                               className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                              title={worker.shiftHours > 0 && hhmmToMinutes(activitySum) >= hhmmToMinutes(worker.shiftHours) ? `Shift hours fully allocated (${worker.shiftHours}h)` : "Add Task"}
+                              title="Add Task"
                             >
                               <Plus size={13} /> Add Task
                             </button>

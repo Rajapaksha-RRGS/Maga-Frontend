@@ -510,28 +510,11 @@ export function OperatorEntryView({
           hours: targetShift,
         };
         newSplits = [newSplit];
-      } else if (currentSplits.length === 1) {
-        // Thawa wahanayak add kaloth dekata bedenna (50/50 split)
-        const targetMins = hhmmToMinutes(targetShift);
-        const halfMins = Math.round(targetMins / 2);
-        const half1 = minutesToHhmm(halfMins);
-        const half2 = minutesToHhmm(targetMins - halfMins);
-
-        const updatedFirst: OperatorEquipmentSplit = {
-          ...currentSplits[0],
-          hours: half1,
-        };
-        const newSplit: OperatorEquipmentSplit = {
-          id: `split-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-          equipmentId: defaultEqId,
-          hours: half2,
-        };
-        newSplits = [updatedFirst, newSplit];
       } else {
-        // 3rd or more vehicle: assign remaining hours if any
+        // 2nd, 3rd or more vehicle: assign remaining hours if any, or default to 0
         const currentSum = sumHhmm(currentSplits.map((s) => s.hours));
         const remMins = Math.max(0, hhmmToMinutes(targetShift) - hhmmToMinutes(currentSum));
-        const remainingHours = minutesToHhmm(remMins);
+        const remainingHours = remMins > 0 ? minutesToHhmm(remMins) : 0;
         const newSplit: OperatorEquipmentSplit = {
           id: `split-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
           equipmentId: defaultEqId,
@@ -558,7 +541,6 @@ export function OperatorEntryView({
     let poolToAdd: SitePoolEquipmentItem | undefined;
     const updated = operators.map((o) => {
       if (o.id !== operatorId) return o;
-      const targetShift = Number(o.shiftHours) || 8.0;
       const currentSplits = o.equipmentSplits || [];
 
       if (field === 'equipmentId') {
@@ -579,28 +561,14 @@ export function OperatorEntryView({
         };
       }
 
-      // field === 'hours'
+      // field === 'hours' (Supervisor has full freedom to type hours without auto-mutating other vehicles!)
       const valNum = value === '' ? 0 : parseFloat(value);
       const newHours = isNaN(valNum) ? 0 : Math.max(0, valNum);
 
-      let splits: OperatorEquipmentSplit[];
-      if (currentSplits.length === 2) {
-        // Auto-balance the other vehicle to take remaining shift hours
-        const balancedMins = Math.max(0, hhmmToMinutes(targetShift) - hhmmToMinutes(newHours));
-        const balancedHours = minutesToHhmm(balancedMins);
-        splits = currentSplits.map((s) => {
-          if (s.id === splitId) {
-            return { ...s, hours: newHours };
-          } else {
-            return { ...s, hours: balancedHours };
-          }
-        });
-      } else {
-        splits = currentSplits.map((s) => {
-          if (s.id !== splitId) return s;
-          return { ...s, hours: newHours };
-        });
-      }
+      const splits = currentSplits.map((s) => {
+        if (s.id !== splitId) return s;
+        return { ...s, hours: newHours };
+      });
 
       return {
         ...o,
