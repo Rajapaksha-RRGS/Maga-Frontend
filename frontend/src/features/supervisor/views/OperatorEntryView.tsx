@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../../../context/AuthContext';
+import * as assignmentService from '../../assignments/services/assignmentService';
 import { SiteOperatorPoolModal } from '../components/SiteOperatorPoolModal';
 import { SearchableEquipmentSelect, type EquipmentOptionItem } from '../components/SearchableEquipmentSelect';
 import { supervisorStorage } from '../services/supervisorStorageService';
@@ -157,7 +158,7 @@ export function OperatorEntryView({
     }
   };
 
-  const handleAddMultipleOperatorsFromPool = (newOps: OperatorEntry[]) => {
+  const handleAddMultipleOperatorsFromPool = async (newOps: OperatorEntry[]) => {
     const existingIds = new Set(operators.map((o) => o.id));
     const toAdd = newOps.filter((o) => !existingIds.has(o.id));
     if (toAdd.length > 0) {
@@ -180,6 +181,19 @@ export function OperatorEntryView({
         if (poolItemsToAdd.length > 0) {
           const newEntries = poolItemsToAdd.map((p) => supervisorStorage.createEquipmentLogEntryFromPool(p));
           onSaveEquipment([...equipment, ...newEntries]);
+        }
+      }
+
+      // Real-time backend operator assignment
+      if (selectedDate && (supervisorId || user?.id)) {
+        try {
+          await assignmentService.assignOperators(
+            selectedDate,
+            supervisorId || user?.id || '',
+            toAdd.map((o) => o.id)
+          );
+        } catch (err: any) {
+          console.warn('[OperatorEntryView] Background assignment sync error:', err);
         }
       }
     }
@@ -620,18 +634,31 @@ export function OperatorEntryView({
     if (expandedId === operatorId) {
       setExpandedId(null);
     }
+
+    // Real-time backend unassign
+    assignmentService.unassignOperator(operatorId).catch((err) => {
+      console.warn('[OperatorEntryView] Background unassign error:', err);
+    });
   };
 
   const handleBatchRemoveOperators = () => {
     if (selectedOperatorIds.length === 0) return;
     if (window.confirm(`Remove ${selectedOperatorIds.length} selected operator(s) from today's list?`)) {
-      const removeSet = new Set(selectedOperatorIds);
+      const idsToRemove = [...selectedOperatorIds];
+      const removeSet = new Set(idsToRemove);
       const updated = operators.filter((o) => !removeSet.has(o.id));
       onSaveOperators(updated);
       setSelectedOperatorIds([]);
       if (expandedId && removeSet.has(expandedId)) {
         setExpandedId(null);
       }
+
+      // Real-time backend unassign for each operator
+      idsToRemove.forEach((id) => {
+        assignmentService.unassignOperator(id).catch((err) => {
+          console.warn('[OperatorEntryView] Background batch unassign error:', err);
+        });
+      });
     }
   };
 

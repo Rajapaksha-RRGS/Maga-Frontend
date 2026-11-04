@@ -258,16 +258,17 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
 export const unassignEmployee = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    await prisma.mF_OP_DailyAssignment.delete({
-      where: { id },
+    await prisma.mF_OP_DailyAssignment.deleteMany({
+      where: {
+        OR: [
+          { id },
+          { employeeId: id },
+        ],
+      },
     });
     res.json({ success: true, message: 'Employee unassigned successfully' });
   } catch (error: any) {
     console.error('Error unassigning employee:', error);
-    if (error.code === 'P2025') {
-      res.status(404).json({ error: 'Assignment record not found' });
-      return;
-    }
     res.status(500).json({ error: 'Failed to unassign employee' });
   }
 };
@@ -687,16 +688,17 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
 export const unassignOperator = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    await prisma.mF_OP_DailyEquipmentAssignment.delete({
-      where: { id },
+    await prisma.mF_OP_DailyEquipmentAssignment.deleteMany({
+      where: {
+        OR: [
+          { id },
+          { operatorId: id },
+        ],
+      },
     });
     res.json({ success: true, message: 'Operator unassigned successfully' });
   } catch (error: any) {
     console.error('Error unassigning operator:', error);
-    if (error.code === 'P2025') {
-      res.status(404).json({ error: 'Operator assignment not found' });
-      return;
-    }
     res.status(500).json({ error: 'Failed to unassign operator' });
   }
 };

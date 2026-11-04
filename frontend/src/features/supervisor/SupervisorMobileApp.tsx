@@ -353,6 +353,7 @@ export default function SupervisorMobileApp() {
             isDayLocked={isDayLocked}
             selectedDate={selectedDate}
             projectId={currentSite.id}
+            supervisorId={user?.id}
           />
         )}
 

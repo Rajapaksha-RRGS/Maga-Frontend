@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useAuth } from '../../../context/AuthContext';
+import * as assignmentService from '../../assignments/services/assignmentService';
 import { 
   Users, 
   Plus, 
@@ -45,6 +47,7 @@ interface LaborEntryViewProps {
   isDayLocked?: boolean;
   selectedDate?: string;
   projectId?: string;
+  supervisorId?: string;
 }
 
 interface BatchActivityItem {
@@ -69,7 +72,10 @@ export function LaborEntryView({
   isDayLocked = false,
   selectedDate = '',
   projectId,
+  supervisorId: propSupervisorId,
 }: LaborEntryViewProps) {
+  const { user } = useAuth();
+  const effectiveSupervisorId = propSupervisorId || user?.id || '';
   const [isLaborPoolModalOpen, setIsLaborPoolModalOpen] = useState(false);
   const [isPoolMode, setIsPoolMode] = useState(false);
 
@@ -79,12 +85,25 @@ export function LaborEntryView({
       .catch(() => setIsPoolMode(false));
   }, [projectId]);
 
-  const handleAddLaborersFromPool = (newLaborers: LaborerEntry[]) => {
+  const handleAddLaborersFromPool = async (newLaborers: LaborerEntry[]) => {
     const existingIds = new Set(laborers.map((l) => l.id));
     const toAdd = newLaborers.filter((nl) => !existingIds.has(nl.id));
     if (toAdd.length > 0) {
       const updated = [...laborers, ...toAdd];
       onSaveLaborers(updated);
+
+      // Real-time backend assignment
+      if (selectedDate && effectiveSupervisorId) {
+        try {
+          await assignmentService.assign(
+            selectedDate,
+            effectiveSupervisorId,
+            toAdd.map((nl) => nl.id)
+          );
+        } catch (err: any) {
+          console.warn('[LaborEntryView] Background assignment sync error:', err);
+        }
+      }
     }
   };
   // Mode: In Time or Out Time (matching hand-drawn sketch)
@@ -762,17 +781,34 @@ export function LaborEntryView({
     if (expandedId === laborerId) {
       setExpandedId(null);
     }
+
+    // Real-time backend unassign
+    if (selectedDate) {
+      assignmentService.unassign(selectedDate, laborerId).catch((err) => {
+        console.warn('[LaborEntryView] Background unassign error:', err);
+      });
+    }
   };
 
   const handleBatchRemoveLaborers = () => {
     if (selectedWorkerIds.length === 0) return;
     if (window.confirm(`Remove ${selectedWorkerIds.length} selected worker(s) from today's list?`)) {
-      const removeSet = new Set(selectedWorkerIds);
+      const idsToRemove = [...selectedWorkerIds];
+      const removeSet = new Set(idsToRemove);
       const updated = laborers.filter((l) => !removeSet.has(l.id));
       onSaveLaborers(updated);
       setSelectedWorkerIds([]);
       if (expandedId && removeSet.has(expandedId)) {
         setExpandedId(null);
+      }
+
+      // Real-time backend unassign for each
+      if (selectedDate) {
+        idsToRemove.forEach((id) => {
+          assignmentService.unassign(selectedDate, id).catch((err) => {
+            console.warn('[LaborEntryView] Background batch unassign error:', err);
+          });
+        });
       }
     }
   };

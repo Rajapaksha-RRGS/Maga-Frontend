@@ -1008,6 +1008,84 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       claimsMap.set(te.employeeId, list);
     }
 
+    // Also check daily assignments on targetDate across project to identify claimed/assigned workers
+    const dailyAssignments = await prisma.mF_OP_DailyAssignment.findMany({
+      where: {
+        dailySheet: {
+          projectId,
+          date: targetDate,
+        },
+      },
+      include: {
+        dailySheet: {
+          select: {
+            supervisorId: true,
+            supervisor: { select: { id: true, fullName: true, username: true } },
+          },
+        },
+      },
+    });
+
+    for (const da of dailyAssignments) {
+      if (!da.employeeId) continue;
+      const sId = da.dailySheet?.supervisorId || '';
+      const sName = da.dailySheet?.supervisor?.fullName || da.dailySheet?.supervisor?.username || 'Supervisor';
+      const list = claimsMap.get(da.employeeId) || [];
+      if (!list.some(c => c.supervisorId === sId)) {
+        list.push({
+          supervisorId: sId,
+          supervisorName: sName,
+          inTime: null,
+          outTime: null,
+          hours: 0,
+        });
+        claimsMap.set(da.employeeId, list);
+      }
+    }
+
+    // Also check operator equipment assignments on targetDate
+    const opAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
+      where: {
+        dailySheet: {
+          projectId,
+          date: targetDate,
+        },
+        operatorId: { not: null },
+      },
+      include: {
+        dailySheet: {
+          select: {
+            supervisorId: true,
+            supervisor: { select: { id: true, fullName: true, username: true } },
+          },
+        },
+        equipment: {
+          select: {
+            corporateEquipment: { select: { standardEquipmentNumber: true } },
+          },
+        },
+      },
+    });
+
+    for (const oa of opAssignments) {
+      if (!oa.operatorId) continue;
+      const sId = oa.dailySheet?.supervisorId || '';
+      const sName = oa.dailySheet?.supervisor?.fullName || oa.dailySheet?.supervisor?.username || 'Supervisor';
+      const mCode = oa.equipment?.corporateEquipment?.standardEquipmentNumber;
+      const list = claimsMap.get(oa.operatorId) || [];
+      if (!list.some(c => c.supervisorId === sId)) {
+        list.push({
+          supervisorId: sId,
+          supervisorName: sName,
+          inTime: null,
+          outTime: null,
+          hours: 0,
+          machineCode: mCode,
+        });
+        claimsMap.set(oa.operatorId, list);
+      }
+    }
+
     const formatted = employees.map((emp) => {
       const claims = claimsMap.get(emp.id) || [];
       const otherClaim = claims.find((c) => c.supervisorId !== supervisorId);
