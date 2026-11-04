@@ -1118,7 +1118,8 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
               select: {
                 id: true,
                 callingName: true,
-                corporateEmployee: { select: { employeeCode: true, fullName: true } },
+                isOperator: true,
+                corporateEmployee: { select: { employeeCode: true, fullName: true, isOperator: true } },
                 tradeGroup: { select: { name: true } },
                 businessPartner: { select: { name: true } },
               },
@@ -1204,6 +1205,11 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
       const operatorEmpIds = new Set<string>();
       for (const ea of sheet.equipmentAssignments) {
         if (ea.operatorId) operatorEmpIds.add(ea.operatorId);
+      }
+      for (const a of sheet.assignments) {
+        if (a.employee && ((a.employee as any).isOperator || (a.employee as any).corporateEmployee?.isOperator)) {
+          operatorEmpIds.add(a.employee.id);
+        }
       }
       for (const te of sheet.timeEntries) {
         if (te.employee) {
@@ -1330,6 +1336,18 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         equipmentDisplays: string[];
         equipmentIds: string[];
       }>();
+
+      for (const a of sheet.assignments) {
+        if (a.employee && operatorEmpIds.has(a.employee.id)) {
+          if (!opMap.has(a.employee.id)) {
+            opMap.set(a.employee.id, {
+              operator: a.employee,
+              equipmentDisplays: [],
+              equipmentIds: [],
+            });
+          }
+        }
+      }
 
       for (const ea of sheet.equipmentAssignments) {
         if (ea.operator && ea.operatorId) {

@@ -604,6 +604,95 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
       });
     }
 
+    // Also include operators assigned to this daily sheet via DailyAssignment (MF_OP_DailyAssignment)
+    const dailyOpAssignments = await prisma.mF_OP_DailyAssignment.findMany({
+      where: {
+        dailySheet: {
+          projectId,
+          date: targetDate,
+          ...(supervisorId ? { supervisorId } : {}),
+        },
+        employee: {
+          OR: [
+            { isOperator: true },
+            { corporateEmployee: { isOperator: true } },
+          ],
+        },
+      },
+      include: {
+        dailySheet: {
+          select: {
+            supervisorId: true,
+            supervisor: { select: { id: true, fullName: true, username: true } },
+          },
+        },
+        employee: {
+          select: {
+            id: true,
+            callingName: true,
+            corporateEmployee: {
+              select: { employeeCode: true, fullName: true },
+            },
+            tradeGroup: { select: { name: true } },
+            businessPartner: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    for (const da of dailyOpAssignments) {
+      if (!da.employee || !da.employeeId) continue;
+      const key = `${da.dailySheet.supervisorId}_${da.employeeId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const claims = opClaimsMap.get(da.employeeId) || [];
+      const otherClaim = claims.find((c) => c.supervisorId !== supervisorId);
+      const myClaim = claims.find((c) => c.supervisorId === supervisorId);
+
+      const empEntries = myOpByEmp.get(da.employeeId);
+      const firstTe = empEntries && empEntries.length > 0 ? empEntries[0] : null;
+      const timeEntry = firstTe ? {
+        inTime: firstTe.inTime || undefined,
+        outTime: firstTe.outTime || undefined,
+        shiftHours: Number(firstTe.shiftHours || 0) || empEntries!.reduce((sum, e) => sum + Number(e.hours || 0), 0),
+        otHours: empEntries!.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0),
+        assignedEquipmentId: firstTe.equipmentId || undefined,
+        equipmentSplits: empEntries!.filter((e) => e.equipmentId).map((e) => ({
+          id: e.id,
+          equipmentId: e.equipmentId!,
+          hours: Number(e.hours || e.shiftHours || 0),
+        })),
+        status: firstTe.status,
+        notes: firstTe.remarks || '',
+      } : undefined;
+
+      formatted.push({
+        id: da.id,
+        date: dateStr,
+        supervisorId: da.dailySheet.supervisorId,
+        operatorId: da.employeeId,
+        equipmentId: firstTe?.equipmentId || '',
+        supervisorName: da.dailySheet.supervisor.fullName,
+        operatorName: da.employee.callingName || da.employee.corporateEmployee.fullName,
+        operatorCode: da.employee.corporateEmployee.employeeCode,
+        operatorTrade: da.employee.tradeGroup?.name || 'Operator',
+        equipmentCode: (firstTe as any)?.equipment?.corporateEquipment?.standardEquipmentNumber || '',
+        equipmentName: (firstTe as any)?.equipment?.corporateEquipment?.equipmentName || '',
+        vehicleNo: (firstTe as any)?.equipment?.corporateEquipment?.vehicleNo || '',
+        businessPartner: da.employee.businessPartner?.name || 'Direct',
+        claimedBySupervisor: otherClaim?.supervisorName,
+        claimedSupervisorId: otherClaim?.supervisorId,
+        claimedInTime: otherClaim?.inTime || undefined,
+        claimedOutTime: otherClaim?.outTime || undefined,
+        claimedHours: otherClaim?.hours,
+        claimedMachineCodes: claims.map((c) => c.machineCode).filter(Boolean),
+        claimedByMe: !!myClaim || !!timeEntry,
+        timeEntry,
+      });
+    }
+
     // Also include any operators this supervisor has already recorded entries for on this date (e.g. added from pool)
     if (supervisorId) {
       for (const [empId, empEntries] of myOpByEmp.entries()) {
@@ -672,7 +761,45 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
     const targetDate = parseDate(date);
     const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
 
-    // Resolve an equipment ID: either provided or fallback to first active project equipment
+    const createdAssignments: any[] = [];
+
+    // 1. ALWAYS assign operators to the dailySheet in MF_OP_DailyAssignment!
+    for (const opId of operatorIds) {
+      const otherSheets = await prisma.mF_OP_DailyAssignment.findMany({
+        where: {
+          employeeId: opId,
+          dailySheet: {
+            projectId,
+            date: targetDate,
+            id: { not: dailySheet.id },
+          },
+        },
+        select: { id: true },
+      });
+
+      if (otherSheets.length > 0) {
+        await prisma.mF_OP_DailyAssignment.deleteMany({
+          where: { id: { in: otherSheets.map((o) => o.id) } },
+        });
+      }
+
+      const asgn = await prisma.mF_OP_DailyAssignment.upsert({
+        where: {
+          dailySheetId_employeeId: {
+            dailySheetId: dailySheet.id,
+            employeeId: opId,
+          },
+        },
+        update: {},
+        create: {
+          dailySheetId: dailySheet.id,
+          employeeId: opId,
+        },
+      });
+      createdAssignments.push(asgn);
+    }
+
+    // 2. If equipmentId was provided (or equipment exists), also link to DailyEquipmentAssignment
     let targetEquipmentId = equipmentId;
     if (!targetEquipmentId) {
       const firstEq = await prisma.mF_P_Equipment.findFirst({
@@ -682,36 +809,31 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
       targetEquipmentId = firstEq?.id;
     }
 
-    if (!targetEquipmentId) {
-      res.status(400).json({ error: 'No equipment available to assign operators to' });
-      return;
-    }
-
-    const created = [];
-    for (const opId of operatorIds) {
-      const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
-        where: {
-          dailySheetId_equipmentId: {
+    if (targetEquipmentId) {
+      for (const opId of operatorIds) {
+        await prisma.mF_OP_DailyEquipmentAssignment.upsert({
+          where: {
+            dailySheetId_equipmentId: {
+              dailySheetId: dailySheet.id,
+              equipmentId: targetEquipmentId,
+            },
+          },
+          update: {
+            operatorId: opId,
+          },
+          create: {
             dailySheetId: dailySheet.id,
+            operatorId: opId,
             equipmentId: targetEquipmentId,
           },
-        },
-        update: {
-          operatorId: opId,
-        },
-        create: {
-          dailySheetId: dailySheet.id,
-          operatorId: opId,
-          equipmentId: targetEquipmentId,
-        },
-      });
-      created.push(assignment);
+        });
+      }
     }
 
     res.status(201).json({
       success: true,
-      count: created.length,
-      assignments: created,
+      count: createdAssignments.length,
+      assignments: createdAssignments,
     });
   } catch (error) {
     console.error('Error assigning operators:', error);
