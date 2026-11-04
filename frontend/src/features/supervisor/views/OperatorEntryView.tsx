@@ -1162,12 +1162,16 @@ export function OperatorEntryView({
                     : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
                 ].join(' ')}
               >
-                {/* Main Card Header */}
-                <div className="p-3 flex items-center justify-between gap-2.5">
+                {/* ── 1. Card Top Row: Checkbox, Operator Identity & Quick Done / Chevron ── */}
+                <div className="p-3 pb-2 flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800/80">
+                  {/* Selection Checkbox */}
                   <button
                     type="button"
-                    onClick={(e) => handleToggleOperatorSelect(operator.id, e)}
-                    className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 focus:outline-none"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleOperatorSelect(operator.id, e);
+                    }}
+                    className="p-1 -ml-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 focus:outline-none flex-shrink-0 cursor-pointer"
                     aria-label={`Select ${operator.employeeNumber}`}
                   >
                     {isSelected ? (
@@ -1177,151 +1181,155 @@ export function OperatorEntryView({
                     )}
                   </button>
 
+                  {/* Operator Identifiers - Clicking expands/collapses the card! */}
                   <div 
                     onClick={() => setExpandedId(isExpanded ? null : operator.id)}
-                    className="flex-1 min-w-0 flex items-center gap-2.5 cursor-pointer"
+                    className="flex-1 min-w-0 cursor-pointer select-none"
+                    title={`Click to ${isExpanded ? 'collapse' : 'expand'} details for ${operator.callingName || operator.employeeNumber}`}
                   >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-xs text-slate-900 dark:text-slate-100 font-mono">
-                          {operator.employeeNumber}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-xs text-slate-900 dark:text-slate-100 font-mono">
+                        {operator.employeeNumber}
+                      </span>
+                      <span className="text-xs text-slate-700 dark:text-slate-300 truncate font-semibold">
+                        {operator.callingName}
+                      </span>
+                      {isDone && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-0.5 shadow-2xs">
+                          <CheckCircle2 size={10} className="text-emerald-600 dark:text-emerald-400" />
+                          Done
                         </span>
-                        <span className="text-xs text-slate-700 dark:text-slate-300 truncate font-semibold">
-                          {operator.callingName}
-                        </span>
-                        {isDone && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-0.5 shadow-2xs">
-                            <CheckCircle2 size={10} className="text-emerald-600 dark:text-emerald-400" />
-                            Done
-                          </span>
-                        )}
-                      </div>
-
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        {operator.designation} {operator.licenseNo ? `· Lic: ${operator.licenseNo}` : ''}
-                      </p>
-
-                      {operator.claimedBySupervisor && !operator.claimedByMe && (
-                        <div className="mt-1 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[10px] text-amber-900 dark:text-amber-200 font-semibold">
-                          <Lock size={10} className="text-amber-600 shrink-0" />
-                          <span>Logged by Sup. {operator.claimedBySupervisor} ({operator.claimedInTime || '--:--'} - {operator.claimedOutTime || '--:--'}{operator.claimedMachineCodes && operator.claimedMachineCodes.length > 0 ? ` on ${operator.claimedMachineCodes.join(', ')}` : ''})</span>
-                        </div>
                       )}
                     </div>
+
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                      {operator.designation} {operator.licenseNo ? `· Lic: ${operator.licenseNo}` : ''}
+                    </p>
+
+                    {operator.claimedBySupervisor && !operator.claimedByMe && (
+                      <div className="mt-1 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[10px] text-amber-900 dark:text-amber-200 font-semibold">
+                        <Lock size={10} className="text-amber-600 shrink-0" />
+                        <span>Logged by Sup. {operator.claimedBySupervisor} ({operator.claimedInTime || '--:--'} - {operator.claimedOutTime || '--:--'}{operator.claimedMachineCodes && operator.claimedMachineCodes.length > 0 ? ` on ${operator.claimedMachineCodes.join(', ')}` : ''})</span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Times & Direct Controls */}
+                  {/* Top-Right Controls: Remove, Done Button & Expand Chevron */}
                   <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                      {/* IN TIME INPUT */}
-                      <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-850 px-1.5 py-0.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
-                        <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 uppercase">IN:</span>
-                        <input
-                          type="time"
-                          disabled={isDayLocked}
-                          value={operator.inTime || ''}
-                          onChange={(e) => handleIndividualTimeChange(operator.id, e.target.value, operator.outTime)}
-                          className={[
-                            'w-[74px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
-                            operator.inTime
-                              ? 'text-emerald-800 dark:text-emerald-200 font-mono'
-                              : 'text-slate-400 dark:text-slate-500'
-                          ].join(' ')}
-                          title={operator.inTime ? 'In-Time (click to edit)' : 'Click to choose In-Time'}
-                        />
-                        {!operator.inTime && !isDayLocked && (
-                          <button
-                            type="button"
-                            onClick={() => handleIndividualTimeChange(operator.id, batchInTime, operator.outTime)}
-                            className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
-                            title={`Quick set In to ${batchInTime}`}
-                          >
-                            In
-                          </button>
-                        )}
-                      </div>
+                    {/* Quick Done / Revert Toggle Button */}
+                    {!isDayLocked && (
+                      <button
+                        type="button"
+                        onClick={() => handleToggleOperatorDone(operator.id)}
+                        className={[
+                          'inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-xl shadow-2xs transition-all active:scale-95 cursor-pointer',
+                          isDone
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-700 hover:bg-emerald-200'
+                            : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                        ].join(' ')}
+                        title={isDone ? 'Marked as Done. Click to revert back to Draft' : 'Mark operator as Done'}
+                      >
+                        <Check size={12} className={isDone ? 'stroke-[2.5]' : 'stroke-[3]'} />
+                        <span>Done</span>
+                      </button>
+                    )}
 
-                      {/* OUT TIME INPUT */}
-                      <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-850 px-1.5 py-0.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
-                        <span className="text-[9px] font-bold text-blue-700 dark:text-blue-400 uppercase">OUT:</span>
-                        <input
-                          type="time"
-                          disabled={isDayLocked}
-                          value={operator.outTime || ''}
-                          onChange={(e) => handleIndividualTimeChange(operator.id, operator.inTime, e.target.value)}
-                          className={[
-                            'w-[74px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
-                            operator.outTime
-                              ? 'text-blue-800 dark:text-blue-200 font-mono'
-                              : 'text-slate-400 dark:text-slate-500'
-                          ].join(' ')}
-                          title={operator.outTime ? 'Out-Time (click to edit)' : 'Click to choose Out-Time'}
-                        />
-                        {!operator.outTime && !isDayLocked && (
-                          <button
-                            type="button"
-                            onClick={() => handleIndividualTimeChange(operator.id, operator.inTime || batchInTime, batchOutTime)}
-                            className="text-[9px] font-bold px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
-                            title={`Quick set Out to ${batchOutTime}`}
-                          >
-                            Out
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Shift Hours Badge */}
-                      {operator.inTime && operator.outTime && (
-                        <span className="text-[11px] font-bold font-mono px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shrink-0" title={`Computed shift: ${shift}h (Operating: ${operatingHours}h, Idle: ${idleHours}h)`}>
-                          {formatHhmm(shift)}h
-                          {operator.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">+{operator.otHours}h</span>}
-                        </span>
-                      )}
-
-                      {/* Quick Done / Revert Toggle Button */}
-                      {!isDayLocked && (
-                        <button
-                          type="button"
-                          onClick={() => handleToggleOperatorDone(operator.id)}
-                          className={[
-                            'inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-xl shadow-2xs transition-all active:scale-95 cursor-pointer',
-                            isDone
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-700 hover:bg-emerald-200'
-                              : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                          ].join(' ')}
-                          title={isDone ? 'Marked as Done. Click to revert back to Draft' : 'Mark operator as Done'}
-                        >
-                          <Check size={12} className={isDone ? 'stroke-[2.5]' : 'stroke-[3]'} />
-                          <span>{isDone ? 'Done' : 'Done'}</span>
-                        </button>
-                      )}
-
-                      {/* Remove Operator button */}
-                      {!isDayLocked && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveOperator(operator.id)}
-                          className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-                          title={`Remove ${operator.callingName || operator.employeeNumber} from today's list`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
+                    {/* Remove Operator button */}
+                    {!isDayLocked && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveOperator(operator.id)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                        title={`Remove ${operator.callingName || operator.employeeNumber} from today's list`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
 
                     {/* Chevron Button */}
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setExpandedId(isExpanded ? null : operator.id);
-                      }}
-                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer focus:outline-none shrink-0"
+                      onClick={() => setExpandedId(isExpanded ? null : operator.id)}
+                      className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer focus:outline-none"
                       aria-label={isExpanded ? "Collapse operator details" : "Expand operator details"}
                       title={isExpanded ? "Collapse details" : "Expand details"}
                     >
-                      {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      {isExpanded ? <ChevronUp size={18} className="text-blue-600 dark:text-blue-400" /> : <ChevronDown size={18} />}
                     </button>
                   </div>
+                </div>
+
+                {/* ── 2. Card Time & Shift Action Bar (Responsive Mobile Row) ── */}
+                <div className="px-3 py-2 flex items-center justify-between gap-2 flex-wrap bg-slate-50/50 dark:bg-slate-900/30">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* IN TIME INPUT */}
+                    <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                      <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase flex items-center gap-0.5">
+                        <LogIn size={11} /> In:
+                      </span>
+                      <input
+                        type="time"
+                        disabled={isDayLocked}
+                        value={operator.inTime || ''}
+                        onChange={(e) => handleIndividualTimeChange(operator.id, e.target.value, operator.outTime)}
+                        className={[
+                          'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
+                          operator.inTime
+                            ? 'text-emerald-800 dark:text-emerald-200 font-mono'
+                            : 'text-slate-400 dark:text-slate-500'
+                        ].join(' ')}
+                        title={operator.inTime ? 'In-Time (click to edit)' : 'Click to choose In-Time'}
+                      />
+                      {!operator.inTime && !isDayLocked && (
+                        <button
+                          type="button"
+                          onClick={() => handleIndividualTimeChange(operator.id, batchInTime, operator.outTime)}
+                          className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
+                          title={`Quick set In to ${batchInTime}`}
+                        >
+                          In
+                        </button>
+                      )}
+                    </div>
+
+                    {/* OUT TIME INPUT */}
+                    <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                      <span className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase flex items-center gap-0.5">
+                        <LogOut size={11} /> Out:
+                      </span>
+                      <input
+                        type="time"
+                        disabled={isDayLocked}
+                        value={operator.outTime || ''}
+                        onChange={(e) => handleIndividualTimeChange(operator.id, operator.inTime, e.target.value)}
+                        className={[
+                          'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
+                          operator.outTime
+                            ? 'text-blue-800 dark:text-blue-200 font-mono'
+                            : 'text-slate-400 dark:text-slate-500'
+                        ].join(' ')}
+                        title={operator.outTime ? 'Out-Time (click to edit)' : 'Click to choose Out-Time'}
+                      />
+                      {!operator.outTime && !isDayLocked && (
+                        <button
+                          type="button"
+                          onClick={() => handleIndividualTimeChange(operator.id, operator.inTime || batchInTime, batchOutTime)}
+                          className="text-[9px] font-bold px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
+                          title={`Quick set Out to ${batchOutTime}`}
+                        >
+                          Out
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Shift Hours Badge */}
+                  {operator.inTime && operator.outTime && (
+                    <span className="text-[11px] font-bold font-mono px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shadow-2xs flex-shrink-0" title={`Computed shift: ${shift}h (Operating: ${operatingHours}h, Idle: ${idleHours}h)`}>
+                      {formatHhmm(shift)}h
+                      {operator.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">+${operator.otHours}h</span>}
+                    </span>
+                  )}
                 </div>
 
                 {/* Machine Summary Badges in Card Footer (Collapsed View) */}

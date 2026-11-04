@@ -1459,13 +1459,16 @@ export function LaborEntryView({
                     : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
                 ].join(' ')}
               >
-                {/* Main Card Header */}
-                <div className="p-3 flex items-center justify-between gap-2.5">
-                  {/* Selection Checkbox */}
+                {/* ── 1. Card Top Row: Checkbox, Worker Identity & Quick Done / Chevron ── */}
+                <div className="p-3 pb-2 flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800/80">
+                  {/* Selection Checkbox (Dedicated to selecting worker) */}
                   <button
                     type="button"
-                    onClick={(e) => handleToggleWorkerSelect(worker.id, e)}
-                    className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 focus:outline-none"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleWorkerSelect(worker.id, e);
+                    }}
+                    className="p-1 -ml-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 focus:outline-none flex-shrink-0 cursor-pointer"
                     aria-label={`Select ${worker.employeeCode}`}
                   >
                     {isSelected ? (
@@ -1475,59 +1478,57 @@ export function LaborEntryView({
                     )}
                   </button>
 
-                  {/* Worker Avatar & Identifiers - Clicking selects/unselects worker */}
+                  {/* Worker Avatar & Identifiers - Clicking expands/collapses the card! */}
                   <div 
-                    onClick={(e) => handleToggleWorkerSelect(worker.id, e)}
-                    className="flex-1 min-w-0 flex items-center gap-2.5 cursor-pointer select-none"
-                    title={`Click to select/deselect ${worker.callingName || worker.employeeCode}`}
+                    onClick={() => setExpandedId(isExpanded ? null : worker.id)}
+                    className="flex-1 min-w-0 cursor-pointer select-none"
+                    title={`Click to ${isExpanded ? 'collapse' : 'expand'} details for ${worker.callingName || worker.employeeCode}`}
                   >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
-                          {worker.callingName}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
+                        {worker.callingName || worker.fullName || worker.employeeCode}
+                      </span>
+                      {worker.callingName && worker.fullName && worker.fullName.trim() !== worker.callingName.trim() && (
+                        <span className="text-xs text-slate-500 dark:text-slate-400 font-normal truncate hidden sm:inline">
+                          · {worker.fullName}
                         </span>
-                        {worker.fullName && worker.fullName.trim() !== worker.callingName.trim() && (
-                          <span className="text-xs text-slate-600 dark:text-slate-300 font-medium truncate">
-                            · {worker.fullName}
-                          </span>
-                        )}
-                        {worker.isStandbyAssigned && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200">
-                            Standby
-                          </span>
-                        )}
-                        {isDone && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-0.5 shadow-2xs">
-                            <CheckCircle2 size={10} className="text-emerald-600 dark:text-emerald-400" />
-                            Done
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        <span className="font-mono text-slate-600 dark:text-slate-300 font-medium">
-                          {worker.employeeCode}
+                      )}
+                      {worker.isStandbyAssigned && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200">
+                          Standby
                         </span>
-                        <span>·</span>
-                        <span className="font-medium text-slate-600 dark:text-slate-300">
-                          {worker.tradeGroup}
+                      )}
+                      {isDone && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-0.5 shadow-2xs">
+                          <CheckCircle2 size={10} className="text-emerald-600 dark:text-emerald-400" />
+                          Done
                         </span>
-                      </div>
-
-                      {worker.claimedBySupervisor && !worker.claimedByMe && (
-                        <div className="mt-1 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[10px] text-amber-900 dark:text-amber-200 font-semibold">
-                          <Lock size={10} className="text-amber-600 shrink-0" />
-                          <span>Logged by Sup. {worker.claimedBySupervisor} ({worker.claimedInTime || '--:--'} - {worker.claimedOutTime || '--:--'})</span>
-                        </div>
                       )}
                     </div>
+
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      <span className="font-mono text-slate-600 dark:text-slate-300 font-semibold">
+                        {worker.employeeCode}
+                      </span>
+                      <span>·</span>
+                      <span className="font-medium text-slate-600 dark:text-slate-300 truncate">
+                        {worker.tradeGroup}
+                      </span>
+                    </div>
+
+                    {worker.claimedBySupervisor && !worker.claimedByMe && (
+                      <div className="mt-1 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[10px] text-amber-900 dark:text-amber-200 font-semibold">
+                        <Lock size={10} className="text-amber-600 shrink-0" />
+                        <span>Logged by Sup. {worker.claimedBySupervisor} ({worker.claimedInTime || '--:--'} - {worker.claimedOutTime || '--:--'})</span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Times & Direct Controls */}
+                  {/* Top-Right Controls: Absent Badge / Done Button & Expand Chevron */}
                   <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                     {worker.isAbsent ? (
                       <div className="flex items-center gap-1">
-                        <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-800 px-2.5 py-1 rounded-xl flex items-center gap-1 shadow-2xs">
+                        <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-800 px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-2xs">
                           <UserX size={12} className="text-rose-600" />
                           Absent
                         </span>
@@ -1535,94 +1536,17 @@ export function LaborEntryView({
                           <button
                             type="button"
                             onClick={() => handleToggleAbsent(worker.id)}
-                            className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                            className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                             title="Unmark Absent (Make Pending)"
                           >
-                            <X size={14} />
+                            <X size={13} />
                           </button>
                         )}
                       </div>
                     ) : (
-                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                        {/* IN TIME INPUT */}
-                        <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-850 px-1.5 py-0.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
-                          <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 uppercase">IN:</span>
-                          <input
-                            type="time"
-                            disabled={isDayLocked}
-                            value={worker.inTime || ''}
-                            onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
-                            className={[
-                              'w-[74px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
-                              worker.inTime
-                                ? 'text-emerald-800 dark:text-emerald-200 font-mono'
-                                : 'text-slate-400 dark:text-slate-500'
-                            ].join(' ')}
-                            title={worker.inTime ? 'In-Time (click to edit)' : 'Click to choose In-Time'}
-                          />
-                          {!worker.inTime && !isDayLocked && (
-                            <button
-                              type="button"
-                              onClick={() => handleIndividualTimeChange(worker.id, batchInTime, worker.outTime)}
-                              className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
-                              title={`Quick set In to ${batchInTime}`}
-                            >
-                              In
-                            </button>
-                          )}
-                        </div>
-
-                        {/* OUT TIME INPUT */}
-                        <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-850 px-1.5 py-0.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
-                          <span className="text-[9px] font-bold text-blue-700 dark:text-blue-400 uppercase">OUT:</span>
-                          <input
-                            type="time"
-                            disabled={isDayLocked}
-                            value={worker.outTime || ''}
-                            onChange={(e) => handleIndividualTimeChange(worker.id, worker.inTime, e.target.value)}
-                            className={[
-                              'w-[74px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
-                              worker.outTime
-                                ? 'text-blue-800 dark:text-blue-200 font-mono'
-                                : 'text-slate-400 dark:text-slate-500'
-                            ].join(' ')}
-                            title={worker.outTime ? 'Out-Time (click to edit)' : 'Click to choose Out-Time'}
-                          />
-                          {!worker.outTime && !isDayLocked && (
-                            <button
-                              type="button"
-                              onClick={() => handleIndividualTimeChange(worker.id, worker.inTime || batchInTime, batchOutTime)}
-                              className="text-[9px] font-bold px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
-                              title={`Quick set Out to ${batchOutTime}`}
-                            >
-                              Out
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Net Shift & OT Hours Badge */}
-                        {worker.inTime && worker.outTime && (
-                          <span className="text-[11px] font-bold font-mono px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shrink-0" title={`Computed shift: ${worker.shiftHours}h (OT: ${worker.otHours}h)`}>
-                            {formatHhmm(worker.shiftHours)}h
-                            {worker.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">+{worker.otHours}h</span>}
-                          </span>
-                        )}
-
-                        {/* Quick Absent Button */}
-                        {!isDayLocked && !worker.isAbsent && !worker.inTime && !worker.outTime && (
-                          <button
-                            type="button"
-                            onClick={() => handleToggleAbsent(worker.id)}
-                            className="text-[10px] font-semibold text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 hover:border-rose-300 px-1.5 py-1 rounded-lg transition-colors cursor-pointer"
-                            title="Mark as Absent"
-                          >
-                            <UserX size={11} className="inline mr-0.5" />
-                            <span>Abs</span>
-                          </button>
-                        )}
-
+                      <>
                         {/* Quick Done / Revert Toggle Button */}
-                        {!isDayLocked && !worker.isAbsent && (
+                        {!isDayLocked && (
                           <button
                             type="button"
                             onClick={() => handleToggleIndividualDone(worker.id)}
@@ -1635,27 +1559,114 @@ export function LaborEntryView({
                             title={isDone ? 'Marked as Done. Click to revert back to Draft' : 'Mark card as Done'}
                           >
                             <Check size={12} className={isDone ? 'stroke-[2.5]' : 'stroke-[3]'} />
-                            <span>{isDone ? 'Done' : 'Done'}</span>
+                            <span>Done</span>
                           </button>
                         )}
-                      </div>
+                      </>
                     )}
 
-                    {/* Chevron Button - Expand/Collapse Only */}
+                    {/* Chevron Button - Always visible right at top corner */}
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setExpandedId(isExpanded ? null : worker.id);
-                      }}
-                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer focus:outline-none shrink-0"
+                      onClick={() => setExpandedId(isExpanded ? null : worker.id)}
+                      className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer focus:outline-none"
                       aria-label={isExpanded ? "Collapse worker details" : "Expand worker details"}
                       title={isExpanded ? "Collapse details" : "Expand details"}
                     >
-                      {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      {isExpanded ? <ChevronUp size={18} className="text-blue-600 dark:text-blue-400" /> : <ChevronDown size={18} />}
                     </button>
                   </div>
                 </div>
+
+                {/* ── 2. Card Time & Shift Action Bar (Responsive Mobile Row) ── */}
+                {!worker.isAbsent && (
+                  <div className="px-3 py-2 flex items-center justify-between gap-2 flex-wrap bg-slate-50/50 dark:bg-slate-900/30">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {/* IN TIME INPUT */}
+                      <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase flex items-center gap-0.5">
+                          <LogIn size={11} /> In:
+                        </span>
+                        <input
+                          type="time"
+                          disabled={isDayLocked}
+                          value={worker.inTime || ''}
+                          onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
+                          className={[
+                            'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
+                            worker.inTime
+                              ? 'text-emerald-800 dark:text-emerald-200 font-mono'
+                              : 'text-slate-400 dark:text-slate-500'
+                          ].join(' ')}
+                          title={worker.inTime ? 'In-Time (click to edit)' : 'Click to choose In-Time'}
+                        />
+                        {!worker.inTime && !isDayLocked && (
+                          <button
+                            type="button"
+                            onClick={() => handleIndividualTimeChange(worker.id, batchInTime, worker.outTime)}
+                            className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
+                            title={`Quick set In to ${batchInTime}`}
+                          >
+                            In
+                          </button>
+                        )}
+                      </div>
+
+                      {/* OUT TIME INPUT */}
+                      <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                        <span className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase flex items-center gap-0.5">
+                          <LogOut size={11} /> Out:
+                        </span>
+                        <input
+                          type="time"
+                          disabled={isDayLocked}
+                          value={worker.outTime || ''}
+                          onChange={(e) => handleIndividualTimeChange(worker.id, worker.inTime, e.target.value)}
+                          className={[
+                            'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
+                            worker.outTime
+                              ? 'text-blue-800 dark:text-blue-200 font-mono'
+                              : 'text-slate-400 dark:text-slate-500'
+                          ].join(' ')}
+                          title={worker.outTime ? 'Out-Time (click to edit)' : 'Click to choose Out-Time'}
+                        />
+                        {!worker.outTime && !isDayLocked && (
+                          <button
+                            type="button"
+                            onClick={() => handleIndividualTimeChange(worker.id, worker.inTime || batchInTime, batchOutTime)}
+                            className="text-[9px] font-bold px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-md cursor-pointer shadow-2xs"
+                            title={`Quick set Out to ${batchOutTime}`}
+                          >
+                            Out
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {/* Net Shift & OT Hours Badge */}
+                      {worker.inTime && worker.outTime && (
+                        <span className="text-[11px] font-bold font-mono px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shadow-2xs" title={`Computed shift: ${worker.shiftHours}h (OT: ${worker.otHours}h)`}>
+                          {formatHhmm(worker.shiftHours)}h
+                          {worker.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">+${worker.otHours}h</span>}
+                        </span>
+                      )}
+
+                      {/* Quick Absent Button */}
+                      {!isDayLocked && !worker.isAbsent && !worker.inTime && !worker.outTime && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleAbsent(worker.id)}
+                          className="text-[10px] font-semibold text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 hover:border-rose-300 px-2 py-1 rounded-lg transition-colors cursor-pointer shadow-2xs"
+                          title="Mark as Absent"
+                        >
+                          <UserX size={11} className="inline mr-0.5" />
+                          <span>Abs</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Compact Activity Splits / Auto-Idle Preview (Collapsed View) */}
                 {!isExpanded && !worker.isAbsent && (worker.activities.length > 0 || (worker.inTime && worker.outTime)) && (
