@@ -428,6 +428,9 @@ async function main() {
       corporateEmployee: {
         select: { id: true, employeeCode: true, fullName: true, epfNo: true },
       },
+      tradeGroup: {
+        select: { standardDailyRate: true },
+      },
     },
   });
 
@@ -719,6 +722,12 @@ async function main() {
           continue;
         }
 
+        // Snapshot rate & business partner
+        const snapRate = Number(localEmp.dailyRate) > 0
+          ? Number(localEmp.dailyRate)
+          : Number(localEmp.tradeGroup?.standardDailyRate || 1400.0);
+        const snapBpId = localEmp.businessPartnerId || null;
+
         // Upsert with status = 'submitted'
         if (existingEntry) {
           await prisma.mF_OP_TimeEntry.update({
@@ -732,6 +741,10 @@ async function main() {
               shiftHours: calc.shiftHours,
               overtimeHours: calc.otHours,
               breakHours: calc.breakHours,
+              ...(existingEntry.appliedDailyRate === null ? {
+                appliedDailyRate: snapRate,
+                appliedBusinessPartnerId: snapBpId,
+              } : {}),
               status: 'submitted',
               submittedAt: new Date(),
             },
@@ -752,6 +765,8 @@ async function main() {
               shiftHours: calc.shiftHours,
               overtimeHours: calc.otHours,
               breakHours: calc.breakHours,
+              appliedDailyRate: snapRate,
+              appliedBusinessPartnerId: snapBpId,
               status: 'submitted',
               submittedAt: new Date(),
             },

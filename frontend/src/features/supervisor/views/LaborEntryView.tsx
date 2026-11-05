@@ -844,7 +844,7 @@ export function LaborEntryView({
       {/* ── 1. Shift Metrics & Status Filter Chips (Unified View) ────────────────── */}
       <div className="p-2.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200/90 dark:border-slate-800 shadow-2xs space-y-2.5">
         {/* Quick Shift Counter Badges */}
-        <div className="flex items-center justify-between text-xs px-1 flex-wrap gap-1.5">
+        {/* <div className="flex items-center justify-between text-xs px-1 flex-wrap gap-1.5">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
               Assigned: <strong className="font-mono text-slate-900 dark:text-white">{laborers.length}</strong>
@@ -871,7 +871,7 @@ export function LaborEntryView({
               </span>
             )}
           </div>
-        </div>
+        </div> */}
 
         {/* Status Filter Chips */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
@@ -1281,7 +1281,7 @@ export function LaborEntryView({
                         </span>
                       ) : (
                         <span className="text-amber-700 dark:text-amber-400">
-                          {formatHhmm(diffHhmm)}h remaining
+                          {formatHhmm(diffHhmm)}h idel
                         </span>
                       )}
                     </span>
@@ -1306,41 +1306,9 @@ export function LaborEntryView({
               </button>
 
               <div className="flex items-center gap-1.5 flex-wrap">
-                {selectedFilteredCount > 0 && !isDayLocked && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleBatchResetToDraft}
-                      className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
-                      title="Revert selected workers to Draft"
-                    >
-                      <RotateCcw size={12} />
-                      <span>Draft</span>
-                    </button>
+                
 
-                    <button
-                      type="button"
-                      onClick={handleBatchClearActivities}
-                      className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
-                      title="Clear all tasks for selected workers"
-                    >
-                      <Trash2 size={12} />
-                      <span>Clear Tasks</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleBatchRemoveLaborers}
-                      className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
-                      title={`Remove ${selectedFilteredCount} selected worker(s) from today`}
-                    >
-                      <Trash2 size={12} />
-                      <span>Remove (${selectedFilteredCount})</span>
-                    </button>
-                  </>
-                )}
-
-                <button
+                {/* <button
                   type="button"
                   onClick={handleApplyBatchIn}
                   disabled={isDayLocked || selectedFilteredCount === 0}
@@ -1360,7 +1328,7 @@ export function LaborEntryView({
                 >
                   <LogOut size={12} />
                   <span>Out & Tasks</span>
-                </button>
+                </button> */}
 
                 <button
                   type="button"
@@ -1370,7 +1338,7 @@ export function LaborEntryView({
                   title={`Apply both ${batchInTime} - ${batchOutTime} and Tasks to ${selectedFilteredCount} workers`}
                 >
                   <Check size={13} className="stroke-[3]" />
-                  <span>Apply Both (${selectedFilteredCount})</span>
+                  <span>Apply To All</span>
                 </button>
               </div>
             </div>

@@ -537,6 +537,20 @@ export const checkInEmployee = async (req: Request, res: Response): Promise<void
 
     const { effectiveDayTypeId } = await getDayTypeRulesAndId(projectId, entryDate);
 
+    // Snapshot employee point-in-time rate and subcontractor
+    const emp = await prisma.mF_P_Employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        dailyRate: true,
+        businessPartnerId: true,
+        tradeGroup: { select: { standardDailyRate: true } },
+      },
+    });
+    const snapDailyRate = emp
+      ? (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 1400.0))
+      : null;
+    const snapBpId = emp?.businessPartnerId || null;
+
     const created = await prisma.mF_OP_TimeEntry.create({
       data: {
         projectId,
@@ -549,6 +563,8 @@ export const checkInEmployee = async (req: Request, res: Response): Promise<void
         inTime,
         hours: 0,
         overtimeHours: 0,
+        appliedDailyRate: snapDailyRate,
+        appliedBusinessPartnerId: snapBpId,
         status: 'draft',
       },
     });
@@ -680,7 +696,28 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
     const dailySheet = effectiveSupId ? await getOrCreateDailySheet(projectId, effectiveSupId, targetDate) : null;
     const createdEntries = [];
 
+    // Pre-load employee snapshots for bulk assignment
+    const employees = await prisma.mF_P_Employee.findMany({
+      where: { id: { in: employeeIds } },
+      select: {
+        id: true,
+        dailyRate: true,
+        businessPartnerId: true,
+        tradeGroup: { select: { standardDailyRate: true } },
+      },
+    });
+    const empRateMap = new Map(
+      employees.map((e) => [
+        e.id,
+        {
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : Number(e.tradeGroup?.standardDailyRate || 1400.0),
+          bpId: e.businessPartnerId || null,
+        },
+      ])
+    );
+
     for (const empId of employeeIds) {
+      const empSnap = empRateMap.get(empId);
       const existingEntries = await prisma.mF_OP_TimeEntry.findMany({
         where: { projectId, employeeId: empId, date: targetDate },
       });
@@ -733,6 +770,10 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
               outTime: placeholder.outTime || preservedOutTime,
               equipmentId: validEquipmentId || placeholder.equipmentId,
               remarks: remarks || placeholder.remarks,
+              ...(placeholder.appliedDailyRate === null && empSnap ? {
+                appliedDailyRate: empSnap.rate,
+                appliedBusinessPartnerId: empSnap.bpId,
+              } : {}),
             },
           });
           createdEntries.push(updated);
@@ -752,6 +793,8 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
               hours: numHours,
               overtimeHours,
               breakHours,
+              appliedDailyRate: empSnap ? empSnap.rate : null,
+              appliedBusinessPartnerId: empSnap ? empSnap.bpId : null,
               remarks: remarks || null,
               status: 'draft',
             },
@@ -819,6 +862,20 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
       },
     });
 
+    // Resolve snapshot rate and subcontractor
+    const emp = await prisma.mF_P_Employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        dailyRate: true,
+        businessPartnerId: true,
+        tradeGroup: { select: { standardDailyRate: true } },
+      },
+    });
+    const snapDailyRate = emp
+      ? (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 1400.0))
+      : null;
+    const snapBpId = emp?.businessPartnerId || null;
+
     const finalInTime = inTime ?? existing?.inTime ?? null;
     const finalOutTime = outTime ?? existing?.outTime ?? null;
     let shiftHoursVal: number | null = null;
@@ -848,6 +905,10 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
           outTime: finalOutTime,
           equipmentId: validEquipmentId ?? existing.equipmentId,
           remarks: remarks ?? existing.remarks,
+          ...(existing.appliedDailyRate === null && snapDailyRate !== null ? {
+            appliedDailyRate: snapDailyRate,
+            appliedBusinessPartnerId: snapBpId,
+          } : {}),
         },
       });
     } else {
@@ -867,6 +928,8 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
           shiftHours: shiftHoursVal,
           overtimeHours: otHoursVal,
           breakHours,
+          appliedDailyRate: snapDailyRate,
+          appliedBusinessPartnerId: snapBpId,
           remarks: remarks || null,
           status: 'draft',
         },
@@ -934,6 +997,9 @@ export const getTimeEntries = async (req: Request, res: Response): Promise<void>
         breakHours: true,
         status: true,
         remarks: true,
+        appliedDailyRate: true,
+        appliedBusinessPartnerId: true,
+        appliedBusinessPartner: { select: { id: true, name: true, code: true } },
         employee: {
           select: {
             id: true,
@@ -1961,6 +2027,20 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
         ? dailySheet.status
         : (status === 'done' ? 'draft' : (status || 'draft'));
 
+      // Preload operator snapshot rate and subcontractor
+      const opEmp = await prisma.mF_P_Employee.findUnique({
+        where: { id: operatorId },
+        select: {
+          dailyRate: true,
+          businessPartnerId: true,
+          tradeGroup: { select: { standardDailyRate: true } },
+        },
+      });
+      const snapRate = opEmp
+        ? (Number(opEmp.dailyRate) > 0 ? Number(opEmp.dailyRate) : Number(opEmp.tradeGroup?.standardDailyRate || 1400.0))
+        : null;
+      const snapBpId = opEmp?.businessPartnerId || null;
+
       const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
         where: {
           projectId,
@@ -1969,7 +2049,7 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
         },
       });
 
-      const teData = {
+      const teData: any = {
         projectId,
         dailySheetId: dailySheet.id,
         employeeId: operatorId,
@@ -1983,11 +2063,17 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
         hours: regularHours,
         overtimeHours,
         breakHours,
+        appliedDailyRate: snapRate,
+        appliedBusinessPartnerId: snapBpId,
         remarks: notes || null,
         status: teStatus,
       };
 
       if (existingTe) {
+        if (existingTe.appliedDailyRate !== null) {
+          delete teData.appliedDailyRate;
+          delete teData.appliedBusinessPartnerId;
+        }
         await prisma.mF_OP_TimeEntry.update({
           where: { id: existingTe.id },
           data: teData,
@@ -2086,9 +2172,34 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
       }
     }
 
+    // Pre-load operator snapshots for bulk processing
+    const opIds = entries.map((e: any) => e.operatorId || e.id).filter(Boolean);
+    const opEmployees = await prisma.mF_P_Employee.findMany({
+      where: { id: { in: opIds } },
+      select: {
+        id: true,
+        dailyRate: true,
+        businessPartnerId: true,
+        tradeGroup: { select: { standardDailyRate: true } },
+      },
+    });
+    const opEmpMap = new Map(
+      opEmployees.map((e) => [
+        e.id,
+        {
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : Number(e.tradeGroup?.standardDailyRate || 1400.0),
+          bpId: e.businessPartnerId || null,
+        },
+      ])
+    );
+
     for (const item of entries) {
       const opId = item.operatorId || item.id;
       if (!opId) continue;
+
+      const opSnap = opEmpMap.get(opId);
+      const snapRate = opSnap ? opSnap.rate : null;
+      const snapBpId = opSnap ? opSnap.bpId : null;
 
       const rawEqId = item.assignedEquipmentId || item.equipmentId;
       let validEquipmentId: string | null = null;
@@ -2227,7 +2338,7 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
               },
             });
 
-            const teData = {
+            const teData: any = {
               projectId,
               dailySheetId: dailySheet.id,
               employeeId: opId,
@@ -2241,11 +2352,17 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
               hours: split.hours,
               overtimeHours: sIdx === 0 ? overtimeHours : 0,
               breakHours: sIdx === 0 ? breakHours : 0,
+              appliedDailyRate: snapRate,
+              appliedBusinessPartnerId: snapBpId,
               remarks: item.notes || null,
               status: teStatus,
             };
 
             if (existingTe) {
+              if (existingTe.appliedDailyRate !== null) {
+                delete teData.appliedDailyRate;
+                delete teData.appliedBusinessPartnerId;
+              }
               await prisma.mF_OP_TimeEntry.update({
                 where: { id: existingTe.id },
                 data: teData,
@@ -2267,7 +2384,7 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
             },
           });
 
-          const teData = {
+          const teData: any = {
             projectId,
             dailySheetId: dailySheet.id,
             employeeId: opId,
@@ -2281,11 +2398,17 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
             hours: regularHours,
             overtimeHours,
             breakHours,
+            appliedDailyRate: snapRate,
+            appliedBusinessPartnerId: snapBpId,
             remarks: item.notes || 'Exter. Equipment Operator Idle (ZXQOPRIDLE)',
             status: teStatus,
           };
 
           if (existingTe) {
+            if (existingTe.appliedDailyRate !== null) {
+              delete teData.appliedDailyRate;
+              delete teData.appliedBusinessPartnerId;
+            }
             await prisma.mF_OP_TimeEntry.update({
               where: { id: existingTe.id },
               data: teData,
@@ -2576,7 +2699,31 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
       entriesByEmployee.get(employeeId)!.push(item);
     }
 
+    // Pre-load labor snapshots for bulk processing
+    const allEmpIds = Array.from(entriesByEmployee.keys());
+    const empRecords = await prisma.mF_P_Employee.findMany({
+      where: { id: { in: allEmpIds } },
+      select: {
+        id: true,
+        dailyRate: true,
+        businessPartnerId: true,
+        tradeGroup: { select: { standardDailyRate: true } },
+      },
+    });
+    const empSnapMap = new Map(
+      empRecords.map((e) => [
+        e.id,
+        {
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : Number(e.tradeGroup?.standardDailyRate || 1400.0),
+          bpId: e.businessPartnerId || null,
+        },
+      ])
+    );
+
     for (const [employeeId, empEntries] of entriesByEmployee.entries()) {
+      const empSnap = empSnapMap.get(employeeId);
+      const snapRate = empSnap ? empSnap.rate : null;
+      const snapBpId = empSnap ? empSnap.bpId : null;
       // Pre-resolve all incoming activity IDs for this employee
       const incomingResolvedActivityIds = new Set<string>();
       for (const item of empEntries) {
@@ -2697,6 +2844,10 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
                 outTime: finalOutTime,
                 equipmentId: validEquipmentId ?? existing.equipmentId,
                 remarks: remarks ?? existing.remarks,
+                ...(existing.appliedDailyRate === null && snapRate !== null ? {
+                  appliedDailyRate: snapRate,
+                  appliedBusinessPartnerId: snapBpId,
+                } : {}),
               },
             });
           }
@@ -2717,6 +2868,8 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
               shiftHours: shiftHoursVal,
               overtimeHours,
               breakHours,
+              appliedDailyRate: snapRate,
+              appliedBusinessPartnerId: snapBpId,
               remarks: remarks || null,
               status: 'draft',
             },

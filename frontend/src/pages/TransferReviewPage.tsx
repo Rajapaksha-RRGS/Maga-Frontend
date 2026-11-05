@@ -9,7 +9,6 @@ import {
   User,
   ShieldCheck,
   Loader2,
-  
   Phone,
   Globe,
   MapPin,

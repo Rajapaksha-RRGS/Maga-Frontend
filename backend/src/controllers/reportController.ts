@@ -194,6 +194,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
             tradeGroup: true,
           },
         },
+        appliedBusinessPartner: true,
       },
       orderBy: { date: 'asc' },
     });
@@ -213,9 +214,10 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
       const dateKey = entry.date.toISOString().split('T')[0];
       const emp = entry.employee;
       const corp = emp.corporateEmployee;
+      const effectiveBp = entry.appliedBusinessPartner || emp.businessPartner;
 
       const isEmployeeActive = emp.status === 'active' && corp.status === 'active';
-      const isPartnerActive = !emp.businessPartner || emp.businessPartner.status === 'active';
+      const isPartnerActive = !effectiveBp || effectiveBp.status === 'active';
       const isPayable = isEmployeeActive && isPartnerActive;
       const payrollStatus = isPayable ? 'PAYABLE' : 'HOLD_PENDING_HO_APPROVAL';
       const lockReason = !isPayable
@@ -233,7 +235,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
           callingName: emp.callingName || corp.fullName || '',
           employeeName: corp.fullName || emp.callingName || '',
           tradeGroup: emp.tradeGroup?.name || (emp.isOperator ? 'Operator' : 'Labor'),
-          businessPartner: emp.businessPartner?.name || 'Direct / Maga',
+          businessPartner: effectiveBp?.name || 'Direct / Maga',
           isEmployeeApproved: isEmployeeActive,
           isPartnerApproved: isPartnerActive,
           isPayable,
@@ -454,6 +456,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
             tradeGroup: true,
           },
         },
+        appliedBusinessPartner: true,
       },
       orderBy: { date: 'asc' },
     });
@@ -472,13 +475,14 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
       const dateKey = entry.date.toISOString().split('T')[0];
       const emp = entry.employee;
       const corp = emp.corporateEmployee;
+      const effectiveBp = entry.appliedBusinessPartner || emp.businessPartner;
 
       if (!empInfoMap.has(empId)) {
         empInfoMap.set(empId, {
           employeeId: empId,
           employeeName: corp.fullName || emp.callingName || '',
           tradeGroup: emp.tradeGroup?.name || '',
-          businessPartner: emp.businessPartner?.name || '',
+          businessPartner: effectiveBp?.name || '',
         });
       }
 
@@ -608,6 +612,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
             tradeGroup: true,
           },
         },
+        appliedBusinessPartner: true,
       },
       orderBy: { date: 'asc' },
     });
@@ -630,12 +635,13 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
 
     for (const entry of entries) {
       const dateKey = entry.date.toISOString().split('T')[0];
-      const bpName = entry.employee.businessPartner?.name || 'Direct / Maga';
+      const effectiveBp = entry.appliedBusinessPartner || entry.employee.businessPartner;
+      const bpName = effectiveBp?.name || 'Direct / Maga';
       const empId = entry.employeeId;
       const hours = Number(entry.hours) + Number(entry.overtimeHours);
 
       const isEmployeeActive = entry.employee.status === 'active' && entry.employee.corporateEmployee.status === 'active';
-      const isPartnerActive = !entry.employee.businessPartner || entry.employee.businessPartner.status === 'active';
+      const isPartnerActive = !effectiveBp || effectiveBp.status === 'active';
       const isPayable = isEmployeeActive && isPartnerActive;
       const payrollStatus = isPayable ? 'PAYABLE' : 'HOLD_PENDING_HO_APPROVAL';
       const lockReason = !isPayable
@@ -649,6 +655,12 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
       if (!bpMap.has(bpName)) bpMap.set(bpName, new Map());
       const empMap = bpMap.get(bpName)!;
 
+      const effectiveDailyRate = (entry.appliedDailyRate !== null && Number(entry.appliedDailyRate) > 0)
+        ? Number(entry.appliedDailyRate)
+        : (Number(entry.employee.dailyRate) > 0
+            ? Number(entry.employee.dailyRate)
+            : Number(entry.employee.tradeGroup?.standardDailyRate || 1400));
+
       if (!empMap.has(empId)) {
         empMap.set(empId, {
           employeeId: empId,
@@ -656,7 +668,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
           employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
           tradeGroup: entry.employee.tradeGroup?.name || '',
           dailyHours: {},
-          dailyRate: Number(entry.employee.dailyRate) > 0 ? Number(entry.employee.dailyRate) : Number(entry.employee.tradeGroup?.standardDailyRate || 1400),
+          dailyRate: effectiveDailyRate,
           isEmployeeApproved: isEmployeeActive,
           isPartnerApproved: isPartnerActive,
           isPayable,
@@ -733,7 +745,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
             employeeName: op.operator.corporateEmployee.fullName || op.operator.callingName || '',
             tradeGroup: op.operator.tradeGroup?.name || 'Operator',
             dailyHours: {},
-            dailyRate: Number(op.operator.dailyRate) || 1600,
+            dailyRate: Number(op.operator.dailyRate) > 0 ? Number(op.operator.dailyRate) : Number(op.operator.tradeGroup?.standardDailyRate || 1600),
             isEmployeeApproved: isEmployeeActive,
             isPartnerApproved: isPartnerActive,
             isPayable,
@@ -1100,6 +1112,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
             businessPartner: true,
           },
         },
+        appliedBusinessPartner: true,
         recordedBy: { select: { id: true, fullName: true, username: true } },
         dailySheet: {
           include: {
@@ -1221,7 +1234,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
         supervisorName,
         employeeCode: first.employee.corporateEmployee.employeeCode || first.employeeId,
         callingName: first.employee.callingName || first.employee.corporateEmployee.fullName || '—',
-        businessPartner: first.employee.businessPartner?.name || 'Direct',
+        businessPartner: first.appliedBusinessPartner?.name || first.employee.businessPartner?.name || 'Direct',
         inTime,
         outTime,
         breakHours,
@@ -1412,6 +1425,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
             corporateEquipment: true,
           },
         },
+        appliedBusinessPartner: true,
       },
     });
 
@@ -1472,8 +1486,19 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
     const timeCards = [];
 
     for (const emp of employees) {
-      const dailyRateVal = Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 1400);
+      // Point-in-time rate and subcontractor snapshot lookup from month's time entries
+      const snapEntry = timeEntries.find(
+        (te) => te.employeeId === emp.id && te.appliedDailyRate !== null && Number(te.appliedDailyRate) > 0
+      );
+      const dailyRateVal = snapEntry
+        ? Number(snapEntry.appliedDailyRate)
+        : (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 1400));
       const hourlyOtRate = Math.round((dailyRateVal / 8 * 1.5) * 100) / 100;
+
+      const snapBpEntry = timeEntries.find(
+        (te) => te.employeeId === emp.id && (te.appliedBusinessPartner || te.appliedBusinessPartnerId)
+      );
+      const effectiveBpName = snapBpEntry?.appliedBusinessPartner?.name || emp.businessPartner?.name || 'Direct';
 
       const days = [];
       let totalDays = 0;
@@ -1585,7 +1610,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
         dailyRate: dailyRateVal,
         hourlyOtRate,
         isOperator: emp.isOperator,
-        businessPartner: emp.businessPartner?.name || 'Direct',
+        businessPartner: effectiveBpName,
         siteName: project?.projectName ? `${project.projectName}` : 'Main Project Site',
         companyName: 'Maga Engineering (Pvt) Ltd.',
         month: monthLabel,

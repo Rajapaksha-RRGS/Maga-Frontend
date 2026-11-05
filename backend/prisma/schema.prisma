@@ -44,6 +44,7 @@ model MF_G_BusinessPartner {
   corporateEmployees MF_G_Employee[]
   employees          MF_P_Employee[]
   equipment          MF_P_Equipment[]
+  appliedTimeEntries MF_OP_TimeEntry[] @relation("TimeEntryAppliedBP")
   @@map("MF_G_BUSINESS_PARTNER")
 }
 
@@ -505,17 +506,20 @@ model MF_OP_TimeEntry {
   remarks            String?
   status             String    @default("draft")
   submittedAt        DateTime? @map("submitted_at")
+  appliedDailyRate   Decimal?  @map("applied_daily_rate") @db.Decimal(10, 2)
+  appliedBusinessPartnerId String? @map("applied_business_partner_id")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  project          MF_P_Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  dailySheet       MF_OP_DailySheet?            @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
-  employee         MF_P_Employee                @relation(fields: [employeeId], references: [id])
-  activity         MF_P_ActivityCode            @relation(fields: [activityId], references: [id])
-  equipment        MF_P_Equipment?              @relation(fields: [equipmentId], references: [id])
-  effectiveDayType MF_G_DayType                 @relation(fields: [effectiveDayTypeId], references: [id])
-  recordedBy       MF_P_User?                   @relation("TimeEntryRecordedBy", fields: [recordedById], references: [id])
-  activitySplits   MF_OP_LaborActivitySplit[]
+  project                MF_P_Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dailySheet             MF_OP_DailySheet?            @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
+  employee               MF_P_Employee                @relation(fields: [employeeId], references: [id])
+  activity               MF_P_ActivityCode            @relation(fields: [activityId], references: [id])
+  equipment              MF_P_Equipment?              @relation(fields: [equipmentId], references: [id])
+  effectiveDayType       MF_G_DayType                 @relation(fields: [effectiveDayTypeId], references: [id])
+  recordedBy             MF_P_User?                   @relation("TimeEntryRecordedBy", fields: [recordedById], references: [id])
+  appliedBusinessPartner MF_G_BusinessPartner?        @relation("TimeEntryAppliedBP", fields: [appliedBusinessPartnerId], references: [id])
+  activitySplits         MF_OP_LaborActivitySplit[]
 
   @@index([projectId, date])
   @@index([dailySheetId])
@@ -524,6 +528,7 @@ model MF_OP_TimeEntry {
   @@index([equipmentId])
   @@index([effectiveDayTypeId])
   @@index([recordedById])
+  @@index([appliedBusinessPartnerId])
   @@map("MF_L_TIME_ENTRY")
 }
 
