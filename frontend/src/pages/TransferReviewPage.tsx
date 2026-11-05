@@ -10,7 +10,6 @@ import {
   ShieldCheck,
   AlertCircle,
   Loader2,
-  Calendar,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../config/api';
 
