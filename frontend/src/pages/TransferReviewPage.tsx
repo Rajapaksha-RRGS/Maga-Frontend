@@ -9,8 +9,7 @@ import {
   User,
   ShieldCheck,
   Loader2,
-  Calendar,
-  FileText,
+  
   Phone,
   Globe,
   MapPin,
