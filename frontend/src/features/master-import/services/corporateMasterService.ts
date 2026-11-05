@@ -1467,7 +1467,7 @@ export function getUniqueCategories(items: { type?: string; tradeGroup?: string;
 }
 
 import { cacheManager } from '../../../utils/cacheManager';
-import { API_URL, getTenantHeaders } from '../../../config/api';
+import { API_URL, getTenantHeaders, getCurrentTenantId } from '../../../config/api';
 
 const getHeaders = (): Record<string, string> => {
   const headers = getTenantHeaders({ 'Content-Type': 'application/json' });
@@ -1522,10 +1522,19 @@ export const fetchCorporateEquipment = async (forceRefresh = false): Promise<Cor
   }, 5 * 60 * 1000, forceRefresh);
 };
 
+export const invalidateCorporateEmployeesCache = (tenantId?: string) => {
+  const tid = tenantId || getCurrentTenantId();
+  cacheManager.invalidate(`corporate:employees:catalog:${tid || 'global'}`);
+  cacheManager.invalidate('corporate:employees:catalog');
+};
+
 export const fetchCorporateEmployees = async (forceRefresh = false): Promise<CorporateEmployee[]> => {
-  return cacheManager.fetchWithCache('corporate:employees:catalog', async () => {
+  const tenantId = getCurrentTenantId();
+  const cacheKey = `corporate:employees:catalog:${tenantId || 'global'}`;
+  return cacheManager.fetchWithCache(cacheKey, async () => {
     try {
-      const res = await fetch(`${API_URL}/employees/corporate-master`, { headers: getHeaders() });
+      const url = `${API_URL}/employees/corporate-master${tenantId ? `?excludeCurrentSite=true&projectId=${encodeURIComponent(tenantId)}` : ''}`;
+      const res = await fetch(url, { headers: getHeaders() });
       if (!res.ok) throw new Error('Failed to fetch corporate employees');
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
@@ -1561,6 +1570,7 @@ export const fetchCorporateEmployees = async (forceRefresh = false): Promise<Cor
       return [];
     } catch (error) {
       console.error('Error fetching corporate employees:', error);
+      cacheManager.invalidate(cacheKey);
       cacheManager.invalidate('corporate:employees:catalog');
       return [];
     }

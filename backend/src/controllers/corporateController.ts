@@ -2191,6 +2191,55 @@ export const createCorporateTradeGroup = async (req: Request, res: Response): Pr
   }
 };
 
+// ── 10.1. PUT /api/corporate/trade-groups/:id ─────────────────────────────────
+export const updateCorporateTradeGroup = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = String(req.params.id);
+    const { code, name, currency, standardDailyRate, standardOtRate, status, syncEmployees } = req.body || {};
+
+    const existing = await prisma.mF_G_TradeGroup.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ error: 'Trade group not found' });
+      return;
+    }
+
+    const cur = currency && typeof currency === 'string' ? currency.trim().toUpperCase() : existing.currency;
+    const newRate = standardDailyRate !== undefined && !isNaN(Number(standardDailyRate)) ? Number(standardDailyRate) : Number(existing.standardDailyRate);
+    const newOtRate = standardOtRate !== undefined && standardOtRate !== '' && !isNaN(Number(standardOtRate))
+      ? Number(standardOtRate)
+      : Math.round(((newRate || 1400) / 8 * 1.5) * 100) / 100;
+
+    const updated = await prisma.mF_G_TradeGroup.update({
+      where: { id },
+      data: {
+        ...(code ? { code: code.trim().toUpperCase() } : {}),
+        ...(name ? { name: name.trim() } : {}),
+        currency: cur,
+        standardDailyRate: newRate,
+        standardOtRate: newOtRate,
+        ...(status ? { status } : {}),
+      },
+    });
+
+    // Auto-sync employee daily rates if trade group standard rate was updated
+    if (newRate !== Number(existing.standardDailyRate) || syncEmployees) {
+      await prisma.mF_G_Employee.updateMany({
+        where: { tradeGroupId: id },
+        data: { dailyRate: newRate },
+      });
+      await prisma.mF_P_Employee.updateMany({
+        where: { tradeGroupId: id },
+        data: { dailyRate: newRate },
+      });
+    }
+
+    res.json({ success: true, tradeGroup: updated });
+  } catch (error: any) {
+    console.error('Error updating trade group:', error);
+    res.status(500).json({ error: error.message || 'Failed to update trade group' });
+  }
+};
+
 // ── 11. GET /api/corporate/business-partners ──────────────────────────────────
 export const getCorporateBusinessPartners = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -3788,6 +3837,14 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
                 standardOtRate: op.otRate !== null ? op.otRate : op.existing.standardOtRate,
                 status: 'active',
               },
+            });
+            await prisma.mF_G_Employee.updateMany({
+              where: { tradeGroupId: op.existing.id },
+              data: { dailyRate: op.normalRate },
+            });
+            await prisma.mF_P_Employee.updateMany({
+              where: { tradeGroupId: op.existing.id },
+              data: { dailyRate: op.normalRate },
             });
             updatedCount++;
           } else {

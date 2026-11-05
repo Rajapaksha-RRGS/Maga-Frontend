@@ -656,7 +656,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
           employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
           tradeGroup: entry.employee.tradeGroup?.name || '',
           dailyHours: {},
-          dailyRate: Number(entry.employee.dailyRate) || 1400,
+          dailyRate: Number(entry.employee.dailyRate) > 0 ? Number(entry.employee.dailyRate) : Number(entry.employee.tradeGroup?.standardDailyRate || 1400),
           isEmployeeApproved: isEmployeeActive,
           isPartnerApproved: isPartnerActive,
           isPayable,
@@ -1472,7 +1472,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
     const timeCards = [];
 
     for (const emp of employees) {
-      const dailyRateVal = Number(emp.dailyRate || 1400);
+      const dailyRateVal = Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 1400);
       const hourlyOtRate = Math.round((dailyRateVal / 8 * 1.5) * 100) / 100;
 
       const days = [];

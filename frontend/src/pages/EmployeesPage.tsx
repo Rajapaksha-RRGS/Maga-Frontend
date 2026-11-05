@@ -20,7 +20,7 @@ import EmptyState from '../components/EmptyState';
 import EmployeeImportView from '../features/employees/components/EmployeeImportView';
 import DirectSiteRegisterModal from '../features/employees/components/DirectSiteRegisterModal';
 import Breadcrumb from '../components/Breadcrumb';
-import type { CorporateEmployee } from '../features/master-import/services/corporateMasterService';
+import { type CorporateEmployee, invalidateCorporateEmployeesCache } from '../features/master-import/services/corporateMasterService';
 import type { Employee } from '../features/employees/services/employeeService';
 import * as employeeService from '../features/employees/services/employeeService';
 import type { BusinessPartner } from '../features/business-partners/services/businessPartnerService';
@@ -159,6 +159,14 @@ export default function EmployeesPage() {
     return new Set(employees.map((e) => (e.employeeCode || e.id).toUpperCase()));
   }, [employees]);
 
+  const existingNics = useMemo(() => {
+    return new Set(
+      employees
+        .map((e) => (e.nicNo || '').trim().toUpperCase())
+        .filter(Boolean)
+    );
+  }, [employees]);
+
   const handleBatchImport = async (items: CorporateEmployee[]) => {
     try {
       const payload = items.map((item) => {
@@ -190,6 +198,7 @@ export default function EmployeesPage() {
       });
 
       await batchEnrollEmployees(payload);
+      invalidateCorporateEmployeesCache();
       await fetchPartners();
     } catch (err: any) {
       console.error('Batch import failed:', err);
@@ -224,6 +233,7 @@ export default function EmployeesPage() {
     }
 
     // Refresh active employees in project view
+    invalidateCorporateEmployeesCache();
     await refresh();
     await fetchPendingTransfers();
   };
@@ -293,6 +303,7 @@ export default function EmployeesPage() {
           <EmployeeImportView
             onBack={() => setImportModalOpen(false)}
             existingCodes={existingCodes}
+            existingNics={existingNics}
             onImport={handleBatchImport}
             onTransfer={handleTransferEmployee}
           />
@@ -526,7 +537,7 @@ export default function EmployeesPage() {
               <SearchInput
                 value={search}
                 onChange={setSearch}
-                placeholder="Search by Trade Group, NIC, Code, or Name…"
+                placeholder="Search by Trade Group, NIC, Code, Name, or BP Code (BP No.)…"
               />
             </div>
             <EmployeeFilters

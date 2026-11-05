@@ -11,6 +11,7 @@ import type { BusinessPartner } from '../../business-partners/services/businessP
 import * as businessPartnerService from '../../business-partners/services/businessPartnerService';
 import StatusBadge from '../../../components/StatusBadge';
 import { UserCheck, UserX } from 'lucide-react';
+import api from '../../../config/api';
 
 interface EmployeeFormProps {
   /** If provided, form is in edit mode for this employee */
@@ -47,6 +48,30 @@ export default function EmployeeForm({
 
   const [partners, setPartners] = useState<BusinessPartner[]>(businessPartners || []);
   const [loadingPartners, setLoadingPartners] = useState(!businessPartners || businessPartners.length === 0);
+  const [availableTradeGroups, setAvailableTradeGroups] = useState<Array<{ id: string; name: string; code: string; standardDailyRate: number }>>([]);
+
+  // Fetch trade groups to support auto-filling standard daily rates
+  useEffect(() => {
+    let isMounted = true;
+    api.get('/corporate/trade-groups')
+      .then((res) => {
+        if (isMounted) setAvailableTradeGroups(res.data?.items ?? res.data ?? []);
+      })
+      .catch((err) => console.error('Failed to load trade groups for EmployeeForm:', err));
+    return () => { isMounted = false; };
+  }, []);
+
+  const handleTradeGroupChange = (value: string) => {
+    setTradeGroup(value);
+    const matched = availableTradeGroups.find(
+      (tg) =>
+        tg.name.toLowerCase() === value.trim().toLowerCase() ||
+        tg.code.toLowerCase() === value.trim().toLowerCase()
+    );
+    if (matched && matched.standardDailyRate) {
+      setDailyRate(String(Number(matched.standardDailyRate)));
+    }
+  };
 
   // Fetch partners if not supplied via props
   useEffect(() => {
@@ -192,13 +217,21 @@ export default function EmployeeForm({
         </label>
         <input
           id="emp-tg"
+          list="emp-tg-datalist"
           type="text"
           value={tradeGroup}
-          onChange={(e) => setTradeGroup(e.target.value)}
+          onChange={(e) => handleTradeGroupChange(e.target.value)}
           className={INPUT_CLASS}
-          placeholder="e.g. Lab Helper, Cook, Helper, Carpenter"
+          placeholder="e.g. Mason, Driver, Supply - Helper, Carpenter"
           required
         />
+        <datalist id="emp-tg-datalist">
+          {availableTradeGroups.map((tg) => (
+            <option key={tg.id} value={tg.name}>
+              {tg.code} — Rs. {Number(tg.standardDailyRate).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </option>
+          ))}
+        </datalist>
       </div>
 
       {/* NIC No. */}

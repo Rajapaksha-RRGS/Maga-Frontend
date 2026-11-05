@@ -129,6 +129,7 @@ export default function SATradeGroupsPage() {
   );
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingTradeGroup, setEditingTradeGroup] = useState<TradeGroup | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formCode, setFormCode] = useState('');
   const [formName, setFormName] = useState('');
@@ -136,7 +137,7 @@ export default function SATradeGroupsPage() {
   const [formDailyRate, setFormDailyRate] = useState('2000');
   const [formError, setFormError] = useState('');
 
-  const handleCreateTradeGroup = async (e: React.FormEvent) => {
+  const handleSaveTradeGroup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formCode.trim() || !formName.trim()) {
       setFormError('Code and Name are required');
@@ -147,22 +148,38 @@ export default function SATradeGroupsPage() {
     try {
       const dailyVal = parseFloat(formDailyRate) || (formCurrency === 'USD' ? 20 : 2000);
 
-      const res = await api.post('/corporate/trade-groups', {
-        code: formCode.trim().toUpperCase(),
-        name: formName.trim(),
-        currency: formCurrency,
-        standardDailyRate: dailyVal,
-      });
-      if (res.data?.tradeGroup) {
-        setTradeGroups((prev) => [res.data.tradeGroup, ...prev]);
-        setIsModalOpen(false);
-        setFormCode('');
-        setFormName('');
-        setFormCurrency('LKR');
-        setFormDailyRate('2000');
+      if (editingTradeGroup) {
+        const res = await api.put(`/corporate/trade-groups/${editingTradeGroup.id}`, {
+          code: formCode.trim().toUpperCase(),
+          name: formName.trim(),
+          currency: formCurrency,
+          standardDailyRate: dailyVal,
+        });
+        if (res.data?.tradeGroup) {
+          setTradeGroups((prev) =>
+            prev.map((t) => (t.id === editingTradeGroup.id ? res.data.tradeGroup : t))
+          );
+          setIsModalOpen(false);
+          setEditingTradeGroup(null);
+        }
+      } else {
+        const res = await api.post('/corporate/trade-groups', {
+          code: formCode.trim().toUpperCase(),
+          name: formName.trim(),
+          currency: formCurrency,
+          standardDailyRate: dailyVal,
+        });
+        if (res.data?.tradeGroup) {
+          setTradeGroups((prev) => [res.data.tradeGroup, ...prev]);
+          setIsModalOpen(false);
+          setFormCode('');
+          setFormName('');
+          setFormCurrency('LKR');
+          setFormDailyRate('2000');
+        }
       }
     } catch (err: any) {
-      setFormError(err.message || 'Failed to create trade group');
+      setFormError(err.message || 'Failed to save trade group');
     } finally {
       setIsSubmitting(false);
     }
@@ -197,8 +214,12 @@ export default function SATradeGroupsPage() {
           <button
             type="button"
             onClick={() => {
+              setEditingTradeGroup(null);
+              setFormCode('');
+              setFormName('');
               setFormDailyRate('2000');
               setFormCurrency('LKR');
+              setFormError('');
               setIsModalOpen(true);
             }}
             className="flex items-center gap-1.5 bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] text-white text-xs font-semibold px-3.5 py-2.5 rounded-lg hover:opacity-90 transition-opacity shadow-sm cursor-pointer"
@@ -284,7 +305,16 @@ export default function SATradeGroupsPage() {
                         <td className="px-4 py-3 text-right">
                           <button
                             type="button"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                            onClick={() => {
+                              setEditingTradeGroup(tg);
+                              setFormCode(tg.code);
+                              setFormName(tg.name);
+                              setFormCurrency(tg.currency || 'LKR');
+                              setFormDailyRate(String(Number(tg.standardDailyRate) || 0));
+                              setFormError('');
+                              setIsModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors cursor-pointer"
                             aria-label={`Edit ${tg.name}`}
                           >
                             <Pencil size={14} />
@@ -314,8 +344,14 @@ export default function SATradeGroupsPage() {
             className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-violet-100 text-slate-900"
             style={{ colorScheme: 'light' }}
           >
-            <h2 className="text-base font-bold text-slate-900 mb-1">Add Global Trade Group</h2>
-            <p className="text-xs text-slate-500 mb-4">Define a standard trade designation, currency, and daily rate.</p>
+            <h2 className="text-base font-bold text-slate-900 mb-1">
+              {editingTradeGroup ? 'Edit Global Trade Group' : 'Add Global Trade Group'}
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              {editingTradeGroup
+                ? 'Update trade group code, designation, and standard daily rate.'
+                : 'Define a standard trade designation, currency, and daily rate.'}
+            </p>
 
             {formError && (
               <div className="mb-4 text-xs text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-200">
@@ -323,7 +359,7 @@ export default function SATradeGroupsPage() {
               </div>
             )}
 
-            <form onSubmit={handleCreateTradeGroup} className="space-y-3.5 bg-white text-slate-900">
+            <form onSubmit={handleSaveTradeGroup} className="space-y-3.5 bg-white text-slate-900">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Trade Code *</label>
                 <input
@@ -397,7 +433,7 @@ export default function SATradeGroupsPage() {
                   disabled={isSubmitting}
                   className="px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-[#1A0A2E] to-[#2D1055] hover:opacity-90 rounded-lg cursor-pointer disabled:opacity-50"
                 >
-                  {isSubmitting ? 'Saving…' : 'Create Trade Group'}
+                  {isSubmitting ? 'Saving…' : editingTradeGroup ? 'Update Trade Group' : 'Create Trade Group'}
                 </button>
               </div>
             </form>

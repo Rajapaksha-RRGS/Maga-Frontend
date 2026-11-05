@@ -24,6 +24,7 @@ import {
   getCorporateTradeGroups,
   createCorporateTradeGroup,
   bulkImportCorporateTradeGroups,
+  updateCorporateTradeGroup,
   getCorporateBusinessPartners,
   createCorporateBusinessPartner,
   updateCorporateBusinessPartner,
@@ -96,6 +97,7 @@ router.post('/equipment/transfer', createCorporateEquipmentTransfer);
 router.get('/trade-groups', getCorporateTradeGroups);
 router.post('/trade-groups', createCorporateTradeGroup);
 router.post('/trade-groups/bulk-import', bulkImportCorporateTradeGroups);
+router.put('/trade-groups/:id', updateCorporateTradeGroup);
 
 // Global Business Partners
 router.get('/business-partners/pending', getPendingBusinessPartners);

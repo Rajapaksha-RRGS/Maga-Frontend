@@ -88,9 +88,13 @@ export function useEmployees(): UseEmployeesReturn {
         (e.id && e.id.toLowerCase().includes(q)) ||
         (e.tradeGroup && e.tradeGroup.toLowerCase().includes(q)) ||
         (e.nicNo && e.nicNo.toLowerCase().includes(q)) ||
-        (e.businessPartner && e.businessPartner.toLowerCase().includes(q));
+        (e.businessPartner && e.businessPartner.toLowerCase().includes(q)) ||
+        (e.businessPartnerCode && e.businessPartnerCode.toLowerCase().includes(q));
 
-      const matchesBP = !businessPartnerFilter || e.businessPartner.toLowerCase() === businessPartnerFilter.toLowerCase();
+      const matchesBP =
+        !businessPartnerFilter ||
+        e.businessPartner.toLowerCase() === businessPartnerFilter.toLowerCase() ||
+        (e.businessPartnerCode && e.businessPartnerCode.toLowerCase() === businessPartnerFilter.toLowerCase());
       const matchesTG = !tradeGroupFilter || e.tradeGroup.toLowerCase() === tradeGroupFilter.toLowerCase();
       const matchesStatus = !statusFilter || e.status === statusFilter;
 

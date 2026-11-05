@@ -440,12 +440,15 @@ export default function SAEmployeesPage() {
   };
 
   const filtered = employees.filter((emp) => {
-    const q = search.toLowerCase();
+    const q = search.toLowerCase().trim();
     const matchSearch =
       !q ||
       emp.fullName.toLowerCase().includes(q) ||
       emp.employeeCode.toLowerCase().includes(q) ||
-      emp.nicNo.toLowerCase().includes(q);
+      emp.nicNo.toLowerCase().includes(q) ||
+      (emp.tradeGroup && emp.tradeGroup.toLowerCase().includes(q)) ||
+      (emp.businessPartner && emp.businessPartner.toLowerCase().includes(q)) ||
+      (emp.businessPartnerCode && emp.businessPartnerCode.toLowerCase().includes(q));
     const matchTG = tradeGroupFilter === 'all' || emp.tradeGroupId === tradeGroupFilter;
     const matchType = typeFilter === 'all' || emp.employeeType === typeFilter;
     return matchSearch && matchTG && matchType;
@@ -720,7 +723,7 @@ export default function SAEmployeesPage() {
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
               <input
                 type="text"
-                placeholder="Search by Name, Code, or NIC…"
+                placeholder="Search by Name, Code, NIC, Trade Group, or BP Code…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-8 pr-3 py-2 text-sm border border-violet-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"

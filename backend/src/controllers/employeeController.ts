@@ -97,6 +97,11 @@ function formatEmployee(emp: any) {
     }
   }
 
+  const rawSiteRate = emp.dailyRate !== null && emp.dailyRate !== undefined ? Number(emp.dailyRate) : 0;
+  const rawCorpRate = corp.dailyRate !== null && corp.dailyRate !== undefined ? Number(corp.dailyRate) : 0;
+  const tgRate = effectiveTradeGroup?.standardDailyRate ? Number(effectiveTradeGroup.standardDailyRate) : 1400.0;
+  const resolvedDailyRate = rawSiteRate > 0 ? rawSiteRate : (rawCorpRate > 0 ? rawCorpRate : tgRate);
+
   return {
     id: emp.id,
     projectId: emp.projectId,
@@ -112,7 +117,7 @@ function formatEmployee(emp: any) {
     nic_no: corp.nicNo || '',
     epfNo: corp.epfNo || '',
     epf_no: corp.epfNo || '',
-    dailyRate: Number(emp.dailyRate ?? corp.dailyRate ?? 1400.0),
+    dailyRate: resolvedDailyRate,
     isOperator: Boolean(emp.isOperator ?? corp.isOperator ?? false),
     status: emp.status || 'active',
     corporateStatus: corp.status || 'active',
@@ -885,9 +890,32 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
 };
 
 // 9. GET /api/employees/corporate-master — Catalog from corporate master
-export const getCorporateEmployeesCatalog = async (_req: Request, res: Response): Promise<void> => {
+export const getCorporateEmployeesCatalog = async (req: Request, res: Response): Promise<void> => {
   try {
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string);
+
+    const where: Record<string, any> = {};
+
+    // Filter out employees already enrolled/active in this project when scoped to a site
+    const shouldExclude =
+      req.query.excludeCurrentSite === 'true' ||
+      (Boolean(projectId) && req.query.includeCurrentSite !== 'true');
+
+    if (projectId && shouldExclude) {
+      where.projectEmployees = {
+        none: {
+          projectId,
+          status: 'active',
+        },
+      };
+    }
+
     const list = await prisma.mF_G_Employee.findMany({
+      where,
       select: {
         id: true,
         employeeCode: true,
@@ -900,7 +928,7 @@ export const getCorporateEmployeesCatalog = async (_req: Request, res: Response)
         status: true,
         currentProjectId: true,
         tradeGroup: {
-          select: { id: true, code: true, name: true },
+          select: { id: true, code: true, name: true, standardDailyRate: true },
         },
         corporateBusinessPartner: {
           select: { id: true, code: true, name: true },
@@ -908,7 +936,7 @@ export const getCorporateEmployeesCatalog = async (_req: Request, res: Response)
       },
       orderBy: { employeeCode: 'asc' },
     });
-    res.json(list);
+    res.json(list.map((emp: any) => ({ ...emp, dailyRate: Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : (emp.tradeGroup?.standardDailyRate ? Number(emp.tradeGroup.standardDailyRate) : 1400.0) })));
   } catch (error) {
     console.error('Error fetching corporate employees catalog:', error);
     res.status(500).json({ error: 'Failed to fetch corporate employees catalog' });
@@ -1092,6 +1120,7 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       const myClaim = claims.find((c) => c.supervisorId === supervisorId);
 
       const isInternal = emp.corporateEmployee.employeeType === 'internal';
+
       return {
         id: emp.id,
         employeeCode: emp.corporateEmployee.employeeCode,
