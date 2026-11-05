@@ -5,11 +5,11 @@ import {
   useEffect,
   type ReactNode,
 } from 'react';
-import { login as authLogin } from '../features/auth/services/authService'; // login function eka authservice eken import karanawa 
+import { login as authLogin } from '../features/auth/services/authService';
 import { cacheManager } from '../utils/cacheManager';
+import { isTokenExpired, getTokenRemainingMs } from '../utils/token';
 
 export type Role = 'super_admin' | 'admin' | 'supervisor';
-
 
 export interface AuthUser {
   id: string;
@@ -27,7 +27,7 @@ interface AuthContextValue {
   role: Role | null;
   isLoading: boolean;
   login: (tenant: string, username: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: (reason?: 'expired' | 'manual') => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -38,33 +38,68 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const logout = (reason?: 'expired' | 'manual'): void => {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem('token');
+    cacheManager.clear();
+    if (reason === 'expired' && typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '/login?expired=1');
+    }
+    setUser(null);
+  };
+
   // Rehydrate from localStorage on mount (persists session across refreshes)
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
+      const token = localStorage.getItem('token');
       if (stored) {
-        setUser(JSON.parse(stored) as AuthUser);
+        const parsed = JSON.parse(stored) as AuthUser;
+        const activeToken = parsed.token || token;
+
+        if (isTokenExpired(activeToken)) {
+          console.warn('Stored session token has expired. Clearing session.');
+          localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem('token');
+          cacheManager.clear();
+          setUser(null);
+        } else {
+          setUser(parsed);
+        }
       }
     } catch {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem('token');
+      cacheManager.clear();
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  const login = async ( tenant: string,username: string,password: string): Promise<void> => {
+  // Timer to automatically log out when token expires in active session
+  useEffect(() => {
+    if (!user) return;
+    const token = user.token || localStorage.getItem('token');
+    const remainingMs = getTokenRemainingMs(token);
+
+    if (remainingMs <= 0) {
+      logout('expired');
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      logout('expired');
+    }, remainingMs);
+
+    return () => clearTimeout(timer);
+  }, [user]);
+
+  const login = async (tenant: string, username: string, password: string): Promise<void> => {
     const loggedInUser = await authLogin(tenant, username, password);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedInUser));
     cacheManager.clear();
     setUser(loggedInUser);
-  };
-
-  const logout = (): void => {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem('token');
-    cacheManager.clear();
-    setUser(null);
-    window.location.href = '/login';
   };
 
   return (

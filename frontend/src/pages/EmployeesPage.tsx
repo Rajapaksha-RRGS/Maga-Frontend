@@ -7,7 +7,7 @@
  * Responsive: DataTable on md+, CardList below md.
  */
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowRightLeft, Check, Clock, UserPlus } from 'lucide-react';
+import { ArrowRightLeft, Check, Clock, UserPlus, Building2, X, Loader2 } from 'lucide-react';
 import api from '../config/api';
 import { useEmployees } from '../features/employees/hooks/useEmployees';
 import EmployeeTable from '../features/employees/components/EmployeeTable';
@@ -76,6 +76,10 @@ export default function EmployeesPage() {
   const [outboundTransfers, setOutboundTransfers] = useState<PendingTransferItem[]>([]);
   const [isProcessingTransfer, setIsProcessingTransfer] = useState(false);
   const [isDirectRegisterModalOpen, setIsDirectRegisterModalOpen] = useState(false);
+  const [releasingTransfer, setReleasingTransfer] = useState<PendingTransferItem | null>(null);
+  const [effectiveReleaseDate, setEffectiveReleaseDate] = useState<string>('');
+  const [releaseRemarks, setReleaseRemarks] = useState<string>('');
+  const [successAlert, setSuccessAlert] = useState<string | null>(null);
 
   const fetchPendingTransfers = async () => {
     try {
@@ -93,12 +97,43 @@ export default function EmployeesPage() {
     fetchPendingTransfers();
   }, []);
 
-  const handleApproveRelease = async (transferId: string) => {
+  // Direct link listener from official MAGA email: ?action=review-transfer&id=...
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action');
+    const transferId = params.get('id');
+
+    if (action === 'review-transfer' && transferId && pendingTransfers.length > 0) {
+      const match = pendingTransfers.find((t) => t.id === transferId);
+      if (match) {
+        openReleaseModal(match);
+      }
+    }
+  }, [pendingTransfers]);
+
+  // Open Releasing PM modal to allow reviewing requested date and adjusting actual release date
+  const openReleaseModal = (req: PendingTransferItem) => {
+    setReleasingTransfer(req);
+    const reqDate = req.startDate ? req.startDate.split('T')[0] : new Date().toISOString().split('T')[0];
+    setEffectiveReleaseDate(reqDate);
+    setReleaseRemarks('');
+  };
+
+  const handleConfirmRelease = async () => {
+    if (!releasingTransfer) return;
     setIsProcessingTransfer(true);
     try {
-      await api.post(`/corporate/transfers/${transferId}/approve`);
+      await api.post(`/corporate/transfers/${releasingTransfer.id}/approve`, {
+        effectiveReleaseDate: effectiveReleaseDate || undefined,
+        releaseRemarks: releaseRemarks.trim() || undefined,
+      });
+      setSuccessAlert(
+        `Personnel ${releasingTransfer.corporateEmployee?.fullName || ''} (${releasingTransfer.corporateEmployee?.employeeCode || ''}) successfully released effective ${effectiveReleaseDate}. Auto-transfer complete.`
+      );
+      setReleasingTransfer(null);
       await refresh();
       await fetchPendingTransfers();
+      setTimeout(() => setSuccessAlert(null), 8000);
     } catch (err: any) {
       alert(err.response?.data?.error || err.message || 'Failed to approve transfer');
     } finally {
@@ -299,6 +334,23 @@ export default function EmployeesPage() {
             </div>
           </div>
 
+          {/* Success Notification Banner */}
+          {successAlert && (
+            <div className="mb-4 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl p-3.5 flex items-center justify-between text-xs animate-in fade-in shadow-xs">
+              <div className="flex items-center gap-2">
+                <Check size={16} className="text-emerald-600 flex-shrink-0" />
+                <span className="font-semibold">{successAlert}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSuccessAlert(null)}
+                className="text-emerald-700 hover:text-emerald-900 cursor-pointer p-1"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
           {/* 2-Way Handshake: Inbound Release Requests Banner (Action Required) */}
           {pendingTransfers.length > 0 && (
             <div className="mb-5 bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-xs animate-in fade-in">
@@ -355,7 +407,7 @@ export default function EmployeesPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleApproveRelease(req.id)}
+                        onClick={() => openReleaseModal(req)}
                         disabled={isProcessingTransfer}
                         className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
                       >
@@ -543,6 +595,143 @@ export default function EmployeesPage() {
         onSuccess={refresh}
         existingPartners={registeredPartners}
       />
+
+      {/* ── Releasing PM Handshake Release Modal ──────────────────────── */}
+      {releasingTransfer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2 text-slate-900">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-700">
+                  <ArrowRightLeft size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Confirm Personnel Release</h3>
+                  <p className="text-[11px] text-slate-500">MAGA Inter-Site Handshake Approval &amp; Auto-Transfer</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReleasingTransfer(null)}
+                className="text-slate-400 hover:text-slate-600 rounded-lg p-1 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Personnel Summary Card */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-slate-900 text-sm">
+                    {releasingTransfer.corporateEmployee?.fullName}
+                  </span>
+                  <span className="ml-2 font-mono text-[11px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
+                    {releasingTransfer.corporateEmployee?.employeeCode}
+                  </span>
+                </div>
+                <span className="text-[11px] font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                  {releasingTransfer.corporateEmployee?.tradeGroup?.name || 'General Labour'}
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-600 flex items-center gap-1.5 pt-1 border-t border-slate-200">
+                <Building2 size={13} className="text-slate-500 flex-shrink-0" />
+                <span>Destination Project:</span>
+                <span className="font-semibold text-slate-800">
+                  {releasingTransfer.toProject?.projectName || releasingTransfer.toProject?.projectCode}
+                </span>
+              </div>
+            </div>
+
+            {/* Requested Mobilization Date (Read-only Badge) */}
+            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-amber-900 font-semibold flex items-center gap-1">
+                  <Clock size={12} className="text-amber-600" />
+                  Requested Mobilization Date (ඉල්ලූ දිනය):
+                </span>
+                <span className="font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                  {releasingTransfer.startDate
+                    ? new Date(releasingTransfer.startDate).toLocaleDateString('en-GB', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })
+                    : 'Not specified'}
+                </span>
+              </div>
+              {releasingTransfer.remarks && (
+                <p className="text-[11px] text-amber-800 italic pt-1">
+                  Scope / Justification: "{releasingTransfer.remarks}"
+                </p>
+              )}
+            </div>
+
+            {/* Releasing PM Inputs (Actual Release Date & Remarks) */}
+            <div className="space-y-3 pt-1">
+              <div>
+                <label className="block text-xs font-semibold text-slate-800 mb-1">
+                  Actual Effective Release Date (ඔබට සැබවින්ම මුදාහළ හැකි දිනය) *
+                </label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={effectiveReleaseDate}
+                    onChange={(e) => setEffectiveReleaseDate(e.target.value)}
+                    className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 bg-white font-medium"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  * If ongoing site casting or works delay release, adjust this date. The worker will be auto-transferred effective on this date.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-800 mb-1">
+                  Release / Handover Remarks (සටහන් / Gate Pass විස්තර):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Released after slab casting. Gate pass #GP-891 issued."
+                  value={releaseRemarks}
+                  onChange={(e) => setReleaseRemarks(e.target.value)}
+                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 bg-white"
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                disabled={isProcessingTransfer}
+                onClick={() => setReleasingTransfer(null)}
+                className="px-3.5 py-2 rounded-lg border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isProcessingTransfer || !effectiveReleaseDate}
+                onClick={handleConfirmRelease}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isProcessingTransfer ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    <span>Processing Auto-Transfer…</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={13} />
+                    <span>Confirm &amp; Auto-Transfer</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

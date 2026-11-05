@@ -77,6 +77,7 @@ import SupervisorMobileApp from './features/supervisor/SupervisorMobileApp';
 // Splash Screen & Showcase
 import SplashScreen from './components/SplashScreen';
 import SplashShowcasePage from './pages/SplashShowcasePage';
+import TransferReviewPage from './pages/TransferReviewPage';
 import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
@@ -102,6 +103,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/splash" element={<SplashShowcasePage />} />
+            <Route path="/transfers/review" element={<TransferReviewPage />} />
 
             {/* ── Protected User & Supervisor Mobile Previews ──────────────────── */}
             <Route element={<ProtectedRoute allowedRoles={['admin', 'super_admin']} />}>

@@ -51,6 +51,7 @@ model MF_G_TradeGroup {
   id                String   @id @default(uuid()) @map("trade_group_id")
   code              String   @unique
   name              String
+  currency          String   @default("LKR") @db.VarChar(10)
   standardDailyRate Decimal  @default(1400.00) @map("standard_daily_rate") @db.Decimal(10, 2)
   standardOtRate    Decimal? @map("standard_ot_rate") @db.Decimal(10, 2)
   status            String   @default("active")

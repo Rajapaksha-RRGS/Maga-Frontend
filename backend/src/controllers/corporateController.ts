@@ -1,6 +1,12 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import prisma from '../config/prisma';
+import {
+  sendTransferRequestedEmail,
+  sendTransferApprovedEmail,
+  sendTransferRejectedEmail,
+  verifyTransferTokenPayload,
+} from '../services/emailService';
 
 function generateTempPassword(): string {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$';
@@ -14,7 +20,39 @@ export interface SimpleProjectRef {
   projectCode: string;
   projectName: string;
   subdomain: string;
+  email?: string | null;
+  projectManager?: string | null;
 }
+
+export const PROJECT_FIELD_ALIASES = [
+  'currentWorkingProject',
+  'current_working_project',
+  'curantworking project',
+  'curantworkingproject',
+  'curant working project',
+  'subdomain',
+  'subdomainName',
+  'subdomain_name',
+  'subdomain name',
+  'sub domain',
+  'sub_domain',
+  'currentProject',
+  'current_project',
+  'workingProject',
+  'working_project',
+  'projectCode',
+  'project_code',
+  'projectName',
+  'project_name',
+  'project',
+  'site',
+  'siteName',
+  'site_name',
+  'workingPlace',
+  'working_place',
+  'siteCode',
+  'site_code',
+];
 
 export function resolveProjectByCode(
   input: string | undefined | null,
@@ -23,27 +61,64 @@ export function resolveProjectByCode(
   if (!input) return null;
   const raw = String(input).trim();
   if (!raw) return null;
+
+  const rawLower = raw.toLowerCase();
   const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!clean) return null;
 
   // 1. Exact ID (UUID)
-  const byId = projects.find((p) => p.id.toLowerCase() === raw.toLowerCase());
+  const byId = projects.find((p) => p.id.toLowerCase() === rawLower);
   if (byId) return byId;
 
-  // 2. Exact projectCode (e.g. "PRJ531" or "PRJ001")
+  // 2. Exact projectCode (e.g. "M00000549" or "PRJ531")
   const byCode = projects.find((p) => p.projectCode.toUpperCase() === raw.toUpperCase());
   if (byCode) return byCode;
 
-  // 3. Exact subdomain (e.g. "531" or "maga")
+  // 3. Exact subdomain (e.g. "531")
   const bySub = projects.find((p) => p.subdomain.toUpperCase() === raw.toUpperCase());
   if (bySub) return bySub;
 
-  // 4. Normalized alphanumeric match (e.g. "531" matches "PRJ531" or "531M")
-  const byClean = projects.find((p) => {
-    const pClean = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // 4. Subdomain extracted from domain / host (e.g. "531.localhost:3000", "531.maga.lk", "http://531.localhost:3000")
+  const hostMatch = rawLower.replace(/^https?:\/\//, '').split(/[:/.]/)[0];
+  if (hostMatch) {
+    const byHost = projects.find((p) => p.subdomain.toLowerCase() === hostMatch);
+    if (byHost) return byHost;
+  }
+
+  // 5. Numeric match for subdomain (e.g. "PRJ531", "M00000531", "531M", "Site 531" -> digits "531")
+  const inputDigits = clean.replace(/[^0-9]/g, '');
+  if (inputDigits) {
+    const bySubDigits = projects.find((p) => {
+      const subDigits = p.subdomain.replace(/[^0-9]/g, '');
+      return subDigits && (subDigits === inputDigits || inputDigits.endsWith(subDigits));
+    });
+    if (bySubDigits) return bySubDigits;
+  }
+
+  // 6. Subdomain containment (e.g. clean contains subdomain "531" or vice-versa)
+  const bySubContain = projects.find((p) => {
     const sClean = p.subdomain.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    return pClean === clean || sClean === clean || pClean.includes(clean) || clean.includes(pClean);
+    return sClean && (clean.includes(sClean) || sClean.includes(clean));
   });
-  if (byClean) return byClean;
+  if (bySubContain) return bySubContain;
+
+  // 7. Project Code containment
+  const byCodeContain = projects.find((p) => {
+    const pClean = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return pClean && (clean.includes(pClean) || pClean.includes(clean));
+  });
+  if (byCodeContain) return byCodeContain;
+
+  // 8. Project Name match / containment (e.g. "Walgama", "Damro", "531M", "Head Office")
+  const byName = projects.find((p) => {
+    const nLower = (p.projectName || '').toLowerCase();
+    const nClean = (p.projectName || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return (
+      (nLower && (nLower.includes(rawLower) || rawLower.includes(nLower))) ||
+      (nClean && (nClean.includes(clean) || clean.includes(nClean)))
+    );
+  });
+  if (byName) return byName;
 
   return null;
 }
@@ -443,7 +518,7 @@ export const requestCorporateTransfer = async (req: Request, res: Response): Pro
 
     // Resolve target project by code or id
     const allProjects = await prisma.mF_P_Project.findMany({
-      select: { id: true, projectCode: true, projectName: true, subdomain: true },
+      select: { id: true, projectCode: true, projectName: true, subdomain: true, email: true, projectManager: true },
     });
     const targetProj = resolveProjectByCode(targetInput, allProjects);
     if (!targetProj) {
@@ -484,12 +559,39 @@ export const requestCorporateTransfer = async (req: Request, res: Response): Pro
       },
       include: {
         corporateEmployee: {
-          select: { id: true, employeeCode: true, fullName: true, nicNo: true },
+          select: { id: true, employeeCode: true, fullName: true, nicNo: true, tradeGroup: { select: { name: true } } },
         },
-        fromProject: { select: { id: true, projectCode: true, projectName: true } },
-        toProject: { select: { id: true, projectCode: true, projectName: true } },
+        fromProject: { select: { id: true, projectCode: true, projectName: true, email: true, projectManager: true } },
+        toProject: { select: { id: true, projectCode: true, projectName: true, email: true, projectManager: true } },
       },
     });
+
+    // Dispatch Official MAGA Notification Email to Releasing Site PM (with Site B CC)
+    if (transfer.fromProject) {
+      sendTransferRequestedEmail({
+        transferId: transfer.id,
+        employee: {
+          fullName: corpEmp.fullName,
+          employeeCode: corpEmp.employeeCode,
+          nicNo: corpEmp.nicNo,
+          tradeGroupName: corpEmp.tradeGroup?.name,
+        },
+        fromProject: {
+          projectCode: transfer.fromProject.projectCode,
+          projectName: transfer.fromProject.projectName,
+          email: transfer.fromProject.email,
+          projectManager: transfer.fromProject.projectManager,
+        },
+        toProject: {
+          projectCode: targetProj.projectCode,
+          projectName: targetProj.projectName,
+          email: targetProj.email,
+          projectManager: targetProj.projectManager,
+        },
+        requestedDate: effectiveStartDate,
+        requestRemarks: remarks,
+      }).catch((e) => console.error('[EMAIL ERROR] Failed to send transfer request email:', e));
+    }
 
     res.status(201).json({
       success: true,
@@ -625,10 +727,14 @@ export const getPendingCorporateTransfers = async (req: Request, res: Response):
 export const approveCorporateTransfer = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = String(req.params.id);
+    const { effectiveReleaseDate, releaseRemarks } = req.body || {};
+
     const transfer = await prisma.mF_G_EmployeeTransfer.findUnique({
       where: { id },
       include: {
-        corporateEmployee: true,
+        corporateEmployee: {
+          include: { tradeGroup: true },
+        },
         toProject: true,
         fromProject: true,
       },
@@ -676,8 +782,11 @@ export const approveCorporateTransfer = async (req: Request, res: Response): Pro
 
     const { corporateEmployeeId, fromProjectId, toProjectId, corporateEmployee, toProject } = transfer;
 
+    // Use Releasing PM's actual effective release date if adjusted, otherwise fallback to requested startDate
+    const finalReleaseDate = effectiveReleaseDate ? new Date(effectiveReleaseDate) : transfer.startDate;
+
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Close older active transfers
+      // 1. Close older active transfers up to the effective release date
       await tx.mF_G_EmployeeTransfer.updateMany({
         where: {
           corporateEmployeeId,
@@ -687,14 +796,22 @@ export const approveCorporateTransfer = async (req: Request, res: Response): Pro
         },
         data: {
           status: 'transferred',
-          endDate: transfer.startDate,
+          endDate: finalReleaseDate,
         },
       });
 
-      // 2. Mark this transfer as active
+      // 2. Mark this transfer as active with final release date and remarks
+      const formattedRemarks = releaseRemarks
+        ? `${transfer.remarks ? transfer.remarks + ' | ' : ''}Released on ${finalReleaseDate.toISOString().split('T')[0]}: ${releaseRemarks}`
+        : transfer.remarks;
+
       const updatedTransfer = await tx.mF_G_EmployeeTransfer.update({
         where: { id },
-        data: { status: 'active' },
+        data: {
+          status: 'active',
+          startDate: finalReleaseDate,
+          remarks: formattedRemarks,
+        },
         include: {
           corporateEmployee: true,
           fromProject: true,
@@ -749,6 +866,32 @@ export const approveCorporateTransfer = async (req: Request, res: Response): Pro
       return updatedTransfer;
     });
 
+    // Dispatch Official MAGA Notification Email to both PMs
+    sendTransferApprovedEmail({
+      transferId: id,
+      employee: {
+        fullName: corporateEmployee.fullName,
+        employeeCode: corporateEmployee.employeeCode,
+        nicNo: corporateEmployee.nicNo,
+        tradeGroupName: corporateEmployee.tradeGroup?.name,
+      },
+      fromProject: {
+        projectCode: transfer.fromProject?.projectCode || 'Unknown',
+        projectName: transfer.fromProject?.projectName || 'Source Station',
+        email: transfer.fromProject?.email,
+        projectManager: transfer.fromProject?.projectManager,
+      },
+      toProject: {
+        projectCode: toProject.projectCode,
+        projectName: toProject.projectName,
+        email: toProject.email,
+        projectManager: toProject.projectManager,
+      },
+      requestedDate: transfer.startDate,
+      effectiveReleaseDate: finalReleaseDate,
+      releaseRemarks: releaseRemarks || null,
+    }).catch((e) => console.error('[EMAIL ERROR] Failed to send transfer approval email:', e));
+
     res.json({
       success: true,
       message: 'Transfer approved and employee successfully mobilized to new project site.',
@@ -769,6 +912,9 @@ export const rejectCorporateTransfer = async (req: Request, res: Response): Prom
     const transfer = await prisma.mF_G_EmployeeTransfer.findUnique({
       where: { id },
       include: {
+        corporateEmployee: {
+          include: { tradeGroup: true },
+        },
         fromProject: true,
         toProject: true,
       },
@@ -820,10 +966,322 @@ export const rejectCorporateTransfer = async (req: Request, res: Response): Prom
       },
     });
 
+    // Dispatch Official Rejection Email to Requesting Project
+    if (transfer.fromProject && transfer.toProject) {
+      sendTransferRejectedEmail({
+        transferId: id,
+        employee: {
+          fullName: transfer.corporateEmployee.fullName,
+          employeeCode: transfer.corporateEmployee.employeeCode,
+          nicNo: transfer.corporateEmployee.nicNo,
+          tradeGroupName: transfer.corporateEmployee.tradeGroup?.name,
+        },
+        fromProject: {
+          projectCode: transfer.fromProject.projectCode,
+          projectName: transfer.fromProject.projectName,
+          email: transfer.fromProject.email,
+          projectManager: transfer.fromProject.projectManager,
+        },
+        toProject: {
+          projectCode: transfer.toProject.projectCode,
+          projectName: transfer.toProject.projectName,
+          email: transfer.toProject.email,
+          projectManager: transfer.toProject.projectManager,
+        },
+        requestedDate: transfer.startDate,
+        reason: reason || 'Not specified by releasing project manager.',
+      }).catch((e) => console.error('[EMAIL ERROR] Failed to send transfer rejection email:', e));
+    }
+
     res.json({ success: true, message: 'Transfer request rejected.', transfer: updated });
   } catch (error: any) {
     console.error('Error rejecting transfer:', error);
     res.status(500).json({ error: error.message || 'Failed to reject transfer' });
+  }
+};
+
+// ── 3F. GET /api/corporate/transfers/verify-token (1-Click Mobile Verify) ────
+export const verifyTransferApprovalToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const token = (req.query.token as string) || (req.body?.token as string);
+    if (!token) {
+      res.status(400).json({ error: 'Authorization token is required' });
+      return;
+    }
+
+    const payload = verifyTransferTokenPayload(token);
+    if (!payload || !payload.transferId) {
+      res.status(401).json({ error: 'This authorization link is invalid or has expired.' });
+      return;
+    }
+
+    const transfer = await prisma.mF_G_EmployeeTransfer.findUnique({
+      where: { id: payload.transferId },
+      include: {
+        corporateEmployee: {
+          include: { tradeGroup: true },
+        },
+        fromProject: true,
+        toProject: true,
+      },
+    });
+
+    if (!transfer) {
+      res.status(404).json({ error: 'Transfer record not found.' });
+      return;
+    }
+
+    if (transfer.status !== 'pending_approval') {
+      res.json({
+        success: false,
+        isProcessed: true,
+        status: transfer.status,
+        message:
+          transfer.status === 'active'
+            ? 'This personnel transfer has already been approved and mobilized.'
+            : `This transfer request has already been ${transfer.status}.`,
+        transfer,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      isProcessed: false,
+      status: 'pending_approval',
+      transfer,
+    });
+  } catch (error: any) {
+    console.error('Error verifying transfer token:', error);
+    res.status(500).json({ error: error.message || 'Verification failed.' });
+  }
+};
+
+// ── 3G. POST /api/corporate/transfers/approve-by-token (1-Click Mobile Approve)
+export const approveTransferByToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, effectiveReleaseDate, releaseRemarks } = req.body || {};
+    if (!token) {
+      res.status(400).json({ error: 'Authorization token is required.' });
+      return;
+    }
+
+    const payload = verifyTransferTokenPayload(token);
+    if (!payload || !payload.transferId) {
+      res.status(401).json({ error: 'Invalid or expired authorization token.' });
+      return;
+    }
+
+    const id = payload.transferId;
+    const transfer = await prisma.mF_G_EmployeeTransfer.findUnique({
+      where: { id },
+      include: {
+        corporateEmployee: { include: { tradeGroup: true } },
+        fromProject: true,
+        toProject: true,
+      },
+    });
+
+    if (!transfer) {
+      res.status(404).json({ error: 'Transfer request not found.' });
+      return;
+    }
+
+    if (transfer.status === 'active') {
+      res.status(400).json({ error: 'This transfer has already been approved and executed.' });
+      return;
+    }
+
+    const { corporateEmployeeId, fromProjectId, toProjectId, corporateEmployee, toProject } = transfer;
+
+    const finalReleaseDate = effectiveReleaseDate ? new Date(effectiveReleaseDate) : transfer.startDate;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Close older active transfers
+      await tx.mF_G_EmployeeTransfer.updateMany({
+        where: {
+          corporateEmployeeId,
+          status: 'active',
+          id: { not: id },
+          endDate: null,
+        },
+        data: {
+          status: 'transferred',
+          endDate: finalReleaseDate,
+        },
+      });
+
+      // 2. Mark this transfer as active
+      const formattedRemarks = releaseRemarks
+        ? `${transfer.remarks ? transfer.remarks + ' | ' : ''}Released on ${finalReleaseDate.toISOString().split('T')[0]}: ${releaseRemarks}`
+        : transfer.remarks;
+
+      const updatedTransfer = await tx.mF_G_EmployeeTransfer.update({
+        where: { id },
+        data: {
+          status: 'active',
+          startDate: finalReleaseDate,
+          remarks: formattedRemarks,
+        },
+        include: {
+          corporateEmployee: true,
+          fromProject: true,
+          toProject: true,
+        },
+      });
+
+      // 3. Deactivate from old project site
+      if (fromProjectId) {
+        await tx.mF_P_Employee.updateMany({
+          where: { corporateEmployeeId, projectId: fromProjectId },
+          data: { status: 'inactive' },
+        });
+      }
+
+      // 4. Activate / Upsert into target site
+      await tx.mF_P_Employee.upsert({
+        where: {
+          projectId_corporateEmployeeId: {
+            projectId: toProjectId,
+            corporateEmployeeId,
+          },
+        },
+        update: {
+          callingName: corporateEmployee.fullName.split(' ')[0] || corporateEmployee.fullName,
+          status: 'active',
+          dailyRate: corporateEmployee.dailyRate ?? 1400.0,
+          tradeGroupId: corporateEmployee.tradeGroupId,
+          businessPartnerId: corporateEmployee.corporateBusinessPartnerId,
+          isOperator: corporateEmployee.isOperator,
+        },
+        create: {
+          projectId: toProjectId,
+          corporateEmployeeId,
+          callingName: corporateEmployee.fullName.split(' ')[0] || corporateEmployee.fullName,
+          status: 'active',
+          dailyRate: corporateEmployee.dailyRate ?? 1400.0,
+          tradeGroupId: corporateEmployee.tradeGroupId,
+          businessPartnerId: corporateEmployee.corporateBusinessPartnerId,
+          isOperator: corporateEmployee.isOperator,
+        },
+      });
+
+      // 5. Update corporate employee currentProjectId
+      await tx.mF_G_Employee.update({
+        where: { id: corporateEmployeeId },
+        data: {
+          currentProjectId: toProjectId,
+        },
+      });
+
+      return updatedTransfer;
+    });
+
+    // Dispatch Official Confirmation Email to both PMs
+    sendTransferApprovedEmail({
+      transferId: id,
+      employee: {
+        fullName: corporateEmployee.fullName,
+        employeeCode: corporateEmployee.employeeCode,
+        nicNo: corporateEmployee.nicNo,
+        tradeGroupName: corporateEmployee.tradeGroup?.name,
+      },
+      fromProject: {
+        projectCode: transfer.fromProject?.projectCode || 'Unknown',
+        projectName: transfer.fromProject?.projectName || 'Source Station',
+        email: transfer.fromProject?.email,
+        projectManager: transfer.fromProject?.projectManager,
+      },
+      toProject: {
+        projectCode: toProject.projectCode,
+        projectName: toProject.projectName,
+        email: toProject.email,
+        projectManager: toProject.projectManager,
+      },
+      requestedDate: transfer.startDate,
+      effectiveReleaseDate: finalReleaseDate,
+      releaseRemarks: releaseRemarks || null,
+    }).catch((e) => console.error('[EMAIL ERROR] Failed to send transfer approval email:', e));
+
+    res.json({
+      success: true,
+      message: 'Personnel transfer successfully authorized and mobilized.',
+      transfer: result,
+    });
+  } catch (error: any) {
+    console.error('Error approving transfer by token:', error);
+    res.status(500).json({ error: error.message || 'Failed to approve transfer.' });
+  }
+};
+
+// ── 3H. POST /api/corporate/transfers/reject-by-token (1-Click Mobile Decline)
+export const rejectTransferByToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, reason } = req.body || {};
+    if (!token) {
+      res.status(400).json({ error: 'Token is required.' });
+      return;
+    }
+
+    const payload = verifyTransferTokenPayload(token);
+    if (!payload || !payload.transferId) {
+      res.status(401).json({ error: 'Invalid or expired authorization token.' });
+      return;
+    }
+
+    const id = payload.transferId;
+    const transfer = await prisma.mF_G_EmployeeTransfer.findUnique({
+      where: { id },
+      include: {
+        corporateEmployee: { include: { tradeGroup: true } },
+        fromProject: true,
+        toProject: true,
+      },
+    });
+
+    if (!transfer) {
+      res.status(404).json({ error: 'Transfer request not found.' });
+      return;
+    }
+
+    const updated = await prisma.mF_G_EmployeeTransfer.update({
+      where: { id },
+      data: {
+        status: 'rejected',
+        remarks: reason ? `Rejected: ${reason}` : 'Transfer request declined by releasing project.',
+      },
+    });
+
+    if (transfer.fromProject && transfer.toProject) {
+      sendTransferRejectedEmail({
+        transferId: id,
+        employee: {
+          fullName: transfer.corporateEmployee.fullName,
+          employeeCode: transfer.corporateEmployee.employeeCode,
+          nicNo: transfer.corporateEmployee.nicNo,
+          tradeGroupName: transfer.corporateEmployee.tradeGroup?.name,
+        },
+        fromProject: {
+          projectCode: transfer.fromProject.projectCode,
+          projectName: transfer.fromProject.projectName,
+          email: transfer.fromProject.email,
+          projectManager: transfer.fromProject.projectManager,
+        },
+        toProject: {
+          projectCode: transfer.toProject.projectCode,
+          projectName: transfer.toProject.projectName,
+          email: transfer.toProject.email,
+          projectManager: transfer.toProject.projectManager,
+        },
+        requestedDate: transfer.startDate,
+        reason: reason || 'Declined by releasing project manager.',
+      }).catch((e) => console.error('[EMAIL ERROR] Failed to send rejection email:', e));
+    }
+
+    res.json({ success: true, message: 'Transfer request declined.', transfer: updated });
+  } catch (error: any) {
+    console.error('Error rejecting transfer by token:', error);
+    res.status(500).json({ error: error.message || 'Failed to decline transfer.' });
   }
 };
 
@@ -1704,18 +2162,24 @@ export const getCorporateTradeGroups = async (_req: Request, res: Response): Pro
 // ── 10. POST /api/corporate/trade-groups ──────────────────────────────────────
 export const createCorporateTradeGroup = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, name, standardDailyRate, standardOtRate } = req.body || {};
+    const { code, name, currency, standardDailyRate, standardOtRate } = req.body || {};
     if (!code || !name) {
       res.status(400).json({ error: 'code and name are required' });
       return;
     }
 
+    const cur = currency && typeof currency === 'string' ? currency.trim().toUpperCase() : 'LKR';
+
     const created = await prisma.mF_G_TradeGroup.create({
       data: {
         code: code.trim().toUpperCase(),
         name: name.trim(),
+        currency: cur,
         standardDailyRate: standardDailyRate !== undefined ? Number(standardDailyRate) : 1400.0,
-        standardOtRate: standardOtRate !== undefined ? Number(standardOtRate) : null,
+        standardOtRate:
+          standardOtRate !== undefined && standardOtRate !== '' && !isNaN(Number(standardOtRate))
+            ? Number(standardOtRate)
+            : Math.round(((Number(standardDailyRate) || 1400) / 8 * 1.5) * 100) / 100,
         status: 'active',
       },
     });
@@ -2504,16 +2968,7 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
 
       const epfNo = getFieldVal(item, ['epfNo', 'epf', 'epfNumber']) || null;
 
-      const rawProject = getFieldVal(item, [
-        'currentWorkingProject',
-        'currentProject',
-        'workingProject',
-        'projectCode',
-        'project',
-        'site',
-        'workingPlace',
-        'siteCode',
-      ]);
+      const rawProject = getFieldVal(item, PROJECT_FIELD_ALIASES);
       const resolvedProj = resolveProjectByCode(rawProject, allProjects);
 
       if (rawProject && !resolvedProj) {
@@ -2846,16 +3301,7 @@ export const bulkImportCorporateEquipment = async (req: Request, res: Response):
       }
 
       // Resolve project assignment (support single project e.g. 531/PRJ531, comma-separated, or ALL)
-      const rawProject = getFieldVal(item, [
-        'currentWorkingProject',
-        'currentProject',
-        'workingProject',
-        'projectCode',
-        'project',
-        'site',
-        'workingPlace',
-        'siteCode',
-      ]);
+      const rawProject = getFieldVal(item, PROJECT_FIELD_ALIASES);
 
       let targetProjects: typeof allProjects = [];
       if (rawProject) {
@@ -3094,16 +3540,7 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
       const existingOp = ops.find((o) => o.code.toLowerCase() === lowerCode);
 
       // Auto-assign to projects if currentWorkingProject / projectCode specified
-      const rawProject = getFieldVal(item, [
-        'currentWorkingProject',
-        'currentProject',
-        'workingProject',
-        'projectCode',
-        'project',
-        'site',
-        'workingPlace',
-        'siteCode',
-      ]);
+      const rawProject = getFieldVal(item, PROJECT_FIELD_ALIASES);
 
       let targetProjects: typeof allProjects = [];
       if (rawProject) {
@@ -3273,6 +3710,7 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
       rowNum: number;
       code: string;
       name: string;
+      currency: string;
       normalRate: number;
       otRate: number | null;
       existing?: (typeof existingTg)[0];
@@ -3289,11 +3727,16 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
 
       const code = getFieldVal(item, ['code', 'tradeGroup', 'tradeCode', 'tradeGroupId']).toUpperCase().trim();
       const name = getFieldVal(item, ['name', 'tradeName', 'tradeGroupName', 'title']);
+      const rawCurrency = getFieldVal(item, ['currency', 'cur', 'Currency', 'CURRENCY']);
+      const currency = rawCurrency ? rawCurrency.toUpperCase().trim() : 'LKR';
 
       const rawRate = getFieldVal(item, ['standardDailyRate', 'normalRate', 'dailyRate', 'rate', 'rateRs']);
       const rawOt = getFieldVal(item, ['standardOtRate', 'otRate', 'otRateRs']);
-      const normalRate = rawRate !== '' && !isNaN(Number(rawRate)) ? Number(rawRate) : 100.0;
-      const otRate = rawOt !== '' && !isNaN(Number(rawOt)) ? Number(rawOt) : null;
+      const normalRate = rawRate !== '' && !isNaN(Number(rawRate)) ? Number(rawRate) : 1400.0;
+      const otRate =
+        rawOt !== '' && !isNaN(Number(rawOt))
+          ? Number(rawOt)
+          : Math.round((normalRate / 8 * 1.5) * 100) / 100;
 
       if (!code || !name) {
         errors.push({
@@ -3324,6 +3767,7 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
         rowNum,
         code,
         name,
+        currency,
         normalRate,
         otRate,
         existing: existingMap.get(code),
@@ -3339,6 +3783,7 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
               where: { id: op.existing.id },
               data: {
                 name: op.name,
+                currency: op.currency || (op.existing as any).currency || 'LKR',
                 standardDailyRate: op.normalRate,
                 standardOtRate: op.otRate !== null ? op.otRate : op.existing.standardOtRate,
                 status: 'active',
@@ -3350,6 +3795,7 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
               data: {
                 code: op.code,
                 name: op.name,
+                currency: op.currency || 'LKR',
                 standardDailyRate: op.normalRate,
                 standardOtRate: op.otRate,
                 status: 'active',

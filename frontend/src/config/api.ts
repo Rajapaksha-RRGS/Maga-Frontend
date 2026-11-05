@@ -76,6 +76,7 @@ export function getTenantHeaders(customHeaders: HeadersInit = {}): Headers {
 
 /**
  * Enhanced fetch that automatically injects tenant header, auth token, and Content-Type.
+ * Also intercepts 401 Unauthorized responses to clear expired sessions and redirect to login.
  */
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const headers = getTenantHeaders(init?.headers);
@@ -85,10 +86,30 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
   } else if (init?.body && typeof init.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  return fetch(input, {
+
+  const response = await fetch(input, {
     ...init,
     headers,
   });
+
+  // If 401 Unauthorized on a protected endpoint, invalidate session and redirect to /login
+  if (response.status === 401) {
+    const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    if (!urlStr.includes('/auth/login')) {
+      console.warn('API returned 401 Unauthorized. Session expired.');
+      try {
+        localStorage.removeItem('les_auth_user');
+        localStorage.removeItem('token');
+      } catch {
+        // Ignore storage errors
+      }
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login?expired=1';
+      }
+    }
+  }
+
+  return response;
 }
 
 export interface ApiResponse<T = any> {

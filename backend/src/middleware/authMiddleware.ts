@@ -26,12 +26,6 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction): vo
       return next();
     }
 
-    const tenantHeader = (req.headers['x-tenant-id'] as string) || (req.headers['x-tenant'] as string);
-    if (tenantHeader === 'superadmin') {
-      req.user = { userId: 'superadmin', role: 'super_admin', tenantId: 'superadmin' };
-      return next();
-    }
-
     res.status(401).json({ error: 'Authentication required' });
   } catch (err) {
     res.status(401).json({ error: 'Invalid or expired token' });
@@ -53,12 +47,6 @@ export const requireAdmin = (req: Request, res: Response, next: NextFunction): v
       return next();
     }
 
-    const tenantHeader = (req.headers['x-tenant-id'] as string) || (req.headers['x-tenant'] as string);
-    if (tenantHeader === 'superadmin') {
-      req.user = { userId: 'superadmin', role: 'super_admin', tenantId: 'superadmin' };
-      return next();
-    }
-
     res.status(401).json({ error: 'Authentication required' });
   } catch (err) {
     res.status(401).json({ error: 'Invalid or expired token' });
@@ -77,12 +65,6 @@ export const requireSuperAdmin = (req: Request, res: Response, next: NextFunctio
         res.status(403).json({ error: 'Access denied: Super Admin privilege required' });
         return;
       }
-      return next();
-    }
-
-    const tenantHeader = (req.headers['x-tenant-id'] as string) || (req.headers['x-tenant'] as string);
-    if (tenantHeader === 'superadmin') {
-      req.user = { userId: 'superadmin', role: 'super_admin', tenantId: 'superadmin' };
       return next();
     }
 

@@ -5,29 +5,29 @@
  * Harmonized with the dashboard's light pastel aesthetic.
  * Strictly scoped to the current tenant/project's actual activity codes and logged time entries.
  *
- * Features:
- * - Period selection: Any Day, Any Month, Any Year with navigation buttons (< >)
- * - Horizontal Bar Chart view with internal vertical scrolling and fixed panel height
- * - Instant caching for fast date/month/year switching
- * - Dynamic KPI summary for Total Hours, OT Hours, and Workers
+ * Unified Single Container Filter:
+ * - [ Day ▾ ] [ Month ▾ ] [ Year ▾ ]
+ * - Specific Day selected -> Filters for that specific day
+ * - Day left as "Day" + Month & Year selected -> Filters for that entire month
+ * - Month left as "Month" + Year selected -> Filters for that entire year
+ * - One-click "Today" shortcut button
+ * - Horizontal Bar Chart view with internal vertical scrolling and fixed panel height (h-[480px])
+ * - Instant in-memory caching for snappy navigation
  */
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { 
-  ChevronLeft,
-  ChevronRight,
   Clock, 
   Zap, 
   Users, 
   Activity,
   ArrowUpRight,
   Plus,
-  Loader2
+  Loader2,
+  Calendar
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { BackendTimeEntry, ActivityCode } from '../../time-entries/services/timeEntryService';
 import * as timeEntrySvc from '../../time-entries/services/timeEntryService';
-
-export type ActivityTimePeriod = 'day' | 'month' | 'year';
 
 interface SupervisorStatus {
   id: string;
@@ -42,6 +42,34 @@ interface Props {
   supervisorStatuses?: SupervisorStatus[];
   todayEntries?: BackendTimeEntry[];
   activityCodes?: ActivityCode[];
+}
+
+const MONTHS = [
+  { value: '01', label: 'Jan' },
+  { value: '02', label: 'Feb' },
+  { value: '03', label: 'Mar' },
+  { value: '04', label: 'Apr' },
+  { value: '05', label: 'May' },
+  { value: '06', label: 'Jun' },
+  { value: '07', label: 'Jul' },
+  { value: '08', label: 'Aug' },
+  { value: '09', label: 'Sep' },
+  { value: '10', label: 'Oct' },
+  { value: '11', label: 'Nov' },
+  { value: '12', label: 'Dec' },
+];
+
+function getDaysInMonth(year: number, monthStr: string): number {
+  if (!monthStr) return 31;
+  const m = Number(monthStr);
+  return new Date(year, m, 0).getDate();
+}
+
+function formatHours(val: number): string {
+  if (val >= 1000) {
+    return val.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  }
+  return val.toFixed(1);
 }
 
 // ── Harmonious Soft Pastel Palettes for Construction Activities ──
@@ -96,123 +124,110 @@ const COLOR_PALETTES = [
   },
 ];
 
-function formatDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function formatMonth(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${yyyy}-${mm}`;
-}
-
-function formatDateDisplay(dateStr: string): string {
-  if (!dateStr) return '';
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dt = new Date(y, m - 1, d);
-  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-function formatMonthDisplay(monthStr: string): string {
-  if (!monthStr) return '';
-  const [y, m] = monthStr.split('-').map(Number);
-  const dt = new Date(y, m - 1, 1);
-  return dt.toLocaleString('en-US', { month: 'short', year: 'numeric' });
-}
-
-function stepDay(current: string, delta: number): string {
-  const [y, m, d] = current.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
-  date.setDate(date.getDate() + delta);
-  return formatDate(date);
-}
-
-function stepMonth(current: string, delta: number): string {
-  const [y, m] = current.split('-').map(Number);
-  const date = new Date(y, m - 1 + delta, 1);
-  return formatMonth(date);
-}
-
-function formatHours(val: number): string {
-  if (val >= 1000) {
-    return val.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  }
-  return val.toFixed(1);
-}
-
 export default function TodayActivityPanel({
   todayEntries = [],
   activityCodes = [],
 }: Props) {
-  const todayStr = useMemo(() => formatDate(new Date()), []);
-  const currentMonthStr = useMemo(() => formatMonth(new Date()), []);
-  const currentYear = useMemo(() => new Date().getFullYear(), []);
+  // Current calendar snapshot
+  const now = useMemo(() => new Date(), []);
+  const currentY = useMemo(() => now.getFullYear(), [now]);
+  const currentM = useMemo(() => String(now.getMonth() + 1).padStart(2, '0'), [now]);
+  const currentD = useMemo(() => String(now.getDate()).padStart(2, '0'), [now]);
+  const todayStr = useMemo(() => `${currentY}-${currentM}-${currentD}`, [currentY, currentM, currentD]);
 
-  // Filter States
-  const [period, setPeriod] = useState<ActivityTimePeriod>('day');
-  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
-  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  // Unified Filter States (defaults to Today)
+  const [selectedYear, setSelectedYear] = useState<number>(currentY);
+  const [selectedMonth, setSelectedMonth] = useState<string>(currentM);
+  const [selectedDay, setSelectedDay] = useState<string>(currentD);
 
-  // Data States
+  // Data & Loading States
   const [entries, setEntries] = useState<BackendTimeEntry[]>(todayEntries || []);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const cacheRef = useRef<Record<string, BackendTimeEntry[]>>({});
 
-  // Dynamic Year Options (past 4 years up to next year)
+  // Dynamic Year Options (Current year + 1 down to -4 years)
   const yearOptions = useMemo(() => {
-    const years: number[] = [];
-    for (let y = currentYear + 1; y >= currentYear - 4; y--) {
-      years.push(y);
+    const list: number[] = [];
+    for (let y = currentY + 1; y >= currentY - 4; y--) {
+      list.push(y);
     }
-    return years;
-  }, [currentYear]);
+    return list;
+  }, [currentY]);
 
-  // Compute Active Query Range & Display Label
-  const { startDate, endDate, displayLabel, isCurrentDay } = useMemo(() => {
-    if (period === 'day') {
-      const isToday = selectedDate === todayStr;
+  // Available days in selected month (1..28/29/30/31)
+  const daysInSelectedMonth = useMemo(() => {
+    const max = getDaysInMonth(selectedYear, selectedMonth);
+    const arr: string[] = [];
+    for (let i = 1; i <= max; i++) {
+      arr.push(String(i).padStart(2, '0'));
+    }
+    return arr;
+  }, [selectedYear, selectedMonth]);
+
+  // Clamp day if month change causes day to exceed max days
+  useEffect(() => {
+    if (selectedDay && selectedMonth) {
+      const max = getDaysInMonth(selectedYear, selectedMonth);
+      if (Number(selectedDay) > max) {
+        setSelectedDay(String(max).padStart(2, '0'));
+      }
+    }
+  }, [selectedYear, selectedMonth, selectedDay]);
+
+  // Compute Active Query Range & Display Labels
+  const { startDate, endDate, queryMode, displayLabel, badgeLabel, isToday } = useMemo(() => {
+    // 1. Year Mode: Month is not selected ("Month")
+    if (!selectedMonth) {
       return {
-        startDate: selectedDate,
-        endDate: selectedDate,
-        displayLabel: isToday ? 'Today' : formatDateDisplay(selectedDate),
-        isCurrentDay: isToday,
+        startDate: `${selectedYear}-01-01`,
+        endDate: `${selectedYear}-12-31`,
+        queryMode: 'year' as const,
+        displayLabel: `Year ${selectedYear}`,
+        badgeLabel: `● Year ${selectedYear} (Full Year)`,
+        isToday: false,
       };
     }
 
-    if (period === 'month') {
-      const [y, m] = selectedMonth.split('-').map(Number);
-      const lastDay = new Date(y, m, 0).getDate();
+    const monthObj = MONTHS.find((m) => m.value === selectedMonth);
+    const monthName = monthObj ? monthObj.label : selectedMonth;
+
+    // 2. Month Mode: Day is not selected ("Day"), but Month is selected
+    if (!selectedDay) {
+      const maxDays = getDaysInMonth(selectedYear, selectedMonth);
       return {
-        startDate: `${selectedMonth}-01`,
-        endDate: `${selectedMonth}-${String(lastDay).padStart(2, '0')}`,
-        displayLabel: formatMonthDisplay(selectedMonth),
-        isCurrentDay: false,
+        startDate: `${selectedYear}-${selectedMonth}-01`,
+        endDate: `${selectedYear}-${selectedMonth}-${String(maxDays).padStart(2, '0')}`,
+        queryMode: 'month' as const,
+        displayLabel: `${monthName} ${selectedYear}`,
+        badgeLabel: `● ${monthName} ${selectedYear} (Full Month)`,
+        isToday: false,
       };
     }
 
-    // period === 'year'
+    // 3. Day Mode: Specific Day, Month, and Year are all selected
+    const dateStr = `${selectedYear}-${selectedMonth}-${selectedDay}`;
+    const isMatchToday = dateStr === todayStr;
+
     return {
-      startDate: `${selectedYear}-01-01`,
-      endDate: `${selectedYear}-12-31`,
-      displayLabel: `Year ${selectedYear}`,
-      isCurrentDay: false,
+      startDate: dateStr,
+      endDate: dateStr,
+      queryMode: 'day' as const,
+      displayLabel: isMatchToday ? 'Today' : `${selectedDay} ${monthName} ${selectedYear}`,
+      badgeLabel: isMatchToday ? '● Live Today' : `● ${selectedDay} ${monthName} ${selectedYear}`,
+      isToday: isMatchToday,
     };
-  }, [period, selectedDate, selectedMonth, selectedYear, todayStr]);
+  }, [selectedYear, selectedMonth, selectedDay, todayStr]);
 
-  // Fetch Data on period / date / month / year changes
+  // Fetch entries when active query range changes
   useEffect(() => {
     // If Day mode viewing Today and we already have todayEntries from props
-    if (period === 'day' && selectedDate === todayStr && todayEntries && todayEntries.length > 0) {
+    if (queryMode === 'day' && isToday && todayEntries && todayEntries.length > 0) {
       setEntries(todayEntries);
       setIsLoading(false);
       return;
     }
 
-    const cacheKey = `${period}_${startDate}_${endDate}`;
+    const cacheKey = `${queryMode}_${startDate}_${endDate}`;
     if (cacheRef.current[cacheKey]) {
       setEntries(cacheRef.current[cacheKey]);
       setIsLoading(false);
@@ -222,7 +237,7 @@ export default function TodayActivityPanel({
     let isMounted = true;
     setIsLoading(true);
 
-    const fetchPromise = period === 'day'
+    const fetchPromise = queryMode === 'day'
       ? timeEntrySvc.getTimeEntries(undefined, startDate)
       : timeEntrySvc.getTimeEntries(undefined, undefined, startDate, endDate);
 
@@ -244,14 +259,14 @@ export default function TodayActivityPanel({
     return () => {
       isMounted = false;
     };
-  }, [period, startDate, endDate, selectedDate, todayStr, todayEntries]);
+  }, [queryMode, startDate, endDate, isToday, todayEntries]);
 
-  // Sync todayEntries when props update while viewing today
+  // Sync todayEntries when props update while on today
   useEffect(() => {
-    if (period === 'day' && selectedDate === todayStr && todayEntries && todayEntries.length > 0) {
+    if (queryMode === 'day' && isToday && todayEntries && todayEntries.length > 0) {
       setEntries(todayEntries);
     }
-  }, [todayEntries, period, selectedDate, todayStr]);
+  }, [todayEntries, queryMode, isToday]);
 
   // Map project activity codes for title/description lookup
   const activityCodeMap = useMemo(() => {
@@ -342,7 +357,7 @@ export default function TodayActivityPanel({
       };
     }
 
-    // If no live logged hours, show the project's configured activity codes with 0h
+    // If no live logged hours, show project's configured activity codes with 0h
     const projectCodesList = (activityCodes || []).slice(0, 8).map((ac, idx) => {
       const theme = COLOR_PALETTES[idx % COLOR_PALETTES.length];
       return {
@@ -377,142 +392,82 @@ export default function TodayActivityPanel({
               <Activity size={16} className="text-emerald-600" />
               Hours by Activity Code
             </h2>
-            
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              isLive
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80'
+                : 'bg-slate-100 text-slate-600 border border-slate-200/80'
+            }`}>
+              {isLive ? badgeLabel : `${displayLabel} (0h)`}
+            </span>
           </div>
-          
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Man-hours distribution across site construction tasks
+          </p>
         </div>
 
-        {/* Action Controls: Period Mode Selector & Specific Date/Month/Year Navigators */}
+        {/* ── Unified Single Container Filter: [ Day ▾ ] [ Month ▾ ] [ Year ▾ ] ── */}
         <div className="flex items-center gap-2 flex-wrap self-end sm:self-auto">
-          {/* Period Mode Switcher (Day / Month / Year) */}
-          <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200/80 text-[11px] font-semibold">
-            <button
-              type="button"
-              onClick={() => setPeriod('day')}
-              className={`px-2.5 py-1 rounded-lg transition-all ${
-                period === 'day'
-                  ? 'bg-white text-slate-800 shadow-2xs font-bold'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="Filter by specific day"
-            >
-              Day
-            </button>
-            <button
-              type="button"
-              onClick={() => setPeriod('month')}
-              className={`px-2.5 py-1 rounded-lg transition-all ${
-                period === 'month'
-                  ? 'bg-white text-slate-800 shadow-2xs font-bold'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="Filter by specific month"
-            >
-              Month
-            </button>
-            <button
-              type="button"
-              onClick={() => setPeriod('year')}
-              className={`px-2.5 py-1 rounded-lg transition-all ${
-                period === 'year'
-                  ? 'bg-white text-slate-800 shadow-2xs font-bold'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="Filter by specific year"
-            >
-              Year
-            </button>
-          </div>
-
-          {/* ── Specific Period Picker & Step Controls ──────────────────── */}
-          {period === 'day' && (
-            <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-xl px-1.5 py-0.5 shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setSelectedDate((d) => stepDay(d, -1))}
-                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
-                title="Previous day"
+          <div className="inline-flex items-center bg-slate-50 border border-slate-200/90 rounded-xl p-1 shadow-2xs divide-x divide-slate-200/80">
+            {/* Day Dropdown */}
+            <div className="relative px-1">
+              <select
+                value={selectedDay}
+                disabled={!selectedMonth}
+                onChange={(e) => setSelectedDay(e.target.value)}
+                className={`text-xs bg-transparent border-none focus:outline-none cursor-pointer py-1 pr-3 pl-1 transition-colors ${
+                  !selectedMonth
+                    ? 'text-slate-300 cursor-not-allowed font-medium'
+                    : selectedDay
+                    ? 'text-slate-800 font-bold'
+                    : 'text-slate-400 font-medium'
+                }`}
+                title={
+                  !selectedMonth
+                    ? 'Select a Month first to pick a Day'
+                    : 'Pick a Day, or select "Day" to view the full month'
+                }
               >
-                <ChevronLeft size={14} />
-              </button>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
-                className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:outline-none cursor-pointer px-1 py-0.5"
-              />
-              <button
-                type="button"
-                onClick={() => setSelectedDate((d) => stepDay(d, 1))}
-                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
-                title="Next day"
-              >
-                <ChevronRight size={14} />
-              </button>
-              {selectedDate !== todayStr && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedDate(todayStr)}
-                  className="text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60 px-1.5 py-0.5 rounded-md transition-colors ml-0.5"
-                  title="Jump to today"
-                >
-                  Today
-                </button>
-              )}
+                <option value="">Day</option>
+                {daysInSelectedMonth.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
 
-          {period === 'month' && (
-            <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-xl px-1.5 py-0.5 shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setSelectedMonth((m) => stepMonth(m, -1))}
-                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
-                title="Previous month"
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <input
-                type="month"
+            {/* Month Dropdown */}
+            <div className="relative px-1">
+              <select
                 value={selectedMonth}
-                onChange={(e) => e.target.value && setSelectedMonth(e.target.value)}
-                className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:outline-none cursor-pointer px-1 py-0.5"
-              />
-              <button
-                type="button"
-                onClick={() => setSelectedMonth((m) => stepMonth(m, 1))}
-                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
-                title="Next month"
+                onChange={(e) => {
+                  const newMonth = e.target.value;
+                  setSelectedMonth(newMonth);
+                  if (!newMonth) {
+                    setSelectedDay('');
+                  }
+                }}
+                className={`text-xs bg-transparent border-none focus:outline-none cursor-pointer py-1 pr-3 pl-1 transition-colors ${
+                  selectedMonth ? 'text-slate-800 font-bold' : 'text-slate-400 font-medium'
+                }`}
+                title='Pick a Month, or select "Month" to view the full year'
               >
-                <ChevronRight size={14} />
-              </button>
-              {selectedMonth !== currentMonthStr && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedMonth(currentMonthStr)}
-                  className="text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60 px-1.5 py-0.5 rounded-md transition-colors ml-0.5"
-                  title="Jump to current month"
-                >
-                  Current
-                </button>
-              )}
+                <option value="">Month</option>
+                {MONTHS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
 
-          {period === 'year' && (
-            <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-xl px-1.5 py-0.5 shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setSelectedYear((y) => y - 1)}
-                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
-                title="Previous year"
-              >
-                <ChevronLeft size={14} />
-              </button>
+            {/* Year Dropdown */}
+            <div className="relative px-1">
               <select
                 value={selectedYear}
                 onChange={(e) => setSelectedYear(Number(e.target.value))}
-                className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:outline-none cursor-pointer px-1 py-0.5"
+                className="text-xs font-bold text-slate-800 bg-transparent border-none focus:outline-none cursor-pointer py-1 pr-3 pl-1"
+                title="Select Year"
               >
                 {yearOptions.map((yr) => (
                   <option key={yr} value={yr}>
@@ -520,25 +475,24 @@ export default function TodayActivityPanel({
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                onClick={() => setSelectedYear((y) => y + 1)}
-                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
-                title="Next year"
-              >
-                <ChevronRight size={14} />
-              </button>
-              {selectedYear !== currentYear && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedYear(currentYear)}
-                  className="text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60 px-1.5 py-0.5 rounded-md transition-colors ml-0.5"
-                  title="Jump to current year"
-                >
-                  Current
-                </button>
-              )}
             </div>
+          </div>
+
+          {/* Quick "Today" Button if filter is not currently on Today */}
+          {(!isToday || !selectedDay || !selectedMonth || selectedYear !== currentY) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedYear(currentY);
+                setSelectedMonth(currentM);
+                setSelectedDay(currentD);
+              }}
+              className="text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 px-2 py-1.5 rounded-xl transition-all shadow-2xs flex items-center gap-1"
+              title="Reset to Today"
+            >
+              <Calendar size={12} className="text-emerald-600" />
+              
+            </button>
           )}
         </div>
       </div>
@@ -575,7 +529,7 @@ export default function TodayActivityPanel({
           </div>
           <div className="min-w-0">
             <span className="text-[10px] text-slate-400 block leading-tight font-medium">
-              {isCurrentDay ? 'Deployed' : 'Active'}
+              {isToday ? 'Deployed' : 'Active'}
             </span>
             <span className="font-bold text-slate-800 font-mono text-sm leading-tight truncate block">
               {totalWorkers} workers

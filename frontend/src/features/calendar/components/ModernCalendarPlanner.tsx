@@ -318,14 +318,11 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
         </div>
       </div>
 
-      {/* ════ RIGHT: Scrolls independently within viewport ═══════════════════ */}
-      <div
-        className="cal-right-col flex-1 flex flex-col gap-4 min-w-0 lg:h-full lg:overflow-y-auto"
-        style={{ scrollbarWidth: 'none' }}
-      >
+      {/* ════ RIGHT: Clean 2-card layout (Fixed Day Type + Isolated Events Scroll) ══ */}
+      <div className="flex-1 flex flex-col gap-4 min-w-0 lg:h-full lg:overflow-hidden">
 
-        {/* Labour Day Type Panel */}
-        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-6 sm:p-8">
+        {/* Labour Day Type Panel (Compact, fixed at top) */}
+        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4 sm:p-5 flex-shrink-0">
           <LabourDayTypePanel
             selectedDate={selectedDate}
             currentDayType={currentDayType}
@@ -334,8 +331,8 @@ export const ModernCalendarPlanner: React.FC<ModernCalendarPlannerProps> = ({
           />
         </div>
 
-        {/* Daily Events Section */}
-        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+        {/* Daily Events Section (Fills remaining height, internal scroll only) */}
+        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden flex-1 min-h-0">
           <DailyEventsSection
             selectedDate={selectedDate}
             events={events}

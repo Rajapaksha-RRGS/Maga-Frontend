@@ -1,12 +1,14 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { AlertCircle } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { AlertCircle, Clock } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import magaLogo from '../../../assets/maga-logo-47321F1221-seeklogo.com.png';
 
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isSessionExpired = searchParams.get('expired') === '1';
 
   const [tenant, setTenant] = useState('');
   const [username, setUsername] = useState('');
@@ -68,11 +70,19 @@ export default function LoginPage() {
           </div>
         </div>
 
+        {/* Session expired notice */}
+        {isSessionExpired && !error && (
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 mb-4">
+            <Clock size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-800">Your session has expired. Please sign in again.</p>
+          </div>
+        )}
+
         {/* Error banner */}
         {error && (
-          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 mb-4">
-            <AlertCircle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-amber-700">{error}</p>
+          <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2.5 mb-4">
+            <AlertCircle size={16} className="text-rose-500 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-rose-700">{error}</p>
           </div>
         )}
 

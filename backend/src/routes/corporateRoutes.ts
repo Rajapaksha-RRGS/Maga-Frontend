@@ -7,6 +7,9 @@ import {
   getPendingCorporateTransfers,
   approveCorporateTransfer,
   rejectCorporateTransfer,
+  verifyTransferApprovalToken,
+  approveTransferByToken,
+  rejectTransferByToken,
   getCorporateEmployees,
   createCorporateEmployee,
   updateCorporateEmployee,
@@ -65,6 +68,11 @@ router.post('/transfers/request', requestCorporateTransfer);
 router.get('/transfers/pending', getPendingCorporateTransfers);
 router.post('/transfers/:id/approve', approveCorporateTransfer);
 router.post('/transfers/:id/reject', rejectCorporateTransfer);
+
+// 1-Click Secure Mobile Handshake Authorization
+router.get('/transfers/verify-token', verifyTransferApprovalToken);
+router.post('/transfers/approve-by-token', approveTransferByToken);
+router.post('/transfers/reject-by-token', rejectTransferByToken);
 
 // Global Employees
 router.get('/employees/pending', getPendingCorporateEmployees);
