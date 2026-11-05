@@ -916,7 +916,7 @@ export default function EmployeeImportView({
             <div className="space-y-3">
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Required From Date (අවශ්‍ය දිනය):
+                  Required From Date:
                 </label>
                 <input
                   type="date"
@@ -928,7 +928,7 @@ export default function EmployeeImportView({
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Justification / Remarks (හේතුව):
+                  Justification / Remarks:
                 </label>
                 <input
                   type="text"

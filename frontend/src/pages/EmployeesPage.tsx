@@ -648,7 +648,7 @@ export default function EmployeesPage() {
               <div className="flex items-center justify-between">
                 <span className="text-amber-900 font-semibold flex items-center gap-1">
                   <Clock size={12} className="text-amber-600" />
-                  Requested Mobilization Date (ඉල්ලූ දිනය):
+                  Requested Mobilization Date:
                 </span>
                 <span className="font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
                   {releasingTransfer.startDate
@@ -671,7 +671,7 @@ export default function EmployeesPage() {
             <div className="space-y-3 pt-1">
               <div>
                 <label className="block text-xs font-semibold text-slate-800 mb-1">
-                  Actual Effective Release Date (ඔබට සැබවින්ම මුදාහළ හැකි දිනය) *
+                  Effective Release Date *
                 </label>
                 <div className="relative">
                   <input
@@ -682,13 +682,13 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  * If ongoing site casting or works delay release, adjust this date. The worker will be auto-transferred effective on this date.
+                  * If ongoing site casting or works delay release, adjust this date.
                 </p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-800 mb-1">
-                  Release / Handover Remarks (සටහන් / Gate Pass විස්තර):
+                  Release / Handover Remarks (Optional):
                 </label>
                 <input
                   type="text"

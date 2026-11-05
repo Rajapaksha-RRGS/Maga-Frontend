@@ -45,7 +45,10 @@ function getTransporter() {
   });
 }
 
-const appUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:5173';
+function getFrontendBaseUrl(): string {
+  const raw = process.env.FRONTEND_URL || process.env.APP_URL || 'https://maga-labor-enty.vercel.app';
+  return raw.trim().replace(/\/+$/, '');
+}
 
 /**
  * Dispatches an email or logs a rich formatted preview if SMTP is not configured.
@@ -208,7 +211,8 @@ export async function sendTransferRequestedEmail(data: TransferNotificationPaylo
   });
 
   const token = generateTransferApprovalToken(data.transferId);
-  const reviewPortalUrl = `${appUrl}/transfers/review?token=${token}`;
+  const baseUrl = getFrontendBaseUrl();
+  const reviewPortalUrl = `${baseUrl}/transfers/review?token=${token}`;
 
   const html = `
     <!DOCTYPE html>
