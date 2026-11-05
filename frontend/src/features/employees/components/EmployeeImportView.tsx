@@ -39,7 +39,6 @@ import type { CrossTenantStatus } from '../services/employeeService';
 interface EmployeeImportViewProps {
   onBack: () => void;
   existingCodes: Set<string>;
-  existingNics?: Set<string>;
   onImport: (items: CorporateEmployee[]) => Promise<void> | void;
   onTransfer: (item: CorporateEmployee, targetSiteName?: string, startDate?: string, remarks?: string) => Promise<void> | void;
 }
@@ -54,7 +53,6 @@ function getBPCode(item: CorporateEmployee): string {
 export default function EmployeeImportView({
   onBack,
   existingCodes,
-  existingNics,
   onImport,
   onTransfer,
 }: EmployeeImportViewProps) {
@@ -93,7 +91,7 @@ export default function EmployeeImportView({
   const [globalSearch, setGlobalSearch] = useState('');
   const [filterTrade, setFilterTrade] = useState('ALL');
   const [filterBP, setFilterBP] = useState('ALL');
-  const [filterStatus, setFilterStatus] = useState<'ALL' | 'AVAILABLE' | 'AT_OTHER_SITE'>('ALL');
+  const [filterStatus, setFilterStatus] = useState<'ALL' | 'AVAILABLE' | 'AT_OTHER_SITE' | 'IN_SITE'>('ALL');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -132,9 +130,8 @@ export default function EmployeeImportView({
 
   // Determine status for each employee
   const getItemStatus = (item: CorporateEmployee) => {
-    const code = (item.employeeCode || '').trim().toUpperCase();
-    const nic = (item.nicNo || '').trim().toUpperCase();
-    if ((code && existingCodes.has(code)) || (nic && existingNics?.has(nic))) {
+    const code = (item.employeeCode || '').toUpperCase();
+    if (code && existingCodes.has(code)) {
       return {
         type: 'IN_SITE' as const,
         label: 'in site',
@@ -143,14 +140,6 @@ export default function EmployeeImportView({
       };
     }
     const crossStatus = code ? crossTenantStatusMap[code] : undefined;
-    if (crossStatus && crossStatus.status === 'in_current_site') {
-      return {
-        type: 'IN_SITE' as const,
-        label: 'in site',
-        badgeClass: 'text-slate-500 bg-slate-100 border-slate-200',
-        siteName: '',
-      };
-    }
     if (crossStatus && crossStatus.status === 'in_other_site') {
       return {
         type: 'AT_OTHER_SITE' as const,
@@ -167,28 +156,13 @@ export default function EmployeeImportView({
     };
   };
 
-  // Mobilizable counts: Strictly excludes personnel already in this site
-  const mobilizableCount = useMemo(() => {
-    return catalog.filter((item) => getItemStatus(item).type !== 'IN_SITE').length;
-  }, [catalog, existingCodes, existingNics, crossTenantStatusMap]);
-
-  const mobilizableOperatorsCount = useMemo(() => {
-    return catalog.filter((item) => {
-      if (getItemStatus(item).type === 'IN_SITE') return false;
-      return item.isOperator || ['operator', 'driver'].some(t => (item.tradeGroup || '').toLowerCase().includes(t));
-    }).length;
-  }, [catalog, existingCodes, existingNics, crossTenantStatusMap]);
-
-  // Filtered and sorted catalog - Excludes personnel already active in this site
+  // Filtered and sorted catalog
   const filteredCatalog = useMemo(() => {
     return catalog.filter((item) => {
       const status = getItemStatus(item);
-
-      // Do NOT load / show personnel already in this site
-      if (status.type === 'IN_SITE') return false;
-
       if (filterStatus === 'AVAILABLE' && status.type !== 'AVAILABLE') return false;
       if (filterStatus === 'AT_OTHER_SITE' && status.type !== 'AT_OTHER_SITE') return false;
+      if (filterStatus === 'IN_SITE' && status.type !== 'IN_SITE') return false;
       if (filterTrade === 'OPERATORS_ALL') {
         const isOp = item.isOperator || ['operator', 'driver'].some(t => (item.tradeGroup || '').toLowerCase().includes(t));
         if (!isOp) return false;
@@ -218,7 +192,7 @@ export default function EmployeeImportView({
       else if (sortField === 'tradeGroup') comp = (a.tradeGroup || '').localeCompare(b.tradeGroup || '');
       return sortAsc ? comp : -comp;
     });
-  }, [catalog, existingCodes, existingNics, crossTenantStatusMap, globalSearch, filterStatus, filterTrade, filterBP, sortField, sortAsc]);
+  }, [catalog, existingCodes, crossTenantStatusMap, globalSearch, filterStatus, filterTrade, filterBP, sortField, sortAsc]);
 
   // Pagination
   const totalItems = filteredCatalog.length;
@@ -286,7 +260,6 @@ export default function EmployeeImportView({
     try {
       await onImport(selectedItems);
       setSelectedCodes(new Set());
-      await loadCatalog(true);
     } finally {
       setIsSubmitting(false);
     }
@@ -310,7 +283,6 @@ export default function EmployeeImportView({
       const next = new Set(selectedCodes);
       next.delete(item.employeeCode);
       setSelectedCodes(next);
-      await loadCatalog(true);
     } finally {
       setIsSubmitting(false);
     }
@@ -327,7 +299,6 @@ export default function EmployeeImportView({
         next.delete(transferTarget.item.employeeCode);
         return next;
       });
-      await loadCatalog(true);
       setTransferSuccessMessage(
         `Transfer request for ${transferTarget.item.callingName} (${transferTarget.item.employeeCode}) submitted successfully. Awaiting release approval from ${transferTarget.currentSiteName}.`
       );
@@ -424,7 +395,7 @@ export default function EmployeeImportView({
                 : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
             }`}
           >
-            <span>🚜 Operators ({mobilizableOperatorsCount})</span>
+            <span>🚜 Operators ({catalog.filter(c => c.isOperator || ['operator', 'driver'].some(t => (c.tradeGroup || '').toLowerCase().includes(t))).length})</span>
           </button>
 
           {/* Filters Pill & Popover */}
@@ -475,9 +446,10 @@ export default function EmployeeImportView({
                     }}
                     className="w-full text-xs rounded border border-slate-300 bg-white px-2 py-1 text-slate-700 outline-none focus:border-blue-500"
                   >
-                    <option value="ALL">All Available for Mobilization ({mobilizableCount})</option>
+                    <option value="ALL">All Statuses</option>
                     <option value="AVAILABLE">Available (Central Pool)</option>
                     <option value="AT_OTHER_SITE">At Another Site</option>
+                    <option value="IN_SITE">In Current Site</option>
                   </select>
                 </div>
 
@@ -548,7 +520,7 @@ export default function EmployeeImportView({
           <div className="flex items-center gap-1 px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-700 font-medium shadow-xs">
             <span>Showing</span>
             <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded text-[11px] font-normal tabular-nums border border-slate-200">
-              {filteredCatalog.length} of {mobilizableCount}
+              {filteredCatalog.length} of {catalog.length}
             </span>
           </div>
         </div>
@@ -836,11 +808,9 @@ export default function EmployeeImportView({
       {/* ── 4. Clean Light Footer Bar ─────────────────────────────────────────── */}
       <div className="bg-slate-50 border-t border-slate-300 px-3 py-2 flex flex-wrap items-center justify-between gap-2.5 text-xs text-slate-600">
         <div className="flex items-center gap-2">
-          <span>Corporate records: <strong className="text-slate-800 font-mono">{catalog.length}</strong></span>
+          <span>Total records: <strong className="text-slate-800 font-mono">{catalog.length}</strong></span>
           <span>•</span>
-          <span>Already In This Site: <strong className="text-slate-800 font-mono">{existingCodes.size} (Excluded)</strong></span>
-          <span>•</span>
-          <span>Available to Mobilize: <strong className="text-slate-800 font-mono">{mobilizableCount}</strong></span>
+          <span>In Site: <strong className="text-slate-800 font-mono">{existingCodes.size}</strong></span>
           <span>•</span>
           <span>Matching: <strong className="text-slate-800 font-mono">{totalItems}</strong></span>
         </div>
@@ -946,7 +916,7 @@ export default function EmployeeImportView({
             <div className="space-y-3">
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Required From Date:
+                  Required From Date (අවශ්‍ය දිනය):
                 </label>
                 <input
                   type="date"
@@ -958,7 +928,7 @@ export default function EmployeeImportView({
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Justification / Remarks:
+                  Justification / Remarks (හේතුව):
                 </label>
                 <input
                   type="text"

@@ -20,7 +20,7 @@ import EmptyState from '../components/EmptyState';
 import EmployeeImportView from '../features/employees/components/EmployeeImportView';
 import DirectSiteRegisterModal from '../features/employees/components/DirectSiteRegisterModal';
 import Breadcrumb from '../components/Breadcrumb';
-import { type CorporateEmployee, invalidateCorporateEmployeesCache } from '../features/master-import/services/corporateMasterService';
+import type { CorporateEmployee } from '../features/master-import/services/corporateMasterService';
 import type { Employee } from '../features/employees/services/employeeService';
 import * as employeeService from '../features/employees/services/employeeService';
 import type { BusinessPartner } from '../features/business-partners/services/businessPartnerService';
@@ -159,14 +159,6 @@ export default function EmployeesPage() {
     return new Set(employees.map((e) => (e.employeeCode || e.id).toUpperCase()));
   }, [employees]);
 
-  const existingNics = useMemo(() => {
-    return new Set(
-      employees
-        .map((e) => (e.nicNo || '').trim().toUpperCase())
-        .filter(Boolean)
-    );
-  }, [employees]);
-
   const handleBatchImport = async (items: CorporateEmployee[]) => {
     try {
       const payload = items.map((item) => {
@@ -198,7 +190,6 @@ export default function EmployeesPage() {
       });
 
       await batchEnrollEmployees(payload);
-      invalidateCorporateEmployeesCache();
       await fetchPartners();
     } catch (err: any) {
       console.error('Batch import failed:', err);
@@ -233,7 +224,6 @@ export default function EmployeesPage() {
     }
 
     // Refresh active employees in project view
-    invalidateCorporateEmployeesCache();
     await refresh();
     await fetchPendingTransfers();
   };
@@ -303,7 +293,6 @@ export default function EmployeesPage() {
           <EmployeeImportView
             onBack={() => setImportModalOpen(false)}
             existingCodes={existingCodes}
-            existingNics={existingNics}
             onImport={handleBatchImport}
             onTransfer={handleTransferEmployee}
           />
@@ -537,7 +526,7 @@ export default function EmployeesPage() {
               <SearchInput
                 value={search}
                 onChange={setSearch}
-                placeholder="Search by Trade Group, NIC, Code, Name, or BP Code (BP No.)…"
+                placeholder="Search by Trade Group, NIC, Code, or Name…"
               />
             </div>
             <EmployeeFilters
@@ -659,7 +648,7 @@ export default function EmployeesPage() {
               <div className="flex items-center justify-between">
                 <span className="text-amber-900 font-semibold flex items-center gap-1">
                   <Clock size={12} className="text-amber-600" />
-                  Requested Mobilization Date:
+                  Requested Mobilization Date (ඉල්ලූ දිනය):
                 </span>
                 <span className="font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
                   {releasingTransfer.startDate
@@ -682,7 +671,7 @@ export default function EmployeesPage() {
             <div className="space-y-3 pt-1">
               <div>
                 <label className="block text-xs font-semibold text-slate-800 mb-1">
-                  Effective Release Date *
+                  Actual Effective Release Date (ඔබට සැබවින්ම මුදාහළ හැකි දිනය) *
                 </label>
                 <div className="relative">
                   <input
@@ -693,13 +682,13 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  * If ongoing site casting or works delay release, adjust this date.
+                  * If ongoing site casting or works delay release, adjust this date. The worker will be auto-transferred effective on this date.
                 </p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-800 mb-1">
-                  Release / Handover Remarks (Optional):
+                  Release / Handover Remarks (සටහන් / Gate Pass විස්තර):
                 </label>
                 <input
                   type="text"
