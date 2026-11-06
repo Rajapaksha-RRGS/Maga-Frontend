@@ -1570,6 +1570,10 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         0
       );
 
+      const laborAssignedCount = Math.max(
+        sheet.assignments.filter((a) => a.employee && !operatorEmpIds.has(a.employee.id)).length,
+        workerDetails.length
+      );
       const laborWorkedCount = workerDetails.filter((w) => w.inTime || w.hours > 0).length;
       const operatorsWorkedCount = operatorDetails.filter((o) => o.inTime || o.hours > 0).length;
       const equipmentRunningCount = equipmentDetails.filter((e) => e.netHours > 0 || e.loggedQuantity > 0).length;
@@ -1581,12 +1585,12 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         status: sheet.status,
         submittedAt: sheet.submittedAt,
         approvedAt: sheet.approvedAt,
-        assignedCount: sheet.assignments.length,
+        assignedCount: laborAssignedCount,
         workedCount: laborWorkedCount,
         totalHours: laborHours,
         totalOvertime: laborOvertime,
         counts: {
-          laborAssigned: sheet.assignments.length,
+          laborAssigned: laborAssignedCount,
           laborWorked: laborWorkedCount,
           operatorsAssigned: operatorDetails.length,
           operatorsWorked: operatorsWorkedCount,
@@ -1643,9 +1647,9 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         submittedCount: submitted.length,
         notSubmittedCount: notSubmitted.length,
         approvedCount: approved.length,
-        totalWorkers: dailySheets.reduce((sum, s) => sum + s.assignments.length, 0),
+        totalWorkers: allGroups.reduce((sum, g) => sum + (g.counts?.laborAssigned || 0) + (g.counts?.operatorsAssigned || 0), 0),
         labor: {
-          totalAssigned: dailySheets.reduce((sum, s) => sum + s.assignments.length, 0),
+          totalAssigned: allGroups.reduce((sum, g) => sum + (g.counts?.laborAssigned || 0), 0),
           attendedCount: allGroups.reduce((sum, g) => sum + (g.counts?.laborWorked || 0), 0),
           totalNormalHours: allGroups.reduce((sum, g) => sum + (g.totals?.laborHours || 0), 0),
           totalOtHours: allGroups.reduce((sum, g) => sum + (g.totals?.laborOvertime || 0), 0),
@@ -1653,7 +1657,12 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         operators: {
           totalAssigned: allGroups.reduce((sum, g) => sum + (g.counts?.operatorsAssigned || 0), 0),
           deployedCount: allGroups.reduce((sum, g) => sum + (g.counts?.operatorsWorked || 0), 0),
-          mappedCount: allGroups.reduce((sum, g) => sum + (g.counts?.operatorsWorked || 0), 0),
+          mappedCount: allGroups.reduce(
+            (sum, g) =>
+              sum +
+              (g.operators || []).filter((o: any) => o.assignedEquipmentId || (o.assignedEquipmentDisplay && o.assignedEquipmentDisplay !== '—')).length,
+            0
+          ),
         },
         equipment: {
           totalAssigned: allGroups.reduce((sum, g) => sum + (g.counts?.equipmentAssigned || 0), 0),

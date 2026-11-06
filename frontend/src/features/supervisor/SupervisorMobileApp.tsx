@@ -16,6 +16,10 @@ import { SupervisorSubHeader } from './components/SupervisorSubHeader';
 import { SupervisorBottomNav, type SupervisorTabKey } from './components/SupervisorBottomNav';
 import { SupervisorNotificationModal } from './components/SupervisorNotificationModal';
 import { fetchSupervisorReminders, type CalendarEvent } from '../calendar/services/calendarEventService';
+import { 
+  initializeNotifications, 
+  notifyNewAdminEvents 
+} from '../../services/localNotificationService';
 
 // 5 Dedicated Tab Views
 import { SupervisorDashboardView } from './views/SupervisorDashboardView';
@@ -114,6 +118,9 @@ export default function SupervisorMobileApp() {
       setEquipment(freshEquipment);
       setReminders(freshReminders);
       setPendingSyncCount(0);
+      notifyNewAdminEvents(freshReminders, () => {
+        setNotificationsModalOpen(true);
+      });
     }).catch((err) => {
       if (!isCancelled) {
         console.warn('Error loading shift data from backend:', err);
@@ -124,6 +131,27 @@ export default function SupervisorMobileApp() {
       isCancelled = true;
     };
   }, [selectedDate, user?.id]);
+
+  // Initialize native notifications channel & background poll for incoming admin events every 30 seconds
+  useEffect(() => {
+    if (!user?.id) return;
+
+    initializeNotifications();
+
+    const intervalId = setInterval(async () => {
+      try {
+        const latest = await fetchSupervisorReminders(user.id, selectedDate);
+        setReminders(latest);
+        notifyNewAdminEvents(latest, () => {
+          setNotificationsModalOpen(true);
+        });
+      } catch (err) {
+        // silent polling catch
+      }
+    }, 30000);
+
+    return () => clearInterval(intervalId);
+  }, [user?.id, selectedDate]);
 
   const handleMarkReminderAsRead = (id: string) => {
     setReadReminderIds((prev) => {

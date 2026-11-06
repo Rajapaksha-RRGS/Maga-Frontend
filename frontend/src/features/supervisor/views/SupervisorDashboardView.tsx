@@ -6,8 +6,7 @@ import {
   CheckCircle2, 
   RotateCw, 
   ChevronRight, 
-  FileEdit,
-  Bell
+  FileEdit
 } from 'lucide-react';
 import type { 
   LaborerEntry, 
@@ -40,8 +39,8 @@ export function SupervisorDashboardView({
   equipment,
   pendingSyncCount,
   isDayLocked,
-  reminders = [],
-  onOpenNotifications,
+  reminders: _reminders = [],
+  onOpenNotifications: _onOpenNotifications,
   onNavigateTab,
   onQuickSync,
 }: SupervisorDashboardViewProps) {
@@ -113,45 +112,6 @@ export function SupervisorDashboardView({
             </p>
           </div>
         </div>
-      )}
-
-      {/* ── Admin Reminders / Tasks Notification Banner ─────────────────────── */}
-      {reminders && reminders.length > 0 && (
-        <button
-          type="button"
-          onClick={onOpenNotifications}
-          className="w-full text-left bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 dark:from-blue-950/40 dark:via-indigo-950/30 dark:to-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-2xs hover:shadow-xs transition-all active:scale-[0.99] cursor-pointer"
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center flex-shrink-0 shadow-2xs">
-              <Bell size={16} />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                  {reminders.length} Site {reminders.length === 1 ? 'Task / Reminder' : 'Tasks / Reminders'}
-                </span>
-                {reminders.some((r) => r.priority === 'urgent') && (
-                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-500 text-white shadow-2xs">
-                    🔥 Urgent
-                  </span>
-                )}
-                {reminders.some((r) => r.priority === 'important') && (
-                  <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-amber-500 text-white shadow-2xs">
-                    ⚡ Important
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400 truncate mt-0.5">
-                {reminders[0].title}
-                {reminders[0].time ? ` (${reminders[0].time})` : ''}
-              </p>
-            </div>
-          </div>
-          <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-0.5 flex-shrink-0">
-            View <ChevronRight size={14} />
-          </span>
-        </button>
       )}
 
       {/* ── Hero Welcome Card ─────────────────────────────────────────────────── */}
