@@ -136,6 +136,7 @@ export default function ActivityCodesPage() {
             data={filtered}
             onRowClick={openEdit}
             onDerive={(parent) => setDeriveParent(parent)}
+            search={search}
           />
           <ActivityCodeCardList
             data={filtered}

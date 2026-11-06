@@ -2467,7 +2467,7 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
       include: { dailyLog: true },
     });
     for (const asgn of staleAssignments) {
-      if (!asgn.dailyLog || asgn.dailyLog.status === 'draft') {
+      if (!asgn.dailyLog || asgn.dailyLog.status === 'draft' || asgn.dailyLog.status === 'pending') {
         if (asgn.dailyLog) {
           await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({ where: { dailyLogId: asgn.dailyLog.id } });
           await prisma.mF_OP_EquipmentDailyLog.delete({ where: { id: asgn.dailyLog.id } });

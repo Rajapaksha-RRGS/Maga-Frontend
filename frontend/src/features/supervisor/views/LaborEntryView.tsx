@@ -813,6 +813,8 @@ export function LaborEntryView({
     }
   };
 
+  void [inMarkedCount, outMarkedCount, handleApplyBatchIn, handleBatchClearActivities, handleApplyBatchOut, handleBatchResetToDraft, handleBatchRemoveLaborers];
+
   const isAllFilteredSelected = 
     filteredLaborers.length > 0 && 
     filteredLaborers.every((l) => selectedWorkerIds.includes(l.id));
@@ -1180,7 +1182,7 @@ export function LaborEntryView({
                   type="time"
                   value={batchInTime}
                   onChange={(e) => setBatchInTime(e.target.value)}
-                  className="text-xs font-bold text-emerald-950 dark:text-emerald-100 bg-transparent focus:outline-none"
+                  className="text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
                 />
               </div>
 
@@ -1192,7 +1194,7 @@ export function LaborEntryView({
                   type="time"
                   value={batchOutTime}
                   onChange={(e) => handleBatchOutTimeChange(e.target.value)}
-                  className="text-xs font-bold text-blue-950 dark:text-blue-100 bg-transparent focus:outline-none"
+                  className="text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
                 />
               </div>
             </div>
@@ -1352,10 +1354,20 @@ export function LaborEntryView({
           <div className="py-12 px-4 text-center bg-white dark:bg-slate-800 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700">
             <Users className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
             <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-              No laborers found
+              {laborers.length === 0
+                ? isPoolMode
+                  ? 'No laborers added yet'
+                  : 'No laborers assigned'
+                : 'No laborers found'}
             </p>
-            <p className="text-xs text-slate-400 mt-1">
-              {effectiveSearch ? 'Try a different search query or trade filter.' : 'Tap + Quick Assign to add standby workers.'}
+            <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+              {effectiveSearch
+                ? 'Try a different search query or trade filter.'
+                : laborers.length === 0
+                ? isPoolMode
+                  ? 'Tap + Add from Pool to add standby workers from the site pool.'
+                  : 'No laborers have been assigned to you for today. Please contact your site administrator or project manager to assign labor.'
+                : 'No laborers matching the selected filter or search.'}
             </p>
           </div>
         ) : (
@@ -1519,7 +1531,7 @@ export function LaborEntryView({
                           className={[
                             'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
                             worker.inTime
-                              ? 'text-emerald-800 dark:text-emerald-200 font-mono'
+                              ? 'text-slate-800 dark:text-slate-100 font-mono'
                               : 'text-slate-400 dark:text-slate-500'
                           ].join(' ')}
                           title={worker.inTime ? 'In-Time (click to edit)' : 'Click to choose In-Time'}
@@ -1549,7 +1561,7 @@ export function LaborEntryView({
                           className={[
                             'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
                             worker.outTime
-                              ? 'text-blue-800 dark:text-blue-200 font-mono'
+                              ? 'text-slate-800 dark:text-slate-100 font-mono'
                               : 'text-slate-400 dark:text-slate-500'
                           ].join(' ')}
                           title={worker.outTime ? 'Out-Time (click to edit)' : 'Click to choose Out-Time'}
@@ -1572,7 +1584,7 @@ export function LaborEntryView({
                       {worker.inTime && worker.outTime && (
                         <span className="text-[11px] font-bold font-mono px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shadow-2xs" title={`Computed shift: ${worker.shiftHours}h (OT: ${worker.otHours}h)`}>
                           {formatHhmm(worker.shiftHours)}h
-                          {worker.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">+${worker.otHours}h</span>}
+                          {worker.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">:{worker.otHours}h OT</span>}
                         </span>
                       )}
 
@@ -1669,54 +1681,6 @@ export function LaborEntryView({
                 {/* ── Accordion Expanded Content: Individual Worker Fine-Tuning ── */}
                 {isExpanded && (
                   <div className="px-3.5 pb-4 pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3 bg-slate-50/50 dark:bg-slate-900/40">
-                    {/* Worker Identity Details */}
-                    {/* <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                      <div>
-                        <span className="text-[10px] uppercase font-bold text-blue-700 dark:text-blue-400 block tracking-wider">
-                          Full Name
-                        </span>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                          {worker.callingName}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-[10px] uppercase font-bold text-blue-700 dark:text-blue-400 block tracking-wider">
-                          NIC · Trade
-                        </span>
-                        <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
-                          {worker.nic} · {worker.tradeGroup}
-                        </span>
-                      </div>
-                    </div> */}
-
-                    {/* Individual In / Out Time Pickers */}
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
-                          In Time
-                        </label>
-                        <input
-                          type="time"
-                          disabled={isDayLocked}
-                          value={worker.inTime}
-                          onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
-                          Out Time
-                        </label>
-                        <input
-                          type="time"
-                          disabled={isDayLocked}
-                          value={worker.outTime}
-                          onChange={(e) => handleIndividualTimeChange(worker.id, worker.inTime, e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
-                        />
-                      </div>
-                    </div>
-
                     {/* Master Activity Splits Section for single worker */}
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
@@ -1809,10 +1773,10 @@ export function LaborEntryView({
                               <div className="p-2.5 rounded-xl bg-amber-50/90 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/80 flex items-center justify-between text-xs">
                                 <div className="flex items-center gap-1.5 text-amber-900 dark:text-amber-200 font-bold">
                                   <PauseCircle size={14} className="text-amber-600 shrink-0" />
-                                  <span>Remaining Shift Idle (ZIDLE): <strong className="font-mono text-sm">{formatHhmm(idleHhmm)}h</strong></span>
+                                  <span> Idle (ZIDLE): <strong className="font-mono text-sm">{formatHhmm(idleHhmm)}h</strong></span>
                                 </div>
                                 <span className="text-[10px] text-amber-800/80 dark:text-amber-400 font-medium">
-                                  Auto-decreases as tasks are added
+                                  Auto-decreases
                                 </span>
                               </div>
                             )}
@@ -1979,14 +1943,16 @@ export function LaborEntryView({
         </div>
       )}
       {/* ── Site Labor Pool Modal ── */}
-      <SiteLaborPoolModal
-        isOpen={isLaborPoolModalOpen}
-        onClose={() => setIsLaborPoolModalOpen(false)}
-        selectedDate={selectedDate || ''}
-        currentLaborers={laborers}
-        onAddLaborers={handleAddLaborersFromPool}
-        projectId={projectId}
-      />
+      {isPoolMode && (
+        <SiteLaborPoolModal
+          isOpen={isLaborPoolModalOpen}
+          onClose={() => setIsLaborPoolModalOpen(false)}
+          selectedDate={selectedDate || ''}
+          currentLaborers={laborers}
+          onAddLaborers={handleAddLaborersFromPool}
+          projectId={projectId}
+        />
+      )}
     </div>
   );
 }

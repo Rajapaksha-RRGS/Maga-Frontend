@@ -13,21 +13,34 @@ import {
   Pencil,
   Trash2,
   Layers,
-  Ruler,
   AlertCircle,
   X,
   UploadCloud,
+  Split,
+  Tag,
+  CornerDownRight,
+  Filter,
 } from 'lucide-react';
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
 
+export const ACTIVITY_REGEX = /^(\d{2}-\d{2}-\d{2}-\d{2})(?:[-/.]([A-Za-z0-9_-]+)|([A-Za-z0-9]+))?$/i;
+
+export function getActivityClassification(code: string) {
+  const clean = (code || '').trim().toUpperCase();
+  const match = clean.match(ACTIVITY_REGEX);
+  if (!match) return 'STANDALONE_SPECIAL' as const;
+  if (!match[2] && !match[3]) return 'STANDARD_MASTER' as const;
+  return 'DERIVED_CHILD' as const;
+}
+
 const ACT_SAMPLE_HEADERS = ['code', 'description', 'unit', 'currentWorkingProject'];
 const ACT_SAMPLE_DATA: Record<string, string>[] = [
-  { code: '01-10-10-00', description: 'Excavation & Earthwork', unit: 'm3', currentWorkingProject: 'PRJ531' },
-  { code: '01-20-10-00', description: 'Concrete Work - Substructure', unit: 'm3', currentWorkingProject: 'ALL' },
-  { code: '02-10-10-00', description: 'Formwork - Superstructure', unit: 'm2', currentWorkingProject: '' },
-  { code: '02-20-10-00', description: 'Rebar & Steel Reinforcement', unit: 'Kg', currentWorkingProject: '' },
-  { code: '00-00-10-00', description: 'General Site Overheads', unit: 'hrs', currentWorkingProject: '' },
+  { code: '01-10-10-00', description: 'Excavation & Earthwork (Master BOQ)', unit: 'm3', currentWorkingProject: 'PRJ531' },
+  { code: '01-10-10-00/01', description: 'Bulk Excavation Sector A (Derived Sub-Activity)', unit: 'm3', currentWorkingProject: 'PRJ531' },
+  { code: '00-00-11-11-M', description: 'Direct Labour Masonry Works (Derived Sub-Activity)', unit: 'hrs', currentWorkingProject: 'PRJ531' },
+  { code: 'ZOTHE', description: 'Site Other Overheads (Standalone Special)', unit: 'hrs', currentWorkingProject: 'ALL' },
+  { code: 'ZIDLE', description: 'Waiting / Idle Time (Standalone Special)', unit: 'hrs', currentWorkingProject: 'ALL' },
 ];
 const ACT_REQUIRED_FIELDS = ['code', 'description'];
 
@@ -46,6 +59,7 @@ export default function SAActivityCodesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [unitFilter, setUnitFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'master' | 'derived' | 'standalone'>('all');
   const [error, setError] = useState<string | null>(null);
 
   // Modal State
@@ -91,15 +105,32 @@ export default function SAActivityCodesPage() {
         unitFilter === 'all' ||
         (ac.unit ? ac.unit.toLowerCase() === unitFilter.toLowerCase() : unitFilter === 'none');
 
-      return matchSearch && matchUnit;
-    });
-  }, [activityCodes, search, unitFilter]);
+      const classification = getActivityClassification(ac.code);
+      const matchType =
+        typeFilter === 'all' ||
+        (typeFilter === 'master' && classification === 'STANDARD_MASTER') ||
+        (typeFilter === 'derived' && classification === 'DERIVED_CHILD') ||
+        (typeFilter === 'standalone' && classification === 'STANDALONE_SPECIAL');
 
-  // Aggregate stats (Simple & relevant, NO Project Adoption Status)
+      return matchSearch && matchUnit && matchType;
+    });
+  }, [activityCodes, search, unitFilter, typeFilter]);
+
+  // Aggregate stats
   const totalCount = activityCodes.length;
-  const uniqueUnitsCount = new Set(
-    activityCodes.map((ac) => ac.unit).filter(Boolean),
-  ).size;
+  const masterCount = useMemo(
+    () => activityCodes.filter((ac) => getActivityClassification(ac.code) === 'STANDARD_MASTER').length,
+    [activityCodes]
+  );
+  const derivedCount = useMemo(
+    () => activityCodes.filter((ac) => getActivityClassification(ac.code) === 'DERIVED_CHILD').length,
+    [activityCodes]
+  );
+  const standaloneCount = useMemo(
+    () => activityCodes.filter((ac) => getActivityClassification(ac.code) === 'STANDALONE_SPECIAL').length,
+    [activityCodes]
+  );
+
 
   const openAddModal = () => {
     setEditingCode(null);
@@ -227,8 +258,8 @@ export default function SAActivityCodesPage() {
         </div>
       )}
 
-      {/* ── KPI Summary Cards (No Project Adoption Status) ────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      {/* ── KPI Summary Cards ────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white rounded-xl border border-violet-100 p-3.5 shadow-xs flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-violet-50 text-[#1A0A2E] flex items-center justify-center shrink-0">
             <Layers size={18} />
@@ -237,33 +268,45 @@ export default function SAActivityCodesPage() {
             <div className="text-xl font-bold text-slate-800 tabular-nums">
               {isLoading ? '—' : totalCount}
             </div>
-            <div className="text-[11px] font-medium text-slate-400">Total Activity Codes</div>
+            <div className="text-[11px] font-medium text-slate-400">Total Activities</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-indigo-100 p-3.5 shadow-xs flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0">
+            <Layers size={18} />
+          </div>
+          <div>
+            <div className="text-xl font-bold text-indigo-900 tabular-nums">
+              {isLoading ? '—' : masterCount}
+            </div>
+            <div className="text-[11px] font-medium text-slate-400">Master BOQ (00-00-00-00)</div>
           </div>
         </div>
 
         <div className="bg-white rounded-xl border border-blue-100 p-3.5 shadow-xs flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-            <Ruler size={18} />
+            <Split size={18} />
           </div>
           <div>
             <div className="text-xl font-bold text-blue-700 tabular-nums">
-              {isLoading ? '—' : uniqueUnitsCount}
+              {isLoading ? '—' : derivedCount}
             </div>
-            <div className="text-[11px] font-medium text-slate-400">Units of Measure</div>
+            <div className="text-[11px] font-medium text-slate-400">Derived Sub-Activities</div>
           </div>
         </div>
 
-        {/* <div className="bg-white rounded-xl border border-emerald-100 p-3.5 shadow-xs flex items-center gap-3 col-span-2 md:col-span-1">
-          <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-            <FileSpreadsheet size={18} />
+        <div className="bg-white rounded-xl border border-amber-100 p-3.5 shadow-xs flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
+            <Tag size={18} />
           </div>
           <div>
-            <div className="text-xl font-bold text-emerald-700 tabular-nums">
-              Standard
+            <div className="text-xl font-bold text-amber-800 tabular-nums">
+              {isLoading ? '—' : standaloneCount}
             </div>
-            <div className="text-[11px] font-medium text-slate-400">IFS/CIDA Certified</div>
+            <div className="text-[11px] font-medium text-slate-400">Standalone (ZOTHE / ZIDEL)</div>
           </div>
-        </div> */}
+        </div>
       </div>
 
       {/* ── Search & Filter Controls ──────────────────────────────────── */}
@@ -282,7 +325,22 @@ export default function SAActivityCodesPage() {
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Classification Type Filter */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+            <Filter size={14} className="text-slate-400" />
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as any)}
+              className="text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+            >
+              <option value="all" className="bg-white text-slate-900">All Activity Types</option>
+              <option value="master" className="bg-white text-slate-900">Master BOQ (00-00-00-00)</option>
+              <option value="derived" className="bg-white text-slate-900">Derived Sub-Activities</option>
+              <option value="standalone" className="bg-white text-slate-900">Standalone Special (ZOTHE, ZIDLE)</option>
+            </select>
+          </div>
+
           {/* Unit Filter */}
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <ListFilter size={14} className="text-slate-400" />
@@ -313,6 +371,9 @@ export default function SAActivityCodesPage() {
                   Activity Code
                 </th>
                 <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">
+                  Level / Type
+                </th>
+                <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">
                   Task / Work Package Description
                 </th>
                 <th className="px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide">
@@ -331,6 +392,9 @@ export default function SAActivityCodesPage() {
                       <div className="h-4 bg-violet-50 rounded w-24" />
                     </td>
                     <td className="px-4 py-3">
+                      <div className="h-4 bg-violet-50 rounded w-20" />
+                    </td>
+                    <td className="px-4 py-3">
                       <div className="h-4 bg-violet-50 rounded w-56" />
                     </td>
                     <td className="px-4 py-3">
@@ -343,7 +407,7 @@ export default function SAActivityCodesPage() {
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-12 text-center text-slate-400">
+                  <td colSpan={5} className="px-4 py-12 text-center text-slate-400">
                     <Layers size={32} className="mx-auto text-slate-300 mb-2" />
                     <p className="font-medium text-slate-600">No Activity Codes Found</p>
                     <p className="text-[11px] text-slate-400 mt-0.5">
@@ -354,54 +418,95 @@ export default function SAActivityCodesPage() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((ac) => (
-                  <tr key={ac.id} className="hover:bg-violet-50/30 transition-colors">
-                    {/* Activity Code */}
-                    <td className="px-4 py-3 font-mono font-bold text-violet-700">
-                      <span className="bg-violet-50 border border-violet-200 px-2 py-0.5 rounded">
-                        {ac.code}
-                      </span>
-                    </td>
+                filtered.map((ac) => {
+                  const classification = getActivityClassification(ac.code);
+                  return (
+                    <tr key={ac.id} className="hover:bg-violet-50/30 transition-colors">
+                      {/* Activity Code */}
+                      <td className="px-4 py-3 font-mono font-bold text-violet-700">
+                        {classification === 'DERIVED_CHILD' ? (
+                          <div className="flex items-center gap-1.5 pl-3">
+                            <CornerDownRight size={13} className="text-blue-500 shrink-0" />
+                            <span className="bg-blue-50/80 border border-blue-200 text-blue-900 px-2 py-0.5 rounded">
+                              {ac.code}
+                            </span>
+                          </div>
+                        ) : classification === 'STANDALONE_SPECIAL' ? (
+                          <span className="bg-amber-50 border border-amber-200 text-amber-900 px-2 py-0.5 rounded">
+                            {ac.code}
+                          </span>
+                        ) : (
+                          <span className="bg-violet-50 border border-violet-200 px-2 py-0.5 rounded">
+                            {ac.code}
+                          </span>
+                        )}
+                      </td>
 
-                    {/* Description */}
-                    <td className="px-4 py-3">
-                      <div className="font-semibold text-slate-800">{ac.description}</div>
-                    </td>
+                      {/* Level / Type */}
+                      <td className="px-4 py-3">
+                        {classification === 'DERIVED_CHILD' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                            <Split size={10} />
+                            <span>Derived Sub</span>
+                          </span>
+                        ) : classification === 'STANDALONE_SPECIAL' ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full"
+                            title="Standalone Special/Overhead code (Non-divisible)"
+                          >
+                            <Tag size={10} />
+                            <span>Standalone</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                            <Layers size={10} />
+                            <span>Master BOQ</span>
+                          </span>
+                        )}
+                      </td>
 
-                    {/* Unit */}
-                    <td className="px-4 py-3">
-                      {ac.unit ? (
-                        <span className="inline-flex items-center font-mono text-[11px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded">
-                          {ac.unit}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 italic text-[11px]">—</span>
-                      )}
-                    </td>
+                      {/* Description */}
+                      <td className="px-4 py-3">
+                        <div className={`font-semibold ${classification === 'DERIVED_CHILD' ? 'text-slate-700' : 'text-slate-800'}`}>
+                          {ac.description}
+                        </div>
+                      </td>
 
-                    {/* Actions */}
-                    <td className="px-4 py-3 text-right">
-                      <div className="inline-flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(ac)}
-                          title="Edit Activity Code"
-                          className="p-1 rounded text-slate-400 hover:text-violet-700 hover:bg-violet-50 transition-colors cursor-pointer"
-                        >
-                          <Pencil size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteActivityCode(ac)}
-                          title="Delete Activity Code"
-                          className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                      {/* Unit */}
+                      <td className="px-4 py-3">
+                        {ac.unit ? (
+                          <span className="inline-flex items-center font-mono text-[11px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded">
+                            {ac.unit}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">—</span>
+                        )}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-4 py-3 text-right">
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(ac)}
+                            title="Edit Activity Code"
+                            className="p-1 rounded text-slate-400 hover:text-violet-700 hover:bg-violet-50 transition-colors cursor-pointer"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteActivityCode(ac)}
+                            title="Delete Activity Code"
+                            className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

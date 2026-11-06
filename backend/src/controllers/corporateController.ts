@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import prisma from '../config/prisma';
+import { classifyActivityCode } from '../utils/activityCodeHelper';
 import {
   sendTransferRequestedEmail,
   sendTransferApprovedEmail,
@@ -3669,7 +3670,41 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
 
           // If target projects specified, auto-assign/upsert into site projects (MF_L_ACTIVITY_CODE)
           if (op.targetProjects && op.targetProjects.length > 0) {
+            const classification = classifyActivityCode(op.code);
+
             for (const proj of op.targetProjects) {
+              let parentActivityId: string | null = null;
+              let isDerived = false;
+
+              if (classification.type === 'DERIVED_CHILD') {
+                isDerived = true;
+                // Find or auto-create parent master in this project
+                let parentAct = await prisma.mF_P_ActivityCode.findFirst({
+                  where: { projectId: proj.id, code: classification.baseCode },
+                  select: { id: true },
+                });
+
+                if (!parentAct) {
+                  const corpParent = await prisma.mF_G_ActivityCode.findUnique({
+                    where: { code: classification.baseCode },
+                    select: { id: true, description: true, unit: true },
+                  });
+
+                  parentAct = await prisma.mF_P_ActivityCode.create({
+                    data: {
+                      projectId: proj.id,
+                      code: classification.baseCode,
+                      description: corpParent?.description || `Master Activity ${classification.baseCode}`,
+                      unit: corpParent?.unit || op.unit,
+                      corporateActivityCodeId: corpParent?.id || null,
+                      isDerived: false,
+                    },
+                    select: { id: true },
+                  });
+                }
+                parentActivityId = parentAct?.id || null;
+              }
+
               await prisma.mF_P_ActivityCode.upsert({
                 where: {
                   projectId_code: {
@@ -3681,6 +3716,8 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
                   description: op.description,
                   unit: op.unit,
                   corporateActivityCodeId: corpRecord.id,
+                  isDerived,
+                  parentActivityId,
                 },
                 create: {
                   projectId: proj.id,
@@ -3688,6 +3725,8 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
                   description: op.description,
                   unit: op.unit,
                   corporateActivityCodeId: corpRecord.id,
+                  isDerived,
+                  parentActivityId,
                 },
               });
             }

@@ -318,8 +318,17 @@ export async function assignEquipment(date: string, supervisorId: string, equipm
   return data.assignments || [];
 }
 
-export async function unassignEquipment(assignmentId: string): Promise<void> {
-  const res = await apiFetch(`${API_URL}/assignments/equipment/${encodeURIComponent(assignmentId)}`, {
+export async function unassignEquipment(
+  assignmentIdOrEquipmentId: string,
+  date?: string,
+  supervisorId?: string
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (date) params.append('date', date);
+  if (supervisorId) params.append('supervisorId', supervisorId);
+  const queryStr = params.toString() ? `?${params.toString()}` : '';
+
+  const res = await apiFetch(`${API_URL}/assignments/equipment/${encodeURIComponent(assignmentIdOrEquipmentId)}${queryStr}`, {
     method: 'DELETE',
   });
   if (!res.ok) {

@@ -28,6 +28,7 @@ import {
 } from '../services/supervisorStorageService';
 import { SiteEquipmentPoolModal } from '../components/SiteEquipmentPoolModal';
 import { useAuth } from '../../../context/AuthContext';
+import * as assignmentService from '../../assignments/services/assignmentService';
 
 interface EquipmentLogsViewProps {
   equipment: EquipmentLogEntry[];
@@ -36,6 +37,7 @@ interface EquipmentLogsViewProps {
   isDayLocked?: boolean;
   selectedDate?: string;
   projectId?: string;
+  supervisorId?: string;
 }
 
 const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon: string }> = {
@@ -119,8 +121,10 @@ export function EquipmentLogsView({
   isDayLocked = false,
   selectedDate = '',
   projectId,
+  supervisorId,
 }: EquipmentLogsViewProps) {
   const { user } = useAuth();
+  const effectiveSupervisorId = supervisorId || user?.id || '';
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -456,6 +460,13 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
     if (expandedId === eqId) {
       setExpandedId(null);
+    }
+
+    // Real-time backend unassign
+    if (selectedDate) {
+      assignmentService.unassignEquipment(eqId, selectedDate, effectiveSupervisorId).catch((err: any) => {
+        console.warn('[EquipmentLogsView] Background unassign error:', err);
+      });
     }
   };
 

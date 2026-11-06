@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import '../middleware/tenantMiddleware';
 import { getDefaultTenantId } from '../utils/tenantHelper';
+import { classifyActivityCode } from '../utils/activityCodeHelper';
 
 const getParam = (param: string | string[] | undefined): string => {
   if (Array.isArray(param)) return param[0] || '';
@@ -376,17 +377,120 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
     });
     const corpMap = new Map(corporateActivities.map((c) => [c.code.toUpperCase(), c]));
 
-    // Step 2: Parallel execution across connection pool without interactive transaction lock
-    const BATCH_CHUNK_SIZE = 25;
+    // Step 2: Separate items into Masters/Standalone vs. Derived Children
+    const masterAndStandaloneItems: any[] = [];
+    const derivedItems: any[] = [];
+
+    for (const item of validItems) {
+      const cleanCode = String(item.code).trim();
+      const classification = classifyActivityCode(cleanCode);
+      if (classification.type === 'DERIVED_CHILD') {
+        derivedItems.push({ item, classification });
+      } else {
+        masterAndStandaloneItems.push({ item, classification });
+      }
+    }
+
     const imported: any[] = [];
 
-    for (let i = 0; i < validItems.length; i += BATCH_CHUNK_SIZE) {
-      const chunk = validItems.slice(i, i + BATCH_CHUNK_SIZE);
+    // Pre-load all existing site activities to resolve parent IDs quickly
+    const existingSiteActivities = await prisma.mF_P_ActivityCode.findMany({
+      where: { projectId },
+      select: { id: true, code: true, corporateActivityCodeId: true },
+    });
+    const siteActMap = new Map<string, { id: string; code: string; corporateActivityCodeId: string | null }>(
+      existingSiteActivities.map((a) => [a.code.toUpperCase().trim(), a])
+    );
+
+    // Pass 1: Upsert all Master Codes (00-00-00-00) and Standalone Special Codes (ZOTHE, ZIDEL, etc.)
+    const BATCH_CHUNK_SIZE = 25;
+    for (let i = 0; i < masterAndStandaloneItems.length; i += BATCH_CHUNK_SIZE) {
+      const chunk = masterAndStandaloneItems.slice(i, i + BATCH_CHUNK_SIZE);
       const chunkResults = await Promise.all(
-        chunk.map(async (item: any) => {
+        chunk.map(async ({ item }) => {
           const cleanCode = String(item.code).trim();
           const corp = corpMap.get(cleanCode.toUpperCase());
           const finalCorpId = item.id || corp?.id || null;
+          const finalDescription = item.description?.trim() || corp?.description || cleanCode;
+          const finalUnit = item.unit?.trim() || corp?.unit || null;
+
+          const saved = await prisma.mF_P_ActivityCode.upsert({
+            where: {
+              projectId_code: {
+                projectId,
+                code: cleanCode,
+              },
+            },
+            update: {
+              description: finalDescription,
+              unit: finalUnit,
+              isDerived: false,
+              parentActivityId: null,
+              ...(finalCorpId ? { corporateActivityCodeId: finalCorpId } : {}),
+            },
+            create: {
+              projectId,
+              code: cleanCode,
+              description: finalDescription,
+              unit: finalUnit,
+              isDerived: false,
+              parentActivityId: null,
+              corporateActivityCodeId: finalCorpId,
+            },
+            select: {
+              id: true,
+              code: true,
+              description: true,
+              unit: true,
+              corporateActivityCodeId: true,
+            },
+          });
+
+          siteActMap.set(saved.code.toUpperCase().trim(), saved);
+          return saved;
+        })
+      );
+      imported.push(...chunkResults);
+    }
+
+    // Pass 2: Upsert Derived Sub-Activities (00-00-00-00 + Suffix) and link to Parent
+    for (let i = 0; i < derivedItems.length; i += BATCH_CHUNK_SIZE) {
+      const chunk = derivedItems.slice(i, i + BATCH_CHUNK_SIZE);
+      const chunkResults = await Promise.all(
+        chunk.map(async ({ item, classification }) => {
+          const cleanCode = String(item.code).trim();
+          const baseCode = classification.baseCode;
+          let parentAct = siteActMap.get(baseCode);
+
+          // If parent doesn't exist yet, auto-create master parent in project
+          if (!parentAct) {
+            const corpParent = corpMap.get(baseCode);
+            const parentDesc = corpParent?.description || `Master Activity ${baseCode}`;
+            const parentUnit = corpParent?.unit || item.unit?.trim() || null;
+            const parentCorpId = corpParent?.id || null;
+
+            const newParent = await prisma.mF_P_ActivityCode.create({
+              data: {
+                projectId,
+                code: baseCode,
+                description: parentDesc,
+                unit: parentUnit,
+                isDerived: false,
+                parentActivityId: null,
+                corporateActivityCodeId: parentCorpId,
+              },
+              select: {
+                id: true,
+                code: true,
+                corporateActivityCodeId: true,
+              },
+            });
+            siteActMap.set(baseCode, newParent);
+            parentAct = newParent;
+          }
+
+          const corp = corpMap.get(cleanCode.toUpperCase());
+          const finalCorpId = item.id || corp?.id || parentAct.corporateActivityCodeId || null;
           const finalDescription = item.description?.trim() || corp?.description || cleanCode;
           const finalUnit = item.unit?.trim() || corp?.unit || null;
 
@@ -400,6 +504,8 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
             update: {
               description: finalDescription,
               unit: finalUnit,
+              isDerived: true,
+              parentActivityId: parentAct.id,
               ...(finalCorpId ? { corporateActivityCodeId: finalCorpId } : {}),
             },
             create: {
@@ -407,6 +513,8 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
               code: cleanCode,
               description: finalDescription,
               unit: finalUnit,
+              isDerived: true,
+              parentActivityId: parentAct.id,
               corporateActivityCodeId: finalCorpId,
             },
             select: {

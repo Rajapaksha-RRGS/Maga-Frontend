@@ -28,6 +28,8 @@ interface SupervisorApprovalCardProps {
   onReject: (supervisorId: string) => Promise<void>;
   onRefresh?: () => void;
   isProcessing?: boolean;
+  searchQuery?: string;
+  searchScope?: 'all' | 'labor' | 'operators' | 'equipment';
 }
 
 export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
@@ -37,6 +39,8 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   onReject,
   onRefresh,
   isProcessing = false,
+  searchQuery = '',
+  searchScope = 'all',
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'labor' | 'operators' | 'equipment'>('labor');
@@ -45,6 +49,8 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const [editOutTime, setEditOutTime] = useState<string>('17:00');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [localWorkers, setLocalWorkers] = useState<ApprovalWorkerItem[]>(group.workers || []);
+
+  const q = searchQuery.toLowerCase().trim();
 
   // Sync local workers when group prop changes
   React.useEffect(() => {
@@ -157,6 +163,92 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
     );
   }, [group.equipment]);
 
+  // ── Targeted scope & query filtering with useMemo ───────────────────────────
+  // 1. Laborers Filter
+  const displayedWorkers = useMemo(() => {
+    if (!q || (searchScope !== 'all' && searchScope !== 'labor')) {
+      return localWorkers;
+    }
+    return localWorkers.filter(
+      (w) =>
+        (w.callingName && w.callingName.toLowerCase().includes(q)) ||
+        (w.fullName && w.fullName.toLowerCase().includes(q)) ||
+        (w.employeeCode && w.employeeCode.toLowerCase().includes(q)) ||
+        (w.tradeGroup && w.tradeGroup.toLowerCase().includes(q)) ||
+        (w.businessPartner && w.businessPartner.toLowerCase().includes(q))
+    );
+  }, [localWorkers, q, searchScope]);
+
+  // 2. Operators Filter
+  const displayedOperators = useMemo(() => {
+    const list = group.operators || [];
+    if (!q || (searchScope !== 'all' && searchScope !== 'operators')) {
+      return list;
+    }
+    return list.filter(
+      (o) =>
+        (o.callingName && o.callingName.toLowerCase().includes(q)) ||
+        (o.fullName && o.fullName.toLowerCase().includes(q)) ||
+        (o.operatorCode && o.operatorCode.toLowerCase().includes(q)) ||
+        (o.assignedEquipmentDisplay && o.assignedEquipmentDisplay.toLowerCase().includes(q))
+    );
+  }, [group.operators, q, searchScope]);
+
+  // 3. Equipment Filter
+  const displayedEquipment = useMemo(() => {
+    if (!q || (searchScope !== 'all' && searchScope !== 'equipment')) {
+      return loggedEquipment;
+    }
+    return loggedEquipment.filter(
+      (e) =>
+        (e.equipmentCode && e.equipmentCode.toLowerCase().includes(q)) ||
+        (e.magaNo && e.magaNo.toLowerCase().includes(q)) ||
+        (e.equipmentName && e.equipmentName.toLowerCase().includes(q))
+    );
+  }, [loggedEquipment, q, searchScope]);
+
+  // Auto-expand card and auto-switch tab to the relevant resource when search is active
+  React.useEffect(() => {
+    if (q) {
+      setExpanded(true);
+      if (searchScope === 'labor') {
+        setActiveTab('labor');
+      } else if (searchScope === 'operators') {
+        setActiveTab('operators');
+      } else if (searchScope === 'equipment') {
+        setActiveTab('equipment');
+      } else {
+        // 'all' scope: automatically activate tab that actually contains the matching result
+        const hasWorkerMatch = localWorkers.some(
+          (w) =>
+            (w.callingName && w.callingName.toLowerCase().includes(q)) ||
+            (w.fullName && w.fullName.toLowerCase().includes(q)) ||
+            (w.employeeCode && w.employeeCode.toLowerCase().includes(q))
+        );
+        const hasOpMatch = (group.operators || []).some(
+          (o) =>
+            (o.callingName && o.callingName.toLowerCase().includes(q)) ||
+            (o.fullName && o.fullName.toLowerCase().includes(q)) ||
+            (o.operatorCode && o.operatorCode.toLowerCase().includes(q))
+        );
+        const hasEqMatch = loggedEquipment.some(
+          (e) =>
+            (e.equipmentCode && e.equipmentCode.toLowerCase().includes(q)) ||
+            (e.magaNo && e.magaNo.toLowerCase().includes(q)) ||
+            (e.equipmentName && e.equipmentName.toLowerCase().includes(q))
+        );
+
+        if (hasOpMatch && !hasWorkerMatch) {
+          setActiveTab('operators');
+        } else if (hasEqMatch && !hasWorkerMatch && !hasOpMatch) {
+          setActiveTab('equipment');
+        } else if (hasWorkerMatch) {
+          setActiveTab('labor');
+        }
+      }
+    }
+  }, [q, searchScope, localWorkers, group.operators, loggedEquipment]);
+
   console.log("Current op data:", group.operators);
   console.log(group.counts);
   
@@ -193,19 +285,37 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 
             {/* 3 Pillars Summary Badges */}
             <div className="flex items-center gap-3 mt-2 text-xs text-slate-600 flex-wrap">
-              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-50 border border-blue-100 font-medium">
+              <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border font-medium transition-all ${
+                q && (searchScope === 'labor' || searchScope === 'all') && displayedWorkers.length > 0
+                  ? 'bg-blue-100 border-blue-300 text-blue-900 ring-2 ring-blue-400/30 font-semibold'
+                  : 'bg-blue-50 border-blue-100'
+              }`}>
                 <Users size={12} className="text-blue-600" />
-                <span>Labor: <strong>{workersCount}/{workersTotal}</strong> ({workerHours}h, OT: {workerOt}h)</span>
+                <span>
+                  Labor: <strong>{displayedWorkers.length}{q && displayedWorkers.length !== localWorkers.length ? `/${localWorkers.length}` : `/${workersTotal}`}</strong> ({workerHours}h, OT: {workerOt}h)
+                </span>
               </div>
 
-              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-violet-50 border border-violet-100 font-medium">
+              <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border font-medium transition-all ${
+                q && (searchScope === 'operators' || searchScope === 'all') && displayedOperators.length > 0
+                  ? 'bg-violet-100 border-violet-300 text-violet-900 ring-2 ring-violet-400/30 font-semibold'
+                  : 'bg-violet-50 border-violet-100'
+              }`}>
                 <HardHat size={12} className="text-violet-600" />
-                <span>Operators: <strong>{operatorsCount}/{operatorsTotal}</strong></span>
+                <span>
+                  Operators: <strong>{displayedOperators.length}{q && displayedOperators.length !== (group.operators?.length || 0) ? `/${group.operators?.length || 0}` : `/${operatorsTotal}`}</strong>
+                </span>
               </div>
 
-              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-100 font-medium">
+              <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border font-medium transition-all ${
+                q && (searchScope === 'equipment' || searchScope === 'all') && displayedEquipment.length > 0
+                  ? 'bg-amber-100 border-amber-300 text-amber-900 ring-2 ring-amber-400/30 font-semibold'
+                  : 'bg-amber-50 border-amber-100'
+              }`}>
                 <Truck size={12} className="text-amber-600" />
-                <span>Equipment: <strong>{loggedEquipment.length}</strong> ({equipmentFuel}L Fuel)</span>
+                <span>
+                  Equipment: <strong>{displayedEquipment.length}{q && displayedEquipment.length !== loggedEquipment.length ? `/${loggedEquipment.length}` : ''}</strong> ({equipmentFuel}L Fuel)
+                </span>
               </div>
 
               {group.submittedAt && (
@@ -267,7 +377,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
       {expanded && (
         <div className="border-t border-slate-200 bg-slate-50/70 p-4 sm:p-5 space-y-4">
           {/* Sub-tab navigation */}
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-3 flex-wrap">
             <button
               type="button"
               onClick={() => setActiveTab('labor')}
@@ -278,7 +388,12 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               }`}
             >
               <Users size={14} />
-              <span>Laborers ({localWorkers.length})</span>
+              <span>
+                Laborers ({displayedWorkers.length}
+                {q && (searchScope === 'all' || searchScope === 'labor') && displayedWorkers.length !== localWorkers.length
+                  ? ` of ${localWorkers.length}`
+                  : ''})
+              </span>
             </button>
 
             <button
@@ -291,7 +406,12 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               }`}
             >
               <HardHat size={14} />
-              <span>Machine Operators ({group.operators?.length || 0})</span>
+              <span>
+                Machine Operators ({displayedOperators.length}
+                {q && (searchScope === 'all' || searchScope === 'operators') && displayedOperators.length !== (group.operators?.length || 0)
+                  ? ` of ${group.operators?.length || 0}`
+                  : ''})
+              </span>
             </button>
 
             <button
@@ -304,7 +424,12 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               }`}
             >
               <Truck size={14} />
-              <span>Plant & Equipment ({loggedEquipment.length})</span>
+              <span>
+                Plant & Equipment ({displayedEquipment.length}
+                {q && (searchScope === 'all' || searchScope === 'equipment') && displayedEquipment.length !== loggedEquipment.length
+                  ? ` of ${loggedEquipment.length}`
+                  : ''})
+              </span>
             </button>
           </div>
 
@@ -313,7 +438,13 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-semibold text-slate-500">
-                  Verified against {workersTotal} worker assignment(s) · {isApproved ? 'Locked' : 'Click Edit to adjust In/Out'}
+                  {q && (searchScope === 'all' || searchScope === 'labor') ? (
+                    <span className="text-blue-700 font-bold">
+                      Filtered: Showing {displayedWorkers.length} of {localWorkers.length} laborer(s) matching "{searchQuery}"
+                    </span>
+                  ) : (
+                    `Verified against ${workersTotal} worker assignment(s) · ${isApproved ? 'Locked' : 'Click Edit to adjust In/Out'}`
+                  )}
                 </span>
               </div>
 
@@ -332,14 +463,14 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {localWorkers.length === 0 ? (
+                    {displayedWorkers.length === 0 ? (
                       <tr>
                         <td colSpan={8} className="py-6 text-center text-slate-400">
-                          No workers assigned for this supervisor.
+                          {q ? `No laborers match "${searchQuery}" for this supervisor.` : 'No workers assigned for this supervisor.'}
                         </td>
                       </tr>
                     ) : (
-                      localWorkers.map((w) => {
+                      displayedWorkers.map((w) => {
                         const isEditingThis = editingEmployeeId === w.employeeId;
                         const hasAttendance = Boolean(w.inTime && w.outTime);
                         const preview = isEditingThis ? computePreviewHours(editInTime, editOutTime) : null;
@@ -548,7 +679,13 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-semibold text-slate-500">
-                  Assigned Machine Operators ({group.operators?.length || 0})
+                  {q && (searchScope === 'all' || searchScope === 'operators') ? (
+                    <span className="text-violet-700 font-bold">
+                      Filtered: Showing {displayedOperators.length} of {group.operators?.length || 0} operator(s) matching "{searchQuery}"
+                    </span>
+                  ) : (
+                    `Assigned Machine Operators (${group.operators?.length || 0})`
+                  )}
                 </span>
               </div>
 
@@ -565,14 +702,14 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {!group.operators || group.operators.length === 0 ? (
+                    {!displayedOperators || displayedOperators.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="py-6 text-center text-slate-400">
-                          No machine operators assigned for this supervisor.
+                          {q ? `No machine operators match "${searchQuery}" for this supervisor.` : 'No machine operators assigned for this supervisor.'}
                         </td>
                       </tr>
                     ) : (
-                      group.operators.map((op) => {
+                      displayedOperators.map((op) => {
                         const hasAttendance = Boolean(op.inTime && op.outTime);
                         const effectiveVal = op.effectiveHours ?? op.shiftHours ?? ((op.hours ?? 0) + (op.otHours ?? 0));
                         return (

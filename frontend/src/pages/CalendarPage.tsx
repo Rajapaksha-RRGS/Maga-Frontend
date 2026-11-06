@@ -7,11 +7,40 @@ import { useCalendar } from '../features/calendar/hooks/useCalendar';
 import { ModernCalendarPlanner } from '../features/calendar/components/ModernCalendarPlanner';
 import Breadcrumb from '../components/Breadcrumb';
 
+function CalendarSkeleton() {
+  return (
+    <div className="flex flex-col lg:flex-row gap-4 lg:h-[calc(100vh-9rem)] animate-pulse">
+      {/* Left calendar skeleton */}
+      <div className="w-full lg:w-[55%] bg-white rounded-3xl border border-slate-200/90 shadow-sm p-5 flex flex-col gap-5 h-full">
+        <div className="flex justify-between items-center pb-2">
+          <div className="h-7 bg-slate-200 rounded w-36" />
+          <div className="flex gap-2">
+            <div className="w-8 h-8 rounded-xl bg-slate-100" />
+            <div className="w-8 h-8 rounded-xl bg-slate-100" />
+          </div>
+        </div>
+        <div className="grid grid-cols-7 gap-2 flex-1">
+          {Array.from({ length: 35 }).map((_, i) => (
+            <div key={i} className="bg-slate-50 border border-slate-100 rounded-2xl min-h-[60px]" />
+          ))}
+        </div>
+      </div>
+
+      {/* Right panel skeleton */}
+      <div className="w-full lg:flex-1 bg-white rounded-3xl border border-slate-200/90 shadow-sm p-5 flex flex-col gap-4 h-full">
+        <div className="h-6 bg-slate-200 rounded w-44" />
+        <div className="h-20 bg-slate-50 rounded-2xl border border-slate-100" />
+        <div className="h-40 bg-slate-50 rounded-2xl border border-slate-100" />
+      </div>
+    </div>
+  );
+}
+
 export default function CalendarPage() {
   const calendar = useCalendar();
 
   return (
-    <div className="px-4 md:px-6 py-5 max-w-7xl mx-auto flex flex-col gap-5 h-screen overflow-hidden">
+    <div className="px-4 md:px-6 py-5 w-full flex flex-col gap-5 h-screen overflow-hidden">
       {/* Header & Title */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -35,10 +64,7 @@ export default function CalendarPage() {
 
       {/* Initial Loading State only when empty */}
       {calendar.isLoading && calendar.entries.length === 0 ? (
-        <div className="py-16 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
-          <div className="inline-block w-7 h-7 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2" />
-          <p className="text-xs font-medium text-slate-500">Loading calendar & schedule data…</p>
-        </div>
+        <CalendarSkeleton />
       ) : (
         /* Modern Split Calendar & Work Organizer (Stays permanently mounted) */
         <ModernCalendarPlanner

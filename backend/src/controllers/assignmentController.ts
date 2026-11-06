@@ -1160,16 +1160,66 @@ export const assignEquipment = async (req: Request, res: Response): Promise<void
 export const unassignEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    await prisma.mF_OP_DailyEquipmentAssignment.delete({
-      where: { id },
+    const dateStr = (req.query.date as string) || (req.body?.date as string);
+    const supervisorId = (req.query.supervisorId as string) || (req.body?.supervisorId as string);
+    const targetDate = dateStr ? parseDate(dateStr) : undefined;
+
+    // Support deleting by either assignment ID or equipment ID
+    const existingAsgn = await prisma.mF_OP_DailyEquipmentAssignment.findFirst({
+      where: {
+        OR: [{ id }, { equipmentId: id }],
+      },
+      select: { id: true, equipmentId: true },
     });
+    const targetEqId = existingAsgn?.equipmentId || id;
+
+    const whereClause: any = {
+      OR: [
+        { id },
+        { equipmentId: id },
+        ...(targetEqId ? [{ equipmentId: targetEqId }] : []),
+      ],
+    };
+
+    if (targetDate || supervisorId) {
+      whereClause.dailySheet = {
+        ...(targetDate ? { date: targetDate } : {}),
+        ...(supervisorId ? { supervisorId } : {}),
+      };
+    }
+
+    const assignmentsToDelete = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
+      where: whereClause,
+      include: { dailyLog: true },
+    });
+
+    if (assignmentsToDelete.length === 0) {
+      try {
+        await prisma.mF_OP_DailyEquipmentAssignment.delete({ where: { id } });
+      } catch (err: any) {
+        if (err.code !== 'P2025') throw err;
+      }
+      res.json({ success: true, message: 'Equipment unassigned successfully' });
+      return;
+    }
+
+    for (const asgn of assignmentsToDelete) {
+      if (asgn.dailyLog) {
+        await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({
+          where: { dailyLogId: asgn.dailyLog.id },
+        });
+        await prisma.mF_OP_EquipmentDailyLog.delete({
+          where: { id: asgn.dailyLog.id },
+        });
+      }
+      await prisma.mF_OP_DailyEquipmentAssignment.delete({
+        where: { id: asgn.id },
+      });
+    }
+
     res.json({ success: true, message: 'Equipment unassigned successfully' });
   } catch (error: any) {
     console.error('Error unassigning equipment:', error);
-    if (error.code === 'P2025') {
-      res.status(404).json({ error: 'Equipment assignment not found' });
-      return;
-    }
     res.status(500).json({ error: 'Failed to unassign equipment' });
   }
 };
