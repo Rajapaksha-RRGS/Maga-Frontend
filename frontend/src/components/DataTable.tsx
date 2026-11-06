@@ -35,7 +35,7 @@ export default function DataTable<T>({
     <div className="hidden md:block bg-white rounded-lg border border-slate-200 overflow-x-auto overflow-y-auto max-h-[calc(100vh-270px)]">
       <table className="w-full text-sm">
         <thead className="sticky top-0 bg-slate-50/95 backdrop-blur-xs z-10">
-          <tr className="bg-slate-50/90 border-b border-slate-200">
+          <tr className="bg-slate-50/90 border-b  border-slate-200">
             {columns.map((col) => (
               <th
                 key={String(col.accessor)}

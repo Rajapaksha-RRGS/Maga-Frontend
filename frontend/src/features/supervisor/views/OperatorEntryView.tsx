@@ -54,21 +54,11 @@ interface OperatorEntryViewProps {
   supervisorId?: string;
 }
 
-// Helper to get logged working hours on a machine from equipment logs
-function getEquipmentLoggedHours(eq?: EquipmentLogEntry): number {
-  if (!eq) return 0;
-  if (typeof eq.workingHours === 'number' && eq.workingHours > 0) return eq.workingHours;
-  if (typeof eq.netHours === 'number' && eq.netHours > 0) return eq.netHours;
-  if (typeof eq.hoursValue === 'number' && eq.hoursValue > 0) return eq.hoursValue;
-  if (typeof eq.daysValue === 'number' && eq.daysValue > 0) return eq.daysValue * 8.0;
-  return 0;
-}
-
 export function OperatorEntryView({
   operators,
   equipment,
   onSaveOperators,
-  onSaveEquipment,
+  onSaveEquipment: _onSaveEquipment,
   searchQuery: externalSearchQuery = '',
   statusFilter: externalStatusFilter = 'all',
   isDayLocked = false,
@@ -92,16 +82,11 @@ export function OperatorEntryView({
       .catch((err) => console.warn('Could not load site pool equipment for operators:', err));
   }, [projectId, selectedDate]);
 
-  // Combined options of ALL equipment at the site (Site Equipment Pool + Supervisor daily logged equipment)
+  // Available equipment options from Site Equipment Pool (Standalone, decoupled from equipment logs)
   const allEquipmentOptions = useMemo<EquipmentOptionItem[]>(() => {
     const map = new Map<string, EquipmentOptionItem>();
 
-    // 1. Add all vehicles from Site Equipment Pool
     sitePoolEquipment.forEach((p) => {
-      const usageSum = (p.existingUsages || []).reduce(
-        (acc, u) => acc + (Number(u.workingHours || u.totalUtilization) || 0),
-        0
-      );
       map.set(p.id, {
         id: p.id,
         code: p.code,
@@ -109,27 +94,11 @@ export function OperatorEntryView({
         vehicleNo: p.vehicleNo,
         type: (p as any).type || (p as any).equipmentType,
         condition: (p as any).condition,
-        loggedHours: usageSum,
-      });
-    });
-
-    // 2. Merge with supervisor's current equipment list (current logged hours take priority)
-    equipment.forEach((eq) => {
-      const lh = getEquipmentLoggedHours(eq);
-      const existing = map.get(eq.id);
-      map.set(eq.id, {
-        id: eq.id,
-        code: eq.code,
-        name: eq.name,
-        vehicleNo: eq.vehicleNo || existing?.vehicleNo,
-        type: eq.type || existing?.type,
-        condition: eq.condition || existing?.condition,
-        loggedHours: lh > 0 ? lh : (existing?.loggedHours || 0),
       });
     });
 
     return Array.from(map.values()).sort((a, b) => a.code.localeCompare(b.code));
-  }, [sitePoolEquipment, equipment]);
+  }, [sitePoolEquipment]);
 
   useEffect(() => {
     supervisorStorage.isOperatorPoolModeEnabled(projectId)
@@ -161,25 +130,6 @@ export function OperatorEntryView({
     if (toAdd.length > 0) {
       const updated = [...operators, ...toAdd];
       onSaveOperators(updated);
-
-      if (onSaveEquipment) {
-        const poolItemsToAdd: SitePoolEquipmentItem[] = [];
-        toAdd.forEach((op) => {
-          const splits = op.equipmentSplits || [];
-          splits.forEach((s) => {
-            if (s.equipmentId && !equipment.some((e) => e.id === s.equipmentId)) {
-              const poolItem = sitePoolEquipment.find((p) => p.id === s.equipmentId);
-              if (poolItem && !poolItemsToAdd.some((p) => p.id === poolItem.id)) {
-                poolItemsToAdd.push(poolItem);
-              }
-            }
-          });
-        });
-        if (poolItemsToAdd.length > 0) {
-          const newEntries = poolItemsToAdd.map((p) => supervisorStorage.createEquipmentLogEntryFromPool(p));
-          onSaveEquipment([...equipment, ...newEntries]);
-        }
-      }
 
       // Real-time backend operator assignment
       if (selectedDate && (supervisorId || user?.id)) {
@@ -500,18 +450,13 @@ export function OperatorEntryView({
 
   // ── MULTI-VEHICLE SPLIT HANDLERS ──
   const handleAddEquipmentSplit = (operatorId: string) => {
-    let poolToAdd: SitePoolEquipmentItem | undefined;
     const updated = operators.map((o) => {
       if (o.id !== operatorId) return o;
       const targetShift = Number(o.shiftHours) || 8.0;
       const currentSplits = o.equipmentSplits || [];
       
-      const defaultEq = allEquipmentOptions.find((eq) => !currentSplits.some((s) => s.equipmentId === eq.id)) || equipment[0] || allEquipmentOptions[0];
+      const defaultEq = allEquipmentOptions.find((eq) => !currentSplits.some((s) => s.equipmentId === eq.id)) || allEquipmentOptions[0];
       const defaultEqId = defaultEq?.id || '';
-
-      if (defaultEqId && onSaveEquipment && !equipment.some((e) => e.id === defaultEqId)) {
-        poolToAdd = sitePoolEquipment.find((p) => p.id === defaultEqId);
-      }
 
       let newSplits: OperatorEquipmentSplit[] = [];
 
@@ -543,15 +488,10 @@ export function OperatorEntryView({
       };
     });
 
-    if (poolToAdd && onSaveEquipment) {
-      const newEntry = supervisorStorage.createEquipmentLogEntryFromPool(poolToAdd);
-      onSaveEquipment([...equipment, newEntry]);
-    }
     onSaveOperators(updated);
   };
 
   const handleUpdateEquipmentSplit = (operatorId: string, splitId: string, field: 'equipmentId' | 'hours', value: any) => {
-    let poolToAdd: SitePoolEquipmentItem | undefined;
     const updated = operators.map((o) => {
       if (o.id !== operatorId) return o;
       const currentSplits = o.equipmentSplits || [];
@@ -564,9 +504,6 @@ export function OperatorEntryView({
             equipmentId: value,
           };
         });
-        if (value && onSaveEquipment && !equipment.some((e) => e.id === value)) {
-          poolToAdd = sitePoolEquipment.find((p) => p.id === value);
-        }
         return {
           ...o,
           assignedEquipmentId: splits[0]?.equipmentId || '',
@@ -590,10 +527,6 @@ export function OperatorEntryView({
       };
     });
 
-    if (poolToAdd && onSaveEquipment) {
-      const newEntry = supervisorStorage.createEquipmentLogEntryFromPool(poolToAdd);
-      onSaveEquipment([...equipment, newEntry]);
-    }
     onSaveOperators(updated);
   };
 
@@ -1393,9 +1326,6 @@ export function OperatorEntryView({
                         <div className="space-y-2.5 w-full">
                           {splits.map((split, sIdx) => {
                             const sharedWith = getSharedEquipmentOperators(split.equipmentId, operator.id);
-                            const matchedEq = equipment.find((e) => e.id === split.equipmentId);
-                            const poolItem = allEquipmentOptions.find((e) => e.id === split.equipmentId);
-                            const eqLoggedHours = matchedEq ? getEquipmentLoggedHours(matchedEq) : (poolItem?.loggedHours || 0);
 
                             return (
                               <div 
@@ -1436,33 +1366,15 @@ export function OperatorEntryView({
                                   </button>
                                 </div>
 
-                                {/* Row 2: Equipment Logged Hours Hint & Quick Fill Buttons */}
-                                <div className="flex items-center justify-between gap-1.5 flex-wrap text-[10px] pt-0.5">
-                                  {matchedEq && (
-                                    <div className="flex items-center gap-1 text-slate-500 dark:text-slate-400 flex-wrap">
-                                      <span>Machine Logged:</span>
-                                      <strong className="text-blue-700 dark:text-blue-300 font-mono">
-                                        {eqLoggedHours > 0 ? `${eqLoggedHours}h` : '0h (Pending)'}
-                                      </strong>
-                                      {eqLoggedHours > 0 && split.hours !== eqLoggedHours && (
-                                        <button
-                                          type="button"
-                                          onClick={() => handleUpdateEquipmentSplit(operator.id, split.id, 'hours', eqLoggedHours)}
-                                          className="text-[9px] font-bold text-blue-600 dark:text-blue-400 underline hover:text-blue-800 ml-1"
-                                        >
-                                          Set to {eqLoggedHours}h
-                                        </button>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {sharedWith.length > 0 && (
+                                {/* Row 2: Shared Info */}
+                                {sharedWith.length > 0 && (
+                                  <div className="flex items-center justify-end gap-1.5 flex-wrap text-[10px] pt-0.5">
                                     <div className="flex items-center gap-1 text-[10px] text-blue-600 dark:text-blue-400 shrink-0">
                                       <Sparkles size={10} />
                                       <span>Shared with: <strong>{sharedWith.join(', ')}</strong></span>
                                     </div>
-                                  )}
-                                </div>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}

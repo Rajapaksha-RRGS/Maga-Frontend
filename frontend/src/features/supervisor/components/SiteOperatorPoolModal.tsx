@@ -11,6 +11,8 @@ import {
   ChevronDown,
   Zap,
   Check,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import {
   supervisorStorage,
@@ -41,6 +43,8 @@ export function SiteOperatorPoolModal({
   const [search, setSearch] = useState('');
   const [poolOperators, setPoolOperators] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedTrade, setSelectedTrade] = useState<string>('all');
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
 
   const [pastOperatorsGangs, setPastOperatorsGangs] = useState<
     Array<{ date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }>
@@ -51,6 +55,8 @@ export function SiteOperatorPoolModal({
   useEffect(() => {
     if (!isOpen) return;
     setIsLoading(true);
+    setCheckedIds(new Set());
+    setSelectedTrade('all');
     setPastNotice(null);
     setShowPastDaysDropdown(false);
 
@@ -66,17 +72,54 @@ export function SiteOperatorPoolModal({
       .catch((err) => console.warn('Could not load past operators:', err));
   }, [isOpen, selectedDate, projectId, user?.id]);
 
+  // Set of IDs already in the current supervisor's active daily list
+  const currentIds = useMemo(() => {
+    return new Set(currentOperators.map((o) => o.id));
+  }, [currentOperators]);
+
+  // Distinct trade groups for filtering
+  const distinctTrades = useMemo(() => {
+    const trades = new Set<string>();
+    poolOperators.forEach((op) => {
+      if (op.tradeGroup) trades.add(op.tradeGroup);
+    });
+    return Array.from(trades).sort();
+  }, [poolOperators]);
+
   const mostRecentGang = pastOperatorsGangs[0];
   const recentAvailableCount = useMemo(() => {
     if (!mostRecentGang) return 0;
     const pastIds = new Set(mostRecentGang.operatorIds);
-    return poolOperators.filter((op) => pastIds.has(op.id) && !currentOperators.some((c) => c.id === op.id)).length;
-  }, [mostRecentGang, poolOperators, currentOperators]);
+    return poolOperators.filter((op) => pastIds.has(op.id) && !currentIds.has(op.id)).length;
+  }, [mostRecentGang, poolOperators, currentIds]);
+
+  const createOperatorEntry = (op: any, pastOp?: any): OperatorEntry => ({
+    id: op.id,
+    callingName: op.callingName || op.fullName || 'Operator',
+    employeeNumber: op.employeeCode || '',
+    licenseNo: op.nicNo || '',
+    designation: op.tradeGroup || 'Machine Operator',
+    inTime: '',
+    outTime: '',
+    shiftHours: 0,
+    otHours: 0,
+    assignedEquipmentId: pastOp?.assignedEquipmentId || '',
+    equipmentSplits: pastOp?.equipmentSplits && pastOp.equipmentSplits.length > 0
+      ? pastOp.equipmentSplits.map((s: any, idx: number) => ({ ...s, id: `split-${Date.now()}-${idx}` }))
+      : (pastOp?.assignedEquipmentId ? [{ id: `split-${Date.now()}-0`, equipmentId: pastOp.assignedEquipmentId, hours: 0 }] : []),
+    status: 'pending',
+    claimedBySupervisor: op.claimedBySupervisor,
+    claimedSupervisorId: op.claimedSupervisorId,
+    claimedInTime: op.claimedInTime,
+    claimedOutTime: op.claimedOutTime,
+    claimedHours: op.claimedHours,
+    claimedMachineCodes: op.claimedMachineCodes,
+    claimedByMe: op.claimedByMe,
+  });
 
   const handleDirectAddPastGang = (pg: { date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }) => {
     const idSet = new Set(pg.operatorIds);
-    const currSet = new Set(currentOperators.map((c) => c.id));
-    const toAddOps = poolOperators.filter((op) => idSet.has(op.id) && !currSet.has(op.id));
+    const toAddOps = poolOperators.filter((op) => idSet.has(op.id) && !currentIds.has(op.id));
 
     if (toAddOps.length === 0) {
       setPastNotice(`All operators from ${pg.date} are already in today's shift.`);
@@ -85,33 +128,7 @@ export function SiteOperatorPoolModal({
     }
 
     const pastMap = new Map((pg.operators || []).map((p) => [p.id, p]));
-
-    const newEntries: OperatorEntry[] = toAddOps.map((op) => {
-      const pastOp = pastMap.get(op.id);
-      return {
-        id: op.id,
-        callingName: op.callingName || op.fullName || 'Operator',
-        employeeNumber: op.employeeCode || '',
-        licenseNo: op.nicNo || '',
-        designation: op.tradeGroup || 'Machine Operator',
-        inTime: '',
-        outTime: '',
-        shiftHours: 0,
-        otHours: 0,
-        assignedEquipmentId: pastOp?.assignedEquipmentId || '',
-        equipmentSplits: pastOp?.equipmentSplits && pastOp.equipmentSplits.length > 0
-          ? pastOp.equipmentSplits.map((s, idx) => ({ ...s, id: `split-${Date.now()}-${idx}` }))
-          : (pastOp?.assignedEquipmentId ? [{ id: `split-${Date.now()}-0`, equipmentId: pastOp.assignedEquipmentId, hours: 0 }] : []),
-        status: 'pending',
-        claimedBySupervisor: op.claimedBySupervisor,
-        claimedSupervisorId: op.claimedSupervisorId,
-        claimedInTime: op.claimedInTime,
-        claimedOutTime: op.claimedOutTime,
-        claimedHours: op.claimedHours,
-        claimedMachineCodes: op.claimedMachineCodes,
-        claimedByMe: op.claimedByMe,
-      };
-    });
+    const newEntries: OperatorEntry[] = toAddOps.map((op) => createOperatorEntry(op, pastMap.get(op.id)));
 
     if (onAddOperators) {
       onAddOperators(newEntries);
@@ -121,15 +138,29 @@ export function SiteOperatorPoolModal({
     onClose();
   };
 
-  // Set of IDs already in the current supervisor's active daily list
-  const currentIds = useMemo(() => {
-    return new Set(currentOperators.map((o) => o.id));
-  }, [currentOperators]);
+  const handleSelectPastGang = (pg: { date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }) => {
+    const idSet = new Set(pg.operatorIds);
+    const matchingAvailable = poolOperators
+      .filter((op) => idSet.has(op.id) && !currentIds.has(op.id))
+      .map((op) => op.id);
+
+    if (matchingAvailable.length === 0) {
+      setPastNotice(`All ${pg.operatorCount} operators from ${pg.date} are already in today's shift.`);
+      setTimeout(() => setPastNotice(null), 3000);
+      return;
+    }
+
+    setCheckedIds(new Set(matchingAvailable));
+    setShowPastDaysDropdown(false);
+    setPastNotice(`Selected ${matchingAvailable.length} operator${matchingAvailable.length > 1 ? 's' : ''} from ${pg.date}. Review and click "Add Selected" below.`);
+    setTimeout(() => setPastNotice(null), 4000);
+  };
 
   // Filtered pool operators
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return poolOperators.filter((op) => {
+      if (selectedTrade !== 'all' && op.tradeGroup !== selectedTrade) return false;
       if (!q) return true;
       return (
         op.callingName?.toLowerCase().includes(q) ||
@@ -138,32 +169,63 @@ export function SiteOperatorPoolModal({
         op.tradeGroup?.toLowerCase().includes(q)
       );
     });
-  }, [poolOperators, search]);
+  }, [poolOperators, search, selectedTrade]);
 
-  const handleAddSingle = (op: any) => {
-    const newEntry: OperatorEntry = {
-      id: op.id,
-      callingName: op.callingName || op.fullName || 'Operator',
-      employeeNumber: op.employeeCode || '',
-      licenseNo: op.nicNo || '',
-      designation: op.tradeGroup || 'Machine Operator',
-      inTime: '',
-      outTime: '',
-      shiftHours: 0,
-      otHours: 0,
-      assignedEquipmentId: '',
-      equipmentSplits: [],
-      status: 'pending',
-      claimedBySupervisor: op.claimedBySupervisor,
-      claimedSupervisorId: op.claimedSupervisorId,
-      claimedInTime: op.claimedInTime,
-      claimedOutTime: op.claimedOutTime,
-      claimedHours: op.claimedHours,
-      claimedMachineCodes: op.claimedMachineCodes,
-      claimedByMe: op.claimedByMe,
-    };
-    onAddOperator(newEntry);
+  // Available count in current filtered list
+  const availableCount = filtered.filter((op) => !currentIds.has(op.id)).length;
+  const allChecked = availableCount > 0 && filtered.filter((op) => !currentIds.has(op.id)).every((op) => checkedIds.has(op.id));
+
+  // Toggle selection for a single operator
+  const handleToggleCheck = (id: string) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Select all or deselect all available
+  const handleSelectAllAvailable = () => {
+    const available = filtered.filter((op) => !currentIds.has(op.id));
+    if (available.every((op) => checkedIds.has(op.id))) {
+      setCheckedIds(new Set());
+    } else {
+      setCheckedIds(new Set(available.map((op) => op.id)));
+    }
+  };
+
+  // Batch add selected operators
+  const handleAddSelected = () => {
+    if (checkedIds.size === 0) return;
+    const toAddOps = poolOperators.filter((op) => checkedIds.has(op.id) && !currentIds.has(op.id));
+    if (toAddOps.length === 0) return;
+
+    const newEntries: OperatorEntry[] = toAddOps.map((op) => createOperatorEntry(op));
+
+    if (onAddOperators) {
+      onAddOperators(newEntries);
+    } else {
+      newEntries.forEach((e) => onAddOperator(e));
+    }
+    setCheckedIds(new Set());
     onClose();
+  };
+
+  // Add a single operator without closing modal immediately
+  const handleAddSingle = (op: any) => {
+    const newEntry = createOperatorEntry(op);
+    if (onAddOperators) {
+      onAddOperators([newEntry]);
+    } else {
+      onAddOperator(newEntry);
+    }
+    setCheckedIds((prev) => {
+      if (!prev.has(op.id)) return prev;
+      const next = new Set(prev);
+      next.delete(op.id);
+      return next;
+    });
   };
 
   if (!isOpen) return null;
@@ -220,7 +282,7 @@ export function SiteOperatorPoolModal({
                       Copy Past Operators
                     </span>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                      ${mostRecentGang.operatorCount} on ${mostRecentGang.date} (${mostRecentGang.dayName})
+                      {mostRecentGang.operatorCount} on {mostRecentGang.date} ({mostRecentGang.dayName})
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
@@ -238,7 +300,7 @@ export function SiteOperatorPoolModal({
                   title={`Directly add ${recentAvailableCount} available operators from ${mostRecentGang.date}`}
                 >
                   <Zap size={13} className="fill-current" />
-                  <span>1-Click Add (${recentAvailableCount})</span>
+                  <span>1-Click Add ({recentAvailableCount})</span>
                 </button>
 
                 {/* Other Past Days Dropdown */}
@@ -257,25 +319,22 @@ export function SiteOperatorPoolModal({
                     {showPastDaysDropdown && (
                       <div className="absolute right-0 mt-1.5 w-60 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-1.5 z-30 space-y-1">
                         <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          Select from Past Days:
+                          Select Operators from Past Days:
                         </div>
                         {pastOperatorsGangs.map((pg) => {
-                          const pgAvail = poolOperators.filter((op) => new Set(pg.operatorIds).has(op.id) && !currentOperators.some((c) => c.id === op.id)).length;
+                          const pgAvail = poolOperators.filter((op) => new Set(pg.operatorIds).has(op.id) && !currentIds.has(op.id)).length;
                           return (
                             <button
                               key={pg.date}
                               type="button"
-                              onClick={() => {
-                                setShowPastDaysDropdown(false);
-                                handleDirectAddPastGang(pg);
-                              }}
+                              onClick={() => handleSelectPastGang(pg)}
                               className="w-full text-left px-2.5 py-1.5 rounded-xl text-xs hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center justify-between cursor-pointer transition-colors"
                             >
                               <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
-                                ${pg.date} (${pg.dayName})
+                                {pg.date} ({pg.dayName})
                               </span>
                               <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400">
-                                ${pgAvail} / ${pg.operatorCount} avail
+                                {pgAvail} / {pg.operatorCount} avail
                               </span>
                             </button>
                           );
@@ -296,19 +355,69 @@ export function SiteOperatorPoolModal({
           </div>
         )}
 
-        {/* ── Search Bar ── */}
-        <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850">
+        {/* ── Search Bar & Filter Chips ── */}
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 space-y-2.5">
           <div className="relative">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by Operator Code or Name..."
+              placeholder="Search by Operator Code, Name, or Machine Type..."
               className="w-full pl-9 pr-4 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 shadow-2xs"
               autoFocus
             />
           </div>
+
+          {/* Trade / Machinery Group Filter Chips */}
+          {distinctTrades.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+              <span className="text-[10px] text-slate-400 font-semibold uppercase shrink-0">Trades:</span>
+              <button
+                type="button"
+                onClick={() => setSelectedTrade('all')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                  selectedTrade === 'all'
+                    ? 'bg-blue-600 text-white font-bold'
+                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750'
+                }`}
+              >
+                All ({poolOperators.length})
+              </button>
+              {distinctTrades.map((trade) => {
+                const count = poolOperators.filter((op) => op.tradeGroup === trade).length;
+                return (
+                  <button
+                    key={trade}
+                    type="button"
+                    onClick={() => setSelectedTrade(trade)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                      selectedTrade === trade
+                        ? 'bg-blue-600 text-white font-bold'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750'
+                    }`}
+                  >
+                    {trade} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Selection Toolbar (Select All) ── */}
+        <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-850 flex items-center justify-between text-xs">
+          <button
+            type="button"
+            onClick={handleSelectAllAvailable}
+            className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold cursor-pointer"
+          >
+            {allChecked ? <CheckSquare size={16} className="text-blue-600" /> : <Square size={16} />}
+            <span>Select All Available ({availableCount})</span>
+          </button>
+          <span className="text-[11px] text-slate-400 font-medium">
+            {checkedIds.size} selected
+          </span>
         </div>
 
         {/* ── Operator List ── */}
@@ -331,44 +440,74 @@ export function SiteOperatorPoolModal({
           ) : (
             filtered.map((op) => {
               const isAlreadyAdded = currentIds.has(op.id);
+              const isChecked = checkedIds.has(op.id);
 
               return (
                 <div
                   key={op.id}
-                  className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                  onClick={() => !isAlreadyAdded && handleToggleCheck(op.id)}
+                  className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 select-none ${
                     isAlreadyAdded
-                      ? 'bg-slate-50/70 dark:bg-slate-850/60 border-slate-200 dark:border-slate-800 opacity-60'
-                      : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-slate-300 shadow-2xs'
+                      ? 'bg-slate-50/70 dark:bg-slate-850/60 border-slate-200 dark:border-slate-800 opacity-60 cursor-default'
+                      : isChecked
+                      ? 'bg-blue-50/50 dark:bg-blue-950/40 border-blue-500/80 ring-1 ring-blue-500/30 cursor-pointer'
+                      : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-slate-300 shadow-2xs cursor-pointer'
                   }`}
                 >
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100">
-                        {op.employeeCode}
-                      </span>
-                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                        {op.callingName}
-                      </span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200">
-                        {op.tradeGroup}
-                      </span>
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Checkbox */}
+                    <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                      {isAlreadyAdded ? (
+                        <div className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-500">
+                          <Check size={12} className="stroke-[3]" />
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleCheck(op.id)}
+                          className="focus:outline-hidden cursor-pointer"
+                          aria-label={isChecked ? `Deselect ${op.callingName}` : `Select ${op.callingName}`}
+                        >
+                          {isChecked ? (
+                            <CheckSquare size={18} className="text-blue-600 dark:text-blue-400" />
+                          ) : (
+                            <Square size={18} className="text-slate-400 hover:text-slate-600" />
+                          )}
+                        </button>
+                      )}
                     </div>
 
-                    {op.fullName && op.fullName !== op.callingName && (
-                      <p className="text-[11px] text-slate-400 truncate">
-                        {op.fullName}
-                      </p>
-                    )}
-
-                    {/* Claimed / Shared Info */}
-                    {op.claimedBySupervisor && !op.claimedByMe && (
-                      <div className="flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 font-semibold pt-0.5">
-                        <Lock size={10} className="text-amber-600" />
-                        <span>Logged by Sup. {op.claimedBySupervisor} ({op.claimedInTime || '--:--'} - {op.claimedOutTime || '--:--'}{op.claimedMachineCodes && op.claimedMachineCodes.length > 0 ? ` on ${op.claimedMachineCodes.join(', ')}` : ''})</span>
+                    {/* Details */}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100">
+                          {op.employeeCode}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                          {op.callingName}
+                        </span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200">
+                          {op.tradeGroup}
+                        </span>
                       </div>
-                    )}
+
+                      {op.fullName && op.fullName !== op.callingName && (
+                        <p className="text-[11px] text-slate-400 truncate">
+                          {op.fullName}
+                        </p>
+                      )}
+
+                      {/* Claimed / Shared Info */}
+                      {op.claimedBySupervisor && !op.claimedByMe && (
+                        <div className="flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 font-semibold pt-0.5">
+                          <Lock size={10} className="text-amber-600" />
+                          <span>Logged by Sup. {op.claimedBySupervisor} ({op.claimedInTime || '--:--'} - {op.claimedOutTime || '--:--'}{op.claimedMachineCodes && op.claimedMachineCodes.length > 0 ? ` on ${op.claimedMachineCodes.join(', ')}` : ''})</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
+                  {/* Right Action */}
                   <div className="shrink-0">
                     {isAlreadyAdded ? (
                       <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 flex items-center gap-1">
@@ -377,8 +516,12 @@ export function SiteOperatorPoolModal({
                     ) : (
                       <button
                         type="button"
-                        onClick={() => handleAddSingle(op)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAddSingle(op);
+                        }}
                         className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-2xs transition-colors cursor-pointer"
+                        title={`Add ${op.callingName} to shift`}
                       >
                         <Plus size={13} className="stroke-[3]" />
                         <span>Add</span>
@@ -391,18 +534,38 @@ export function SiteOperatorPoolModal({
           )}
         </div>
 
-        {/* ── Footer ── */}
-        <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
-          >
-            Close
-          </button>
+        {/* ── Footer Actions ── */}
+        <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-slate-500">
+            {checkedIds.size > 0 ? (
+              <strong className="text-blue-700 dark:text-blue-400">
+                {checkedIds.size} operator{checkedIds.size > 1 ? 's' : ''} selected
+              </strong>
+            ) : (
+              'Select operators to batch-add'
+            )}
+          </span>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              disabled={checkedIds.size === 0}
+              onClick={handleAddSelected}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 dark:disabled:bg-slate-800 text-white disabled:text-slate-400 transition-colors cursor-pointer shadow-xs"
+            >
+              <Plus size={14} className="stroke-[3]" />
+              <span>Add Selected ({checkedIds.size}) to Shift</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
-

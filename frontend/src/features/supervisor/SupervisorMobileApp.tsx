@@ -20,6 +20,7 @@ import {
   initializeNotifications, 
   notifyNewAdminEvents 
 } from '../../services/localNotificationService';
+import { initPushNotifications } from '../../services/pushNotificationService';
 
 // 5 Dedicated Tab Views
 import { SupervisorDashboardView } from './views/SupervisorDashboardView';
@@ -132,11 +133,25 @@ export default function SupervisorMobileApp() {
     };
   }, [selectedDate, user?.id]);
 
-  // Initialize native notifications channel & background poll for incoming admin events every 30 seconds
+  // Initialize native local & push notifications channel & background poll for incoming admin events every 30 seconds
   useEffect(() => {
     if (!user?.id) return;
 
     initializeNotifications();
+    initPushNotifications({
+      onToken: (token) => {
+        console.log('FCM Token ready:', token);
+      },
+      onNotificationReceived: () => {
+        // Refresh reminders when push arrives in foreground
+        fetchSupervisorReminders(user.id, selectedDate)
+          .then((latest) => setReminders(latest))
+          .catch(() => {});
+      },
+      onNotificationActionPerformed: () => {
+        setNotificationsModalOpen(true);
+      },
+    });
 
     const intervalId = setInterval(async () => {
       try {
