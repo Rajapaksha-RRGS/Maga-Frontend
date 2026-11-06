@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "212853091354",
+    "project_id": "maga-app-1858f",
+    "storage_bucket": "maga-app-1858f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:212853091354:android:3357dfa68da124fc63b5a3",
+        "android_client_info": {
+          "package_name": "com.maga.magalaborenrt"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_oLb0tP-Ra36ONw4p7R6tcPUhd2KGP2Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
