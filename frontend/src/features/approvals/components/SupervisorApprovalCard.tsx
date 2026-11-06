@@ -292,7 +292,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               }`}>
                 <Users size={12} className="text-blue-600" />
                 <span>
-                  Labor: <strong>{displayedWorkers.length}{q && displayedWorkers.length !== localWorkers.length ? `/${localWorkers.length}` : `/${workersTotal}`}</strong> ({workerHours}h, OT: {workerOt}h)
+                  Labor: <strong>{q ? displayedWorkers.length : workersCount}/{workersTotal}</strong> ({workerHours}h, OT: {workerOt}h)
                 </span>
               </div>
 
@@ -303,7 +303,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               }`}>
                 <HardHat size={12} className="text-violet-600" />
                 <span>
-                  Operators: <strong>{displayedOperators.length}{q && displayedOperators.length !== (group.operators?.length || 0) ? `/${group.operators?.length || 0}` : `/${operatorsTotal}`}</strong>
+                  Operators: <strong>{q ? displayedOperators.length : operatorsCount}/{operatorsTotal}</strong>
                 </span>
               </div>
 
@@ -314,7 +314,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               }`}>
                 <Truck size={12} className="text-amber-600" />
                 <span>
-                  Equipment: <strong>{displayedEquipment.length}{q && displayedEquipment.length !== loggedEquipment.length ? `/${loggedEquipment.length}` : ''}</strong> ({equipmentFuel}L Fuel)
+                  Equipment: <strong>{q ? displayedEquipment.length : loggedEquipment.length}</strong> ({equipmentFuel}L Fuel)
                 </span>
               </div>
 
@@ -799,7 +799,13 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-semibold text-slate-500">
-                  Logged Plant & Equipment Daily Logs ({loggedEquipment.length})
+                  {q && (searchScope === 'all' || searchScope === 'equipment') ? (
+                    <span className="text-amber-800 font-bold">
+                      Filtered: Showing {displayedEquipment.length} of {loggedEquipment.length} equipment matching "{searchQuery}"
+                    </span>
+                  ) : (
+                    `Logged Plant & Equipment Daily Logs (${loggedEquipment.length})`
+                  )}
                 </span>
               </div>
 
@@ -817,14 +823,14 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {loggedEquipment.length === 0 ? (
+                    {displayedEquipment.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="py-6 text-center text-slate-400">
-                          No plant & equipment logged for this supervisor.
+                          {q ? `No plant & equipment match "${searchQuery}" for this supervisor.` : 'No plant & equipment logged for this supervisor.'}
                         </td>
                       </tr>
                     ) : (
-                      loggedEquipment.map((eq) => {
+                      displayedEquipment.map((eq) => {
                         const isWorking = eq.condition === 'WORKING';
                         const isBreakdown = eq.condition === 'BREAKDOWN';
                         const isLogged = eq.netHours > 0 || eq.loggedQuantity > 0;
