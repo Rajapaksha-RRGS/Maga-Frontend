@@ -52,6 +52,10 @@ export const getAssignmentsForDate = async (req: Request, res: Response): Promis
           projectId,
           date: targetDate,
         },
+        employee: {
+          isOperator: false,
+          corporateEmployee: { isOperator: false },
+        },
       },
       select: {
         id: true,
@@ -201,10 +205,27 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
     // Ensure DailySheet exists
     const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
 
+    // Strictly validate that operators CANNOT be assigned as laborers
+    const validLaborers = await prisma.mF_P_Employee.findMany({
+      where: {
+        id: { in: employeeIds },
+        projectId,
+        isOperator: false,
+        corporateEmployee: { isOperator: false },
+      },
+      select: { id: true },
+    });
+    const validLaborIds = validLaborers.map((l) => l.id);
+
+    if (validLaborIds.length === 0) {
+      res.status(400).json({ error: 'No valid non-operator laborers found in the provided IDs' });
+      return;
+    }
+
     // 1. Remove any existing assignment on the same date under other sheets in bulk
     await prisma.mF_OP_DailyAssignment.deleteMany({
       where: {
-        employeeId: { in: employeeIds },
+        employeeId: { in: validLaborIds },
         dailySheet: {
           projectId,
           date: targetDate,
@@ -215,7 +236,7 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
 
     // 2. Bulk insert all assignments into dailySheet in one shot
     await prisma.mF_OP_DailyAssignment.createMany({
-      data: employeeIds.map((empId: string) => ({
+      data: validLaborIds.map((empId: string) => ({
         dailySheetId: dailySheet.id,
         employeeId: empId,
       })),
@@ -226,7 +247,7 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
     const createdAssignments = await prisma.mF_OP_DailyAssignment.findMany({
       where: {
         dailySheetId: dailySheet.id,
-        employeeId: { in: employeeIds },
+        employeeId: { in: validLaborIds },
       },
       select: {
         id: true,
