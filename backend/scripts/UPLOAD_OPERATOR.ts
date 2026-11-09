@@ -263,6 +263,7 @@ async function main() {
   const defaultFilePath = path.join(__dirname, 'Company operator Master Upload Sheet.csv');
   let explicitFilePath: string | null = null;
   let explicitProject: string | null = null;
+  let explicitSupervisor: string | null = null;
 
   for (let i = 0; i < args.length; i++) {
     for (let j = args.length; j > i; j--) {
@@ -284,8 +285,12 @@ async function main() {
   for (const a of args) {
     if (a.startsWith('--project=')) {
       explicitProject = a.split('=')[1].trim();
+    } else if (a.startsWith('--supervisor=')) {
+      explicitSupervisor = a.split('=')[1].trim();
     } else if (!a.startsWith('-')) {
-      explicitProject = a.trim();
+      if (!explicitProject) {
+        explicitProject = a.trim();
+      }
     }
   }
 
@@ -351,14 +356,36 @@ async function main() {
   console.log(`📌 Target Project: ${BOLD}${project.projectName} (${project.projectCode})${RESET}`);
 
   // 4. Resolve Supervisor or Admin for DailySheet
-  let supervisor = await prisma.mF_P_User.findFirst({
-    where: {
-      projectId: project.id,
-      role: 'supervisor',
-      status: 'active',
-    },
-    select: { id: true, username: true, fullName: true },
-  });
+  let supervisor: { id: string; username: string; fullName: string } | null = null;
+
+  if (explicitSupervisor) {
+    const cleanSup = explicitSupervisor.toLowerCase();
+    supervisor = await prisma.mF_P_User.findFirst({
+      where: {
+        projectId: project.id,
+        status: 'active',
+        OR: [
+          { username: { equals: cleanSup, mode: 'insensitive' } },
+          { fullName: { contains: cleanSup, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, username: true, fullName: true },
+    });
+    if (!supervisor) {
+      console.log(`${YELLOW}⚠️ Specified supervisor "${explicitSupervisor}" not found in project ${project.projectCode}. Falling back to default active supervisor.${RESET}`);
+    }
+  }
+
+  if (!supervisor) {
+    supervisor = await prisma.mF_P_User.findFirst({
+      where: {
+        projectId: project.id,
+        role: 'supervisor',
+        status: 'active',
+      },
+      select: { id: true, username: true, fullName: true },
+    });
+  }
 
   if (!supervisor) {
     supervisor = await prisma.mF_P_User.findFirst({
@@ -731,10 +758,22 @@ async function main() {
       processedDailySheets.set(dateKey, dailySheetId);
     }
 
-    const finalInTime = group.inTime || '07:00';
-    const finalOutTime = group.outTime || '17:00';
-    const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, 8.0);
-    const regularHours = Math.max(0, calc.shiftHours - calc.otHours);
+    let finalInTime: string | null = group.inTime || null;
+    let finalOutTime: string | null = group.outTime || null;
+    let shiftHours = Number(group.hours || 0);
+    let otHours = 0;
+    let breakHours = 0;
+    let regularHours = shiftHours;
+
+    if (group.inTime && group.outTime) {
+      const calc = calculateShiftAndOvertime(group.inTime, group.outTime, 8.0);
+      shiftHours = calc.shiftHours;
+      otHours = calc.otHours;
+      breakHours = calc.breakHours;
+      regularHours = Math.max(0, calc.shiftHours - calc.otHours);
+      finalInTime = group.inTime;
+      finalOutTime = group.outTime;
+    }
 
     if (isDryRun) {
       successCount++;
@@ -743,27 +782,7 @@ async function main() {
 
     const targetUtcDate = new Date(dateKey + 'T00:00:00.000Z');
 
-    // 1. If Equipment was provided, link Operator to Equipment in Daily Equipment Assignment
-    if (localEq) {
-      await prisma.mF_OP_DailyEquipmentAssignment.upsert({
-        where: {
-          dailySheetId_equipmentId: {
-            dailySheetId: dailySheetId!,
-            equipmentId: localEq.id,
-          },
-        },
-        update: {
-          operatorId: localEmp.id,
-        },
-        create: {
-          dailySheetId: dailySheetId!,
-          equipmentId: localEq.id,
-          operatorId: localEmp.id,
-        },
-      });
-    }
-
-    // 2. Ensure DailyAssignment exists for the operator
+    // 1. Ensure DailyAssignment exists for the operator (links operator to this supervisor's daily sheet)
     await prisma.mF_OP_DailyAssignment.upsert({
       where: {
         dailySheetId_employeeId: {
@@ -778,7 +797,7 @@ async function main() {
       },
     });
 
-    // 3. Clear existing time entry for this operator and date to prevent duplicate totals
+    // 2. Clear existing time entry for this operator and date to prevent duplicate totals
     await prisma.mF_OP_TimeEntry.deleteMany({
       where: {
         projectId: project.id,
@@ -787,7 +806,7 @@ async function main() {
       },
     });
 
-    // 4. Create Time Entry for operator linking to Equipment
+    // 3. Create Time Entry for operator with equipmentId directly attached (matching normal system behavior)
     await prisma.mF_OP_TimeEntry.create({
       data: {
         projectId: project.id,
@@ -799,9 +818,9 @@ async function main() {
         effectiveDayTypeId,
         inTime: finalInTime,
         outTime: finalOutTime,
-        shiftHours: calc.shiftHours,
-        overtimeHours: calc.otHours,
-        breakHours: calc.breakHours,
+        shiftHours: shiftHours,
+        overtimeHours: otHours,
+        breakHours: breakHours,
         hours: regularHours,
         status: 'submitted',
         submittedAt: new Date(),

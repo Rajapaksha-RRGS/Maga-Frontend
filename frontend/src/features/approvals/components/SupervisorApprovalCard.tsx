@@ -43,7 +43,15 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   searchScope = 'all',
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'labor' | 'operators' | 'equipment'>('labor');
+  const [activeTab, setActiveTab] = useState<'labor' | 'operators' | 'equipment'>(() => {
+    const hasLabor = (group.workers && group.workers.length > 0);
+    const hasOperators = (group.operators && group.operators.length > 0);
+    const hasEquipment = (group.loggedEquipment && group.loggedEquipment.length > 0);
+
+    if (!hasLabor && hasOperators) return 'operators';
+    if (!hasLabor && !hasOperators && hasEquipment) return 'equipment';
+    return 'labor';
+  });
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [editInTime, setEditInTime] = useState<string>('07:30');
   const [editOutTime, setEditOutTime] = useState<string>('17:00');
@@ -52,10 +60,19 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 
   const q = searchQuery.toLowerCase().trim();
 
-  // Sync local workers when group prop changes
+  // Sync local workers when group prop changes and smart-select active tab
   React.useEffect(() => {
     setLocalWorkers(group.workers || []);
-  }, [group.workers]);
+    const hasLabor = (group.workers && group.workers.length > 0);
+    const hasOperators = (group.operators && group.operators.length > 0);
+    const hasEquipment = (group.loggedEquipment && group.loggedEquipment.length > 0);
+
+    if (!hasLabor && hasOperators) {
+      setActiveTab((prev) => (prev === 'labor' ? 'operators' : prev));
+    } else if (!hasLabor && !hasOperators && hasEquipment) {
+      setActiveTab((prev) => (prev === 'labor' ? 'equipment' : prev));
+    }
+  }, [group.workers, group.operators, group.loggedEquipment]);
 
   const isApproved = group.status === 'approved';
   const isSubmitted = group.status === 'submitted';
@@ -871,11 +888,11 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                   );
                                 }
                                 if (unitUpper === 'MTH') {
-                                  const days = Number(eq.loggedQuantity || 1);
+                                  const qty = Number(eq.loggedQuantity ?? 0);
                                   return (
                                     <>
-                                      <div className="font-semibold text-slate-900">{days} Day{days === 1 ? '' : 's'}</div>
-                                      <span className="text-[10px] text-violet-600 font-medium">Monthly Contract (Days)</span>
+                                      <div className="font-semibold text-slate-900">{qty} mth</div>
+                                      <span className="text-[10px] text-violet-600 font-medium">Monthly Hire (mth)</span>
                                     </>
                                   );
                                 }
