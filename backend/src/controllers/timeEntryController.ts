@@ -2678,19 +2678,13 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         },
       });
 
-      for (const empId of activeEmployeeIds) {
-        await prisma.mF_OP_DailyAssignment.upsert({
-          where: {
-            dailySheetId_employeeId: {
-              dailySheetId: dailySheet.id,
-              employeeId: empId,
-            },
-          },
-          update: {},
-          create: {
+      if (activeEmployeeIds.length > 0) {
+        await prisma.mF_OP_DailyAssignment.createMany({
+          data: activeEmployeeIds.map((empId: string) => ({
             dailySheetId: dailySheet.id,
             employeeId: empId,
-          },
+          })),
+          skipDuplicates: true,
         });
       }
     }

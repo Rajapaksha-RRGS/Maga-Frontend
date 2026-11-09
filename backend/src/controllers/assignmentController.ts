@@ -201,42 +201,38 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
     // Ensure DailySheet exists
     const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
 
-    const createdAssignments = [];
-    for (const empId of employeeIds) {
-      // Remove any existing assignment on the same date under other sheets
-      const otherSheets = await prisma.mF_OP_DailyAssignment.findMany({
-        where: {
-          employeeId: empId,
-          dailySheet: {
-            projectId,
-            date: targetDate,
-            id: { not: dailySheet.id },
-          },
+    // 1. Remove any existing assignment on the same date under other sheets in bulk
+    await prisma.mF_OP_DailyAssignment.deleteMany({
+      where: {
+        employeeId: { in: employeeIds },
+        dailySheet: {
+          projectId,
+          date: targetDate,
+          id: { not: dailySheet.id },
         },
-        select: { id: true },
-      });
+      },
+    });
 
-      if (otherSheets.length > 0) {
-        await prisma.mF_OP_DailyAssignment.deleteMany({
-          where: { id: { in: otherSheets.map((o) => o.id) } },
-        });
-      }
+    // 2. Bulk insert all assignments into dailySheet in one shot
+    await prisma.mF_OP_DailyAssignment.createMany({
+      data: employeeIds.map((empId: string) => ({
+        dailySheetId: dailySheet.id,
+        employeeId: empId,
+      })),
+      skipDuplicates: true,
+    });
 
-      const assignment = await prisma.mF_OP_DailyAssignment.upsert({
-        where: {
-          dailySheetId_employeeId: {
-            dailySheetId: dailySheet.id,
-            employeeId: empId,
-          },
-        },
-        update: {},
-        create: {
-          dailySheetId: dailySheet.id,
-          employeeId: empId,
-        },
-      });
-      createdAssignments.push(assignment);
-    }
+    // 3. Query created assignments for response
+    const createdAssignments = await prisma.mF_OP_DailyAssignment.findMany({
+      where: {
+        dailySheetId: dailySheet.id,
+        employeeId: { in: employeeIds },
+      },
+      select: {
+        id: true,
+        employeeId: true,
+      },
+    });
 
     res.status(201).json({
       success: true,
@@ -353,22 +349,16 @@ export const copyGangsFromDate = async (req: Request, res: Response): Promise<vo
         });
       }
 
-      for (const assign of srcSheet.assignments) {
-        await prisma.mF_OP_DailyAssignment.upsert({
-          where: {
-            dailySheetId_employeeId: {
-              dailySheetId: targetSheet.id,
-              employeeId: assign.employeeId,
-            },
-          },
-          update: {},
-          create: {
+      if (srcSheet.assignments.length > 0) {
+        const createRes = await prisma.mF_OP_DailyAssignment.createMany({
+          data: srcSheet.assignments.map((assign) => ({
             dailySheetId: targetSheet.id,
             employeeId: assign.employeeId,
             isStandby: assign.isStandby,
-          },
+          })),
+          skipDuplicates: true,
         });
-        copiedCount++;
+        copiedCount += createRes.count;
       }
     }
 
@@ -761,43 +751,32 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
     const targetDate = parseDate(date);
     const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
 
-    const createdAssignments: any[] = [];
-
-    // 1. ALWAYS assign operators to the dailySheet in MF_OP_DailyAssignment!
-    for (const opId of operatorIds) {
-      const otherSheets = await prisma.mF_OP_DailyAssignment.findMany({
-        where: {
-          employeeId: opId,
-          dailySheet: {
-            projectId,
-            date: targetDate,
-            id: { not: dailySheet.id },
-          },
+    // 1. ALWAYS assign operators to the dailySheet in MF_OP_DailyAssignment in bulk!
+    await prisma.mF_OP_DailyAssignment.deleteMany({
+      where: {
+        employeeId: { in: operatorIds },
+        dailySheet: {
+          projectId,
+          date: targetDate,
+          id: { not: dailySheet.id },
         },
-        select: { id: true },
-      });
+      },
+    });
 
-      if (otherSheets.length > 0) {
-        await prisma.mF_OP_DailyAssignment.deleteMany({
-          where: { id: { in: otherSheets.map((o) => o.id) } },
-        });
-      }
+    await prisma.mF_OP_DailyAssignment.createMany({
+      data: operatorIds.map((opId: string) => ({
+        dailySheetId: dailySheet.id,
+        employeeId: opId,
+      })),
+      skipDuplicates: true,
+    });
 
-      const asgn = await prisma.mF_OP_DailyAssignment.upsert({
-        where: {
-          dailySheetId_employeeId: {
-            dailySheetId: dailySheet.id,
-            employeeId: opId,
-          },
-        },
-        update: {},
-        create: {
-          dailySheetId: dailySheet.id,
-          employeeId: opId,
-        },
-      });
-      createdAssignments.push(asgn);
-    }
+    const createdAssignments = await prisma.mF_OP_DailyAssignment.findMany({
+      where: {
+        dailySheetId: dailySheet.id,
+        employeeId: { in: operatorIds },
+      },
+    });
 
     // 2. If equipmentId was provided (or equipment exists), also link to DailyEquipmentAssignment
     let targetEquipmentId = equipmentId;
