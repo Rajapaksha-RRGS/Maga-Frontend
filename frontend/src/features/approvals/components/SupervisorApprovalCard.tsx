@@ -18,8 +18,18 @@ import {
 import { 
   adminAdjustWorker, 
   type SupervisorApprovalGroup, 
-  type ApprovalWorkerItem 
+  type ApprovalWorkerItem,
+  type ApprovalEquipmentItem
 } from '../services/approvalService';
+
+const isEquipmentLogged = (eq: ApprovalEquipmentItem) =>
+  eq.netHours > 0 ||
+  eq.workingHours > 0 ||
+  eq.loggedQuantity > 0 ||
+  eq.fuelLiters > 0 ||
+  eq.status === 'approved' ||
+  eq.status === 'logged' ||
+  Boolean(eq.splits && eq.splits.length > 0 && eq.splits.some((s) => s.utilization > 0));
 
 interface SupervisorApprovalCardProps {
   group: SupervisorApprovalGroup;
@@ -44,9 +54,9 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'labor' | 'operators' | 'equipment'>(() => {
-    const hasLabor = (group.workers && group.workers.length > 0);
-    const hasOperators = (group.operators && group.operators.length > 0);
-    const hasEquipment = (group.loggedEquipment && group.loggedEquipment.length > 0);
+    const hasLabor = Boolean(group.workers && group.workers.length > 0);
+    const hasOperators = Boolean(group.operators && group.operators.length > 0);
+    const hasEquipment = Boolean(group.equipment && group.equipment.some(isEquipmentLogged));
 
     if (!hasLabor && hasOperators) return 'operators';
     if (!hasLabor && !hasOperators && hasEquipment) return 'equipment';
@@ -63,16 +73,16 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   // Sync local workers when group prop changes and smart-select active tab
   React.useEffect(() => {
     setLocalWorkers(group.workers || []);
-    const hasLabor = (group.workers && group.workers.length > 0);
-    const hasOperators = (group.operators && group.operators.length > 0);
-    const hasEquipment = (group.loggedEquipment && group.loggedEquipment.length > 0);
+    const hasLabor = Boolean(group.workers && group.workers.length > 0);
+    const hasOperators = Boolean(group.operators && group.operators.length > 0);
+    const hasEquipment = Boolean(group.equipment && group.equipment.some(isEquipmentLogged));
 
     if (!hasLabor && hasOperators) {
       setActiveTab((prev) => (prev === 'labor' ? 'operators' : prev));
     } else if (!hasLabor && !hasOperators && hasEquipment) {
       setActiveTab((prev) => (prev === 'labor' ? 'equipment' : prev));
     }
-  }, [group.workers, group.operators, group.loggedEquipment]);
+  }, [group.workers, group.operators, group.equipment]);
 
   const isApproved = group.status === 'approved';
   const isSubmitted = group.status === 'submitted';
@@ -168,16 +178,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 
   // Method 2: Only show logged equipment (machines with actual hours/usage logged)
   const loggedEquipment = useMemo(() => {
-    return (group.equipment || []).filter(
-      (eq) =>
-        eq.netHours > 0 ||
-        eq.workingHours > 0 ||
-        eq.loggedQuantity > 0 ||
-        eq.fuelLiters > 0 ||
-        eq.status === 'approved' ||
-        eq.status === 'logged' ||
-        (eq.splits && eq.splits.length > 0 && eq.splits.some((s) => s.utilization > 0))
-    );
+    return (group.equipment || []).filter(isEquipmentLogged);
   }, [group.equipment]);
 
   // ── Targeted scope & query filtering with useMemo ───────────────────────────
