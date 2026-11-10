@@ -271,7 +271,7 @@ export default function ApprovalsPage() {
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
                 data.dayType.isAllOvertime || data.dayType.standardHoursCap === 0
                   ? 'bg-amber-50 text-amber-800 border-amber-300'
-                  : data.dayType.standardHoursCap === 6
+                  : data.dayType.standardHoursCap === 5.5 || data.dayType.name?.toLowerCase().includes('saturday')
                   ? 'bg-blue-50 text-blue-800 border-blue-200'
                   : 'bg-emerald-50 text-emerald-800 border-emerald-200'
               }`}
@@ -281,7 +281,7 @@ export default function ApprovalsPage() {
                 className={`w-2 h-2 rounded-full ${
                   data.dayType.isAllOvertime || data.dayType.standardHoursCap === 0
                     ? 'bg-amber-500 animate-pulse'
-                    : data.dayType.standardHoursCap === 6
+                    : data.dayType.standardHoursCap === 5.5 || data.dayType.name?.toLowerCase().includes('saturday')
                     ? 'bg-blue-500'
                     : 'bg-emerald-500'
                 }`}

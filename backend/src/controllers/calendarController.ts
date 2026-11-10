@@ -71,12 +71,21 @@ export async function getDayTypeRulesAndId(projectId: string, date: Date) {
 
   const code = (dayType?.code || 'NORMAL').toUpperCase();
   const mult = Number(dayType?.rateMultiplier ?? 1.0);
+  const isSaturday = code === 'SATURDAY';
+  const isSunday = code === 'SUNDAY';
+  const isAllOvertime = isSunday || code === 'POYA' || code === 'PUBLIC_HOLIDAY' || code === 'HOLIDAY';
+
+  const displayName = dayType?.name || (isSunday ? 'Sunday' : isSaturday ? 'Saturday' : isAllOvertime ? 'Public Holiday' : 'Normal Day');
 
   return {
     effectiveDayTypeId: dayType?.id || '',
     rateMultiplier: mult,
-    isAllOvertime: code === 'SUNDAY' || code === 'POYA' || code === 'PUBLIC_HOLIDAY' || code === 'HOLIDAY',
-    standardHoursCap: code === 'SATURDAY' ? 6.5 : 8.0,
+    code,
+    name: displayName,
+    isAllOvertime,
+    isSaturday,
+    isSunday,
+    standardHoursCap: isAllOvertime ? 0.0 : isSaturday ? 5.5 : 8.0,
   };
 }
 
@@ -104,12 +113,19 @@ async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date
       const netHours = Number(entry.hours) || 0;
       let otHours = 0;
 
-      if (rules.isAllOvertime) {
-        otHours = netHours;
-      } else if (netHours > rules.standardHoursCap) {
-        otHours = Math.round((netHours - rules.standardHoursCap) * 100) / 100;
-      } else {
+      if (netHours <= 0) {
         otHours = 0;
+      } else if (rules.isAllOvertime) {
+        otHours = netHours;
+      } else if (rules.isSaturday) {
+        // Saturday: Base standard is 5.5 hours (> 5.5 => +OT, < 5.5 => -OT)
+        otHours = Math.round((netHours - 5.5) * 100) / 100;
+      } else if (netHours > 6.0) {
+        // Weekday Full Day: Base standard is 8.0 hours (> 8 => +OT, < 8 => -OT)
+        otHours = Math.round((netHours - 8.0) * 100) / 100;
+      } else {
+        // Weekday Half Day (<= 6.0h): Base standard is 4.0 hours (> 4 => +OT, < 4 => -OT)
+        otHours = Math.round((netHours - 4.0) * 100) / 100;
       }
 
       await prisma.mF_OP_TimeEntry.update({

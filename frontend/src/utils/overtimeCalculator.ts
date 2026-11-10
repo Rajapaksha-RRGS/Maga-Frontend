@@ -44,23 +44,37 @@ export interface OvertimeBreakdown {
  * - Out-time passes 11:00 PM (23:00): Additional 1.0 hour deducted for dinner/night break.
  */
 export function calculateBreakHours(grossHours: number, inTime?: string, outTime?: string): number {
-  let breaks = grossHours >= 5.0 ? 1.0 : 0.0;
-  if (outTime) {
-    const [outH, outM] = outTime.split(':').map(Number);
-    const outMins = outH * 60 + (outM || 0);
-    let inMins = 0;
-    if (inTime) {
-      const [inH, inM] = inTime.split(':').map(Number);
-      inMins = inH * 60 + (inM || 0);
-    }
-    const isPast11PM = (outMins >= inMins)
-      ? (outMins >= 23 * 60)
-      : (inMins <= 23 * 60 || outMins >= 23 * 60);
-    if (isPast11PM) {
-      breaks += 1.0;
-    }
+  if (!inTime || !outTime) {
+    return grossHours >= 5.0 ? 1.0 : 0.0;
   }
-  return breaks;
+  const [inH, inM] = inTime.split(':').map(Number);
+  const [outH, outM] = outTime.split(':').map(Number);
+  if (isNaN(inH) || isNaN(outH)) return grossHours >= 5.0 ? 1.0 : 0.0;
+
+  const inMins = inH * 60 + (inM || 0);
+  const outMins = outH * 60 + (outM || 0);
+
+  const calcOverlap = (wStart: number, wEnd: number): number => {
+    if (outMins > inMins) {
+      return Math.max(0, Math.min(outMins, wEnd) - Math.max(inMins, wStart));
+    } else {
+      const seg1 = Math.max(0, Math.min(1440, wEnd) - Math.max(inMins, wStart));
+      const seg2 = Math.max(0, Math.min(outMins, wEnd) - Math.max(0, wStart));
+      return seg1 + seg2;
+    }
+  };
+
+  let totalBreaks = 0;
+  // Lunch (12:00 - 13:00)
+  if (calcOverlap(12 * 60, 13 * 60) > 0) {
+    totalBreaks += 1.0;
+  }
+  // Dinner (22:00 - 23:00)
+  if (calcOverlap(22 * 60, 23 * 60) > 0) {
+    totalBreaks += 1.0;
+  }
+
+  return Math.min(totalBreaks, grossHours);
 }
 
 /**
@@ -83,7 +97,7 @@ export function getDayTypeRule(
       return { standardCap: 0.0, isAllOvertime: true, dayTypeLabel: 'Public Holiday (Full OT)' };
     }
     if (lower.includes('saturday')) {
-      return { standardCap: 6.0, isAllOvertime: false, dayTypeLabel: 'Saturday (Half-day)' };
+      return { standardCap: 5.5, isAllOvertime: false, dayTypeLabel: 'Saturday' };
     }
     if (lower.includes('shutdown')) {
       return { standardCap: 8.0, isAllOvertime: false, dayTypeLabel: 'Shutdown (Normal Day Rules)' };
@@ -101,7 +115,7 @@ export function getDayTypeRule(
   }
   if (dayOfWeek === 6) {
     // Saturday
-    return { standardCap: 6.0, isAllOvertime: false, dayTypeLabel: 'Saturday (Half-day)' };
+    return { standardCap: 5.5, isAllOvertime: false, dayTypeLabel: 'Saturday' };
   }
 
   // Monday to Friday
@@ -109,14 +123,15 @@ export function getDayTypeRule(
 }
 
 /**
- * Calculate Normal vs Overtime hours for an employee on a specific date.
+ * Calculate Normal vs Overtime hours for an employee on a specific date per logic document.
  */
 export function calculateDailyHoursAndOT(
   dateStr: string,
   totalHours: number,
   explicitDayType?: string,
   breakHours: number = 0,
-  grossHours?: number
+  grossHours?: number,
+  isExternal: boolean = false
 ): OvertimeBreakdown {
   const effectiveHours = totalHours;
   const gross = grossHours !== undefined ? grossHours : effectiveHours + breakHours;
@@ -136,8 +151,33 @@ export function calculateDailyHoursAndOT(
     };
   }
 
-  const normalHours = Math.min(effectiveHours, standardCap);
-  const overtimeHours = Math.max(0, effectiveHours - standardCap);
+  const isSat = standardCap === 5.5 || dayTypeLabel.toLowerCase().includes('saturday');
+  let normalHours = 0;
+  let overtimeHours = 0;
+
+  if (effectiveHours <= 0) {
+    normalHours = 0;
+    overtimeHours = 0;
+  } else if (isExternal) {
+    // External / Subcontractor Labor:
+    // Billed purely on actual hours worked (capped at standardCap). No negative OT.
+    const cap = isSat ? 5.5 : 8.0;
+    normalHours = Math.min(effectiveHours, cap);
+    overtimeHours = effectiveHours > cap ? Math.round((effectiveHours - cap) * 100) / 100 : 0;
+  } else if (isSat) {
+    // Internal Saturday:
+    // Regular working hours is actual worked hours (capped at 5.5). Overtime is calculated against 5.5 base.
+    normalHours = Math.min(effectiveHours, 5.5);
+    overtimeHours = Math.round((effectiveHours - 5.5) * 100) / 100;
+  } else if (effectiveHours > 6.0) {
+    // Weekday Full Day: Base standard is 8.0 hours (> 8 => +OT, < 8 => -OT)
+    normalHours = Math.min(effectiveHours, 8.0);
+    overtimeHours = Math.round((effectiveHours - 8.0) * 100) / 100;
+  } else {
+    // Weekday Half Day: Base standard is 4.0 hours (> 4 => +OT, < 4 => -OT)
+    normalHours = Math.min(effectiveHours, 4.0);
+    overtimeHours = Math.round((effectiveHours - 4.0) * 100) / 100;
+  }
 
   return {
     grossHours: gross,
@@ -183,7 +223,7 @@ export function calculateShiftBreakdown(
   const inMins = timeToMinutes(inTime);
   const outMins = timeToMinutes(outTime);
   let diffMins = outMins - inMins;
-  if (diffMins < 0) diffMins += 24 * 60;
+  if (diffMins <= 0) diffMins += 24 * 60;
 
   if (diffMins <= 0) return null;
 

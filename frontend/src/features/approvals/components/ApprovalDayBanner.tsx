@@ -11,7 +11,7 @@ export const ApprovalDayBanner: React.FC<ApprovalDayBannerProps> = ({ date, dayT
   if (!dayType) return null;
 
   const isHolidayOrSunday = dayType.isAllOvertime || dayType.standardHoursCap === 0;
-  const isSaturday = dayType.standardHoursCap === 6;
+  const isSaturday = dayType.standardHoursCap === 5.5 || dayType.standardHoursCap === 6 || dayType.name?.toLowerCase().includes('saturday');
 
   const formattedDate = new Date(date).toLocaleDateString('en-GB', {
     weekday: 'long',

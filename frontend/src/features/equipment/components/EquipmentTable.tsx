@@ -9,16 +9,14 @@ interface Props { data: Equipment[]; onRowClick?: (e: Equipment) => void; }
 
 const columns: Column<Equipment>[] = [
   { 
-    header: 'Equipment / Vehicle', 
+    header: 'Equipment', 
     accessor: 'code', 
     render: (e) => (
       <div className="flex flex-col">
         <span className="font-mono text-xs font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded w-fit">
-          {e.vehicleNo || e.code}
+          {e.magaNo || e.code}
         </span>
-        {e.magaNo && e.magaNo !== (e.vehicleNo || e.code) && (
-          <span className="font-mono text-[10px] text-slate-500 mt-0.5">ERP: {e.magaNo}</span>
-        )}
+        
       </div>
     ) 
   },

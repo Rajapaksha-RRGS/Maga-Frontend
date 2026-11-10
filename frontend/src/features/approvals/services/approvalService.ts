@@ -30,10 +30,16 @@ export interface ApprovalWorkerItem {
   fullName: string;
   tradeGroup: string;
   businessPartner: string;
+  isExternal?: boolean;
+  daysWorked?: number;
   inTime: string;
   outTime: string;
   hours: number;
   otHours: number;
+  breakHours?: number;
+  isLunchDeducted?: boolean;
+  isDinnerDeducted?: boolean;
+  additionalHours?: number;
   shiftHours?: number;
   effectiveHours?: number;
   idleHours?: number;
@@ -47,10 +53,16 @@ export interface ApprovalOperatorItem {
   callingName: string;
   fullName: string;
   tradeGroup: string;
+  isExternal?: boolean;
+  daysWorked?: number;
   inTime: string;
   outTime: string;
   hours: number;
   otHours: number;
+  breakHours?: number;
+  isLunchDeducted?: boolean;
+  isDinnerDeducted?: boolean;
+  additionalHours?: number;
   shiftHours?: number;
   effectiveHours?: number;
   idleHours?: number;
@@ -230,6 +242,7 @@ export async function adminAdjustWorker(payload: {
   outTime: string;
   hours?: number;
   overtimeHours?: number;
+  additionalHours?: number;
 }): Promise<{
   success: boolean;
   employeeId: string;
@@ -237,6 +250,7 @@ export async function adminAdjustWorker(payload: {
   outTime: string;
   hours: number;
   overtimeHours: number;
+  additionalHours?: number;
   shiftHours?: number;
   effectiveHours?: number;
 }> {

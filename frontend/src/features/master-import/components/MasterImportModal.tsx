@@ -184,10 +184,46 @@ export default function MasterImportModal<T>({
 
     setSelectedCodes((prev) => {
       const next = new Set(prev);
-      if (next.has(code)) {
+      const isSelecting = !next.has(code);
+
+      // Check if this item is a Master activity code (e.g., 33-44-17-00)
+      const isMasterActivity =
+        entityName === 'Activity Code' && /^\d{2}-\d{2}-\d{2}-\d{2}$/.test(code.trim());
+
+      // If it's a master activity, also find its derived children in catalog
+      let childCodes: string[] = [];
+      if (isMasterActivity) {
+        const base = code.trim().toUpperCase();
+        childCodes = catalog
+          .map(getItemCode)
+          .filter((c) => {
+            const clean = c.trim().toUpperCase();
+            return (
+              clean !== base &&
+              clean.startsWith(base) &&
+              /^(\d{2}-\d{2}-\d{2}-\d{2})[-/.]([A-Za-z0-9_-]+)/.test(clean)
+            );
+          });
+      }
+
+      if (!isSelecting) {
         next.delete(code);
+        // Also unselect children if parent is unselected
+        for (const childCode of childCodes) {
+          next.delete(childCode);
+        }
       } else {
         next.add(code);
+        // Also select available children
+        for (const childCode of childCodes) {
+          const childItem = catalog.find((c) => getItemCode(c) === childCode);
+          if (childItem) {
+            const { isAlreadyInProject, isInOtherSite } = getItemStatus(childItem);
+            if (!isAlreadyInProject && !isInOtherSite) {
+              next.add(childCode);
+            }
+          }
+        }
       }
       return next;
     });
@@ -198,17 +234,23 @@ export default function MasterImportModal<T>({
     const itemsToImport = catalog.filter((item) => selectedCodes.has(getItemCode(item)));
     setIsImporting(true);
     try {
-      await onImport(itemsToImport);
+      const res: any = await onImport(itemsToImport);
+      const totalCount = res?.importedCount || itemsToImport.length;
+      const countLabel =
+        totalCount > itemsToImport.length
+          ? `${itemsToImport.length} selected (${totalCount} including sub-activities)`
+          : `${totalCount}`;
+
       setSuccessMessage(
-        `Successfully imported ${itemsToImport.length} ${entityName.toLowerCase()}${
-          itemsToImport.length !== 1 ? 's' : ''
+        `Successfully imported ${countLabel} ${entityName.toLowerCase()}${
+          totalCount !== 1 ? 's' : ''
         } into project workspace!`
       );
       setSelectedCodes(new Set());
       setTimeout(() => {
         setSuccessMessage(null);
         onClose();
-      }, 1300);
+      }, 1500);
     } catch (err: any) {
       console.error('Import failed:', err);
       alert(err?.message || 'Failed to import master records');

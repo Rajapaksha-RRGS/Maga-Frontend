@@ -17,3 +17,5 @@ npm --prefix backend run upload:labor -- "August_Labour.csv" 521
 Terminal එකේ පහත කෙටි command එක පමණක් run කරන්න:
 bash
 cd g:\Maga-Frontend\backend
+
+මාසික (mth) යන්ත්‍රයක් අදාළ මාසය තුළ (උදා: අගෝස්තු මාසයේ) දින කීයක් වැඩ කළද (දින 5ක් වුවද, දින 13ක් වුවද, දින 20ක් වුවද), මුළු මාසයටම එකතුව උපරිම 1.00 mth වන ලෙස Activities අතර අනුපාතිකව (Proportionally) බෙදී යයි.

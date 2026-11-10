@@ -579,7 +579,7 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
         inTime: firstTe.inTime || undefined,
         outTime: firstTe.outTime || undefined,
         shiftHours: Number(firstTe.shiftHours || 0) || empEntries!.reduce((sum, e) => sum + Number(e.hours || 0), 0),
-        otHours: empEntries!.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0),
+        otHours: Math.max(...empEntries!.map((e) => Number(e.overtimeHours || 0))),
         assignedEquipmentId: firstTe.equipmentId || a.equipmentId || undefined,
         equipmentSplits: empEntries!.filter((e) => e.equipmentId).map((e) => ({
           id: e.id,
@@ -668,7 +668,7 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
         inTime: firstTe.inTime || undefined,
         outTime: firstTe.outTime || undefined,
         shiftHours: Number(firstTe.shiftHours || 0) || empEntries!.reduce((sum, e) => sum + Number(e.hours || 0), 0),
-        otHours: empEntries!.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0),
+        otHours: Math.max(...empEntries!.map((e) => Number(e.overtimeHours || 0))),
         assignedEquipmentId: firstTe.equipmentId || undefined,
         equipmentSplits: empEntries!.filter((e) => e.equipmentId).map((e) => ({
           id: e.id,
@@ -716,7 +716,7 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
           inTime: firstTe.inTime || undefined,
           outTime: firstTe.outTime || undefined,
           shiftHours: Number(firstTe.shiftHours || 0) || empEntries.reduce((sum, e) => sum + Number(e.hours || 0), 0),
-          otHours: empEntries.reduce((sum, e) => sum + Number(e.overtimeHours || 0), 0),
+          otHours: Math.max(...empEntries.map((e) => Number(e.overtimeHours || 0))),
           assignedEquipmentId: firstTe.equipmentId || undefined,
           equipmentSplits: empEntries.filter((e) => e.equipmentId).map((e) => ({
             id: e.id,

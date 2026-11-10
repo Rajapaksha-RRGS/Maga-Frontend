@@ -47,6 +47,10 @@ export interface LaborerEntry {
   outTime: string;
   shiftHours: number;
   otHours: number;
+  breakHours?: number;
+  isLunchDeducted?: boolean;
+  isDinnerDeducted?: boolean;
+  additionalHours?: number;
   activities: ActivitySplit[];
   status: 'draft' | 'pending' | 'done';
   isStandbyAssigned?: boolean;
@@ -77,6 +81,10 @@ export interface OperatorEntry {
   outTime: string;
   shiftHours: number;
   otHours: number;
+  breakHours?: number;
+  isLunchDeducted?: boolean;
+  isDinnerDeducted?: boolean;
+  additionalHours?: number;
   assignedEquipmentId: string; // Primary ID of the mapped equipment
   equipmentSplits?: OperatorEquipmentSplit[];
   status: 'draft' | 'pending' | 'done';
@@ -650,15 +658,25 @@ export const supervisorStorage = {
 
           const backendInTime = myEntries[0]?.inTime || '';
           const backendOutTime = myEntries[0]?.outTime || '';
-          const backendShift = myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0);
-          const backendOt = myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0);
-          const backendActivities: ActivitySplit[] = myEntries
-            .filter((e: any) => e.activity?.code || e.activityId)
-            .map((e: any, idx: number) => ({
-              id: e.id || `act-${idx}`,
-              activityCode: e.activity?.code || '',
-              hours: Number(e.hours) || 0,
+          const backendShift = Number(myEntries[0]?.shiftHours || myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0));
+          const backendOt = Number(myEntries[0]?.overtimeHours ?? myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0));
+          
+          let backendActivities: ActivitySplit[] = [];
+          if (myEntries[0]?.activitySplits && myEntries[0].activitySplits.length > 0) {
+            backendActivities = myEntries[0].activitySplits.map((s: any, idx: number) => ({
+              id: s.id || `act-${idx}`,
+              activityCode: s.activityCode?.code || '',
+              hours: Number(s.hours) || 0,
             }));
+          } else {
+            backendActivities = myEntries
+              .filter((e: any) => e.activity?.code || e.activityId)
+              .map((e: any, idx: number) => ({
+                id: e.id || `act-${idx}`,
+                activityCode: e.activity?.code || '',
+                hours: Number(e.hours) || 0,
+              }));
+          }
 
           const hasTimes = Boolean(backendInTime || backendOutTime || backendActivities.length > 0);
           const serverStatus = myEntries[0]?.status;
@@ -681,6 +699,10 @@ export const supervisorStorage = {
             outTime: backendOutTime,
             shiftHours: backendShift,
             otHours: backendOt,
+            breakHours: Number(myEntries[0]?.breakHours || 0),
+            additionalHours: Number(myEntries[0]?.additionalHours || 0),
+            isLunchDeducted: Boolean(myEntries[0]?.isLunchDeducted),
+            isDinnerDeducted: Boolean(myEntries[0]?.isDinnerDeducted),
             activities: backendActivities,
             status,
             isAbsent: false,
@@ -741,6 +763,10 @@ export const supervisorStorage = {
             outTime: backendOutTime,
             shiftHours: backendShift,
             otHours: backendOt,
+            additionalHours: Number(te?.additionalHours || 0),
+            breakHours: Number(te?.breakHours || 0),
+            isLunchDeducted: Boolean(te?.isLunchDeducted),
+            isDinnerDeducted: Boolean(te?.isDinnerDeducted),
             assignedEquipmentId: backendEqId,
             equipmentSplits: backendSplits,
             status,
@@ -832,6 +858,7 @@ export const supervisorStorage = {
                 inTime: lab.inTime || undefined,
                 outTime: lab.outTime || undefined,
                 otHours: lab.otHours || undefined,
+                additionalHours: lab.additionalHours || 0,
                 status: lab.status || 'draft',
               });
               sumAssigned += actHours;
@@ -839,7 +866,7 @@ export const supervisorStorage = {
           }
         }
 
-        // Auto-balance Idle hours
+        // Auto-balance Idle hours: if supervisor assigned fewer activity hours than total shift, remainder is Idle
         if (totalShift > sumAssigned && zidleId) {
           const idleHours = Math.round((totalShift - sumAssigned) * 100) / 100;
           if (idleHours > 0) {
@@ -850,6 +877,7 @@ export const supervisorStorage = {
               inTime: lab.inTime || undefined,
               outTime: lab.outTime || undefined,
               otHours: lab.otHours || undefined,
+              additionalHours: lab.additionalHours || 0,
               status: lab.status || 'draft',
             });
           }
@@ -861,6 +889,7 @@ export const supervisorStorage = {
             inTime: lab.inTime || undefined,
             outTime: lab.outTime || undefined,
             otHours: lab.otHours || undefined,
+            additionalHours: lab.additionalHours || 0,
             status: lab.status || 'draft',
           });
         }
@@ -912,6 +941,7 @@ export const supervisorStorage = {
           outTime: op.outTime || undefined,
           shiftHours,
           otHours: op.otHours || undefined,
+          additionalHours: op.additionalHours || 0,
           assignedEquipmentId: op.assignedEquipmentId || (splits[0]?.equipmentId !== 'ZXQOPRIDLE' ? splits[0]?.equipmentId : undefined),
           splits: splits.length > 0 ? splits : undefined,
           notes: op.notes || undefined,

@@ -57,11 +57,17 @@ interface BatchActivityItem {
 }
 
 // Helper to get effective shift hours for a worker in current context
-function getWorkerEffectiveShift(worker: LaborerEntry, referenceOutTime: string): { shift: number; ot: number; hasIn: boolean } {
+function getWorkerEffectiveShift(worker: LaborerEntry, referenceOutTime: string, selectedDate?: string): { shift: number; ot: number; hasIn: boolean; breakHours?: number; isLunchDeducted?: boolean; isDinnerDeducted?: boolean; additionalHours?: number } {
   if (!worker.inTime) return { shift: 0, ot: 0, hasIn: false };
   const outTime = worker.outTime || referenceOutTime;
-  const { shift, ot } = computeHours(worker.inTime, outTime);
-  return { shift, ot, hasIn: true };
+  const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted, additionalHours } = computeHours(
+    worker.inTime,
+    outTime,
+    selectedDate,
+    undefined,
+    worker.additionalHours || 0
+  );
+  return { shift, ot, hasIn: true, breakHours, isLunchDeducted, isDinnerDeducted, additionalHours };
 }
 
 export function LaborEntryView({
@@ -158,6 +164,7 @@ export function LaborEntryView({
 
   // ── OUT MODE BATCH STATE ──
   const [batchOutTime, setBatchOutTime] = useState('17:00');
+  const [batchAdditionalHours, setBatchAdditionalHours] = useState('0.0');
   const [batchActivities, setBatchActivities] = useState<BatchActivityItem[]>([
     { id: 'batch-act-1', activityCode: '', hours: 8.0 }
   ]);
@@ -166,7 +173,7 @@ export function LaborEntryView({
   const shiftGroupStats = useMemo(() => {
     const counts: Record<string, number> = {};
     laborers.forEach((l) => {
-      const info = getWorkerEffectiveShift(l, batchOutTime);
+      const info = getWorkerEffectiveShift(l, batchOutTime, selectedDate);
       const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
       counts[key] = (counts[key] || 0) + 1;
     });
@@ -179,7 +186,7 @@ export function LaborEntryView({
     });
 
     return { counts, keys };
-  }, [laborers, batchOutTime]);
+  }, [laborers, batchOutTime, selectedDate]);
 
   // Derived unique Trade Groups for Trade filter chips
   const tradeGroupStats = useMemo(() => {
@@ -219,7 +226,7 @@ export function LaborEntryView({
 
       // Shift Hours filter
       if (selectedShiftFilter !== 'all') {
-        const info = getWorkerEffectiveShift(l, batchOutTime);
+        const info = getWorkerEffectiveShift(l, batchOutTime, selectedDate);
         const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
         if (key !== selectedShiftFilter) {
           return false;
@@ -306,7 +313,13 @@ export function LaborEntryView({
       if (!targetIds.includes(l.id)) return l;
       const inTime = batchInTime;
       const outTime = l.outTime;
-      const { shift, ot } = computeHours(inTime, outTime);
+      const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+        inTime,
+        outTime,
+        selectedDate,
+        undefined,
+        l.additionalHours || 0
+      );
 
       const isComplete = inTime && outTime && l.activities.length > 0;
       return {
@@ -314,6 +327,9 @@ export function LaborEntryView({
         inTime,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         isAbsent: false,
         status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
         lastSavedAt: `In: ${batchInTime}`,
@@ -330,7 +346,14 @@ export function LaborEntryView({
     const targetIds = selectedFilteredWorkerIds;
     if (targetIds.length === 0) return;
 
-    const { shift, ot } = computeHours(batchInTime, batchOutTime);
+    const addVal = parseFloat(batchAdditionalHours) || 0;
+    const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+      batchInTime,
+      batchOutTime,
+      selectedDate,
+      undefined,
+      addVal
+    );
 
     const updated = laborers.map((l) => {
       if (!targetIds.includes(l.id)) return l;
@@ -347,8 +370,12 @@ export function LaborEntryView({
         ...l,
         inTime: batchInTime,
         outTime: batchOutTime,
+        additionalHours: addVal,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         activities: newSplits,
         isAbsent: false,
         status: 'done' as const,
@@ -373,7 +400,45 @@ export function LaborEntryView({
       laborers.find((l) => l.inTime) ||
       { inTime: batchInTime || '07:00' };
     const inTime = sampleWorker.inTime || '07:00';
-    const { shift } = computeHours(inTime, newOutTime);
+    const addVal = parseFloat(batchAdditionalHours) || 0;
+    const { shift } = computeHours(inTime, newOutTime, selectedDate, undefined, addVal);
+    if (shift > 0) {
+      setTargetShiftHours(shift);
+      setBatchActivities((prev) => {
+        if (prev.length <= 1) {
+          return [{
+            id: 'batch-act-1',
+            activityCode: prev[0]?.activityCode || activityOptions[0]?.code || '',
+            hours: shift,
+          }];
+        } else {
+          const sum = prev.reduce((acc, a) => acc + (a.hours || 0), 0);
+          if (sum > 0) {
+            let allocated = 0;
+            return prev.map((a, idx) => {
+              if (idx === prev.length - 1) {
+                return { ...a, hours: parseFloat(Math.max(0.5, shift - allocated).toFixed(1)) };
+              }
+              const share = parseFloat(((a.hours / sum) * shift).toFixed(1));
+              allocated += share;
+              return { ...a, hours: share };
+            });
+          }
+          return prev;
+        }
+      });
+    }
+  };
+
+  // ── DYNAMIC BATCH ADDITIONAL HOURS HANDLER ──
+  const handleBatchAdditionalHoursChange = (newAddStr: string) => {
+    setBatchAdditionalHours(newAddStr);
+    const addVal = parseFloat(newAddStr) || 0;
+    const sampleWorker = laborers.find((l) => selectedWorkerIds.includes(l.id) && l.inTime) ||
+      laborers.find((l) => l.inTime) ||
+      { inTime: batchInTime || '07:00' };
+    const inTime = sampleWorker.inTime || '07:00';
+    const { shift } = computeHours(inTime, batchOutTime, selectedDate, undefined, addVal);
     if (shift > 0) {
       setTargetShiftHours(shift);
       setBatchActivities((prev) => {
@@ -412,7 +477,7 @@ export function LaborEntryView({
     } else {
       // Auto-select all workers belonging to this specific shift cohort!
       const matchingCohortIds = laborers.filter((l) => {
-        const info = getWorkerEffectiveShift(l, batchOutTime);
+        const info = getWorkerEffectiveShift(l, batchOutTime, selectedDate);
         const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
         return key === shiftKey;
       }).map((l) => l.id);
@@ -515,7 +580,7 @@ export function LaborEntryView({
     // Group selected workers by effective shift hours
     const selectedShiftGroups: Record<string, LaborerEntry[]> = {};
     selectedWorkers.forEach((w) => {
-      const info = getWorkerEffectiveShift(w, batchOutTime);
+      const info = getWorkerEffectiveShift(w, batchOutTime, selectedDate);
       const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
       if (!selectedShiftGroups[key]) selectedShiftGroups[key] = [];
       selectedShiftGroups[key].push(w);
@@ -534,11 +599,19 @@ export function LaborEntryView({
       return;
     }
 
+    const addVal = parseFloat(batchAdditionalHours) || 0;
     const updated = laborers.map((l) => {
       if (!targetIds.includes(l.id)) return l;
       const inTime = l.inTime || '07:00'; // Fallback if In wasn't marked
       const outTime = batchOutTime;
-      const { shift, ot } = computeHours(inTime, outTime);
+      const workerAddVal = addVal > 0 ? addVal : (l.additionalHours || 0);
+      const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+        inTime,
+        outTime,
+        selectedDate,
+        undefined,
+        workerAddVal
+      );
 
       // Map batch activities to laborer splits (only valid activity codes)
       const newSplits: ActivitySplit[] = batchActivities
@@ -553,8 +626,12 @@ export function LaborEntryView({
         ...l,
         inTime,
         outTime,
+        additionalHours: workerAddVal,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         activities: newSplits,
         status: 'done' as const,
         lastSavedAt: `Out: ${batchOutTime}`,
@@ -567,15 +644,72 @@ export function LaborEntryView({
   };
 
   // ── INDIVIDUAL WORKER UPDATES ──
+  const handleIndividualAdditionalHoursChange = (id: string, additionalHours: number) => {
+    const updated = laborers.map((l) => {
+      if (l.id !== id) return l;
+      const addVal = Math.max(0, additionalHours);
+      const inTime = l.inTime || '';
+      const outTime = l.outTime || '';
+      const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+        inTime,
+        outTime,
+        selectedDate,
+        undefined,
+        addVal
+      );
+
+      // Preserve supervisor's entered activities; only trim if activities exceed shift
+      let activities = [...l.activities];
+      if (shift > 0) {
+        let runningMins = 0;
+        const maxMins = hhmmToMinutes(shift);
+        activities = activities
+          .map((a) => {
+            const actMins = hhmmToMinutes(a.hours);
+            if (runningMins + actMins <= maxMins) {
+              runningMins += actMins;
+              return a;
+            } else {
+              const availMins = Math.max(0, maxMins - runningMins);
+              runningMins += availMins;
+              return { ...a, hours: minutesToHhmm(availMins) };
+            }
+          })
+          .filter((a) => a.hours > 0);
+      }
+
+      return {
+        ...l,
+        additionalHours: addVal,
+        shiftHours: shift,
+        otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
+        activities,
+        status: 'draft' as const,
+        lastSavedAt: `+Add: ${addVal}h`,
+      };
+    });
+    onSaveLaborers(updated);
+  };
+
   const handleIndividualTimeChange = (id: string, inTime: string, outTime: string) => {
-    const { shift, ot } = computeHours(inTime, outTime);
+    const laborer = laborers.find((l) => l.id === id);
+    const addVal = laborer?.additionalHours || 0;
+    const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+      inTime,
+      outTime,
+      selectedDate,
+      undefined,
+      addVal
+    );
     const updated = laborers.map((l) => {
       if (l.id !== id) return l;
 
+      // Preserve supervisor's entered activities; only trim if activities exceed shift
       let activities = [...l.activities];
-      if (activities.length === 1 && shift > 0) {
-        activities = [{ ...activities[0], hours: shift }];
-      } else if (activities.length > 1 && shift > 0) {
+      if (shift > 0) {
         let runningMins = 0;
         const maxMins = hhmmToMinutes(shift);
         activities = activities.map((a) => {
@@ -597,6 +731,9 @@ export function LaborEntryView({
         outTime,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         activities,
         isAbsent: inTime ? false : l.isAbsent,
         status: 'draft' as const, // Always keep as draft while editing until explicitly marked Done
@@ -629,7 +766,14 @@ export function LaborEntryView({
     if (!laborer) return;
     const inTime = laborer.inTime || batchInTime || '07:00';
     const outTime = laborer.outTime || batchOutTime || '17:00';
-    const { shift } = computeHours(inTime, outTime);
+    const addVal = laborer.additionalHours || 0;
+    const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+      inTime,
+      outTime,
+      selectedDate,
+      undefined,
+      addVal
+    );
     const actSum = sumHhmm((laborer.activities || []).map((a) => a.hours));
     if (shift > 0 && hhmmToMinutes(actSum) > hhmmToMinutes(shift)) {
       alert(`Activity hours (${formatHhmm(actSum)}h) cannot exceed shift hours (${formatHhmm(shift)}h). Please reduce activity hours.`);
@@ -638,7 +782,6 @@ export function LaborEntryView({
 
     const updated = laborers.map((l) => {
       if (l.id !== id) return l;
-      const { shift, ot } = computeHours(inTime, outTime);
 
       return {
         ...l,
@@ -646,10 +789,13 @@ export function LaborEntryView({
         outTime,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         activities: l.activities || [],
         isAbsent: false,
         status: 'done' as const,
-        lastSavedAt: `Done at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        lastSavedAt: `Done: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
       };
     });
     onSaveLaborers(updated);
@@ -1123,7 +1269,7 @@ export function LaborEntryView({
               <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                 {isBatchOpen
                   ? 'Set In/Out times & assign tasks to selected workers in 1-tap.'
-                  : `${batchInTime} - ${batchOutTime} • Tap to expand controls & apply`}
+                  : `${batchInTime} - ${batchOutTime}${parseFloat(batchAdditionalHours) > 0 ? ` (+${batchAdditionalHours}h Add)` : ''} • Tap to expand controls & apply`}
               </p>
             </div>
           </div>
@@ -1172,8 +1318,8 @@ export function LaborEntryView({
               </div>
             </div>
 
-            {/* Dual In & Out Pickers Side-by-Side */}
-            <div className="grid grid-cols-2 gap-2.5">
+            {/* In, Out & Additional Hours Pickers */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-2.5">
               <div className="flex items-center justify-between gap-1.5 bg-emerald-50/70 dark:bg-emerald-950/30 px-2.5 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800/60 shadow-2xs">
                 <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-300 uppercase flex items-center gap-1">
                   <LogIn size={12} /> In:
@@ -1196,6 +1342,26 @@ export function LaborEntryView({
                   onChange={(e) => handleBatchOutTimeChange(e.target.value)}
                   className="text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
                 />
+              </div>
+
+              <div className="flex items-center justify-between gap-1.5 bg-amber-50/70 dark:bg-amber-950/30 px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800/60 shadow-2xs">
+                <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 uppercase flex items-center gap-1" title="Additional Hours added directly to effective shift">
+                  +Add:
+                </span>
+                <div className="flex items-center gap-0.5">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    max="24"
+                    value={batchAdditionalHours}
+                    onChange={(e) => handleBatchAdditionalHoursChange(e.target.value)}
+                    placeholder="0.0"
+                    className="w-12 text-xs font-bold font-mono text-amber-900 dark:text-amber-200 bg-transparent focus:outline-none text-right cursor-pointer"
+                    title="Batch Additional Hours"
+                  />
+                  <span className="text-[10px] text-amber-700/70 dark:text-amber-400/70 font-mono">h</span>
+                </div>
               </div>
             </div>
 
@@ -1577,6 +1743,26 @@ export function LaborEntryView({
                           </button>
                         )}
                       </div>
+
+                      {/* ADDITIONAL HOURS INPUT */}
+                      <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                        <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase flex items-center gap-0.5" title="Additional Hours added directly to effective shift">
+                          +Add:
+                        </span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="24"
+                          disabled={isDayLocked}
+                          value={worker.additionalHours !== undefined && worker.additionalHours !== null ? worker.additionalHours : ''}
+                          onChange={(e) => handleIndividualAdditionalHoursChange(worker.id, parseFloat(e.target.value) || 0)}
+                          placeholder="0.0"
+                          className="w-[42px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-amber-500 bg-transparent cursor-pointer font-mono text-amber-800 dark:text-amber-200"
+                          title="Additional Hours (Added directly to effective shift)"
+                        />
+                        <span className="text-[10px] text-slate-400 font-mono">h</span>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -1584,7 +1770,9 @@ export function LaborEntryView({
                       {worker.inTime && worker.outTime && (
                         <span className="text-[11px] font-bold font-mono px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shadow-2xs" title={`Computed shift: ${worker.shiftHours}h (OT: ${worker.otHours}h)`}>
                           {formatHhmm(worker.shiftHours)}h
-                          {worker.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">:{worker.otHours}h OT</span>}
+                          {Number(worker.additionalHours || 0) > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5"> (+{worker.additionalHours}h)</span>}
+                          {worker.otHours > 0 && <span className="text-[9px] text-emerald-600 dark:text-emerald-400 ml-0.5">:+{worker.otHours}h OT</span>}
+                          {worker.otHours < 0 && <span className="text-[9px] text-rose-600 dark:text-rose-400 ml-0.5">:{worker.otHours}h OT</span>}
                         </span>
                       )}
 

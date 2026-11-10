@@ -25,8 +25,8 @@ function getRuleDescription(dt?: DayType): { cap: string; desc: string; badgeCol
   }
   if (lower.includes('saturday')) {
     return {
-      cap: '6.0h Cap (07:00-13:00)',
-      desc: 'Hours exceeding 6.0h are calculated as Overtime',
+      cap: '5.5h Base (Full Day)',
+      desc: 'Base standard is 5.5h (+OT if > 5.5h, -OT if < 5.5h)',
       badgeColor: 'bg-blue-100 text-blue-800 border-blue-300',
     };
   }

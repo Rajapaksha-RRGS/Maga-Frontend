@@ -21,6 +21,26 @@ import {
   type ApprovalWorkerItem,
   type ApprovalEquipmentItem
 } from '../services/approvalService';
+import { computeBreakMinutes } from '../../supervisor/utils/timeUtils';
+
+// Formats decimal hours preserving quarter-hours (e.g. 15.75h, 7.25h, 4.5h, 8.0h) instead of rounding to .1
+export const formatHoursDisplay = (hours: number | undefined | null): string => {
+  if (hours === undefined || hours === null || isNaN(hours)) return '0.0h';
+  const num = Math.round(hours * 100) / 100;
+  if (Number.isInteger(num)) return `${num.toFixed(1)}h`;
+  if (Math.round(num * 10) / 10 === num) return `${num.toFixed(1)}h`;
+  return `${num.toFixed(2)}h`;
+};
+
+// Returns clear hours and minutes tooltip e.g. "15h 45m"
+export const toHhMmTooltip = (decimalHours: number | undefined | null): string => {
+  if (decimalHours === undefined || decimalHours === null || isNaN(decimalHours)) return '0h 0m';
+  const isNeg = decimalHours < 0;
+  const abs = Math.abs(decimalHours);
+  const h = Math.floor(abs);
+  const m = Math.round((abs - h) * 60);
+  return `${isNeg ? '-' : ''}${h}h ${m}m (${Math.round(decimalHours * 100) / 100}h)`;
+};
 
 const isEquipmentLogged = (eq: ApprovalEquipmentItem) =>
   eq.netHours > 0 ||
@@ -65,6 +85,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [editInTime, setEditInTime] = useState<string>('07:30');
   const [editOutTime, setEditOutTime] = useState<string>('17:00');
+  const [editAdditionalHours, setEditAdditionalHours] = useState<string>('0.0');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [localWorkers, setLocalWorkers] = useState<ApprovalWorkerItem[]>(group.workers || []);
 
@@ -88,29 +109,50 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const isSubmitted = group.status === 'submitted';
 
   // Preview hours calculation (1-hr standard break deduction; 2-hr deduction if shift passes 11:00 PM / 23:00)
-  const computePreviewHours = (inTime: string, outTime: string) => {
+  const computePreviewHours = (inTime: string, outTime: string, addHours = 0) => {
     if (!inTime || !outTime) return { hours: 0, otHours: 0, effectiveHours: 0 };
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
     const inMins = inH * 60 + (inM || 0);
     const outMins = outH * 60 + (outM || 0);
     let diff = outMins - inMins;
-    if (diff < 0) diff += 24 * 60;
+    if (diff <= 0) diff += 24 * 60;
     if (diff <= 0) return { hours: 0, otHours: 0, effectiveHours: 0 };
 
-    // Standard 1 hour break deduction
-    let breakMins = 60;
-    const isPast11PM = (outMins >= inMins)
-      ? (outMins >= 23 * 60)
-      : (inMins <= 23 * 60 || outMins >= 23 * 60);
-    if (isPast11PM) {
-      breakMins = 120; // 2 hours break if passes 11:00 PM
-    }
+    // Window-based break deduction (12:00-13:00 Lunch, 22:00-23:00 Dinner)
+    const { breakMinutes: breakMins } = computeBreakMinutes(inMins, outMins);
 
     const netMins = Math.max(0, diff - breakMins);
-    const effectiveHours = netMins > 0 ? parseFloat((netMins / 60).toFixed(2)) : 0;
-    const ot = effectiveHours > 8.0 ? parseFloat((effectiveHours - 8.0).toFixed(2)) : 0;
-    const reg = Math.max(0, parseFloat((effectiveHours - ot).toFixed(2)));
+    const rawEffective = netMins > 0 ? parseFloat((netMins / 60).toFixed(2)) : 0;
+    const effectiveHours = Math.max(0, parseFloat((rawEffective + (addHours || 0)).toFixed(2)));
+    const d = new Date(selectedDate);
+    const dow = d.getDay(); // 0 = Sun, 6 = Sat
+    const editingWorker = localWorkers.find((w) => w.employeeId === editingEmployeeId);
+    const isExt = editingWorker ? Boolean(editingWorker.isExternal || (editingWorker.businessPartner && !editingWorker.businessPartner.toLowerCase().includes('direct'))) : false;
+
+    let ot = 0;
+    let reg = effectiveHours;
+    if (dow === 0) {
+      ot = effectiveHours;
+      reg = 0;
+    } else if (isExt) {
+      const cap = dow === 6 ? 5.5 : 8.0;
+      reg = Math.min(effectiveHours, cap);
+      ot = effectiveHours > cap ? parseFloat((effectiveHours - cap).toFixed(2)) : 0;
+    } else if (dow === 6) {
+      // Saturday: Base standard is 5.5 hours
+      reg = Math.min(effectiveHours, 5.5);
+      ot = parseFloat((effectiveHours - 5.5).toFixed(2));
+    } else {
+      // Weekday: > 6h => Full Day (8.0h base); <= 6h => Half Day (4.0h base)
+      if (effectiveHours > 6.0) {
+        reg = Math.min(effectiveHours, 8.0);
+        ot = parseFloat((effectiveHours - 8.0).toFixed(2));
+      } else {
+        reg = Math.min(effectiveHours, 4.0);
+        ot = parseFloat((effectiveHours - 4.0).toFixed(2));
+      }
+    }
     return { hours: reg, otHours: ot, effectiveHours };
   };
 
@@ -118,6 +160,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
     setEditingEmployeeId(w.employeeId);
     setEditInTime(w.inTime || '07:30');
     setEditOutTime(w.outTime || '17:00');
+    setEditAdditionalHours(w.additionalHours !== undefined ? String(w.additionalHours) : '0.0');
   };
 
   const cancelEditing = () => {
@@ -127,7 +170,8 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const handleSaveEdit = async (employeeId: string) => {
     setIsSavingEdit(true);
     try {
-      const { hours, otHours, effectiveHours } = computePreviewHours(editInTime, editOutTime);
+      const addVal = parseFloat(editAdditionalHours) || 0;
+      const { hours, otHours, effectiveHours } = computePreviewHours(editInTime, editOutTime, addVal);
       const res = await adminAdjustWorker({
         supervisorId: group.supervisorId,
         employeeId,
@@ -136,6 +180,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
         outTime: editOutTime,
         hours,
         overtimeHours: otHours,
+        additionalHours: addVal,
       });
 
       // Update local row immediately for instant feedback
@@ -148,6 +193,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                 outTime: editOutTime,
                 hours: res.hours ?? hours,
                 otHours: res.overtimeHours ?? otHours,
+                additionalHours: addVal,
                 shiftHours: res.shiftHours ?? effectiveHours,
                 effectiveHours: res.effectiveHours ?? res.shiftHours ?? effectiveHours,
                 status: 'submitted',
@@ -172,8 +218,9 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const operatorsCount = group.counts?.operatorsWorked ?? (group.operators?.length || 0);
   const operatorsTotal = group.counts?.operatorsAssigned ?? (group.operators?.length || 0);
 
-  const workerHours = (group.totals?.laborHours ?? group.totalHours ?? 0).toFixed(1);
-  const workerOt = (group.totals?.laborOvertime ?? group.totalOvertime ?? 0).toFixed(1);
+  const workerHours = formatHoursDisplay(group.totals?.laborHours ?? group.totalHours ?? 0);
+  const rawLaborOt = group.totals?.laborOvertime ?? group.totalOvertime ?? 0;
+  const workerOt = formatHoursDisplay(rawLaborOt);
   const equipmentFuel = group.totals?.equipmentFuel ?? 0;
 
   // Method 2: Only show logged equipment (machines with actual hours/usage logged)
@@ -310,7 +357,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               }`}>
                 <Users size={12} className="text-blue-600" />
                 <span>
-                  Labor: <strong>{q ? displayedWorkers.length : workersCount}/{workersTotal}</strong> ({workerHours}h, OT: {workerOt}h)
+                  Labor: <strong>{q ? displayedWorkers.length : workersCount}/{workersTotal}</strong> ({workerHours}, OT: {rawLaborOt > 0 ? `+${workerOt}` : workerOt})
                 </span>
               </div>
 
@@ -500,8 +547,13 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             className={isEditingThis ? 'bg-blue-50/50' : 'hover:bg-blue-50/20 transition-colors'}
                           >
                             <td className="py-2.5 px-3.5">
-                              <div className="font-semibold text-slate-900">
-                                {w.callingName}
+                              <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                                <span>{w.callingName}</span>
+                                {!w.isExternal && (w.daysWorked ?? 0) > 0 && (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    {w.daysWorked === 1 ? '1.0 Day' : `${w.daysWorked} Day`}
+                                  </span>
+                                )}
                               </div>
                               <div className="text-[11px] text-slate-500 font-mono">
                                 {w.employeeCode}
@@ -517,25 +569,57 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             </td>
                             <td className="py-2.5 px-3">
                               {isEditingThis ? (
-                                <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-blue-300 shadow-2xs">
-                                  <input
-                                    type="time"
-                                    value={editInTime}
-                                    onChange={(e) => setEditInTime(e.target.value)}
-                                    className="w-18 px-1 py-0.5 rounded text-xs font-bold text-slate-900 font-mono border border-slate-200 focus:outline-none focus:border-blue-500"
-                                  />
-                                  <span className="text-slate-400 font-bold">–</span>
-                                  <input
-                                    type="time"
-                                    value={editOutTime}
-                                    onChange={(e) => setEditOutTime(e.target.value)}
-                                    className="w-18 px-1 py-0.5 rounded text-xs font-bold text-slate-900 font-mono border border-slate-200 focus:outline-none focus:border-blue-500"
-                                  />
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-blue-300 shadow-2xs">
+                                    <input
+                                      type="time"
+                                      value={editInTime}
+                                      onChange={(e) => setEditInTime(e.target.value)}
+                                      className="w-18 px-1 py-0.5 rounded text-xs font-bold text-slate-900 font-mono border border-slate-200 focus:outline-none focus:border-blue-500"
+                                    />
+                                    <span className="text-slate-400 font-bold">–</span>
+                                    <input
+                                      type="time"
+                                      value={editOutTime}
+                                      onChange={(e) => setEditOutTime(e.target.value)}
+                                      className="w-18 px-1 py-0.5 rounded text-xs font-bold text-slate-900 font-mono border border-slate-200 focus:outline-none focus:border-blue-500"
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-600">
+                                    <span>+Add Hrs:</span>
+                                    <input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      max="12"
+                                      value={editAdditionalHours}
+                                      onChange={(e) => setEditAdditionalHours(e.target.value)}
+                                      className="w-12 px-1 py-0.5 rounded text-[11px] font-bold font-mono border border-slate-200 focus:outline-none focus:border-blue-500 bg-white"
+                                      placeholder="0.0"
+                                    />
+                                  </div>
                                 </div>
                               ) : hasAttendance ? (
-                                <span className="font-mono text-slate-900 font-medium">
-                                  {w.inTime} – {w.outTime}
-                                </span>
+                                <div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="font-mono text-slate-900 font-medium">
+                                      {w.inTime} – {w.outTime}
+                                    </span>
+                                    {(w.additionalHours ?? 0) > 0 && (
+                                      <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200" title={`Additional Hours: +${w.additionalHours}h`}>
+                                        +{w.additionalHours}h Add
+                                      </span>
+                                    )}
+                                  </div>
+                                  {(w.breakHours ?? 0) > 0 && (
+                                    <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5" title={`Break deducted: ${w.breakHours}h`}>
+                                      <span>Break: -{w.breakHours}h</span>
+                                      {w.isLunchDeducted && w.isDinnerDeducted && <span className="text-slate-500 font-semibold">(Lunch+Dinner)</span>}
+                                      {w.isLunchDeducted && !w.isDinnerDeducted && <span className="text-slate-500 font-semibold">(Lunch)</span>}
+                                      {!w.isLunchDeducted && w.isDinnerDeducted && <span className="text-slate-500 font-semibold">(Dinner)</span>}
+                                    </div>
+                                  )}
+                                </div>
                               ) : (
                                 <span className="text-amber-600 font-semibold text-[11px]">
                                   Not Recorded
@@ -544,23 +628,35 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
                               {isEditingThis && preview ? (
-                                <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-bold font-mono">
-                                  {(preview.effectiveHours ?? 0).toFixed(1)}h
+                                <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-bold font-mono" title={toHhMmTooltip(preview.effectiveHours)}>
+                                  {formatHoursDisplay(preview.effectiveHours)}
                                 </span>
                               ) : effectiveVal > 0 ? (
-                                `${effectiveVal.toFixed(1)}h`
+                                <span title={toHhMmTooltip(effectiveVal)}>
+                                  {formatHoursDisplay(effectiveVal)}
+                                </span>
                               ) : (
                                 '-'
                               )}
                             </td>
                             <td className="py-2.5 px-3">
                               {isEditingThis && preview ? (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold font-mono">
-                                  +{(preview.otHours ?? 0).toFixed(1)}h
+                                <span className={`px-1.5 py-0.5 rounded font-bold font-mono ${
+                                  preview.otHours > 0
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : preview.otHours < 0
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-slate-100 text-slate-700'
+                                }`} title={toHhMmTooltip(preview.otHours)}>
+                                  {preview.otHours > 0 ? `+${formatHoursDisplay(preview.otHours)}` : formatHoursDisplay(preview.otHours)}
                                 </span>
                               ) : (w.otHours ?? 0) > 0 ? (
-                                <span className="font-bold text-amber-600">
-                                  +{(w.otHours ?? 0).toFixed(1)}h
+                                <span className="font-bold text-amber-600" title={toHhMmTooltip(w.otHours)}>
+                                  +{formatHoursDisplay(w.otHours)}
+                                </span>
+                              ) : (w.otHours ?? 0) < 0 ? (
+                                <span className="font-bold text-rose-600" title={toHhMmTooltip(w.otHours)}>
+                                  {formatHoursDisplay(w.otHours)}
                                 </span>
                               ) : (
                                 <span className="text-slate-400">0.0h</span>
@@ -589,7 +685,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                         title="Idle / Unallocated Shift Hours"
                                       >
                                         <Tag size={10} className="text-amber-600" />
-                                        Idle (ZIDLE): {idleAmount.toFixed(1)}h
+                                        Idle (ZIDLE): {formatHoursDisplay(idleAmount)}
                                       </span>
                                     </div>
                                   );
@@ -610,7 +706,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                           title={act.description || (isIdle ? 'Idle / Unallocated Hours' : '')}
                                         >
                                           <Tag size={10} className={isIdle ? 'text-amber-600' : 'text-blue-500'} />
-                                          {isIdle ? `Idle (${act.code}): ${act.hours}h` : `${act.code}: ${act.hours}h`}
+                                          {isIdle ? `Idle (${act.code}): ${formatHoursDisplay(act.hours)}` : `${act.code}: ${formatHoursDisplay(act.hours)}`}
                                         </span>
                                       );
                                     })}
@@ -620,7 +716,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                         title="Idle / Unallocated Shift Hours"
                                       >
                                         <Tag size={10} className="text-amber-600" />
-                                        Idle (ZIDLE): {fallbackIdle.toFixed(1)}h
+                                        Idle (ZIDLE): {formatHoursDisplay(fallbackIdle)}
                                       </span>
                                     )}
                                   </div>
@@ -733,8 +829,13 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                         return (
                           <tr key={op.operatorId} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-2.5 px-3.5">
-                              <div className="font-semibold text-slate-900">
-                                {op.callingName || op.fullName}
+                              <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                                <span>{op.callingName || op.fullName}</span>
+                                {!op.isExternal && (op.daysWorked ?? 0) > 0 && (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    {op.daysWorked === 1 ? '1.0 Day' : `${op.daysWorked} Day`}
+                                  </span>
+                                )}
                               </div>
                               <div className="text-[11px] text-slate-500 font-mono">
                                 {op.operatorCode}
@@ -768,9 +869,19 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             </td>
                             <td className="py-2.5 px-3 font-mono">
                               {hasAttendance ? (
-                                <span className="text-slate-900 font-medium">
-                                  {op.inTime} – {op.outTime}
-                                </span>
+                                <div>
+                                  <span className="text-slate-900 font-medium">
+                                    {op.inTime} – {op.outTime}
+                                  </span>
+                                  {(op.breakHours ?? 0) > 0 && (
+                                    <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5" title={`Break deducted: ${op.breakHours}h`}>
+                                      <span>Break: -{op.breakHours}h</span>
+                                      {op.isLunchDeducted && op.isDinnerDeducted && <span className="text-slate-500 font-semibold">(Lunch+Dinner)</span>}
+                                      {op.isLunchDeducted && !op.isDinnerDeducted && <span className="text-slate-500 font-semibold">(Lunch)</span>}
+                                      {!op.isLunchDeducted && op.isDinnerDeducted && <span className="text-slate-500 font-semibold">(Dinner)</span>}
+                                    </div>
+                                  )}
+                                </div>
                               ) : (
                                 <span className="text-amber-600 font-semibold text-[11px]">
                                   Not Recorded
@@ -778,12 +889,20 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               )}
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
-                              {effectiveVal > 0 ? `${effectiveVal.toFixed(1)}h` : '-'}
+                              {effectiveVal > 0 ? (
+                                <span title={toHhMmTooltip(effectiveVal)}>
+                                  {formatHoursDisplay(effectiveVal)}
+                                </span>
+                              ) : '-'}
                             </td>
                             <td className="py-2.5 px-3">
                               {(op.otHours ?? 0) > 0 ? (
-                                <span className="font-bold text-amber-600">
-                                  +{(op.otHours ?? 0).toFixed(1)}h
+                                <span className="font-bold text-amber-600" title={toHhMmTooltip(op.otHours)}>
+                                  +{formatHoursDisplay(op.otHours)}
+                                </span>
+                              ) : (op.otHours ?? 0) < 0 ? (
+                                <span className="font-bold text-rose-600" title={toHhMmTooltip(op.otHours)}>
+                                  {formatHoursDisplay(op.otHours)}
                                 </span>
                               ) : (
                                 <span className="text-slate-400">0.0h</span>

@@ -17,8 +17,10 @@
  * 7. Comprehensive Error Handling (Zero-Crash Policy) with row-by-row reporting.
  */
 
-import fs from 'fs';
+import dotenv from 'dotenv';
 import path from 'path';
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+import fs from 'fs';
 import prisma from '../src/config/prisma';
 
 // ANSI Colors for clear terminal output
@@ -34,6 +36,7 @@ interface RawRowInput {
   outTime?: string;
   activityCode: string;
   hours: number;
+  additionalHours?: number;
   employeeIdentifier: string;
   dateStr: string;
   rawLineIndex: number;
@@ -50,24 +53,40 @@ interface ProcessError {
   reason: string;
 }
 
-// Helper: Normalize time to "HH:mm" (e.g., "7" -> "07:00", "28" -> "04:00", "7:30" -> "07:30", "17:00" -> "17:00")
+// Helper: Normalize time to "HH:mm" (e.g., "7" -> "07:00", "28" -> "04:00", "7:30" -> "07:30", "12.5" -> "12:30", "22.25" -> "22:15")
 function normalizeTime(val?: string | null): string | null {
   if (!val) return null;
   const clean = val.trim();
   if (!clean) return null;
 
-  // e.g. "7" -> "07:00", "24" -> "00:00", "28" -> "04:00"
+  // 1. e.g. "7" -> "07:00", "24" -> "00:00", "28" -> "04:00"
   if (/^\d{1,2}$/.test(clean)) {
     let h = parseInt(clean, 10);
     if (h >= 24) h = h % 24;
     return `${String(h).padStart(2, '0')}:00`;
   }
 
-  // e.g. "7:30" or "07:30" or "28:30"
-  if (/^\d{1,2}:\d{2}$/.test(clean)) {
+  // 2. e.g. "7:30" or "07:30" or "28:30"
+  if (/^\d{1,2}:\d{1,2}$/.test(clean)) {
     let [h, m] = clean.split(':').map(Number);
     if (h >= 24) h = h % 24;
     if (m >= 0 && m < 60) {
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+  }
+
+  // 3. Decimal hours e.g. "12.5" -> "12:30", "22.25" -> "22:15", "6.5" -> "06:30"
+  if (/^\d{1,2}\.\d+$/.test(clean)) {
+    const num = parseFloat(clean);
+    if (!isNaN(num)) {
+      let h = Math.floor(num);
+      const frac = num - h;
+      let m = Math.round(frac * 60);
+      if (m >= 60) {
+        h += 1;
+        m = 0;
+      }
+      if (h >= 24) h = h % 24;
       return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     }
   }
@@ -115,16 +134,33 @@ function computeBreakHours(inTime?: string | null, outTime?: string | null): num
   const inMins = inH * 60 + (inM || 0);
   const outMins = outH * 60 + (outM || 0);
 
-  let diff = outMins - inMins;
-  if (diff < 0) diff += 24 * 60;
-  if (diff <= 0) return 0;
+  let grossMins = outMins - inMins;
+  if (grossMins <= 0) grossMins += 24 * 60;
 
-  let breakHours = 1.0;
-  const isPast11PM = outMins >= inMins ? outMins >= 23 * 60 : inMins <= 23 * 60 || outMins >= 23 * 60;
-  if (isPast11PM) breakHours = 2.0;
+  const lunchStart = 12 * 60; // 12:00
+  const lunchEnd = 13 * 60;   // 13:00
+  const dinnerStart = 22 * 60;// 22:00
+  const dinnerEnd = 23 * 60;  // 23:00
 
-  const grossHours = diff / 60;
-  return Math.min(breakHours, grossHours);
+  const calcOverlap = (wStart: number, wEnd: number): number => {
+    if (outMins > inMins) {
+      return Math.max(0, Math.min(outMins, wEnd) - Math.max(inMins, wStart));
+    } else {
+      const s1 = Math.max(0, Math.min(1440, wEnd) - Math.max(inMins, wStart));
+      const s2 = Math.max(0, Math.min(outMins, wEnd) - Math.max(0, wStart));
+      return s1 + s2;
+    }
+  };
+
+  let totalBreak = 0;
+  if (calcOverlap(lunchStart, lunchEnd) > 0) {
+    totalBreak += 1.0;
+  }
+  if (calcOverlap(dinnerStart, dinnerEnd) > 0) {
+    totalBreak += 1.0;
+  }
+
+  return Math.min(totalBreak, grossMins / 60);
 }
 
 // Helper: Calculate Shift Hours and Overtime
@@ -137,7 +173,7 @@ function calculateShiftAndOvertime(
   const [outH, outM] = outTime.split(':').map(Number);
 
   let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
-  if (diff < 0) diff += 24 * 60;
+  if (diff <= 0) diff += 24 * 60;
 
   const grossHours = Math.round((diff / 60) * 100) / 100;
   const breakHours = computeBreakHours(inTime, outTime);
@@ -170,6 +206,7 @@ function parseRawFile(content: string): RawRowInput[] {
     out: -1,
     activity: -1,
     hours: -1,
+    additionalHours: -1,
     employee: -1,
     date: -1,
   };
@@ -178,7 +215,8 @@ function parseRawFile(content: string): RawRowInput[] {
   if (hasHeader) {
     startIndex = 1;
     headerTokens.forEach((tok, idx) => {
-      if (tok === 'in' || tok.includes('in_time') || tok.includes('intime')) colMap.in = idx;
+      if (tok.includes('add') || tok.includes('additional') || tok.includes('extra')) colMap.additionalHours = idx;
+      else if (tok === 'in' || tok.includes('in_time') || tok.includes('intime')) colMap.in = idx;
       else if (tok === 'out' || tok.includes('out_time') || tok.includes('outtime')) colMap.out = idx;
       else if (tok.includes('act')) colMap.activity = idx;
       else if (tok.includes('hour')) colMap.hours = idx;
@@ -224,6 +262,7 @@ function parseRawFile(content: string): RawRowInput[] {
     const inT = colMap.in >= 0 ? rawTokens[colMap.in] : '';
     const outT = colMap.out >= 0 ? rawTokens[colMap.out] : '';
     const dt = colMap.date >= 0 ? rawTokens[colMap.date] : '';
+    const addHrsStr = colMap.additionalHours >= 0 ? rawTokens[colMap.additionalHours] : '';
 
     if (!emp && !act) continue;
 
@@ -231,6 +270,7 @@ function parseRawFile(content: string): RawRowInput[] {
       employeeIdentifier: emp,
       activityCode: act,
       hours: parseFloat(hrsStr) || 8.0,
+      additionalHours: addHrsStr && !isNaN(parseFloat(addHrsStr)) ? parseFloat(addHrsStr) : undefined,
       inTime: normalizeTime(inT) || undefined,
       outTime: normalizeTime(outT) || undefined,
       dateStr: dt,
@@ -469,6 +509,7 @@ async function main() {
       date: Date;
       inTime?: string;
       outTime?: string;
+      additionalHours?: number;
       activities: Array<{ activityCode: string; hours: number; rawLineIndex: number }>;
     }
   >();
@@ -536,6 +577,7 @@ async function main() {
         date: parsedDate,
         inTime: r.inTime,
         outTime: r.outTime,
+        additionalHours: r.additionalHours,
         activities: [],
       });
     }
@@ -544,12 +586,97 @@ async function main() {
     // Retain in/out if available
     if (!group.inTime && r.inTime) group.inTime = r.inTime;
     if (!group.outTime && r.outTime) group.outTime = r.outTime;
+    if (r.additionalHours !== undefined) {
+      group.additionalHours = Math.max(group.additionalHours || 0, r.additionalHours);
+    }
 
     group.activities.push({
       activityCode: r.activityCode,
       hours: r.hours,
       rawLineIndex: r.rawLineIndex,
     });
+  }
+
+  // 5.5 Pre-Upload Hours Balance & Additional Hours Detection Scan
+  console.log(`\n${CYAN}${BOLD}=====================================================${RESET}`);
+  console.log(`${CYAN}${BOLD}  📊 PRE-UPLOAD HOURS BALANCE & ADDITIONAL HOURS SCAN ${RESET}`);
+  console.log(`${CYAN}${BOLD}=====================================================${RESET}`);
+
+  let balancedCount = 0;
+  let addHoursCount = 0;
+  let deficitCount = 0;
+  const balanceWarnings: Array<{
+    emp: string;
+    date: string;
+    in: string;
+    out: string;
+    csvHrs: number;
+    baseShift: number;
+    diff: number;
+    type: 'ADDITIONAL' | 'DEFICIT';
+  }> = [];
+
+  for (const [groupKey, group] of groupedEntries.entries()) {
+    const finalIn = group.inTime || '07:00';
+    const finalOut = group.outTime || '17:00';
+    const calc = calculateShiftAndOvertime(finalIn, finalOut, 8.0);
+    const csvSum = Math.round(group.activities.reduce((s, a) => s + a.hours, 0) * 100) / 100;
+    const diff = Math.round((csvSum - calc.shiftHours) * 100) / 100;
+
+    if (Math.abs(diff) < 0.05) {
+      balancedCount++;
+    } else if (diff > 0.05) {
+      addHoursCount++;
+      balanceWarnings.push({
+        emp: group.employeeIdentifier,
+        date: group.dateStr,
+        in: finalIn,
+        out: finalOut,
+        csvHrs: csvSum,
+        baseShift: calc.shiftHours,
+        diff,
+        type: 'ADDITIONAL',
+      });
+    } else {
+      deficitCount++;
+      balanceWarnings.push({
+        emp: group.employeeIdentifier,
+        date: group.dateStr,
+        in: finalIn,
+        out: finalOut,
+        csvHrs: csvSum,
+        baseShift: calc.shiftHours,
+        diff,
+        type: 'DEFICIT',
+      });
+    }
+  }
+
+  console.log(`  • Total Shifts to Process: ${BOLD}${groupedEntries.size}${RESET}`);
+  console.log(`  • ${GREEN}✓ Perfectly Balanced Shifts:${RESET} ${BOLD}${balancedCount}${RESET}`);
+  console.log(`  • ${YELLOW}⭐ Shifts with Implied Additional Hours:${RESET} ${BOLD}${addHoursCount}${RESET}`);
+  console.log(`  • ${CYAN}⚠️  Shifts with Deficit / Potential Idle:${RESET} ${BOLD}${deficitCount}${RESET}\n`);
+
+  if (addHoursCount > 0) {
+    console.log(`${YELLOW}${BOLD}  [Sample Shifts with Additional Hours detected]:${RESET}`);
+    const sampleAdd = balanceWarnings.filter((w) => w.type === 'ADDITIONAL').slice(0, 5);
+    for (const w of sampleAdd) {
+      console.log(
+        `    ${YELLOW}➔${RESET} [${w.emp}] ${w.date} (${w.in} - ${w.out}) | Base: ${w.baseShift}h -> CSV Total: ${w.csvHrs}h [ ${YELLOW}+${w.diff}h Additional Hours${RESET} ]`
+      );
+    }
+    console.log('');
+  }
+
+  if (deficitCount > 0) {
+    console.log(`${CYAN}${BOLD}  [Sample Shifts with Hours Deficit (Remainder Idle)]:${RESET}`);
+    const sampleDef = balanceWarnings.filter((w) => w.type === 'DEFICIT').slice(0, 5);
+    for (const w of sampleDef) {
+      console.log(
+        `    ${CYAN}➔${RESET} [${w.emp}] ${w.date} (${w.in} - ${w.out}) | Base: ${w.baseShift}h -> CSV Total: ${w.csvHrs}h [ ${CYAN}${w.diff}h Deficit${RESET} ]`
+      );
+    }
+    console.log('');
   }
 
   // 6. Execute Bulk Processing with Row-by-Row Isolation
@@ -580,6 +707,36 @@ async function main() {
         continue;
       }
 
+      // Step B: Calculate In/Out and Shift Hours
+      const finalInTime = group.inTime || '07:00';
+      const finalOutTime = group.outTime || '17:00';
+
+      const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, 8.0);
+      const totalCsvHours = Math.round(group.activities.reduce((s, a) => s + a.hours, 0) * 100) / 100;
+      const baseShift = calc.shiftHours; // gross - breaks
+      let additionalHours = group.additionalHours !== undefined && group.additionalHours > 0 ? group.additionalHours : 0;
+      let finalShiftHours = baseShift;
+
+      // Detect and assign Additional Hours (explicit from CSV column or implied by CSV activity sum)
+      if (additionalHours > 0) {
+        finalShiftHours = Math.round((baseShift + additionalHours) * 100) / 100;
+      } else if (totalCsvHours > baseShift) {
+        additionalHours = Math.round((totalCsvHours - baseShift) * 100) / 100;
+        finalShiftHours = Math.round((baseShift + additionalHours) * 100) / 100;
+      }
+
+      // Auto-balance Idle / Hours Deficit: If activities are less than shift hours, allocate the remaining shortage to ZIDLE
+      const deficitHours = Math.round((baseShift - totalCsvHours) * 100) / 100;
+      const hasZidle = group.activities.some((a) => a.activityCode.trim().toUpperCase() === 'ZIDLE');
+      if (deficitHours > 0.05 && !hasZidle) {
+        group.activities.push({
+          activityCode: 'ZIDLE',
+          hours: deficitHours,
+          rawLineIndex: group.activities[0]?.rawLineIndex || 0,
+        });
+      }
+      const finalCsvHours = Math.round(group.activities.reduce((s, a) => s + a.hours, 0) * 100) / 100;
+
       if (isDryRun) {
         // Validate activities in dry-run mode
         for (const actItem of group.activities) {
@@ -597,8 +754,8 @@ async function main() {
                   line: actItem.rawLineIndex,
                   employee: group.employeeIdentifier,
                   dateStr: group.dateStr,
-                  inTime: group.inTime || '07:00',
-                  outTime: group.outTime || '17:00',
+                  inTime: finalInTime,
+                  outTime: finalOutTime,
                   activityCode: actItem.activityCode,
                   hours: actItem.hours,
                   reason: `Activity code '${actItem.activityCode}' could not be resolved in project or corporate master.`,
@@ -612,7 +769,7 @@ async function main() {
         continue;
       }
 
-      // Step B: Get or Create DailySheet for Supervisor & Date
+      // Step C: Get or Create DailySheet for Supervisor & Date
       const dateKey = group.date.toISOString().slice(0, 10);
       let dailySheet = dailySheetCache.get(dateKey);
       if (!dailySheet) {
@@ -635,7 +792,7 @@ async function main() {
         dailySheetCache.set(dateKey, dailySheet);
       }
 
-      // Step C: Ensure DailyAssignment exists
+      // Step D: Ensure DailyAssignment exists
       await prisma.mF_OP_DailyAssignment.upsert({
         where: {
           dailySheetId_employeeId: {
@@ -650,19 +807,14 @@ async function main() {
         },
       });
 
-      // Step D: Calculate In/Out and Shift Hours
-      // Default to 07:00 - 17:00 if not provided
-      const finalInTime = group.inTime || '07:00';
-      const finalOutTime = group.outTime || '17:00';
+      const finalOt = Math.max(0, Math.round((finalShiftHours - 8.0) * 100) / 100);
 
-      const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, 8.0);
-
-      // Step E: Save Time Entries for all activities
+      // Step E: Save Time Entry & Activity Splits
+      // Resolve all activity codes for this shift
+      const resolvedActivities: Array<{ actId: string; code: string; hours: number; rawLineIndex: number }> = [];
       for (const actItem of group.activities) {
-        // Resolve Activity Code
         let actId = actMap.get(actItem.activityCode.trim().toLowerCase());
         if (!actId) {
-          // If code not in project, try to find in corporate master and link
           const corpAct = await prisma.mF_G_ActivityCode.findFirst({
             where: { code: actItem.activityCode.trim() },
           });
@@ -680,7 +832,6 @@ async function main() {
             actId = newAct.id;
             actMap.set(actItem.activityCode.trim().toLowerCase(), actId);
           } else {
-            // Fallback to first project activity if available
             actId = projectActivities[0]?.id;
             if (!actId) {
               errors.push({
@@ -697,87 +848,147 @@ async function main() {
             }
           }
         }
-
-        // Check if entry already exists and is approved
-        const existingEntry = await prisma.mF_OP_TimeEntry.findFirst({
-          where: {
-            projectId: project.id,
-            employeeId: localEmp.id,
-            date: group.date,
-            activityId: actId,
-          },
+        resolvedActivities.push({
+          actId,
+          code: actItem.activityCode,
+          hours: actItem.hours,
+          rawLineIndex: actItem.rawLineIndex,
         });
+      }
 
-        if (existingEntry && existingEntry.status === 'approved') {
-          errors.push({
-            line: actItem.rawLineIndex,
-            employee: group.employeeIdentifier,
-            dateStr: group.dateStr,
+      if (resolvedActivities.length === 0) continue;
+
+      // Check existing entries for this employee shift
+      const existingEntries = await prisma.mF_OP_TimeEntry.findMany({
+        where: {
+          projectId: project.id,
+          employeeId: localEmp.id,
+          date: group.date,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      const approvedEntry = existingEntries.find((e) => e.status === 'approved');
+      if (approvedEntry) {
+        errors.push({
+          line: group.activities[0].rawLineIndex,
+          employee: group.employeeIdentifier,
+          dateStr: group.dateStr,
+          inTime: finalInTime,
+          outTime: finalOutTime,
+          activityCode: group.activities.map((a) => a.activityCode).join(', '),
+          hours: finalCsvHours,
+          reason: `Time Entry is already APPROVED by Admin/PM. Did not overwrite.`,
+        });
+        continue;
+      }
+
+      // Snapshot rate & business partner
+      const snapRate = Number(localEmp.dailyRate) > 0
+        ? Number(localEmp.dailyRate)
+        : Number(localEmp.tradeGroup?.standardDailyRate || 1400.0);
+      const snapBpId = localEmp.businessPartnerId || null;
+
+      const primaryEntry = existingEntries[0];
+      const redundantEntries = existingEntries.slice(1);
+      let targetTimeEntryId: string;
+
+      if (primaryEntry) {
+        targetTimeEntryId = primaryEntry.id;
+        await prisma.mF_OP_TimeEntry.update({
+          where: { id: primaryEntry.id },
+          data: {
+            dailySheetId: dailySheet.id,
+            recordedById: supervisor.id,
             inTime: finalInTime,
             outTime: finalOutTime,
-            activityCode: actItem.activityCode,
-            hours: actItem.hours,
-            reason: `Time Entry is already APPROVED by Admin/PM. Did not overwrite.`,
-          });
-          continue;
-        }
-
-        // Snapshot rate & business partner
-        const snapRate = Number(localEmp.dailyRate) > 0
-          ? Number(localEmp.dailyRate)
-          : Number(localEmp.tradeGroup?.standardDailyRate || 1400.0);
-        const snapBpId = localEmp.businessPartnerId || null;
-
-        // Upsert with status = 'submitted'
-        if (existingEntry) {
-          await prisma.mF_OP_TimeEntry.update({
-            where: { id: existingEntry.id },
-            data: {
-              dailySheetId: dailySheet.id,
-              recordedById: supervisor.id,
-              inTime: finalInTime,
-              outTime: finalOutTime,
-              hours: actItem.hours,
-              shiftHours: calc.shiftHours,
-              overtimeHours: calc.otHours,
-              breakHours: calc.breakHours,
-              ...(existingEntry.appliedDailyRate === null ? {
-                appliedDailyRate: snapRate,
-                appliedBusinessPartnerId: snapBpId,
-              } : {}),
-              status: 'submitted',
-              submittedAt: new Date(),
-            },
-          });
-        } else {
-          await prisma.mF_OP_TimeEntry.create({
-            data: {
-              projectId: project.id,
-              dailySheetId: dailySheet.id,
-              employeeId: localEmp.id,
-              recordedById: supervisor.id,
-              date: group.date,
-              activityId: actId,
-              effectiveDayTypeId,
-              inTime: finalInTime,
-              outTime: finalOutTime,
-              hours: actItem.hours,
-              shiftHours: calc.shiftHours,
-              overtimeHours: calc.otHours,
-              breakHours: calc.breakHours,
+            hours: finalCsvHours,
+            shiftHours: finalShiftHours,
+            additionalHours: additionalHours,
+            overtimeHours: finalOt,
+            breakHours: calc.breakHours,
+            isLunchDeducted: calc.breakHours >= 1.0,
+            isDinnerDeducted: calc.breakHours >= 2.0,
+            activityId: resolvedActivities[0].actId,
+            ...(primaryEntry.appliedDailyRate === null ? {
               appliedDailyRate: snapRate,
               appliedBusinessPartnerId: snapBpId,
-              status: 'submitted',
-              submittedAt: new Date(),
-            },
-          });
-        }
-
-        successCount++;
-        console.log(
-          `  ${GREEN}✓${RESET} [${localEmp.corporateEmployee.employeeCode}] ${localEmp.callingName || localEmp.corporateEmployee.fullName} -> Act: ${actItem.activityCode} (${actItem.hours}h) | In: ${finalInTime} Out: ${finalOutTime} [${GREEN}SUBMITTED${RESET}]`
-        );
+            } : {}),
+            status: 'submitted',
+            submittedAt: new Date(),
+          },
+        });
+      } else {
+        const created = await prisma.mF_OP_TimeEntry.create({
+          data: {
+            projectId: project.id,
+            dailySheetId: dailySheet.id,
+            employeeId: localEmp.id,
+            recordedById: supervisor.id,
+            date: group.date,
+            activityId: resolvedActivities[0].actId,
+            effectiveDayTypeId,
+            inTime: finalInTime,
+            outTime: finalOutTime,
+            hours: finalCsvHours,
+            shiftHours: finalShiftHours,
+            additionalHours: additionalHours,
+            overtimeHours: finalOt,
+            breakHours: calc.breakHours,
+            isLunchDeducted: calc.breakHours >= 1.0,
+            isDinnerDeducted: calc.breakHours >= 2.0,
+            appliedDailyRate: snapRate,
+            appliedBusinessPartnerId: snapBpId,
+            status: 'submitted',
+            submittedAt: new Date(),
+          },
+        });
+        targetTimeEntryId = created.id;
       }
+
+      // Remove any historical duplicate parent rows
+      if (redundantEntries.length > 0) {
+        const redIds = redundantEntries.map((r) => r.id);
+        await prisma.mF_OP_LaborActivitySplit.deleteMany({
+          where: { timeEntryId: { in: redIds } },
+        });
+        await prisma.mF_OP_TimeEntry.deleteMany({
+          where: { id: { in: redIds } },
+        });
+      }
+
+      // Sync MF_OP_LaborActivitySplit records for this shift
+      await prisma.mF_OP_LaborActivitySplit.deleteMany({
+        where: { timeEntryId: targetTimeEntryId },
+      });
+
+      // Consolidate splits by activityCodeId to safely prevent any duplicate key violations
+      const consolidatedSplits = new Map<string, { actId: string; code: string; hours: number; rawLineIndex: number }>();
+      for (const act of resolvedActivities) {
+        const existing = consolidatedSplits.get(act.actId);
+        if (existing) {
+          existing.hours = Math.round((existing.hours + act.hours) * 100) / 100;
+        } else {
+          consolidatedSplits.set(act.actId, { ...act });
+        }
+      }
+
+      for (const act of consolidatedSplits.values()) {
+        await prisma.mF_OP_LaborActivitySplit.create({
+          data: {
+            timeEntryId: targetTimeEntryId,
+            activityCodeId: act.actId,
+            hours: act.hours,
+          },
+        });
+        successCount++;
+      }
+
+      const addTag = additionalHours > 0 ? ` [${YELLOW}+${additionalHours}h Add${RESET}]` : '';
+      const actSummary = resolvedActivities.map((a) => `${a.code} (${a.hours}h)`).join(', ');
+      console.log(
+        `  ${GREEN}✓${RESET} [${localEmp.corporateEmployee.employeeCode}] ${localEmp.callingName || localEmp.corporateEmployee.fullName} -> Splits: ${actSummary} | In: ${finalInTime} Out: ${finalOutTime}${addTag} [${GREEN}SUBMITTED${RESET}]`
+      );
     } catch (err: any) {
       errors.push({
         line: group.activities[0]?.rawLineIndex || 0,

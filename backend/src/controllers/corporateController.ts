@@ -3523,7 +3523,7 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
     }
 
     const codes = rawItems
-      .map((item: any) => getFieldVal(item, ['code', 'activityCode', 'activity', 'codeNo']).trim())
+      .map((item: any) => getFieldVal(item, ['code', 'activityCode', 'activity', 'codeNo']).trim().toUpperCase())
       .filter(Boolean);
 
     const allProjects = await prisma.mF_P_Project.findMany({
@@ -3538,7 +3538,7 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
 
     const existingMap = new Map<string, (typeof existingCodes)[0]>();
     for (const ac of existingCodes) {
-      existingMap.set(ac.code.toLowerCase().trim(), ac);
+      existingMap.set(ac.code.toUpperCase().trim(), ac);
     }
 
     const errors: Array<{
@@ -3562,7 +3562,7 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
     }
 
     const ops: ValidActivityOp[] = [];
-    const seenCodesInBatch = new Set<string>();
+    const seenCodesInBatch = new Map<string, ValidActivityOp>();
 
     for (let i = 0; i < rawItems.length; i++) {
       const rowNum = i + 1;
@@ -3570,24 +3570,24 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
 
       if (isRowEmpty(item)) continue;
 
-      const code = getFieldVal(item, ['code', 'activityCode', 'activity', 'codeNo']).trim();
+      const rawCode = getFieldVal(item, ['code', 'activityCode', 'activity', 'codeNo']).trim();
       const description = getFieldVal(item, ['description', 'name', 'activityName', 'title']).trim();
-      const unit = getFieldVal(item, ['unit', 'unitOfMeasure', 'uom']) || 'm3';
+      const unit = getFieldVal(item, ['unit', 'unitOfMeasure', 'uom']).trim() || 'm3';
 
-      if (!code || !description) {
+      if (!rawCode || !description) {
         errors.push({
           row: rowNum,
-          code: code || undefined,
+          code: rawCode || undefined,
           name: description || undefined,
-          field: !code ? 'Activity Code' : 'Description',
-          reason: !code ? 'Activity Code is required' : 'Description is required',
+          field: !rawCode ? 'Activity Code' : 'Description',
+          reason: !rawCode ? 'Activity Code is required' : 'Description is required',
           suggestion: 'Provide an activity code (e.g. 01-10-10-00) and short description.',
         });
         continue;
       }
 
-      const lowerCode = code.toLowerCase();
-      const existingOp = ops.find((o) => o.code.toLowerCase() === lowerCode);
+      const cleanCode = rawCode.toUpperCase();
+      const existingOp = seenCodesInBatch.get(cleanCode);
 
       // Auto-assign to projects if currentWorkingProject / projectCode specified
       const rawProject = getFieldVal(item, PROJECT_FIELD_ALIASES);
@@ -3609,7 +3609,7 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
             } else {
               errors.push({
                 row: rowNum,
-                code,
+                code: cleanCode,
                 name: description,
                 field: 'Current Working Project',
                 reason: `Project site '${part}' was not found in the system.`,
@@ -3622,6 +3622,8 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
 
       // If this code was already seen in an earlier row, merge its target projects without throwing a duplicate error!
       if (existingOp) {
+        if (description) existingOp.description = description;
+        if (unit) existingOp.unit = unit;
         if (targetProjects.length > 0) {
           for (const tp of targetProjects) {
             if (!existingOp.targetProjects.some((p) => p.id === tp.id)) {
@@ -3631,67 +3633,71 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
         }
         continue;
       }
-      seenCodesInBatch.add(lowerCode);
 
-      ops.push({
+      const op: ValidActivityOp = {
         rowNum,
-        code,
+        code: cleanCode,
         description,
         unit,
         targetProjects,
-        existing: existingMap.get(lowerCode),
-      });
+        existing: existingMap.get(cleanCode),
+      };
+      seenCodesInBatch.set(cleanCode, op);
+      ops.push(op);
     }
 
-    // Parallel DB writes for high performance
-    await Promise.all(
-      ops.map(async (op) => {
-        try {
-          let corpRecord: any;
-          if (op.existing) {
-            corpRecord = await prisma.mF_G_ActivityCode.update({
-              where: { id: op.existing.id },
-              data: {
+    // High performance batch writes using upsert to avoid duplicate key conflicts
+    const BATCH_CHUNK_SIZE = 25;
+    for (let i = 0; i < ops.length; i += BATCH_CHUNK_SIZE) {
+      const chunk = ops.slice(i, i + BATCH_CHUNK_SIZE);
+      await Promise.all(
+        chunk.map(async (op) => {
+          try {
+            const isExisting = Boolean(op.existing || existingMap.get(op.code));
+            const corpRecord = await prisma.mF_G_ActivityCode.upsert({
+              where: { code: op.code },
+              update: {
                 description: op.description,
-                unit: op.unit || op.existing.unit,
+                unit: op.unit || (op.existing?.unit ?? null),
               },
-            });
-            updatedCount++;
-          } else {
-            corpRecord = await prisma.mF_G_ActivityCode.create({
-              data: {
+              create: {
                 code: op.code,
                 description: op.description,
-                unit: op.unit,
+                unit: op.unit || null,
               },
             });
-            insertedCount++;
-          }
 
-          // If target projects specified, auto-assign/upsert into site projects (MF_L_ACTIVITY_CODE)
-          if (op.targetProjects && op.targetProjects.length > 0) {
-            const classification = classifyActivityCode(op.code);
+            if (isExisting) {
+              updatedCount++;
+            } else {
+              insertedCount++;
+            }
 
-            for (const proj of op.targetProjects) {
-              let parentActivityId: string | null = null;
-              let isDerived = false;
+            // If target projects specified, auto-assign/upsert into site projects (MF_L_ACTIVITY_CODE)
+            if (op.targetProjects && op.targetProjects.length > 0) {
+              const classification = classifyActivityCode(op.code);
 
-              if (classification.type === 'DERIVED_CHILD') {
-                isDerived = true;
-                // Find or auto-create parent master in this project
-                let parentAct = await prisma.mF_P_ActivityCode.findFirst({
-                  where: { projectId: proj.id, code: classification.baseCode },
-                  select: { id: true },
-                });
+              for (const proj of op.targetProjects) {
+                let parentActivityId: string | null = null;
+                let isDerived = false;
 
-                if (!parentAct) {
+                if (classification.type === 'DERIVED_CHILD') {
+                  isDerived = true;
+                  // Ensure parent master exists in this project using upsert
                   const corpParent = await prisma.mF_G_ActivityCode.findUnique({
                     where: { code: classification.baseCode },
                     select: { id: true, description: true, unit: true },
                   });
 
-                  parentAct = await prisma.mF_P_ActivityCode.create({
-                    data: {
+                  const parentAct = await prisma.mF_P_ActivityCode.upsert({
+                    where: {
+                      projectId_code: {
+                        projectId: proj.id,
+                        code: classification.baseCode,
+                      },
+                    },
+                    update: {},
+                    create: {
                       projectId: proj.id,
                       code: classification.baseCode,
                       description: corpParent?.description || `Master Activity ${classification.baseCode}`,
@@ -3701,49 +3707,49 @@ export const bulkImportCorporateActivityCodes = async (req: Request, res: Respon
                     },
                     select: { id: true },
                   });
+                  parentActivityId = parentAct.id;
                 }
-                parentActivityId = parentAct?.id || null;
-              }
 
-              await prisma.mF_P_ActivityCode.upsert({
-                where: {
-                  projectId_code: {
+                await prisma.mF_P_ActivityCode.upsert({
+                  where: {
+                    projectId_code: {
+                      projectId: proj.id,
+                      code: op.code,
+                    },
+                  },
+                  update: {
+                    description: op.description,
+                    unit: op.unit,
+                    corporateActivityCodeId: corpRecord.id,
+                    isDerived,
+                    parentActivityId,
+                  },
+                  create: {
                     projectId: proj.id,
                     code: op.code,
+                    description: op.description,
+                    unit: op.unit,
+                    corporateActivityCodeId: corpRecord.id,
+                    isDerived,
+                    parentActivityId,
                   },
-                },
-                update: {
-                  description: op.description,
-                  unit: op.unit,
-                  corporateActivityCodeId: corpRecord.id,
-                  isDerived,
-                  parentActivityId,
-                },
-                create: {
-                  projectId: proj.id,
-                  code: op.code,
-                  description: op.description,
-                  unit: op.unit,
-                  corporateActivityCodeId: corpRecord.id,
-                  isDerived,
-                  parentActivityId,
-                },
-              });
+                });
+              }
             }
+          } catch (err: any) {
+            const translated = translateError(err, 'activity code', op.code);
+            errors.push({
+              row: op.rowNum,
+              code: op.code,
+              name: op.description,
+              field: 'Database',
+              reason: translated.reason,
+              suggestion: translated.suggestion,
+            });
           }
-        } catch (err: any) {
-          const translated = translateError(err, 'activity code', op.code);
-          errors.push({
-            row: op.rowNum,
-            code: op.code,
-            name: op.description,
-            field: 'Database',
-            reason: translated.reason,
-            suggestion: translated.suggestion,
-          });
-        }
-      })
-    );
+        })
+      );
+    }
 
     res.json({
       success: true,

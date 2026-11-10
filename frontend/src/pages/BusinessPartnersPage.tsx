@@ -1,15 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Building2, Plus, Clock, HardHat, XCircle } from 'lucide-react';
 import { useBusinessPartners } from '../features/business-partners/hooks/useBusinessPartners';
 import BusinessPartnerTable from '../features/business-partners/components/BusinessPartnerTable';
 import BusinessPartnerCardList from '../features/business-partners/components/BusinessPartnerCardList';
 import BusinessPartnerForm from '../features/business-partners/components/BusinessPartnerForm';
 import DirectSitePartnerRegisterModal from '../features/business-partners/components/DirectSitePartnerRegisterModal';
-import MasterImportModal, { type ColumnDef } from '../features/master-import/components/MasterImportModal';
+import BusinessPartnerErpMasterView from '../features/business-partners/components/BusinessPartnerErpMasterView';
 import SearchInput from '../components/SearchInput';
 import SlidePanel from '../components/SlidePanel';
 import Breadcrumb from '../components/Breadcrumb';
-import * as bpService from '../features/business-partners/services/businessPartnerService';
 import type {
   BusinessPartner,
   BusinessPartnerFormData,
@@ -38,73 +37,17 @@ export default function BusinessPartnersPage() {
   const [editingPartner, setEditingPartner] = useState<BusinessPartner | null>(null);
   const [isDirectRegisterModalOpen, setIsDirectRegisterModalOpen] = useState(false);
 
-  // Corporate Master selection modal state
+  // Corporate Master selection view state
   const [corporateModalOpen, setCorporateModalOpen] = useState(false);
-  const [corporateCatalog, setCorporateCatalog] = useState<BusinessPartner[]>([]);
-
-  useEffect(() => {
-    if (corporateModalOpen) {
-      bpService
-        .fetchCorporateCatalog()
-        .then((data) => setCorporateCatalog(data))
-        .catch((err) => console.error('Failed to load corporate business partners:', err));
-    }
-  }, [corporateModalOpen]);
 
   const existingCodes = useMemo(() => {
     return new Set(partners.map((p) => p.code.toUpperCase()));
   }, [partners]);
 
-  const corporateColumns: ColumnDef<BusinessPartner>[] = [
-    {
-      key: 'code',
-      header: 'Code',
-      width: '110px',
-      render: (item) => (
-        <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200">
-          {item.code}
-        </span>
-      ),
-    },
-    {
-      key: 'name',
-      header: 'Partner / Company Name',
-      render: (item) => (
-        <div>
-          <span className="font-medium text-slate-800 text-xs block">{item.name}</span>
-          {item.brNumber && (
-            <span className="text-[10px] text-slate-400 font-mono">BR: {item.brNumber}</span>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'type',
-      header: 'Category',
-      width: '130px',
-      render: (item) => (
-        <span className="text-xs text-slate-600 capitalize">
-          {(item.type || 'Subcontractor').replace(/_/g, ' ')}
-        </span>
-      ),
-    },
-    {
-      key: 'contact',
-      header: 'Contact',
-      width: '180px',
-      render: (item) => (
-        <div className="text-xs text-slate-600">
-          <div>{item.contactPerson || '—'}</div>
-          {item.phone && <div className="text-slate-400 font-mono text-[11px]">{item.phone}</div>}
-        </div>
-      ),
-    },
-  ];
-
   const handleAssignCorporate = async (selected: BusinessPartner[]) => {
     const ids = selected.map((s) => s.id);
     await assignCorporatePartners(ids);
-    setCorporateModalOpen(false);
+    await refresh(true);
   };
 
   const openEdit = (partner: BusinessPartner) => {
@@ -141,9 +84,27 @@ export default function BusinessPartnersPage() {
   const inactiveCount = partners.filter((bp) => bp.status === 'inactive').length;
 
   return (
-    <div className="px-4 md:px-6 py-5">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+    <div
+      className={[
+        'bg-[#F7F8FA] w-full',
+        corporateModalOpen
+          ? 'h-full max-h-full flex-1 flex flex-col min-h-0 p-2 md:p-3 overflow-hidden box-border overscroll-none'
+          : 'min-h-full px-4 md:px-6 py-5',
+      ].join(' ')}
+    >
+      {corporateModalOpen ? (
+        <div className="flex-1 min-h-0 h-full flex flex-col animate-in fade-in duration-150">
+          <BusinessPartnerErpMasterView
+            existingCodes={existingCodes}
+            onClose={() => setCorporateModalOpen(false)}
+            onImport={handleAssignCorporate}
+            onOpenDirectRegister={() => setIsDirectRegisterModalOpen(true)}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Header */}
+          <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
           <h1 className="text-base font-semibold text-slate-900 tracking-tight flex items-center gap-2">
             <Building2 size={20} className="text-blue-700" />
@@ -331,23 +292,8 @@ export default function BusinessPartnersPage() {
           refresh(true);
         }}
       />
-
-      {/* Corporate Master Selection Modal */}
-      <MasterImportModal<BusinessPartner>
-        isOpen={corporateModalOpen}
-        onClose={() => setCorporateModalOpen(false)}
-        title="Select Business Partners from Corporate Master"
-        subtitle="Assign approved corporate subcontractors and equipment vendors to this site"
-        entityName="Business Partners"
-        catalog={corporateCatalog}
-        existingCodes={existingCodes}
-        getItemCode={(item) => item.code}
-        getItemName={(item) => item.name}
-        getItemCategory={(item) => item.type || 'Subcontractor'}
-        getItemSourceProject={() => 'Corporate Master'}
-        columns={corporateColumns}
-        onImport={handleAssignCorporate}
-      />
-    </div>
-  );
+    </>
+  )}
+</div>
+);
 }

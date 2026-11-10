@@ -71,12 +71,12 @@ function dateRange(from?: string, to?: string): string[] {
 }
 
 // ─── Helper: Day type OT rules (mirrors frontend overtimeCalculator.ts) ────────
-function getDayTypeRule(dateStr: string): { standardCap: number; isAllOvertime: boolean; label: string } {
+function getDayTypeRule(dateStr: string): { standardCap: number; isAllOvertime: boolean; isSaturday: boolean; label: string } {
   const d = new Date(dateStr);
   const dow = d.getDay(); // 0 = Sunday, 6 = Saturday
-  if (dow === 0) return { standardCap: 0, isAllOvertime: true, label: 'Sunday' };
-  if (dow === 6) return { standardCap: 6.0, isAllOvertime: false, label: 'Saturday' };
-  return { standardCap: 8.0, isAllOvertime: false, label: 'Normal Day' };
+  if (dow === 0) return { standardCap: 0, isAllOvertime: true, isSaturday: false, label: 'Sunday' };
+  if (dow === 6) return { standardCap: 5.5, isAllOvertime: false, isSaturday: true, label: 'Saturday' };
+  return { standardCap: 8.0, isAllOvertime: false, isSaturday: false, label: 'Normal Day' };
 }
 
 // ─── Helper: Compute shift work hours and OT with Database Fast-Path ─────────
@@ -109,13 +109,15 @@ function computeAttendanceHoursAndOt(
     const inMins = inH * 60 + (inM || 0);
     const outMins = outH * 60 + (outM || 0);
     let diffMins = outMins - inMins;
-    if (diffMins < 0) diffMins += 24 * 60; // Crosses midnight
+    if (diffMins <= 0) diffMins += 24 * 60; // Crosses midnight or full 24h
 
     let breakMins = 0;
     if (diffMins >= 300) breakMins += 60; // 1-hour lunch break deduction
-    const isPast11PM = (outMins >= inMins)
-      ? (outMins >= 23 * 60)
-      : (inMins <= 23 * 60 || outMins >= 23 * 60);
+    const isPast11PM = diffMins >= 720 || (
+      (outMins >= inMins)
+        ? (outMins >= 23 * 60)
+        : (inMins <= 23 * 60 || outMins >= 23 * 60)
+    );
     if (isPast11PM) breakMins += 60; // 1-hour late night break deduction
 
     diffMins = Math.max(0, diffMins - breakMins);
@@ -124,8 +126,12 @@ function computeAttendanceHoursAndOt(
       let ot = 0;
       if (isAllOvertime) {
         ot = shiftHours;
-      } else if (shiftHours > standardCap) {
-        ot = Math.round((shiftHours - standardCap) * 100) / 100;
+      } else if (standardCap === 5.5) {
+        ot = Math.round((shiftHours - 5.5) * 100) / 100;
+      } else if (shiftHours > 6.0) {
+        ot = Math.round((shiftHours - 8.0) * 100) / 100;
+      } else {
+        ot = Math.round((shiftHours - 4.0) * 100) / 100;
       }
       return { workHours: shiftHours, otHours: ot };
     }
@@ -638,7 +644,8 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
       const effectiveBp = entry.appliedBusinessPartner || entry.employee.businessPartner;
       const bpName = effectiveBp?.name || 'Direct / Maga';
       const empId = entry.employeeId;
-      const hours = Number(entry.hours) + Number(entry.overtimeHours);
+      // entry.hours represents the actual hours worked on this activity. Do not add overtimeHours here as hours already includes total shift work.
+      const hours = Number(entry.hours || entry.shiftHours || 0);
 
       const isEmployeeActive = entry.employee.status === 'active' && entry.employee.corporateEmployee.status === 'active';
       const isPartnerActive = !effectiveBp || effectiveBp.status === 'active';
@@ -918,6 +925,11 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
           },
         },
         activity: true,
+        activitySplits: {
+          include: {
+            activityCode: true,
+          },
+        },
       },
       orderBy: [{ date: 'asc' }, { employeeId: 'asc' }],
     });
@@ -967,20 +979,39 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
 
       // Regular activity rows
       for (const entry of groupEntries) {
-        const hours = Number(entry.hours);
-        totalDayHours += hours;
-        finalRows.push({
-          id: `erp-${rowIdx++}`,
-          employeeId: entry.employee.corporateEmployee.employeeCode || entry.employeeId,
-          employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
-          date: dateKey,
-          activityCode: entry.activity.code,
-          activityDescription: entry.activity.description || entry.activity.code,
-          hours,
-          overtimeHours: 0,
-          remarks: entry.remarks || '',
-        });
-        totalHours += hours;
+        if (entry.activitySplits && entry.activitySplits.length > 0) {
+          for (const split of entry.activitySplits) {
+            const splitHours = Number(split.hours) || 0;
+            totalDayHours += splitHours;
+            finalRows.push({
+              id: `erp-${rowIdx++}`,
+              employeeId: entry.employee.corporateEmployee.employeeCode || entry.employeeId,
+              employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
+              date: dateKey,
+              activityCode: split.activityCode.code,
+              activityDescription: split.activityCode.description || split.activityCode.code,
+              hours: splitHours,
+              overtimeHours: 0,
+              remarks: entry.remarks || '',
+            });
+            totalHours += splitHours;
+          }
+        } else {
+          const hours = Number(entry.hours);
+          totalDayHours += hours;
+          finalRows.push({
+            id: `erp-${rowIdx++}`,
+            employeeId: entry.employee.corporateEmployee.employeeCode || entry.employeeId,
+            employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
+            date: dateKey,
+            activityCode: entry.activity.code,
+            activityDescription: entry.activity.description || entry.activity.code,
+            hours,
+            overtimeHours: 0,
+            remarks: entry.remarks || '',
+          });
+          totalHours += hours;
+        }
       }
 
       // ── ZIDLE Balancing Row ────────────────────────────────────────────────
@@ -1120,6 +1151,11 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
           },
         },
         activity: { select: { id: true, code: true, description: true } },
+        activitySplits: {
+          include: {
+            activityCode: { select: { id: true, code: true, description: true } },
+          },
+        },
       },
       orderBy: [{ date: 'desc' }, { employee: { callingName: 'asc' } }],
     });
@@ -1147,16 +1183,29 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       const inTime = groupEntries.find((e) => e.inTime)?.inTime || '—';
       const outTime = groupEntries.find((e) => e.outTime)?.outTime || '—';
 
-      // Activities breakdown
+      // Activities breakdown (support multi-activity splits)
       const activitiesMap = new Map<string, { code: string; description: string; hours: number }>();
       for (const e of groupEntries) {
-        const code = e.activity?.code || '00-00-11-11-M';
-        const desc = e.activity?.description || code;
-        const h = Number(e.hours) || 0;
-        if (h > 0) {
-          const prev = activitiesMap.get(code) || { code, description: desc, hours: 0 };
-          prev.hours += h;
-          activitiesMap.set(code, prev);
+        if (e.activitySplits && e.activitySplits.length > 0) {
+          for (const s of e.activitySplits) {
+            const code = s.activityCode?.code || '00-00-11-11-M';
+            const desc = s.activityCode?.description || code;
+            const h = Number(s.hours) || 0;
+            if (h > 0) {
+              const prev = activitiesMap.get(code) || { code, description: desc, hours: 0 };
+              prev.hours += h;
+              activitiesMap.set(code, prev);
+            }
+          }
+        } else {
+          const code = e.activity?.code || '00-00-11-11-M';
+          const desc = e.activity?.description || code;
+          const h = Number(e.hours) || 0;
+          if (h > 0) {
+            const prev = activitiesMap.get(code) || { code, description: desc, hours: 0 };
+            prev.hours += h;
+            activitiesMap.set(code, prev);
+          }
         }
       }
 
@@ -1177,11 +1226,13 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
         const inMins = inH * 60 + (inM || 0);
         const outMins = outH * 60 + (outM || 0);
         let diffMins = outMins - inMins;
-        if (diffMins < 0) diffMins += 24 * 60;
+        if (diffMins <= 0) diffMins += 24 * 60;
         if (diffMins >= 300) breakHours += 1.0;
-        const isPast11PM = (outMins >= inMins)
-          ? (outMins >= 23 * 60)
-          : (inMins <= 23 * 60 || outMins >= 23 * 60);
+        const isPast11PM = diffMins >= 720 || (
+          (outMins >= inMins)
+            ? (outMins >= 23 * 60)
+            : (inMins <= 23 * 60 || outMins >= 23 * 60)
+        );
         if (isPast11PM) breakHours += 1.0;
       }
 
@@ -1191,7 +1242,8 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       if (totalDayHours === 0 && inTime !== '—' && outTime !== '—') {
         const [inH, inM] = inTime.split(':').map(Number);
         const [outH, outM] = outTime.split(':').map(Number);
-        const diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+        let diffMins = (outH * 60 + outM) - (inH * 60 + inM);
+        if (diffMins <= 0) diffMins += 24 * 60;
         if (diffMins > 0) {
           const grossHours = Math.round((diffMins / 60) * 100) / 100;
           totalDayHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
@@ -1546,21 +1598,30 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
           const eqCorp = first.equipment?.corporateEquipment;
           eqCode = eqCorp?.standardEquipmentNumber || eqCorp?.vehicleNo || null;
 
-          // Sum hours across activities
-          let sumShiftHours = 0;
-          let sumOtHours = 0;
-          for (const e of dayEntries) {
-            sumShiftHours += Number(e.shiftHours ?? e.hours ?? 0);
-            sumOtHours += Number(e.overtimeHours || 0);
-          }
+          // For multi-activity split rows (e.g. 6h Act A + 7h Act B = 13h):
+          // Activity hours should be summed, but shiftHours and overtimeHours are daily attributes
+          // and must NOT be multiplied/summed across splits, otherwise OT gets duplicated!
+          const sumActivityHours = dayEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+          const sumShiftHours = Number(first.shiftHours) > 0 ? Number(first.shiftHours) : sumActivityHours;
+          const sumOtHours = Math.max(...dayEntries.map((e) => Number(e.overtimeHours) || 0));
 
-          // Compute Days worked: >= 7.0h = 1.0 day (e.g. 09:00-17:00, Saturday 6.5h+), >= 3.5h = 0.5 day
-          if (sumShiftHours >= 7.0 || (sumShiftHours + sumOtHours) >= 7.0) {
+          // Compute Days worked per logic document:
+          // External workers: 0 Days (subcontractor labor is billed by hours, not payroll days).
+          // Internal Saturday: Any attendance = 1.0 Day; Weekday > 6h = 1.0 Day; Weekday <= 6h = 0.5 Day; Sunday/Holiday = 0.0 Days
+          const isExternalWorker = Boolean(emp.businessPartnerId || emp.corporateEmployee?.corporateBusinessPartnerId);
+          const dayRule = getDayTypeRule(dateStr);
+          if (isExternalWorker) {
+            dayWorked = 0;
+          } else if (sumShiftHours <= 0 && sumOtHours === 0) {
+            dayWorked = 0;
+          } else if (dayRule.isAllOvertime) {
+            dayWorked = 0;
+          } else if (dayRule.isSaturday) {
             dayWorked = 1.0;
-          } else if (sumShiftHours >= 3.5 || (sumShiftHours + sumOtHours) >= 3.5) {
-            dayWorked = 0.5;
+          } else if (sumShiftHours > 6.0) {
+            dayWorked = 1.0;
           } else if (sumShiftHours > 0) {
-            dayWorked = Math.round((sumShiftHours / 8) * 100) / 100;
+            dayWorked = 0.5;
           }
 
           dayOt = Math.round(sumOtHours * 100) / 100;

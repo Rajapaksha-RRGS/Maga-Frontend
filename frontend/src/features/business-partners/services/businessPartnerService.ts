@@ -34,6 +34,7 @@ export interface BusinessPartner {
   siteEquipmentCount?: number;
   isActiveOnSite?: boolean;
   type?: string;
+  rating?: string;
 }
 
 export interface BusinessPartnerFormData {

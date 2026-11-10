@@ -1,4 +1,2 @@
 Line,Employee,Date,In,Out,Activity,Hours,Reason
-2,X51331,2026-11-03,07:00,17:00,03-11-13-50,8,"Employee 'X51331' not found in local site table (MF_L_EMPLOYEE)."
-3,X51331,2026-11-03,07:00,17:00,03-20-00-00,8,"Employee 'X51331' not found in local site table (MF_L_EMPLOYEE)."
-4,R8352,2026-11-03,07:30,17:00,03-11-13-50,8.5,"Employee 'R8352' not found in local site table (MF_L_EMPLOYEE)."
+1036,R0225,09/07/2026,07:00,22:00,26-70-15-00,13,"Missing Idle / Hours Deficit: Shift is 14h (07:00 - 22:00) but Activities total 13h. Missing 1h Idle line (ZIDLE)!"

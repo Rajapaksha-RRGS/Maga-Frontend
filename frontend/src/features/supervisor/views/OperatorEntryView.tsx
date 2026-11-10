@@ -167,6 +167,7 @@ export function OperatorEntryView({
 
   // ── OUT MODE BATCH STATE ──
   const [batchOutTime, setBatchOutTime] = useState('17:00');
+  const [batchAdditionalHours, setBatchAdditionalHours] = useState('0.0');
 
   // Unique designations / roles
   const uniqueRoles = useMemo(() => {
@@ -285,7 +286,13 @@ export function OperatorEntryView({
       if (!selectedOperatorIds.includes(o.id)) return o;
       const inTime = batchInTime;
       const outTime = o.outTime;
-      const { shift, ot } = computeHours(inTime, outTime);
+      const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+        inTime,
+        outTime,
+        selectedDate,
+        undefined,
+        o.additionalHours || 0
+      );
 
       const splits = (o.equipmentSplits && o.equipmentSplits.length === 1)
         ? [{ ...o.equipmentSplits[0], hours: shift || 8.0 }]
@@ -296,6 +303,9 @@ export function OperatorEntryView({
         inTime,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         equipmentSplits: splits,
         status: (inTime && outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
         lastSavedAt: `In: ${batchInTime}`,
@@ -310,11 +320,19 @@ export function OperatorEntryView({
   const handleApplyBatchOut = () => {
     if (selectedOperatorIds.length === 0) return;
 
+    const addVal = parseFloat(batchAdditionalHours) || 0;
     const updated = operators.map((o) => {
       if (!selectedOperatorIds.includes(o.id)) return o;
       const inTime = o.inTime || '07:00';
       const outTime = batchOutTime;
-      const { shift, ot } = computeHours(inTime, outTime);
+      const workerAdd = addVal > 0 ? addVal : (o.additionalHours || 0);
+      const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+        inTime,
+        outTime,
+        selectedDate,
+        undefined,
+        workerAdd
+      );
 
       const splits = (o.equipmentSplits && o.equipmentSplits.length === 1)
         ? [{ ...o.equipmentSplits[0], hours: shift || 8.0 }]
@@ -324,8 +342,12 @@ export function OperatorEntryView({
         ...o,
         inTime,
         outTime,
+        additionalHours: workerAdd,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         assignedEquipmentId: splits[0]?.equipmentId || o.assignedEquipmentId || '',
         equipmentSplits: splits,
         status: (inTime && outTime ? 'done' : 'draft') as 'done' | 'draft',
@@ -341,7 +363,14 @@ export function OperatorEntryView({
   const handleApplyBatchFullShift = () => {
     if (selectedOperatorIds.length === 0) return;
 
-    const { shift, ot } = computeHours(batchInTime, batchOutTime);
+    const addVal = parseFloat(batchAdditionalHours) || 0;
+    const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+      batchInTime,
+      batchOutTime,
+      selectedDate,
+      undefined,
+      addVal
+    );
 
     const updated = operators.map((o) => {
       if (!selectedOperatorIds.includes(o.id)) return o;
@@ -354,8 +383,12 @@ export function OperatorEntryView({
         ...o,
         inTime: batchInTime,
         outTime: batchOutTime,
+        additionalHours: addVal,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         assignedEquipmentId: splits[0]?.equipmentId || o.assignedEquipmentId || '',
         equipmentSplits: splits,
         status: 'done' as const,
@@ -387,20 +420,58 @@ export function OperatorEntryView({
   };
 
   // ── INDIVIDUAL TIME CHANGES ──
-  const handleIndividualTimeChange = (id: string, inTime: string, outTime: string) => {
-    const { shift, ot } = computeHours(inTime, outTime);
+  const handleIndividualAdditionalHoursChange = (id: string, additionalHours: number) => {
     const updated = operators.map((o) => {
       if (o.id !== id) return o;
-      let splits = o.equipmentSplits;
-      if (splits && splits.length === 1) {
-        splits = [{ ...splits[0], hours: shift || 8.0 }];
-      }
+      const addVal = Math.max(0, additionalHours);
+      const inTime = o.inTime || '';
+      const outTime = o.outTime || '';
+      const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+        inTime,
+        outTime,
+        selectedDate,
+        undefined,
+        addVal
+      );
+      const splits = o.equipmentSplits;
+      return {
+        ...o,
+        additionalHours: addVal,
+        shiftHours: shift,
+        otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
+        equipmentSplits: splits,
+        status: 'draft' as const,
+        lastSavedAt: `+Add: ${addVal}h`,
+      };
+    });
+    onSaveOperators(updated);
+  };
+
+  const handleIndividualTimeChange = (id: string, inTime: string, outTime: string) => {
+    const op = operators.find((o) => o.id === id);
+    const addVal = op?.additionalHours || 0;
+    const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+      inTime,
+      outTime,
+      selectedDate,
+      undefined,
+      addVal
+    );
+    const updated = operators.map((o) => {
+      if (o.id !== id) return o;
+      const splits = o.equipmentSplits;
       return {
         ...o,
         inTime,
         outTime,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         equipmentSplits: splits,
         status: 'draft' as const, // Editing keeps/sets it as draft
         lastSavedAt: `Draft: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
@@ -414,7 +485,14 @@ export function OperatorEntryView({
       if (o.id !== id) return o;
       const inTime = o.inTime || '07:00';
       const outTime = o.outTime || batchOutTime || '17:00';
-      const { shift, ot } = computeHours(inTime, outTime);
+      const addVal = o.additionalHours || 0;
+      const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
+        inTime,
+        outTime,
+        selectedDate,
+        undefined,
+        addVal
+      );
       let splits = o.equipmentSplits || [];
       if (splits.length === 1 && shift > 0) {
         splits = [{ ...splits[0], hours: shift }];
@@ -425,6 +503,9 @@ export function OperatorEntryView({
         outTime,
         shiftHours: shift,
         otHours: ot,
+        breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         equipmentSplits: splits,
         status: 'done' as const,
         lastSavedAt: `Done at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
@@ -846,7 +927,7 @@ export function OperatorEntryView({
               <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                 {isBatchOpen
                   ? 'Set shift times for selected operators in 1-tap.'
-                  : `${batchInTime} - ${batchOutTime} • Tap to expand controls & apply`}
+                  : `${batchInTime} - ${batchOutTime}${parseFloat(batchAdditionalHours) > 0 ? ` (+${batchAdditionalHours}h Add)` : ''} • Tap to expand controls & apply`}
               </p>
             </div>
           </div>
@@ -892,8 +973,8 @@ export function OperatorEntryView({
               </div>
             </div>
 
-            {/* Dual In & Out Pickers Side-by-Side */}
-            <div className="grid grid-cols-2 gap-2.5">
+            {/* In, Out & Additional Hours Pickers */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-2.5">
               <div className="flex items-center justify-between gap-1.5 bg-emerald-50/70 dark:bg-emerald-950/30 px-2.5 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800/60 shadow-2xs">
                 <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-300 uppercase flex items-center gap-1">
                   <LogIn size={12} /> In:
@@ -916,6 +997,26 @@ export function OperatorEntryView({
                   onChange={(e) => setBatchOutTime(e.target.value)}
                   className="text-xs font-bold text-blue-950 dark:text-blue-100 bg-transparent focus:outline-none"
                 />
+              </div>
+
+              <div className="flex items-center justify-between gap-1.5 bg-amber-50/70 dark:bg-amber-950/30 px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800/60 shadow-2xs">
+                <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 uppercase flex items-center gap-1" title="Additional Hours added directly to effective shift">
+                  +Add:
+                </span>
+                <div className="flex items-center gap-0.5">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    max="24"
+                    value={batchAdditionalHours}
+                    onChange={(e) => setBatchAdditionalHours(e.target.value)}
+                    placeholder="0.0"
+                    className="w-12 text-xs font-bold font-mono text-amber-900 dark:text-amber-200 bg-transparent focus:outline-none text-right cursor-pointer"
+                    title="Batch Additional Hours"
+                  />
+                  <span className="text-[10px] text-amber-700/70 dark:text-amber-400/70 font-mono">h</span>
+                </div>
               </div>
             </div>
 
@@ -1228,13 +1329,35 @@ export function OperatorEntryView({
                         </button>
                       )}
                     </div>
+
+                    {/* ADDITIONAL HOURS INPUT */}
+                    <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                      <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase flex items-center gap-0.5" title="Additional Hours added directly to effective shift">
+                        +Add:
+                      </span>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="24"
+                        disabled={isDayLocked}
+                        value={operator.additionalHours !== undefined && operator.additionalHours !== null ? operator.additionalHours : ''}
+                        onChange={(e) => handleIndividualAdditionalHoursChange(operator.id, parseFloat(e.target.value) || 0)}
+                        placeholder="0.0"
+                        className="w-[42px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-amber-500 bg-transparent cursor-pointer font-mono text-amber-800 dark:text-amber-200"
+                        title="Additional Hours (Added directly to effective shift)"
+                      />
+                      <span className="text-[10px] text-slate-400 font-mono">h</span>
+                    </div>
                   </div>
 
                   {/* Shift Hours Badge */}
                   {operator.inTime && operator.outTime && (
                     <span className="text-[11px] font-bold font-mono px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shadow-2xs flex-shrink-0" title={`Computed shift: ${shift}h (Operating: ${operatingHours}h, Idle: ${idleHours}h)`}>
                       {formatHhmm(shift)}h
-                      {operator.otHours > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5">+${operator.otHours}h</span>}
+                      {Number(operator.additionalHours || 0) > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5"> (+{operator.additionalHours}h)</span>}
+                      {operator.otHours > 0 && <span className="text-[9px] text-emerald-600 dark:text-emerald-400 ml-0.5">:+{operator.otHours}h OT</span>}
+                      {operator.otHours < 0 && <span className="text-[9px] text-rose-600 dark:text-rose-400 ml-0.5">:{operator.otHours}h OT</span>}
                     </span>
                   )}
                 </div>

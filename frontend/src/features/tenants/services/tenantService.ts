@@ -33,6 +33,14 @@ export interface TenantRecord {
   laborAssignBySupervisor?: boolean;
   operatorAssignBySupervisor?: boolean;
   equipmentAssignBySupervisor?: boolean;
+  lunchBreakEnabled?: boolean;
+  lunchStartTime?: string;
+  lunchEndTime?: string;
+  lunchDurationHours?: number;
+  dinnerBreakEnabled?: boolean;
+  dinnerStartTime?: string;
+  dinnerEndTime?: string;
+  dinnerDurationHours?: number;
   createdAt: string;
   userCount?: number;
   employeeCount?: number;
@@ -249,4 +257,33 @@ export async function updatePoolModes(
   }
   const err = await res.json().catch(() => ({}));
   throw new Error(err.error || 'Failed to update site pool modes');
+}
+
+export interface SiteMealSettingsPayload {
+  lunchBreakEnabled?: boolean;
+  lunchStartTime?: string;
+  lunchEndTime?: string;
+  lunchDurationHours?: number;
+  dinnerBreakEnabled?: boolean;
+  dinnerStartTime?: string;
+  dinnerEndTime?: string;
+  dinnerDurationHours?: number;
+}
+
+export async function updateMealSettings(
+  id: string,
+  settings: SiteMealSettingsPayload
+): Promise<TenantRecord> {
+  const res = await apiFetch(`${API_URL}/tenants/${id}/meal-settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    cacheManager.clear();
+    return data;
+  }
+  const err = await res.json().catch(() => ({}));
+  throw new Error(err.error || 'Failed to update site meal settings');
 }

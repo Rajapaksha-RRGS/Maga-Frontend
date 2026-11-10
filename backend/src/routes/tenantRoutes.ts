@@ -10,6 +10,7 @@ import {
   getCorporateProjectsCatalog,
   updateEquipmentAssignMode,
   updatePoolModes,
+  updateMealSettings,
 } from '../controllers/tenantController';
 import { getSiteEquipmentPool } from '../controllers/equipmentController';
 import { getSiteEmployeePool } from '../controllers/employeeController';
@@ -25,6 +26,7 @@ router.put('/:id', updateTenant);
 router.patch('/:id/status', requireAdmin, updateTenantStatus);
 router.patch('/:id/equipment-mode', updateEquipmentAssignMode);
 router.patch('/:id/pool-modes', updatePoolModes);
+router.patch('/:id/meal-settings', updateMealSettings);
 router.post('/:id/reset-admin-password', requireAdmin, resetTenantAdminPassword);
 router.get('/by-subdomain/:subdomain', getTenantBySubdomain);
 

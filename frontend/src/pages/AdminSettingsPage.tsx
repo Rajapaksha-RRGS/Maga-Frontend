@@ -16,12 +16,17 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Utensils,
+  Sun,
+  Moon,
+  Save,
 } from 'lucide-react';
 import Breadcrumb from '../components/Breadcrumb';
 import { useAuth } from '../context/AuthContext';
 import {
   getTenantById,
   updatePoolModes,
+  updateMealSettings,
   fetchCorporateProjects,
   type CorporateProjectOption,
   type TenantRecord,
@@ -39,6 +44,60 @@ export default function AdminSettingsPage() {
   const [updatingResource, setUpdatingResource] = useState<ResourceType | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
+
+  // Site Meal Policy state
+  const [lunchEnabled, setLunchEnabled] = useState(true);
+  const [lunchStart, setLunchStart] = useState('12:00');
+  const [lunchEnd, setLunchEnd] = useState('13:00');
+  const [lunchDuration, setLunchDuration] = useState('1.00');
+
+  const [dinnerEnabled, setDinnerEnabled] = useState(true);
+  const [dinnerStart, setDinnerStart] = useState('22:00');
+  const [dinnerEnd, setDinnerEnd] = useState('23:00');
+  const [dinnerDuration, setDinnerDuration] = useState('1.00');
+  const [isSavingMeal, setIsSavingMeal] = useState(false);
+
+  // Sync meal policy when project loads
+  useEffect(() => {
+    if (project) {
+      setLunchEnabled(project.lunchBreakEnabled ?? true);
+      setLunchStart(project.lunchStartTime || '12:00');
+      setLunchEnd(project.lunchEndTime || '13:00');
+      setLunchDuration(project.lunchDurationHours ? String(project.lunchDurationHours) : '1.00');
+
+      setDinnerEnabled(project.dinnerBreakEnabled ?? true);
+      setDinnerStart(project.dinnerStartTime || '22:00');
+      setDinnerEnd(project.dinnerEndTime || '23:00');
+      setDinnerDuration(project.dinnerDurationHours ? String(project.dinnerDurationHours) : '1.00');
+    }
+  }, [project]);
+
+  const handleSaveMealSettings = async () => {
+    if (!selectedProjectId) return;
+    setIsSavingMeal(true);
+    setSuccessToast(null);
+    setErrorToast(null);
+
+    try {
+      const updated = await updateMealSettings(selectedProjectId, {
+        lunchBreakEnabled: lunchEnabled,
+        lunchStartTime: lunchStart,
+        lunchEndTime: lunchEnd,
+        lunchDurationHours: parseFloat(lunchDuration) || 1.0,
+        dinnerBreakEnabled: dinnerEnabled,
+        dinnerStartTime: dinnerStart,
+        dinnerEndTime: dinnerEnd,
+        dinnerDurationHours: parseFloat(dinnerDuration) || 1.0,
+      });
+      setProject(updated);
+      setSuccessToast('Site meal break deduction rules saved successfully.');
+      setTimeout(() => setSuccessToast(null), 4000);
+    } catch (err: any) {
+      setErrorToast(err.message || 'Failed to save site meal break rules');
+    } finally {
+      setIsSavingMeal(false);
+    }
+  };
 
   // Load project configuration
   const loadProjectConfig = async (projId: string) => {
@@ -378,6 +437,162 @@ export default function AdminSettingsPage() {
                   )}
                 </span>
               </button>
+            </div>
+          </div>
+
+          {/* ── 4. Site Meal Break Deduction Rules Card ── */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 md:p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center font-bold">
+                  <Utensils size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">
+                    Site Meal & Break Deduction Rules
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Configure official site lunch and dinner break deduction windows for all workers on site.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveMealSettings}
+                disabled={isSavingMeal}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm hover:shadow active:scale-98 disabled:opacity-50 cursor-pointer self-start sm:self-auto"
+              >
+                {isSavingMeal ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Saving Rules...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save size={14} />
+                    <span>Save Break Rules</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {/* Lunch Break Configuration */}
+              <div className="p-4 rounded-xl border border-amber-200/80 bg-amber-50/30 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sun size={17} className="text-amber-600" />
+                    <span className="text-sm font-bold text-slate-800">Lunch Break</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={lunchEnabled}
+                      onChange={(e) => setLunchEnabled(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+                  </label>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Automatically deducted when a laborer or operator works across this mid-day window.
+                </p>
+
+                <div className="grid grid-cols-3 gap-2.5 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Start Time</label>
+                    <input
+                      type="time"
+                      value={lunchStart}
+                      disabled={!lunchEnabled}
+                      onChange={(e) => setLunchStart(e.target.value)}
+                      className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">End Time</label>
+                    <input
+                      type="time"
+                      value={lunchEnd}
+                      disabled={!lunchEnabled}
+                      onChange={(e) => setLunchEnd(e.target.value)}
+                      className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Duration (Hrs)</label>
+                    <input
+                      type="number"
+                      step="0.25"
+                      min="0.25"
+                      max="3.00"
+                      value={lunchDuration}
+                      disabled={!lunchEnabled}
+                      onChange={(e) => setLunchDuration(e.target.value)}
+                      className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Dinner Break Configuration */}
+              <div className="p-4 rounded-xl border border-indigo-200/80 bg-indigo-50/30 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Moon size={17} className="text-indigo-600" />
+                    <span className="text-sm font-bold text-slate-800">Dinner / Night Break</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dinnerEnabled}
+                      onChange={(e) => setDinnerEnabled(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Automatically deducted when a worker continues working into the late night across this window.
+                </p>
+
+                <div className="grid grid-cols-3 gap-2.5 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Start Time</label>
+                    <input
+                      type="time"
+                      value={dinnerStart}
+                      disabled={!dinnerEnabled}
+                      onChange={(e) => setDinnerStart(e.target.value)}
+                      className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">End Time</label>
+                    <input
+                      type="time"
+                      value={dinnerEnd}
+                      disabled={!dinnerEnabled}
+                      onChange={(e) => setDinnerEnd(e.target.value)}
+                      className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Duration (Hrs)</label>
+                    <input
+                      type="number"
+                      step="0.25"
+                      min="0.25"
+                      max="3.00"
+                      value={dinnerDuration}
+                      disabled={!dinnerEnabled}
+                      onChange={(e) => setDinnerDuration(e.target.value)}
+                      className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

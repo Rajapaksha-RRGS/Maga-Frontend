@@ -391,6 +391,51 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
       }
     }
 
+    // Step 2.5: Auto-discover Derived Sub-Activities for selected Master Parent activities
+    // When a user selects a master activity (e.g. 33-44-17-00), automatically fetch all its child
+    // activities (e.g. 33-44-17-00-23, 33-44-17-00-27) from the corporate catalog so they are imported together.
+    const masterBaseCodes = masterAndStandaloneItems
+      .filter(({ classification }) => classification.type === 'STANDARD_MASTER')
+      .map(({ item }) => String(item.code).trim().toUpperCase());
+
+    if (masterBaseCodes.length > 0) {
+      const childCorpRecords = await prisma.mF_G_ActivityCode.findMany({
+        where: {
+          OR: masterBaseCodes.map((base) => ({
+            code: { startsWith: base },
+          })),
+        },
+        select: { id: true, code: true, description: true, unit: true },
+      });
+
+      const existingDerivedCodes = new Set(
+        derivedItems.map(({ item }) => String(item.code).trim().toUpperCase())
+      );
+
+      for (const childCorp of childCorpRecords) {
+        const cleanChildCode = childCorp.code.trim().toUpperCase();
+        const childClassification = classifyActivityCode(cleanChildCode);
+
+        if (
+          childClassification.type === 'DERIVED_CHILD' &&
+          masterBaseCodes.includes(childClassification.baseCode) &&
+          !existingDerivedCodes.has(cleanChildCode)
+        ) {
+          derivedItems.push({
+            item: {
+              id: childCorp.id,
+              code: childCorp.code,
+              description: childCorp.description,
+              unit: childCorp.unit,
+            },
+            classification: childClassification,
+          });
+          existingDerivedCodes.add(cleanChildCode);
+          corpMap.set(cleanChildCode, childCorp);
+        }
+      }
+    }
+
     const imported: any[] = [];
 
     // Pre-load all existing site activities to resolve parent IDs quickly
@@ -469,8 +514,15 @@ export const importActivityCodesFromCorporate = async (req: Request, res: Respon
             const parentUnit = corpParent?.unit || item.unit?.trim() || null;
             const parentCorpId = corpParent?.id || null;
 
-            const newParent = await prisma.mF_P_ActivityCode.create({
-              data: {
+            const newParent = await prisma.mF_P_ActivityCode.upsert({
+              where: {
+                projectId_code: {
+                  projectId,
+                  code: baseCode,
+                },
+              },
+              update: {},
+              create: {
                 projectId,
                 code: baseCode,
                 description: parentDesc,

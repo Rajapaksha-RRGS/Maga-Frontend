@@ -110,52 +110,157 @@ export function sumHhmm(values: (number | string)[]): number {
   return Math.round(total * 100) / 100;
 }
 
+export interface SiteMealPolicyConfig {
+  lunchBreakEnabled?: boolean;
+  lunchStartTime?: string;
+  lunchEndTime?: string;
+  lunchDuration?: number;
+  dinnerBreakEnabled?: boolean;
+  dinnerStartTime?: string;
+  dinnerEndTime?: string;
+  dinnerDuration?: number;
+}
+
+export function computeBreakMinutes(
+  inMins: number,
+  outMins: number,
+  policy?: SiteMealPolicyConfig
+): { breakMinutes: number; isLunchDeducted: boolean; isDinnerDeducted: boolean } {
+  const lunchEnabled = policy?.lunchBreakEnabled ?? true;
+  const dinnerEnabled = policy?.dinnerBreakEnabled ?? true;
+
+  const [lStartH, lStartM] = (policy?.lunchStartTime || '12:00').split(':').map(Number);
+  const [lEndH, lEndM] = (policy?.lunchEndTime || '13:00').split(':').map(Number);
+  const lunchStart = (lStartH || 12) * 60 + (lStartM || 0);
+  const lunchEnd = (lEndH || 13) * 60 + (lEndM || 0);
+  const lunchDurationMins = Math.round((policy?.lunchDuration ?? 1.0) * 60);
+
+  const [dStartH, dStartM] = (policy?.dinnerStartTime || '22:00').split(':').map(Number);
+  const [dEndH, dEndM] = (policy?.dinnerEndTime || '23:00').split(':').map(Number);
+  const dinnerStart = (dStartH || 22) * 60 + (dStartM || 0);
+  const dinnerEnd = (dEndH || 23) * 60 + (dEndM || 0);
+  const dinnerDurationMins = Math.round((policy?.dinnerDuration ?? 1.0) * 60);
+
+  const calcOverlap = (wStart: number, wEnd: number): number => {
+    if (outMins > inMins) {
+      return Math.max(0, Math.min(outMins, wEnd) - Math.max(inMins, wStart));
+    } else {
+      const seg1 = Math.max(0, Math.min(1440, wEnd) - Math.max(inMins, wStart));
+      const seg2 = Math.max(0, Math.min(outMins, wEnd) - Math.max(0, wStart));
+      return seg1 + seg2;
+    }
+  };
+
+  let isLunchDeducted = false;
+  let isDinnerDeducted = false;
+  let totalBreakMins = 0;
+
+  if (lunchEnabled) {
+    const overlap = calcOverlap(lunchStart, lunchEnd);
+    if (overlap > 0) {
+      isLunchDeducted = true;
+      totalBreakMins += lunchDurationMins;
+    }
+  }
+
+  if (dinnerEnabled) {
+    const overlap = calcOverlap(dinnerStart, dinnerEnd);
+    if (overlap > 0) {
+      isDinnerDeducted = true;
+      totalBreakMins += dinnerDurationMins;
+    }
+  }
+
+  return { breakMinutes: totalBreakMins, isLunchDeducted, isDinnerDeducted };
+}
+
 /**
  * Computes shift and OT hours between two "HH:MM" 24h clock strings according to site rules:
- * 1. Standard lunch break: 1.0 hour (60 mins) deducted if gross shift >= 5.0 hours (300 mins).
- * 2. Late night / Dinner break: Additional 1.0 hour (60 mins) deducted if out-time passes or reaches 11:00 PM (23:00).
- * Standard shift cap is 8.00 hours (480 minutes). Any remaining time is OT.
- * Output is in Decimal Hours (0.50 = 30 minutes, 1.00 = 60 minutes):
- *   e.g. 06:30 to 21:30 -> gross 15h - 1h lunch = 14h -> shift: 14.00, ot: 6.00
- *   e.g. 07:00 to 17:00 -> gross 10h - 1h lunch = 9h -> shift: 9.00, ot: 1.00
- *   e.g. 07:00 to 23:00 -> gross 16h - 1h lunch - 1h night meal = 14h -> shift: 14.00, ot: 6.00
+ * 1. Lunch break window: Deducted if shift spans the site lunch window (default: 12:00 - 13:00).
+ * 2. Dinner break window: Deducted if shift spans the site dinner window (default: 22:00 - 23:00).
+ * Standard shift cap is 8.00 hours (or 5.5h on Saturday, 0.0h on Sunday). Any remaining time is OT.
  */
-export function computeHours(inTime: string, outTime: string): { shift: number; ot: number } {
-  if (!inTime || !outTime) return { shift: 0, ot: 0 };
+export function computeHours(
+  inTime: string,
+  outTime: string,
+  dateStr?: string,
+  mealPolicy?: SiteMealPolicyConfig,
+  additionalHours: number = 0
+): {
+  shift: number;
+  ot: number;
+  breakHours: number;
+  isLunchDeducted: boolean;
+  isDinnerDeducted: boolean;
+  additionalHours: number;
+} {
+  if (!inTime || !outTime) {
+    return { shift: 0, ot: 0, breakHours: 0, isLunchDeducted: false, isDinnerDeducted: false, additionalHours: 0 };
+  }
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
 
-  if (isNaN(inH) || isNaN(outH)) return { shift: 0, ot: 0 };
+  if (isNaN(inH) || isNaN(outH)) {
+    return { shift: 0, ot: 0, breakHours: 0, isLunchDeducted: false, isDinnerDeducted: false, additionalHours: 0 };
+  }
 
   const inMins = inH * 60 + (inM || 0);
   const outMins = outH * 60 + (outM || 0);
 
   let grossMinutes = outMins - inMins;
-  if (grossMinutes < 0) grossMinutes += 24 * 60; // Crosses midnight
-
-  if (grossMinutes <= 0) return { shift: 0, ot: 0 };
-
-  // Break Deductions:
-  // 1. Standard lunch break: 1 hour if gross >= 5 hours (300 mins)
-  let breakMinutes = 0;
-  if (grossMinutes >= 300) {
-    breakMinutes += 60;
+  if (grossMinutes <= 0) {
+    grossMinutes += 24 * 60;
   }
 
-  // 2. Late night deduction: if out time passes or reaches 11:00 PM (23:00), deduct an additional 1 hour (60 mins)
-  const isPast11PM = (outMins >= inMins)
-    ? (outMins >= 23 * 60)
-    : (inMins <= 23 * 60 || outMins >= 23 * 60);
-  if (isPast11PM) {
-    breakMinutes += 60;
+  if (grossMinutes <= 0) {
+    return { shift: 0, ot: 0, breakHours: 0, isLunchDeducted: false, isDinnerDeducted: false, additionalHours: 0 };
   }
 
-  const netMinutes = Math.max(0, grossMinutes - breakMinutes);
-  if (netMinutes <= 0) return { shift: 0, ot: 0 };
+  // Window-based Break Deductions
+  const { breakMinutes, isLunchDeducted, isDinnerDeducted } = computeBreakMinutes(inMins, outMins, mealPolicy);
+  const effectiveBreakMinutes = Math.min(breakMinutes, grossMinutes);
+  const netMinutes = Math.max(0, grossMinutes - effectiveBreakMinutes);
+  const rawShift = Math.round((netMinutes / 60) * 100) / 100;
+  const shift = Math.max(0, Math.round((rawShift + (additionalHours || 0)) * 100) / 100);
+  const breakHours = Math.round((effectiveBreakMinutes / 60) * 100) / 100;
 
-  const shift = Math.round((netMinutes / 60) * 100) / 100;
-  const otMinutes = netMinutes > 480 ? netMinutes - 480 : 0;
-  const ot = Math.round((otMinutes / 60) * 100) / 100;
+  if (shift <= 0) {
+    return {
+      shift: 0,
+      ot: 0,
+      breakHours,
+      isLunchDeducted,
+      isDinnerDeducted,
+      additionalHours: 0,
+    };
+  }
+  
+  let ot = 0;
+  if (dateStr) {
+    const d = new Date(dateStr);
+    const dow = d.getUTCDay();
+    if (dow === 0) {
+      // Sunday: 100% OT
+      ot = shift;
+    } else if (dow === 6) {
+      // Saturday: Base standard is 5.5 hours (+OT if > 5.5, -OT if < 5.5)
+      ot = Math.round((shift - 5.5) * 100) / 100;
+    } else {
+      // Weekday: > 6h => Full Day (8.0h base); <= 6h => Half Day (4.0h base)
+      if (shift > 6.0) {
+        ot = Math.round((shift - 8.0) * 100) / 100;
+      } else {
+        ot = Math.round((shift - 4.0) * 100) / 100;
+      }
+    }
+  } else {
+    // Default weekday rule: base 8.0h (>6h) or 4.0h (<=6h)
+    if (shift > 6.0) {
+      ot = Math.round((shift - 8.0) * 100) / 100;
+    } else {
+      ot = Math.round((shift - 4.0) * 100) / 100;
+    }
+  }
 
-  return { shift, ot };
+  return { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted, additionalHours };
 }

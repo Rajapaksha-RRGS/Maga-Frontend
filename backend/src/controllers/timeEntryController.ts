@@ -13,58 +13,237 @@ function parseDate(dateStr: string): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
-// Helper: compute break hours (1 hr standard break; 2 hrs if shift passes 11:00 PM / 23:00)
-function computeBreakHours(inTime?: string | null, outTime?: string | null): number {
-  if (!inTime || !outTime) return 0;
+// Site Meal Policy configuration
+export interface SiteMealPolicy {
+  lunchBreakEnabled: boolean;
+  lunchStartTime: string;
+  lunchEndTime: string;
+  lunchDuration: number;
+  dinnerBreakEnabled: boolean;
+  dinnerStartTime: string;
+  dinnerEndTime: string;
+  dinnerDuration: number;
+}
+
+export const DEFAULT_MEAL_POLICY: SiteMealPolicy = {
+  lunchBreakEnabled: true,
+  lunchStartTime: '12:00',
+  lunchEndTime: '13:00',
+  lunchDuration: 1.0,
+  dinnerBreakEnabled: true,
+  dinnerStartTime: '22:00',
+  dinnerEndTime: '23:00',
+  dinnerDuration: 1.0,
+};
+
+const mealPolicyCache = new Map<string, { policy: SiteMealPolicy; expiresAt: number }>();
+
+export async function getSiteMealPolicy(projectId?: string | null): Promise<SiteMealPolicy> {
+  if (!projectId) return DEFAULT_MEAL_POLICY;
+  const cached = mealPolicyCache.get(projectId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.policy;
+  }
+
+  try {
+    const proj = await prisma.mF_P_Project.findUnique({
+      where: { id: projectId },
+      select: {
+        lunchBreakEnabled: true,
+        lunchStartTime: true,
+        lunchEndTime: true,
+        lunchDurationHours: true,
+        dinnerBreakEnabled: true,
+        dinnerStartTime: true,
+        dinnerEndTime: true,
+        dinnerDurationHours: true,
+      },
+    });
+
+    const policy: SiteMealPolicy = {
+      lunchBreakEnabled: proj?.lunchBreakEnabled ?? true,
+      lunchStartTime: proj?.lunchStartTime || '12:00',
+      lunchEndTime: proj?.lunchEndTime || '13:00',
+      lunchDuration: proj?.lunchDurationHours ? Number(proj.lunchDurationHours) : 1.0,
+      dinnerBreakEnabled: proj?.dinnerBreakEnabled ?? true,
+      dinnerStartTime: proj?.dinnerStartTime || '22:00',
+      dinnerEndTime: proj?.dinnerEndTime || '23:00',
+      dinnerDuration: proj?.dinnerDurationHours ? Number(proj.dinnerDurationHours) : 1.0,
+    };
+
+    mealPolicyCache.set(projectId, { policy, expiresAt: Date.now() + 60_000 });
+    return policy;
+  } catch (err) {
+    return DEFAULT_MEAL_POLICY;
+  }
+}
+
+// Window Overlap Break Calculator:
+// Deducts lunch (default 12:00 - 13:00) and/or dinner (default 22:00 - 23:00) based on actual shift times
+export function computeBreakHoursAndSnapshots(
+  inTime?: string | null,
+  outTime?: string | null,
+  policy: SiteMealPolicy = DEFAULT_MEAL_POLICY
+): { breakHours: number; isLunchDeducted: boolean; isDinnerDeducted: boolean } {
+  if (!inTime || !outTime) {
+    return { breakHours: 0, isLunchDeducted: false, isDinnerDeducted: false };
+  }
+
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
+  if (isNaN(inH) || isNaN(outH)) {
+    return { breakHours: 0, isLunchDeducted: false, isDinnerDeducted: false };
+  }
+
   const inMins = inH * 60 + (inM || 0);
   const outMins = outH * 60 + (outM || 0);
 
-  let diff = outMins - inMins;
-  if (diff < 0) diff += 24 * 60;
-  if (diff <= 0) return 0;
+  let grossMins = outMins - inMins;
+  if (grossMins <= 0) grossMins += 24 * 60; // Overnight or 24h shift
 
-  // Standard 1 hour break deduction
-  let breakHours = 1.0;
+  // Parse lunch window
+  const [lStartH, lStartM] = (policy.lunchStartTime || '12:00').split(':').map(Number);
+  const [lEndH, lEndM] = (policy.lunchEndTime || '13:00').split(':').map(Number);
+  const lunchStart = (lStartH || 12) * 60 + (lStartM || 0);
+  const lunchEnd = (lEndH || 13) * 60 + (lEndM || 0);
 
-  // If shift passes 11:00 PM (23:00), 2 hours break deduction in total
-  const isPast11PM = (outMins >= inMins)
-    ? (outMins >= 23 * 60)
-    : (inMins <= 23 * 60 || outMins >= 23 * 60);
+  // Parse dinner window
+  const [dStartH, dStartM] = (policy.dinnerStartTime || '22:00').split(':').map(Number);
+  const [dEndH, dEndM] = (policy.dinnerEndTime || '23:00').split(':').map(Number);
+  const dinnerStart = (dStartH || 22) * 60 + (dStartM || 0);
+  const dinnerEnd = (dEndH || 23) * 60 + (dEndM || 0);
 
-  if (isPast11PM) {
-    breakHours = 2.0;
+  const calcWindowOverlap = (wStart: number, wEnd: number): number => {
+    if (outMins > inMins) {
+      // Normal shift within same day
+      const overlapStart = Math.max(inMins, wStart);
+      const overlapEnd = Math.min(outMins, wEnd);
+      return Math.max(0, overlapEnd - overlapStart);
+    } else {
+      // Overnight shift crossing midnight:
+      // Segment 1: [inMins, 1440] (Day 1)
+      // Segment 2: [0, outMins]    (Day 2)
+      const seg1Overlap = Math.max(0, Math.min(1440, wEnd) - Math.max(inMins, wStart));
+      const seg2Overlap = Math.max(0, Math.min(outMins, wEnd) - Math.max(0, wStart));
+      return seg1Overlap + seg2Overlap;
+    }
+  };
+
+  let isLunchDeducted = false;
+  let isDinnerDeducted = false;
+  let totalBreak = 0;
+
+  if (policy.lunchBreakEnabled) {
+    const lunchOverlap = calcWindowOverlap(lunchStart, lunchEnd);
+    if (lunchOverlap > 0) {
+      isLunchDeducted = true;
+      totalBreak += policy.lunchDuration;
+    }
   }
 
-  const grossHours = diff / 60;
-  return Math.min(breakHours, grossHours);
+  if (policy.dinnerBreakEnabled) {
+    const dinnerOverlap = calcWindowOverlap(dinnerStart, dinnerEnd);
+    if (dinnerOverlap > 0) {
+      isDinnerDeducted = true;
+      totalBreak += policy.dinnerDuration;
+    }
+  }
+
+  const grossHours = grossMins / 60;
+  totalBreak = Math.min(totalBreak, grossHours);
+
+  return {
+    breakHours: Math.round(totalBreak * 100) / 100,
+    isLunchDeducted,
+    isDinnerDeducted,
+  };
 }
 
-// Helper: calculate gross shift hours, break hours, and overtime
-function calculateShiftAndOvertime(
+// Backwards-compatible helper returning total break hours
+export function computeBreakHours(
+  inTime?: string | null,
+  outTime?: string | null,
+  policy: SiteMealPolicy = DEFAULT_MEAL_POLICY
+): number {
+  return computeBreakHoursAndSnapshots(inTime, outTime, policy).breakHours;
+}
+
+// Helper: calculate gross shift hours, break hours, overtime, and regular hours per logic document
+export function calculateShiftAndOvertime(
   inTime: string,
   outTime: string,
   standardHoursCap: number,
-  isAllOvertime: boolean
-): { shiftHours: number; otHours: number; breakHours: number } {
+  isAllOvertime: boolean,
+  isSaturday?: boolean,
+  isExternal?: boolean,
+  policy: SiteMealPolicy = DEFAULT_MEAL_POLICY,
+  additionalHours: number = 0
+): {
+  shiftHours: number;
+  otHours: number;
+  breakHours: number;
+  regularHours: number;
+  daysWorked: number;
+  isLunchDeducted: boolean;
+  isDinnerDeducted: boolean;
+  additionalHours: number;
+} {
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
 
   let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
-  if (diff < 0) diff += 24 * 60;
+  if (diff <= 0) diff += 24 * 60;
 
   const grossHours = Math.round((diff / 60) * 100) / 100;
-  const breakHours = computeBreakHours(inTime, outTime);
-  const shiftHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
+  const { breakHours, isLunchDeducted, isDinnerDeducted } = computeBreakHoursAndSnapshots(inTime, outTime, policy);
+  const rawShiftHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
+  // Additional hours are added directly as effective shift hours:
+  const shiftHours = Math.max(0, Math.round((rawShiftHours + (additionalHours || 0)) * 100) / 100);
+
+  if (shiftHours <= 0) {
+    return { shiftHours: 0, otHours: 0, breakHours, regularHours: 0, daysWorked: 0, isLunchDeducted, isDinnerDeducted, additionalHours: 0 };
+  }
 
   let otHours = 0;
+  let regularHours = 0;
+  let daysWorked = 0;
+
+  const isSat = isSaturday || standardHoursCap === 5.5;
+
   if (isAllOvertime) {
+    // Sundays, Poya, Public Holidays: Entire work time counts directly as OT, no regular day
     otHours = shiftHours;
-  } else if (shiftHours > standardHoursCap) {
-    otHours = Math.round((shiftHours - standardHoursCap) * 100) / 100;
+    regularHours = 0;
+    daysWorked = 0;
+  } else if (isExternal) {
+    // External / Subcontractor Labor:
+    // Billed purely on actual hours worked. No "Days" counted. No negative OT.
+    const cap = isSat ? 5.5 : 8.0;
+    regularHours = Math.min(shiftHours, cap);
+    otHours = shiftHours > cap ? Math.round((shiftHours - cap) * 100) / 100 : 0;
+    daysWorked = 0;
+  } else if (isSat) {
+    // Internal Saturday:
+    // Any attendance is counted as Full Day (1.0). Regular working hours is actual worked hours (capped at 5.5).
+    daysWorked = 1.0;
+    regularHours = Math.min(shiftHours, 5.5);
+    otHours = Math.round((shiftHours - 5.5) * 100) / 100;
+  } else {
+    // Internal Weekday:
+    if (shiftHours > 6.0) {
+      // Full Day (1.0): Base standard is 8.0 hours
+      daysWorked = 1.0;
+      regularHours = Math.min(shiftHours, 8.0);
+      otHours = Math.round((shiftHours - 8.0) * 100) / 100;
+    } else {
+      // Half Day (0.5): Base standard is 4.0 hours
+      daysWorked = 0.5;
+      regularHours = Math.min(shiftHours, 4.0);
+      otHours = Math.round((shiftHours - 4.0) * 100) / 100;
+    }
   }
-  return { shiftHours, otHours, breakHours };
+
+  return { shiftHours, otHours, breakHours, regularHours, daysWorked, isLunchDeducted, isDinnerDeducted, additionalHours };
 }
 
 async function getOrCreateDailySheet(projectId: string, supervisorId: string, date: Date) {
@@ -105,7 +284,7 @@ async function getOrCreateDefaultActivityId(projectId: string): Promise<string> 
   return created.id;
 }
 
-async function resolveProjectActivityId(
+export async function resolveProjectActivityId(
   rawActivityId: string,
   projectId: string,
   cache?: Map<string, string>
@@ -621,13 +800,18 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
     let shiftHours = 0;
     let otHours = 0;
     let breakHours = 0;
+    let isLunchDeducted = false;
+    let isDinnerDeducted = false;
 
     if (inTime) {
-      const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, entryDate);
-      const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime);
+      const mealPolicy = await getSiteMealPolicy(projectId);
+      const { standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, entryDate);
+      const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime, isSaturday, false, mealPolicy);
       shiftHours = calc.shiftHours;
       otHours = calc.otHours;
       breakHours = calc.breakHours;
+      isLunchDeducted = calc.isLunchDeducted;
+      isDinnerDeducted = calc.isDinnerDeducted;
     }
 
     await prisma.mF_OP_TimeEntry.updateMany({
@@ -635,12 +819,14 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
       data: {
         outTime,
         breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
         shiftHours,
         overtimeHours: otHours,
       },
     });
 
-    res.json({ success: true, employeeId, outTime, shiftHours, otHours });
+    res.json({ success: true, employeeId, outTime, shiftHours, otHours, breakHours, isLunchDeducted, isDinnerDeducted });
   } catch (error) {
     console.error('Error in checkOutEmployee:', error);
     res.status(500).json({ error: 'Failed to record check-out' });
@@ -671,7 +857,8 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
-    const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, targetDate);
+    const mealPolicy = await getSiteMealPolicy(projectId);
 
     const resolvedActivityId = await resolveProjectActivityId(activityId, projectId);
 
@@ -740,44 +927,56 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
         }
       }
 
-      const existingActivityEntry = existingEntries.find((e) => e.activityId === resolvedActivityId);
-
-      if (existingActivityEntry) {
-        const updated = await prisma.mF_OP_TimeEntry.update({
-          where: { id: existingActivityEntry.id },
-          data: {
+      if (existingEntries.length > 0) {
+        const primary = existingEntries[0];
+        // Add or update split in MF_OP_LaborActivitySplit using upsert
+        await prisma.mF_OP_LaborActivitySplit.upsert({
+          where: {
+            timeEntryId_activityCodeId: {
+              timeEntryId: primary.id,
+              activityCodeId: resolvedActivityId,
+            },
+          },
+          update: { hours: numHours },
+          create: {
+            timeEntryId: primary.id,
+            activityCodeId: resolvedActivityId,
             hours: numHours,
-            overtimeHours,
-            breakHours,
-            inTime: existingActivityEntry.inTime || preservedInTime,
-            outTime: existingActivityEntry.outTime || preservedOutTime,
-            equipmentId: validEquipmentId || existingActivityEntry.equipmentId,
-            remarks: remarks || existingActivityEntry.remarks,
+          },
+        });
+
+        // Clean up redundant entries if any existed
+        const redundant = existingEntries.slice(1);
+        if (redundant.length > 0) {
+          const redIds = redundant.map((r) => r.id);
+          await prisma.mF_OP_LaborActivitySplit.deleteMany({
+            where: { timeEntryId: { in: redIds } },
+          });
+          await prisma.mF_OP_TimeEntry.deleteMany({
+            where: { id: { in: redIds } },
+          });
+        }
+
+        // Recalculate total hours for primary from splits
+        const allSplits = await prisma.mF_OP_LaborActivitySplit.findMany({
+          where: { timeEntryId: primary.id },
+        });
+        const totalSplitHours = allSplits.reduce((s, x) => s + Number(x.hours || 0), 0);
+
+        const updated = await prisma.mF_OP_TimeEntry.update({
+          where: { id: primary.id },
+          data: {
+            hours: totalSplitHours > 0 ? totalSplitHours : numHours,
+            inTime: primary.inTime || preservedInTime,
+            outTime: primary.outTime || preservedOutTime,
+            equipmentId: validEquipmentId || primary.equipmentId,
+            remarks: remarks || primary.remarks,
           },
         });
         createdEntries.push(updated);
       } else {
-        const placeholder = existingEntries.find((e) => Number(e.hours) === 0 && e.activityId !== resolvedActivityId);
-        if (placeholder) {
-          const updated = await prisma.mF_OP_TimeEntry.update({
-            where: { id: placeholder.id },
-            data: {
-              activityId: resolvedActivityId,
-              hours: numHours,
-              overtimeHours,
-              breakHours,
-              inTime: placeholder.inTime || preservedInTime,
-              outTime: placeholder.outTime || preservedOutTime,
-              equipmentId: validEquipmentId || placeholder.equipmentId,
-              remarks: remarks || placeholder.remarks,
-              ...(placeholder.appliedDailyRate === null && empSnap ? {
-                appliedDailyRate: empSnap.rate,
-                appliedBusinessPartnerId: empSnap.bpId,
-              } : {}),
-            },
-          });
-          createdEntries.push(updated);
-        } else {
+        let parentId: string;
+        try {
           const created = await prisma.mF_OP_TimeEntry.create({
             data: {
               projectId,
@@ -799,7 +998,39 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
               status: 'draft',
             },
           });
+          parentId = created.id;
           createdEntries.push(created);
+        } catch (err: any) {
+          if (err?.code === 'P2002') {
+            const existing = await prisma.mF_OP_TimeEntry.findUnique({
+              where: {
+                projectId_employeeId_date: {
+                  projectId,
+                  employeeId: empId,
+                  date: targetDate,
+                },
+              },
+            });
+            parentId = existing!.id;
+          } else {
+            throw err;
+          }
+        }
+        if (numHours > 0) {
+          await prisma.mF_OP_LaborActivitySplit.upsert({
+            where: {
+              timeEntryId_activityCodeId: {
+                timeEntryId: parentId,
+                activityCodeId: resolvedActivityId,
+              },
+            },
+            update: { hours: numHours },
+            create: {
+              timeEntryId: parentId,
+              activityCodeId: resolvedActivityId,
+              hours: numHours,
+            },
+          });
         }
       }
     }
@@ -828,7 +1059,8 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
-    const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, targetDate);
+    const mealPolicy = await getSiteMealPolicy(projectId);
     const numHours = hours !== undefined ? parseFloat(hours) : 0;
 
     let effectiveSupId = supervisorId;
@@ -936,6 +1168,20 @@ export const upsertTimeEntry = async (req: Request, res: Response): Promise<void
       });
     }
 
+    // Sync activity split for single entry
+    await prisma.mF_OP_LaborActivitySplit.deleteMany({
+      where: { timeEntryId: record.id },
+    });
+    if (numHours > 0) {
+      await prisma.mF_OP_LaborActivitySplit.create({
+        data: {
+          timeEntryId: record.id,
+          activityCodeId: resolvedActivityId,
+          hours: numHours,
+        },
+      });
+    }
+
     res.status(201).json(record);
   } catch (error) {
     console.error('Error upserting time entry:', error);
@@ -995,6 +1241,9 @@ export const getTimeEntries = async (req: Request, res: Response): Promise<void>
         overtimeHours: true,
         shiftHours: true,
         breakHours: true,
+        isLunchDeducted: true,
+        isDinnerDeducted: true,
+        additionalHours: true,
         status: true,
         remarks: true,
         appliedDailyRate: true,
@@ -1010,6 +1259,11 @@ export const getTimeEntries = async (req: Request, res: Response): Promise<void>
           },
         },
         activity: { select: { id: true, code: true, description: true } },
+        activitySplits: {
+          include: {
+            activityCode: { select: { id: true, code: true, description: true } },
+          },
+        },
         equipment: {
           select: {
             id: true,
@@ -1058,6 +1312,50 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
         submittedAt,
       },
     });
+
+    // Auto-balance Idle (ZIDLE) on supervisor submission:
+    // When the supervisor submits the daily sheet, any remaining shift shortage is officially recorded as ZIDLE
+    const sheetEntries = await prisma.mF_OP_TimeEntry.findMany({
+      where: { dailySheetId: dailySheet.id },
+      include: {
+        activitySplits: {
+          include: { activityCode: true },
+        },
+      },
+    });
+
+    const actCache = new Map<string, string>();
+    for (const te of sheetEntries) {
+      const effShift = Number(te.shiftHours || 0);
+      if (effShift <= 0) continue;
+
+      const splits = te.activitySplits || [];
+      const sumSplits = splits.reduce((sum, s) => sum + Number(s.hours || 0), 0);
+      const shortage = Math.round((effShift - sumSplits) * 100) / 100;
+      const hasZidle = splits.some((s) => s.activityCode?.code?.toUpperCase() === 'ZIDLE');
+
+      if (shortage > 0.05 && !hasZidle) {
+        const zidleId = await resolveProjectActivityId('ZIDLE', projectId, actCache);
+        await prisma.mF_OP_LaborActivitySplit.upsert({
+          where: {
+            timeEntryId_activityCodeId: {
+              timeEntryId: te.id,
+              activityCodeId: zidleId,
+            },
+          },
+          update: { hours: shortage },
+          create: {
+            timeEntryId: te.id,
+            activityCodeId: zidleId,
+            hours: shortage,
+          },
+        });
+        await prisma.mF_OP_TimeEntry.update({
+          where: { id: te.id },
+          data: { hours: effShift },
+        });
+      }
+    }
 
     // Update time entries
     const updated = await prisma.mF_OP_TimeEntry.updateMany({
@@ -1263,6 +1561,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
     const submitted: any[] = [];
     const notSubmitted: any[] = [];
     const approved: any[] = [];
+    const mealPolicy = await getSiteMealPolicy(projectId);
 
     for (const sheet of dailySheets) {
       const sup = sheet.supervisor;
@@ -1313,21 +1612,47 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         const firstWithTimes = entries.find((e: any) => e.inTime && e.outTime) || entries[0];
         const inTime = firstWithTimes?.inTime || '';
         const outTime = firstWithTimes?.outTime || '';
+        const additionalHours = firstWithTimes ? Number(firstWithTimes.additionalHours || 0) : 0;
 
         // Calculate shift hours, overtime, and regular hours
         let shiftHours = 0;
         let otHours = 0;
         let regularHours = 0;
+        let daysWorked = 0;
+        let breakHours = firstWithTimes ? Number(firstWithTimes.breakHours || 0) : 0;
+        let isLunchDeducted = Boolean(firstWithTimes?.isLunchDeducted);
+        let isDinnerDeducted = Boolean(firstWithTimes?.isDinnerDeducted);
+
+        const isExternal = Boolean(
+          emp.businessPartnerId ||
+          emp.corporateEmployee?.corporateBusinessPartnerId ||
+          emp.employeeType === 'external' ||
+          (emp.businessPartner?.name && !emp.businessPartner?.name?.toLowerCase().includes('direct'))
+        );
 
         if (inTime && outTime) {
-          const calc = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
+          const calc = calculateShiftAndOvertime(
+            inTime,
+            outTime,
+            dayTypeRules.standardHoursCap,
+            dayTypeRules.isAllOvertime,
+            dayTypeRules.isSaturday,
+            isExternal,
+            mealPolicy,
+            additionalHours
+          );
           shiftHours = calc.shiftHours;
           otHours = calc.otHours;
-          regularHours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((shiftHours - otHours) * 100) / 100);
+          regularHours = calc.regularHours;
+          daysWorked = calc.daysWorked;
+          breakHours = calc.breakHours;
+          isLunchDeducted = calc.isLunchDeducted;
+          isDinnerDeducted = calc.isDinnerDeducted;
         } else if (entries.length > 0) {
           shiftHours = entries.reduce((sum: number, e: any) => sum + Number(e.shiftHours ?? e.hours ?? 0), 0);
           otHours = entries.reduce((sum: number, e: any) => sum + Number(e.overtimeHours || 0), 0);
-          regularHours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((shiftHours - otHours) * 100) / 100);
+          regularHours = entries.reduce((sum: number, e: any) => sum + Number(e.hours || 0), 0);
+          daysWorked = isExternal ? 0 : dayTypeRules.isAllOvertime ? 0 : (dayTypeRules.isSaturday || shiftHours > 6.0) ? 1.0 : shiftHours > 0 ? 0.5 : 0;
         }
 
         // Collect all activities worked across all entries
@@ -1384,12 +1709,18 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           fullName: emp.corporateEmployee?.fullName || emp.callingName || '',
           tradeGroup: emp.tradeGroup?.name || 'General',
           businessPartner: emp.businessPartner?.name || 'Direct / Maga',
+          isExternal,
           inTime,
           outTime,
           hours: regularHours,
           otHours,
           shiftHours,
           effectiveHours: shiftHours,
+          daysWorked,
+          breakHours,
+          isLunchDeducted,
+          isDinnerDeducted,
+          additionalHours,
           idleHours,
           activities,
           status: primaryStatus,
@@ -1473,15 +1804,43 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         let shiftHours = 0;
         let hours = 0;
         let otHours = 0;
+        let daysWorked = 0;
+
+        const isExternal = Boolean(
+          op.businessPartnerId ||
+          op.corporateEmployee?.corporateBusinessPartnerId ||
+          op.employeeType === 'external' ||
+          (op.businessPartner?.name && !op.businessPartner?.name?.toLowerCase().includes('direct'))
+        );
+
+        const additionalHours = firstOpTe ? Number(firstOpTe.additionalHours || 0) : 0;
+        let breakHours = firstOpTe ? Number(firstOpTe.breakHours || 0) : 0;
+        let isLunchDeducted = Boolean(firstOpTe?.isLunchDeducted);
+        let isDinnerDeducted = Boolean(firstOpTe?.isDinnerDeducted);
+
         if (inTime && outTime) {
-          const calc = calculateShiftAndOvertime(inTime, outTime, dayTypeRules.standardHoursCap, dayTypeRules.isAllOvertime);
+          const calc = calculateShiftAndOvertime(
+            inTime,
+            outTime,
+            dayTypeRules.standardHoursCap,
+            dayTypeRules.isAllOvertime,
+            dayTypeRules.isSaturday,
+            isExternal,
+            mealPolicy,
+            additionalHours
+          );
           shiftHours = calc.shiftHours;
           otHours = calc.otHours;
-          hours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((calc.shiftHours - calc.otHours) * 100) / 100);
+          hours = calc.regularHours;
+          daysWorked = calc.daysWorked;
+          breakHours = calc.breakHours;
+          isLunchDeducted = calc.isLunchDeducted;
+          isDinnerDeducted = calc.isDinnerDeducted;
         } else if (opTeList.length > 0) {
           shiftHours = opTeList.reduce((sum, t) => sum + Number(t.shiftHours ?? t.hours ?? 0), 0);
           otHours = opTeList.reduce((sum, t) => sum + Number(t.overtimeHours || 0), 0);
-          hours = dayTypeRules.isAllOvertime ? 0 : Math.max(0, Math.round((shiftHours - otHours) * 100) / 100);
+          hours = opTeList.reduce((sum, t) => sum + Number(t.hours || 0), 0);
+          daysWorked = isExternal ? 0 : dayTypeRules.isAllOvertime ? 0 : (dayTypeRules.isSaturday || shiftHours > 6.0) ? 1.0 : shiftHours > 0 ? 0.5 : 0;
         }
         const eqDisplay = equipmentDisplays.length > 0 ? equipmentDisplays.join(', ') : '—';
 
@@ -1491,12 +1850,18 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           callingName: op.callingName || op.corporateEmployee?.fullName || 'Operator',
           fullName: op.corporateEmployee?.fullName || op.callingName || '',
           tradeGroup: op.tradeGroup?.name || 'Machine Operator',
+          isExternal,
           inTime,
           outTime,
           hours,
           otHours,
           shiftHours,
           effectiveHours: shiftHours,
+          daysWorked,
+          breakHours,
+          isLunchDeducted,
+          isDinnerDeducted,
+          additionalHours,
           assignedEquipmentId: equipmentIds[0] || null,
           assignedEquipmentDisplay: eqDisplay,
           status: firstOpTe?.status || (inTime ? 'draft' : 'pending'),
@@ -1635,7 +2000,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
     res.json({
       date: dateStr,
       dayType: {
-        name: dayTypeRules.isAllOvertime ? 'Holiday / Sunday' : 'Normal / Working',
+        name: dayTypeRules.name,
         standardHoursCap: dayTypeRules.standardHoursCap,
         isAllOvertime: dayTypeRules.isAllOvertime,
       },
@@ -1651,8 +2016,8 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         labor: {
           totalAssigned: allGroups.reduce((sum, g) => sum + (g.counts?.laborAssigned || 0), 0),
           attendedCount: allGroups.reduce((sum, g) => sum + (g.counts?.laborWorked || 0), 0),
-          totalNormalHours: allGroups.reduce((sum, g) => sum + (g.totals?.laborHours || 0), 0),
-          totalOtHours: allGroups.reduce((sum, g) => sum + (g.totals?.laborOvertime || 0), 0),
+          totalNormalHours: Math.round(allGroups.reduce((sum, g) => sum + (g.totals?.laborHours || 0), 0) * 100) / 100,
+          totalOtHours: Math.round(allGroups.reduce((sum, g) => sum + (g.totals?.laborOvertime || 0), 0) * 100) / 100,
         },
         operators: {
           totalAssigned: allGroups.reduce((sum, g) => sum + (g.counts?.operatorsAssigned || 0), 0),
@@ -1712,6 +2077,49 @@ export const approveTimeEntries = async (req: Request, res: Response): Promise<v
       where: { id: { in: sheetIds } },
       data: { status: 'approved', isLocked: true, approvedAt },
     });
+
+    // Ensure any remaining shift shortage is balanced as ZIDLE before approving
+    const unapprovedEntries = await prisma.mF_OP_TimeEntry.findMany({
+      where: { dailySheetId: { in: sheetIds } },
+      include: {
+        activitySplits: {
+          include: { activityCode: true },
+        },
+      },
+    });
+
+    const actCache = new Map<string, string>();
+    for (const te of unapprovedEntries) {
+      const effShift = Number(te.shiftHours || 0);
+      if (effShift <= 0) continue;
+
+      const splits = te.activitySplits || [];
+      const sumSplits = splits.reduce((sum, s) => sum + Number(s.hours || 0), 0);
+      const shortage = Math.round((effShift - sumSplits) * 100) / 100;
+      const hasZidle = splits.some((s) => s.activityCode?.code?.toUpperCase() === 'ZIDLE');
+
+      if (shortage > 0.05 && !hasZidle) {
+        const zidleId = await resolveProjectActivityId('ZIDLE', projectId, actCache);
+        await prisma.mF_OP_LaborActivitySplit.upsert({
+          where: {
+            timeEntryId_activityCodeId: {
+              timeEntryId: te.id,
+              activityCodeId: zidleId,
+            },
+          },
+          update: { hours: shortage },
+          create: {
+            timeEntryId: te.id,
+            activityCodeId: zidleId,
+            hours: shortage,
+          },
+        });
+        await prisma.mF_OP_TimeEntry.update({
+          where: { id: te.id },
+          data: { hours: effShift, status: 'approved' },
+        });
+      }
+    }
 
     const timeResult = await prisma.mF_OP_TimeEntry.updateMany({
       where: { dailySheetId: { in: sheetIds } },
@@ -1806,7 +2214,7 @@ export const rejectTimeEntries = async (req: Request, res: Response): Promise<vo
 // 7.3 POST /api/time-entries/admin-adjust — Admin inline adjustment
 export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { employeeId, date, inTime, outTime, hours, overtimeHours } = req.body || {};
+    const { employeeId, date, inTime, outTime, hours, overtimeHours, additionalHours } = req.body || {};
     if (!employeeId || !date) {
       res.status(400).json({ error: 'employeeId and date are required' });
       return;
@@ -1820,41 +2228,131 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
-    const { standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
+    const { standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, targetDate);
+    const mealPolicy = await getSiteMealPolicy(projectId);
+    const addHoursVal = additionalHours !== undefined ? parseFloat(additionalHours) : 0;
 
     let calculatedHours = hours !== undefined ? parseFloat(hours) : 0;
     let calculatedOt = overtimeHours !== undefined ? parseFloat(overtimeHours) : 0;
     let breakHours = 0;
+    let regularHours = calculatedHours;
+    let daysWorked = 0;
+    let isLunchDeducted = false;
+    let isDinnerDeducted = false;
+
+    const emp = await prisma.mF_P_Employee.findUnique({
+      where: { id: employeeId },
+      select: { businessPartnerId: true, corporateEmployee: { select: { corporateBusinessPartnerId: true } } },
+    });
+    const isExternal = Boolean(emp?.businessPartnerId || emp?.corporateEmployee?.corporateBusinessPartnerId);
 
     if (inTime && outTime) {
-      const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime);
+      const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime, isSaturday, isExternal, mealPolicy, addHoursVal);
       calculatedHours = calc.shiftHours;
       calculatedOt = calc.otHours;
       breakHours = calc.breakHours;
+      regularHours = calc.regularHours;
+      daysWorked = calc.daysWorked;
+      isLunchDeducted = calc.isLunchDeducted;
+      isDinnerDeducted = calc.isDinnerDeducted;
     }
 
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: { projectId, employeeId, date: targetDate },
+      orderBy: { createdAt: 'asc' },
+      include: { activitySplits: true },
     });
 
     if (entries.length > 0) {
-      await prisma.mF_OP_TimeEntry.updateMany({
-        where: { projectId, employeeId, date: targetDate },
+      const primary = entries.find((e) => e.activitySplits.length > 0) || entries[0];
+      const redundant = entries.filter((e) => e.id !== primary.id);
+
+      // Consolidate redundant entries into primary if any exist
+      if (redundant.length > 0) {
+        for (const r of redundant) {
+          if (r.activitySplits.length > 0) {
+            await prisma.mF_OP_LaborActivitySplit.updateMany({
+              where: { timeEntryId: r.id },
+              data: { timeEntryId: primary.id },
+            });
+          } else {
+            const splitExists = await prisma.mF_OP_LaborActivitySplit.findFirst({
+              where: { timeEntryId: primary.id, activityCodeId: r.activityId },
+            });
+            if (!splitExists) {
+              await prisma.mF_OP_LaborActivitySplit.create({
+                data: {
+                  timeEntryId: primary.id,
+                  activityCodeId: r.activityId,
+                  hours: r.hours,
+                },
+              });
+            }
+          }
+        }
+        const redIds = redundant.map((r) => r.id);
+        await prisma.mF_OP_LaborActivitySplit.deleteMany({
+          where: { timeEntryId: { in: redIds } },
+        });
+        await prisma.mF_OP_TimeEntry.deleteMany({
+          where: { id: { in: redIds } },
+        });
+      }
+
+      // Update primary time entry
+      await prisma.mF_OP_TimeEntry.update({
+        where: { id: primary.id },
         data: {
           inTime,
           outTime,
           breakHours,
+          isLunchDeducted,
+          isDinnerDeducted,
+          additionalHours: addHoursVal,
           shiftHours: calculatedHours,
           hours: calculatedHours,
           overtimeHours: calculatedOt,
           remarks: 'Adjusted by Admin',
         },
       });
-    }
 
-    let regularHours = calculatedHours;
-    if (inTime && outTime) {
-      regularHours = isAllOvertime ? 0 : Math.max(0, Math.round((calculatedHours - calculatedOt) * 100) / 100);
+      // Update splits proportionally
+      const existingSplits = await prisma.mF_OP_LaborActivitySplit.findMany({
+        where: { timeEntryId: primary.id },
+      });
+
+      if (existingSplits.length > 1) {
+        const oldSplitSum = existingSplits.reduce((s, x) => s + Number(x.hours || 0), 0);
+        let allocated = 0;
+        for (let i = 0; i < existingSplits.length; i++) {
+          const split = existingSplits[i];
+          let newHours = oldSplitSum > 0
+            ? Math.round((Number(split.hours || 0) / oldSplitSum) * calculatedHours * 100) / 100
+            : Math.round((calculatedHours / existingSplits.length) * 100) / 100;
+          if (i === existingSplits.length - 1) {
+            newHours = Math.max(0, Math.round((calculatedHours - allocated) * 100) / 100);
+          } else {
+            allocated += newHours;
+          }
+          await prisma.mF_OP_LaborActivitySplit.update({
+            where: { id: split.id },
+            data: { hours: newHours },
+          });
+        }
+      } else if (existingSplits.length === 1) {
+        await prisma.mF_OP_LaborActivitySplit.update({
+          where: { id: existingSplits[0].id },
+          data: { hours: calculatedHours },
+        });
+      } else {
+        await prisma.mF_OP_LaborActivitySplit.create({
+          data: {
+            timeEntryId: primary.id,
+            activityCodeId: primary.activityId,
+            hours: calculatedHours,
+          },
+        });
+      }
     }
 
     res.json({
@@ -1866,6 +2364,11 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
       shiftHours: calculatedHours,
       effectiveHours: calculatedHours,
       overtimeHours: calculatedOt,
+      additionalHours: addHoursVal,
+      breakHours,
+      isLunchDeducted,
+      isDinnerDeducted,
+      daysWorked,
       message: 'Worker entry adjusted successfully by Admin.',
     });
   } catch (error) {
@@ -1946,7 +2449,7 @@ export const getOperatorEntries = async (req: Request, res: Response): Promise<v
 // 9. POST /api/time-entries/operators — Save single operator entry
 export const saveOperatorEntry = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { operatorId, supervisorId, date, inTime, outTime, assignedEquipmentId, notes, status, shiftHours, hours, otHours } = req.body || {};
+    const { operatorId, supervisorId, date, inTime, outTime, assignedEquipmentId, notes, status, shiftHours, hours, otHours, additionalHours } = req.body || {};
 
     const projectId =
       req.resolvedProjectId ||
@@ -1956,7 +2459,8 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
-    const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, targetDate);
+    const mealPolicy = await getSiteMealPolicy(projectId);
     const defaultActivityId = await getOrCreateDefaultActivityId(projectId);
 
     let effectiveSupId = supervisorId;
@@ -2019,22 +2523,13 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
 
     // Save/update operator shift time entry
     if (operatorId && (inTime || outTime || shiftHours)) {
+      const addHoursVal = Number(additionalHours || 0);
       let shiftHoursVal = Number(shiftHours || 0);
       let overtimeHours = Number(otHours || 0);
       let breakHours = 0;
+      let isLunchDeducted = false;
+      let isDinnerDeducted = false;
       let regularHours = Number(hours || 0);
-
-      if (inTime && outTime) {
-        const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime);
-        shiftHoursVal = calc.shiftHours;
-        overtimeHours = calc.otHours;
-        breakHours = calc.breakHours;
-        regularHours = isAllOvertime ? 0 : Math.max(0, Math.round((shiftHoursVal - overtimeHours) * 100) / 100);
-      }
-
-      const teStatus = (dailySheet.status === 'submitted' || dailySheet.status === 'approved')
-        ? dailySheet.status
-        : (status === 'done' ? 'draft' : (status || 'draft'));
 
       // Preload operator snapshot rate and subcontractor
       const opEmp = await prisma.mF_P_Employee.findUnique({
@@ -2049,6 +2544,21 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
         ? (Number(opEmp.dailyRate) > 0 ? Number(opEmp.dailyRate) : Number(opEmp.tradeGroup?.standardDailyRate || 1400.0))
         : null;
       const snapBpId = opEmp?.businessPartnerId || null;
+      const isExternal = Boolean(snapBpId);
+
+      if (inTime && outTime) {
+        const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime, isSaturday, isExternal, mealPolicy, addHoursVal);
+        shiftHoursVal = calc.shiftHours;
+        overtimeHours = calc.otHours;
+        breakHours = calc.breakHours;
+        isLunchDeducted = calc.isLunchDeducted;
+        isDinnerDeducted = calc.isDinnerDeducted;
+        regularHours = calc.regularHours;
+      }
+
+      const teStatus = (dailySheet.status === 'submitted' || dailySheet.status === 'approved')
+        ? dailySheet.status
+        : (status === 'done' ? 'draft' : (status || 'draft'));
 
       const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
         where: {
@@ -2072,6 +2582,9 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
         hours: regularHours,
         overtimeHours,
         breakHours,
+        isLunchDeducted,
+        isDinnerDeducted,
+        additionalHours: addHoursVal,
         appliedDailyRate: snapRate,
         appliedBusinessPartnerId: snapBpId,
         remarks: notes || null,
@@ -2121,7 +2634,8 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
-    const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, targetDate);
+    const mealPolicy = await getSiteMealPolicy(projectId);
     const defaultActivityId = await getOrCreateDefaultActivityId(projectId);
 
     let effectiveSupId = supervisorId;
@@ -2251,7 +2765,12 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
         let shiftHoursVal: number = Number(item.shiftHours || 0);
         let overtimeHours: number = Number(item.otHours || item.overtimeHours || 0);
         let breakHours: number = 0;
+        let isLunchDeducted: boolean = false;
+        let isDinnerDeducted: boolean = false;
         let regularHours: number = Number(item.hours || 0);
+
+        const addHoursVal = Number(item.additionalHours || 0);
+        const isExternal = Boolean(snapBpId);
 
         if (item.inTime && item.outTime) {
           // Conflict Protection: Check if operator is already booked on overlapping hours by another supervisor
@@ -2292,11 +2811,13 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
             return;
           }
 
-          const calc = calculateShiftAndOvertime(item.inTime, item.outTime, standardHoursCap, isAllOvertime);
+          const calc = calculateShiftAndOvertime(item.inTime, item.outTime, standardHoursCap, isAllOvertime, isSaturday, isExternal, mealPolicy, addHoursVal);
           shiftHoursVal = calc.shiftHours;
           overtimeHours = calc.otHours;
           breakHours = calc.breakHours;
-          regularHours = isAllOvertime ? 0 : Math.max(0, Math.round((shiftHoursVal - overtimeHours) * 100) / 100);
+          isLunchDeducted = calc.isLunchDeducted;
+          isDinnerDeducted = calc.isDinnerDeducted;
+          regularHours = calc.regularHours;
         }
 
         const teStatus = (dailySheet.status === 'submitted' || dailySheet.status === 'approved')
@@ -2361,6 +2882,9 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
               hours: split.hours,
               overtimeHours: sIdx === 0 ? overtimeHours : 0,
               breakHours: sIdx === 0 ? breakHours : 0,
+              isLunchDeducted: sIdx === 0 ? isLunchDeducted : false,
+              isDinnerDeducted: sIdx === 0 ? isDinnerDeducted : false,
+              additionalHours: sIdx === 0 ? addHoursVal : 0,
               appliedDailyRate: snapRate,
               appliedBusinessPartnerId: snapBpId,
               remarks: item.notes || null,
@@ -2407,6 +2931,9 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
             hours: regularHours,
             overtimeHours,
             breakHours,
+            isLunchDeducted,
+            isDinnerDeducted,
+            additionalHours: addHoursVal,
             appliedDailyRate: snapRate,
             appliedBusinessPartnerId: snapBpId,
             remarks: item.notes || 'Exter. Equipment Operator Idle (ZXQOPRIDLE)',
@@ -2644,7 +3171,8 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
-    const { effectiveDayTypeId, standardHoursCap, isAllOvertime } = await getDayTypeRulesAndId(projectId, targetDate);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, targetDate);
+    const mealPolicy = await getSiteMealPolicy(projectId);
 
     let effectiveSupId = supervisorId;
     if (!effectiveSupId) {
@@ -2727,157 +3255,276 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
       const empSnap = empSnapMap.get(employeeId);
       const snapRate = empSnap ? empSnap.rate : null;
       const snapBpId = empSnap ? empSnap.bpId : null;
-      // Pre-resolve all incoming activity IDs for this employee
-      const incomingResolvedActivityIds = new Set<string>();
-      for (const item of empEntries) {
-        const resId = await resolveProjectActivityId(item.activityId, projectId, activityResolutionCache);
-        incomingResolvedActivityIds.add(resId);
-      }
 
-      // Reconcile: delete any stale draft entries for this employee under this dailySheet/supervisor on this date
-      // that are no longer part of the incoming activity splits
-      const staleFilter: any = {
-        projectId,
-        employeeId,
-        date: targetDate,
-        status: 'draft',
-        activityId: { notIn: Array.from(incomingResolvedActivityIds) },
-      };
-      if (dailySheet) {
-        staleFilter.dailySheetId = dailySheet.id;
-      } else if (effectiveSupId) {
-        staleFilter.recordedById = effectiveSupId;
-      }
+      // Extract shift attributes across all activity splits for this worker
+      const finalInTime = empEntries.find((e) => e.inTime)?.inTime ?? null;
+      const finalOutTime = empEntries.find((e) => e.outTime)?.outTime ?? null;
+      const addHoursVal = Math.max(...empEntries.map((e) => Number(e.additionalHours || 0)), 0);
+      const totalActivityHours = empEntries.reduce((sum, item) => sum + (item.hours !== undefined ? parseFloat(item.hours) : 0), 0);
+      const firstEntry = empEntries[0];
+      const primaryResolvedActivityId = await resolveProjectActivityId(firstEntry.activityId, projectId, activityResolutionCache);
 
-      await prisma.mF_OP_TimeEntry.deleteMany({
-        where: staleFilter,
-      });
-
-      for (const item of empEntries) {
-        const { activityId, hours, inTime, outTime, remarks, equipmentId } = item;
-        const resolvedActivityId = await resolveProjectActivityId(activityId, projectId, activityResolutionCache);
-
-        let validEquipmentId: string | null = null;
-        if (equipmentId) {
-          if (equipmentValidationCache.has(equipmentId)) {
-            validEquipmentId = equipmentValidationCache.get(equipmentId)!;
-          } else {
-            const eqExists = await prisma.mF_P_Equipment.findUnique({
-              where: { id: equipmentId },
-              select: { id: true },
-            });
-            validEquipmentId = eqExists ? eqExists.id : null;
-            equipmentValidationCache.set(equipmentId, validEquipmentId);
-          }
-        }
-
-        const numHours = hours !== undefined ? parseFloat(hours) : 0;
-        const finalInTime = inTime ?? null;
-        const finalOutTime = outTime ?? null;
-
-        let shiftHoursVal: number | null = null;
-        let overtimeHours = 0;
-        let breakHours = 0;
-
-        if (finalInTime && finalOutTime) {
-          const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, standardHoursCap, isAllOvertime);
-          shiftHoursVal = calc.shiftHours;
-          overtimeHours = calc.otHours;
-          breakHours = calc.breakHours;
+      let validEquipmentId: string | null = null;
+      const eqIdCandidate = empEntries.find((e) => e.equipmentId)?.equipmentId;
+      if (eqIdCandidate) {
+        if (equipmentValidationCache.has(eqIdCandidate)) {
+          validEquipmentId = equipmentValidationCache.get(eqIdCandidate)!;
         } else {
-          breakHours = computeBreakHours(finalInTime, finalOutTime);
-          overtimeHours = isAllOvertime ? numHours : numHours > standardHoursCap ? numHours - standardHoursCap : 0;
-        }
-
-        // Conflict Protection: Check if worker has an active overlapping shift logged by another supervisor
-        if (finalInTime && finalOutTime) {
-          const otherSupEntries = await prisma.mF_OP_TimeEntry.findMany({
-            where: {
-              projectId,
-              employeeId,
-              date: targetDate,
-              dailySheetId: { not: dailySheet?.id },
-              inTime: { not: null },
-              outTime: { not: null },
-            },
-            include: {
-              dailySheet: {
-                select: {
-                  supervisor: { select: { fullName: true, username: true } },
-                },
-              },
-            },
+          const eqExists = await prisma.mF_P_Equipment.findUnique({
+            where: { id: eqIdCandidate },
+            select: { id: true },
           });
-
-          const conflicting = otherSupEntries.find((oe) => {
-            if (!oe.inTime || !oe.outTime) return false;
-            return finalInTime < oe.outTime && finalOutTime > oe.inTime;
-          });
-
-          if (conflicting) {
-            const supName = conflicting.dailySheet?.supervisor?.fullName || conflicting.dailySheet?.supervisor?.username || 'another supervisor';
-            res.status(409).json({
-              error: `Time conflict: Worker is already recorded by Supervisor ${supName} from ${conflicting.inTime} to ${conflicting.outTime}. Overlapping shifts cannot overwrite existing attendance.`,
-            });
-            return;
-          }
+          validEquipmentId = eqExists ? eqExists.id : null;
+          equipmentValidationCache.set(eqIdCandidate, validEquipmentId);
         }
+      }
+      const combinedRemarks = empEntries.map((e) => e.remarks).filter(Boolean).join('; ') || null;
 
-        // Strictly scope to current supervisor dailySheet to prevent overwriting other supervisors
-        const existing = await prisma.mF_OP_TimeEntry.findFirst({
+      let shiftHoursVal: number | null = null;
+      let overtimeHours = 0;
+      let breakHours = 0;
+      let isLunchDeducted = false;
+      let isDinnerDeducted = false;
+      const isExternal = Boolean(empSnap?.bpId);
+
+      if (finalInTime && finalOutTime) {
+        const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, standardHoursCap, isAllOvertime, isSaturday, isExternal, mealPolicy, addHoursVal);
+        shiftHoursVal = calc.shiftHours;
+        overtimeHours = calc.otHours;
+        breakHours = calc.breakHours;
+        isLunchDeducted = calc.isLunchDeducted;
+        isDinnerDeducted = calc.isDinnerDeducted;
+      } else {
+        const breakSnap = computeBreakHoursAndSnapshots(finalInTime, finalOutTime, mealPolicy);
+        breakHours = breakSnap.breakHours;
+        isLunchDeducted = breakSnap.isLunchDeducted;
+        isDinnerDeducted = breakSnap.isDinnerDeducted;
+        const effectiveWithAdd = Math.max(0, totalActivityHours + addHoursVal);
+        shiftHoursVal = effectiveWithAdd;
+        if (effectiveWithAdd <= 0) {
+          overtimeHours = 0;
+        } else if (isAllOvertime) {
+          overtimeHours = effectiveWithAdd;
+        } else if (isExternal) {
+          const cap = isSaturday || standardHoursCap === 5.5 ? 5.5 : 8.0;
+          overtimeHours = effectiveWithAdd > cap ? Math.round((effectiveWithAdd - cap) * 100) / 100 : 0;
+        } else if (isSaturday || standardHoursCap === 5.5) {
+          overtimeHours = Math.round((effectiveWithAdd - 5.5) * 100) / 100;
+        } else if (effectiveWithAdd > 6.0) {
+          overtimeHours = Math.round((effectiveWithAdd - 8.0) * 100) / 100;
+        } else {
+          overtimeHours = Math.round((effectiveWithAdd - 4.0) * 100) / 100;
+        }
+      }
+
+      // Conflict Protection: Check if worker has an active overlapping shift logged by another supervisor
+      if (finalInTime && finalOutTime) {
+        const otherSupEntries = await prisma.mF_OP_TimeEntry.findMany({
           where: {
             projectId,
-            dailySheetId: dailySheet ? dailySheet.id : null,
             employeeId,
-            activityId: resolvedActivityId,
             date: targetDate,
+            dailySheetId: { not: dailySheet?.id },
+            inTime: { not: null },
+            outTime: { not: null },
+          },
+          include: {
+            dailySheet: {
+              select: {
+                supervisor: { select: { fullName: true, username: true } },
+              },
+            },
           },
         });
 
-        if (existing) {
-          if (existing.status !== 'submitted' && existing.status !== 'approved') {
-            await prisma.mF_OP_TimeEntry.update({
-              where: { id: existing.id },
-              data: {
-                hours: numHours,
-                shiftHours: shiftHoursVal,
-                overtimeHours,
-                breakHours,
-                inTime: finalInTime,
-                outTime: finalOutTime,
-                equipmentId: validEquipmentId ?? existing.equipmentId,
-                remarks: remarks ?? existing.remarks,
-                ...(existing.appliedDailyRate === null && snapRate !== null ? {
-                  appliedDailyRate: snapRate,
-                  appliedBusinessPartnerId: snapBpId,
-                } : {}),
-              },
-            });
-          }
-        } else {
-          await prisma.mF_OP_TimeEntry.create({
+        const conflicting = otherSupEntries.find((oe) => {
+          if (!oe.inTime || !oe.outTime) return false;
+          return finalInTime < oe.outTime && finalOutTime > oe.inTime;
+        });
+
+        if (conflicting) {
+          const supName = conflicting.dailySheet?.supervisor?.fullName || conflicting.dailySheet?.supervisor?.username || 'another supervisor';
+          res.status(409).json({
+            error: `Time conflict: Worker is already recorded by Supervisor ${supName} from ${conflicting.inTime} to ${conflicting.outTime}. Overlapping shifts cannot overwrite existing attendance.`,
+          });
+          return;
+        }
+      }
+
+      // Scope to employee and date to find existing entries (consolidates any historical duplicates)
+      const existingEntries = await prisma.mF_OP_TimeEntry.findMany({
+        where: {
+          projectId,
+          employeeId,
+          date: targetDate,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      let parentEntryId: string;
+      const primary = existingEntries[0];
+      const redundant = existingEntries.slice(1);
+
+      if (primary) {
+        parentEntryId = primary.id;
+        if (primary.status !== 'submitted' && primary.status !== 'approved') {
+          await prisma.mF_OP_TimeEntry.update({
+            where: { id: primary.id },
+            data: {
+              dailySheetId: dailySheet?.id || primary.dailySheetId || null,
+              recordedById: effectiveSupId || primary.recordedById || null,
+              hours: totalActivityHours,
+              shiftHours: shiftHoursVal,
+              overtimeHours,
+              breakHours,
+              isLunchDeducted,
+              isDinnerDeducted,
+              additionalHours: addHoursVal,
+              inTime: finalInTime,
+              outTime: finalOutTime,
+              activityId: primaryResolvedActivityId,
+              equipmentId: validEquipmentId ?? primary.equipmentId,
+              remarks: combinedRemarks ?? primary.remarks,
+              ...(primary.appliedDailyRate === null && snapRate !== null ? {
+                appliedDailyRate: snapRate,
+                appliedBusinessPartnerId: snapBpId,
+              } : {}),
+            },
+          });
+        }
+      } else {
+        try {
+          const created = await prisma.mF_OP_TimeEntry.create({
             data: {
               projectId,
               dailySheetId: dailySheet?.id || null,
               employeeId,
               recordedById: effectiveSupId || null,
               date: targetDate,
-              activityId: resolvedActivityId,
+              activityId: primaryResolvedActivityId,
               equipmentId: validEquipmentId,
               effectiveDayTypeId,
               inTime: finalInTime,
               outTime: finalOutTime,
-              hours: numHours,
+              hours: totalActivityHours,
               shiftHours: shiftHoursVal,
               overtimeHours,
               breakHours,
+              isLunchDeducted,
+              isDinnerDeducted,
+              additionalHours: addHoursVal,
               appliedDailyRate: snapRate,
               appliedBusinessPartnerId: snapBpId,
-              remarks: remarks || null,
+              remarks: combinedRemarks,
               status: 'draft',
             },
           });
+          parentEntryId = created.id;
+        } catch (err: any) {
+          if (err?.code === 'P2002') {
+            const existing = await prisma.mF_OP_TimeEntry.findUnique({
+              where: {
+                projectId_employeeId_date: {
+                  projectId,
+                  employeeId,
+                  date: targetDate,
+                },
+              },
+            });
+            parentEntryId = existing!.id;
+          } else {
+            throw err;
+          }
         }
+      }
+
+      // Delete any redundant secondary entries from previous multi-activity records
+      if (redundant.length > 0) {
+        const redIds = redundant.map((r) => r.id);
+        await prisma.mF_OP_LaborActivitySplit.deleteMany({
+          where: { timeEntryId: { in: redIds } },
+        });
+        await prisma.mF_OP_TimeEntry.deleteMany({
+          where: { id: { in: redIds } },
+        });
+      }
+
+      // Sync MF_OP_LaborActivitySplit child records for this parentEntryId
+      await prisma.mF_OP_LaborActivitySplit.deleteMany({
+        where: { timeEntryId: parentEntryId },
+      });
+
+      let totalSavedSplitHours = 0;
+      let hasZidleExplicit = false;
+
+      for (const item of empEntries) {
+        const resolvedId = await resolveProjectActivityId(item.activityId, projectId, activityResolutionCache);
+        const itemHours = item.hours !== undefined ? parseFloat(item.hours) : 0;
+        if (itemHours > 0) {
+          const actCodeRecord = await prisma.mF_P_ActivityCode.findUnique({
+            where: { id: resolvedId },
+            select: { code: true },
+          });
+          if (actCodeRecord?.code?.toUpperCase() === 'ZIDLE') {
+            hasZidleExplicit = true;
+          }
+
+          totalSavedSplitHours += itemHours;
+          await prisma.mF_OP_LaborActivitySplit.upsert({
+            where: {
+              timeEntryId_activityCodeId: {
+                timeEntryId: parentEntryId,
+                activityCodeId: resolvedId,
+              },
+            },
+            update: { hours: itemHours },
+            create: {
+              timeEntryId: parentEntryId,
+              activityCodeId: resolvedId,
+              hours: itemHours,
+            },
+          });
+        }
+      }
+
+      // Auto-balance Idle (ZIDLE) into Database:
+      // Only finalize ZIDLE if this sheet is locked/submitted OR if supervisor marked this worker as 'done'.
+      // While in pure 'draft' mode, supervisor is actively entering hours so we do NOT inject premature ZIDLE records.
+      const isSheetLockedOrSubmitted = dailySheet?.status === 'submitted' || dailySheet?.status === 'approved' || dailySheet?.isLocked;
+      const isDone = empEntries.some((e: any) => e.status === 'done');
+
+      const effectiveShift = shiftHoursVal !== null && shiftHoursVal !== undefined ? Number(shiftHoursVal) : totalSavedSplitHours;
+      const idleShortage = !hasZidleExplicit && effectiveShift > totalSavedSplitHours
+        ? Math.round((effectiveShift - totalSavedSplitHours) * 100) / 100
+        : 0;
+
+      if (idleShortage > 0 && (isSheetLockedOrSubmitted || isDone)) {
+        const zidleId = await resolveProjectActivityId('ZIDLE', projectId, activityResolutionCache);
+        await prisma.mF_OP_LaborActivitySplit.upsert({
+          where: {
+            timeEntryId_activityCodeId: {
+              timeEntryId: parentEntryId,
+              activityCodeId: zidleId,
+            },
+          },
+          update: { hours: idleShortage },
+          create: {
+            timeEntryId: parentEntryId,
+            activityCodeId: zidleId,
+            hours: idleShortage,
+          },
+        });
+        totalSavedSplitHours += idleShortage;
+      }
+
+      // Update parent TimeEntry hours to match the full shift / total of all splits (productive + ZIDLE)
+      if (totalSavedSplitHours > 0) {
+        await prisma.mF_OP_TimeEntry.update({
+          where: { id: parentEntryId },
+          data: {
+            hours: totalSavedSplitHours,
+          },
+        });
       }
     }
 

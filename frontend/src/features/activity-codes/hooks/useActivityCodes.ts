@@ -48,8 +48,9 @@ export function useActivityCodes() {
   ) => {
     setError(null);
     try {
-      await svc.importFromCorporate(importItems);
+      const res = await svc.importFromCorporate(importItems);
       await load(true);
+      return res;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Batch import failed');
       throw e;

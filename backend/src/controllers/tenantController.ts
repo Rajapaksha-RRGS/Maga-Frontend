@@ -42,6 +42,14 @@ function formatTenant(t: any) {
     equipmentAssignBySupervisor: t.equipmentAssignBySupervisor ?? false,
     laborAssignBySupervisor: (t as any).laborAssignBySupervisor ?? false,
     operatorAssignBySupervisor: (t as any).operatorAssignBySupervisor ?? false,
+    lunchBreakEnabled: t.lunchBreakEnabled ?? true,
+    lunchStartTime: t.lunchStartTime || '12:00',
+    lunchEndTime: t.lunchEndTime || '13:00',
+    lunchDurationHours: t.lunchDurationHours ? Number(t.lunchDurationHours) : 1.0,
+    dinnerBreakEnabled: t.dinnerBreakEnabled ?? true,
+    dinnerStartTime: t.dinnerStartTime || '22:00',
+    dinnerEndTime: t.dinnerEndTime || '23:00',
+    dinnerDurationHours: t.dinnerDurationHours ? Number(t.dinnerDurationHours) : 1.0,
     createdAt: t.createdAt,
     userCount: t._count?.users ?? 0,
     employeeCount: t._count?.employees ?? 0,
@@ -80,6 +88,14 @@ const projectSelectOptimized = {
   email: true,
   status: true,
   equipmentAssignBySupervisor: true,
+  lunchBreakEnabled: true,
+  lunchStartTime: true,
+  lunchEndTime: true,
+  lunchDurationHours: true,
+  dinnerBreakEnabled: true,
+  dinnerStartTime: true,
+  dinnerEndTime: true,
+  dinnerDurationHours: true,
   createdAt: true,
   users: {
     where: { role: 'admin' },
@@ -488,4 +504,46 @@ export const updatePoolModes = async (req: Request, res: Response): Promise<void
     res.status(500).json({ error: 'Failed to update pool modes' });
   }
 };
+
+// 11. PATCH /api/tenants/:id/meal-settings — Update site meal break policies
+export const updateMealSettings = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = getParam(req.params.id);
+    const {
+      lunchBreakEnabled,
+      lunchStartTime,
+      lunchEndTime,
+      lunchDurationHours,
+      dinnerBreakEnabled,
+      dinnerStartTime,
+      dinnerEndTime,
+      dinnerDurationHours,
+    } = req.body || {};
+
+    const dataToUpdate: any = {};
+    if (typeof lunchBreakEnabled === 'boolean') dataToUpdate.lunchBreakEnabled = lunchBreakEnabled;
+    if (typeof lunchStartTime === 'string') dataToUpdate.lunchStartTime = lunchStartTime;
+    if (typeof lunchEndTime === 'string') dataToUpdate.lunchEndTime = lunchEndTime;
+    if (lunchDurationHours !== undefined) dataToUpdate.lunchDurationHours = Number(lunchDurationHours);
+
+    if (typeof dinnerBreakEnabled === 'boolean') dataToUpdate.dinnerBreakEnabled = dinnerBreakEnabled;
+    if (typeof dinnerStartTime === 'string') dataToUpdate.dinnerStartTime = dinnerStartTime;
+    if (typeof dinnerEndTime === 'string') dataToUpdate.dinnerEndTime = dinnerEndTime;
+    if (dinnerDurationHours !== undefined) dataToUpdate.dinnerDurationHours = Number(dinnerDurationHours);
+
+    const updated = await prisma.mF_P_Project.update({
+      where: { id },
+      data: dataToUpdate,
+      select: projectSelectOptimized,
+    });
+
+    const formatted = formatTenant(updated);
+    await attachPoolModes(formatted, id);
+    res.json(formatted);
+  } catch (error: any) {
+    console.error('Error updating meal settings:', error);
+    res.status(500).json({ error: error.message || 'Failed to update site meal settings' });
+  }
+};
+
 
