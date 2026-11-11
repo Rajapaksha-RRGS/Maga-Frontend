@@ -1024,9 +1024,9 @@ export const supervisorStorage = {
   ): Promise<{ success: boolean; errors: string[] }> {
     const tasks: Promise<boolean>[] = [];
 
-    tasks.push(this.syncLaborersToBackend(supervisorId, date, laborers));
-    tasks.push(this.syncOperatorsToBackend(supervisorId, date, operators));
-    if (equipment.length > 0) tasks.push(this.syncEquipmentToBackend(supervisorId, date, equipment));
+    if (laborers && laborers.length > 0) tasks.push(this.syncLaborersToBackend(supervisorId, date, laborers));
+    if (operators && operators.length > 0) tasks.push(this.syncOperatorsToBackend(supervisorId, date, operators));
+    if (equipment && equipment.length > 0) tasks.push(this.syncEquipmentToBackend(supervisorId, date, equipment));
 
     const results = await Promise.all(tasks);
     const allOk = results.every(Boolean);
@@ -1043,7 +1043,7 @@ export const supervisorStorage = {
     laborers: LaborerEntry[],
     operators: OperatorEntry[],
     equipment: EquipmentLogEntry[]
-  ): Promise<{ success: boolean; offline?: boolean; message?: string }> {
+  ): Promise<{ success: boolean; offline?: boolean; message?: string; status?: any; isLocked?: boolean; submittedAt?: string }> {
     try {
       await this.syncToBackend(supervisorId, date, laborers, operators, equipment);
 
@@ -1058,7 +1058,15 @@ export const supervisorStorage = {
         throw new Error(err?.error || 'Failed to submit and lock day on backend');
       }
 
-      return { success: true, offline: false };
+      const data = await res.json().catch(() => ({}));
+
+      return {
+        success: true,
+        offline: false,
+        status: data.status || 'submitted',
+        isLocked: true,
+        submittedAt: data.submittedAt,
+      };
     } catch (err: any) {
       console.error('Submit error:', err);
       throw err;
@@ -1151,6 +1159,5 @@ export const supervisorStorage = {
     }
 
     return [];
-  },
   },
 };

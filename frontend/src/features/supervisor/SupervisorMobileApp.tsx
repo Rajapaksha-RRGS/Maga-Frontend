@@ -298,9 +298,18 @@ export default function SupervisorMobileApp() {
       if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
 
       const result = await supervisorStorage.submitDayToBackend(user.id, selectedDate, laborers, operators, equipment);
-      const freshStatus = await supervisorStorage.fetchDayStatus(user.id, selectedDate);
-      setDayStatus(freshStatus);
-      setIsDayLocked(freshStatus.isLocked);
+      if (result.status && result.isLocked !== undefined) {
+        setDayStatus({
+          status: result.status,
+          isLocked: result.isLocked,
+          submittedAt: result.submittedAt,
+        });
+        setIsDayLocked(result.isLocked);
+      } else {
+        const freshStatus = await supervisorStorage.fetchDayStatus(user.id, selectedDate);
+        setDayStatus(freshStatus);
+        setIsDayLocked(freshStatus.isLocked);
+      }
       setPendingSyncCount(0);
       if (result.offline && result.message) {
         alert(result.message);

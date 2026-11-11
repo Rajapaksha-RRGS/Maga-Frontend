@@ -413,10 +413,20 @@ export function DailySummaryView({
           <button
             type="button"
             onClick={() => setShowConfirmModal(true)}
-            className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-sm shadow-md transition-all active:scale-[0.99]"
+            disabled={isSubmitting}
+            className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-bold text-sm shadow-md transition-all active:scale-[0.99]"
           >
-            <Lock size={17} />
-            <span>Submit & Lock Day Roster</span>
+            {isSubmitting ? (
+              <>
+                <RefreshCw size={17} className="animate-spin" />
+                <span>Locking Day Roster...</span>
+              </>
+            ) : (
+              <>
+                <Lock size={17} />
+                <span>Submit & Lock Day Roster</span>
+              </>
+            )}
           </button>
         </div>
       )}
@@ -451,7 +461,8 @@ export function DailySummaryView({
               <button
                 type="button"
                 onClick={() => setShowConfirmModal(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                disabled={isSubmitting}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
               >
                 Review Again
               </button>
@@ -459,9 +470,16 @@ export function DailySummaryView({
                 type="button"
                 onClick={handleConfirmSubmit}
                 disabled={isSubmitting}
-                className="flex-1 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                className="flex-1 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
               >
-                {isSubmitting ? 'Submitting...' : 'Confirm & Lock'}
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin" />
+                    <span>Locking Day Roster...</span>
+                  </>
+                ) : (
+                  'Confirm & Lock'
+                )}
               </button>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import prisma from '../config/prisma';
 import '../middleware/tenantMiddleware';
 import { getDefaultTenantId } from '../utils/tenantHelper';
@@ -1325,6 +1326,9 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
     });
 
     const actCache = new Map<string, string>();
+    const zidleId = await resolveProjectActivityId('ZIDLE', projectId, actCache);
+
+    const splitOps: Promise<any>[] = [];
     for (const te of sheetEntries) {
       const effShift = Number(te.shiftHours || 0);
       if (effShift <= 0) continue;
@@ -1335,26 +1339,31 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
       const hasZidle = splits.some((s) => s.activityCode?.code?.toUpperCase() === 'ZIDLE');
 
       if (shortage > 0.05 && !hasZidle) {
-        const zidleId = await resolveProjectActivityId('ZIDLE', projectId, actCache);
-        await prisma.mF_OP_LaborActivitySplit.upsert({
-          where: {
-            timeEntryId_activityCodeId: {
+        splitOps.push(
+          prisma.mF_OP_LaborActivitySplit.upsert({
+            where: {
+              timeEntryId_activityCodeId: {
+                timeEntryId: te.id,
+                activityCodeId: zidleId,
+              },
+            },
+            update: { hours: shortage },
+            create: {
               timeEntryId: te.id,
               activityCodeId: zidleId,
+              hours: shortage,
             },
-          },
-          update: { hours: shortage },
-          create: {
-            timeEntryId: te.id,
-            activityCodeId: zidleId,
-            hours: shortage,
-          },
-        });
-        await prisma.mF_OP_TimeEntry.update({
-          where: { id: te.id },
-          data: { hours: effShift },
-        });
+          }),
+          prisma.mF_OP_TimeEntry.update({
+            where: { id: te.id },
+            data: { hours: effShift },
+          })
+        );
       }
+    }
+
+    if (splitOps.length > 0) {
+      await Promise.all(splitOps);
     }
 
     // Update time entries
@@ -1384,6 +1393,8 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
 
     res.json({
       success: true,
+      status: 'submitted',
+      isLocked: true,
       submittedCount: updated.count,
       submittedAt: submittedAt.toISOString(),
       message: 'Successfully submitted daily entries.',
@@ -2678,34 +2689,63 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
         },
       });
 
-      for (const opId of activeEmployeeIds) {
-        await prisma.mF_OP_DailyAssignment.upsert({
-          where: {
-            dailySheetId_employeeId: {
-              dailySheetId: dailySheet.id,
-              employeeId: opId,
-            },
-          },
-          update: {},
-          create: {
+      if (activeEmployeeIds.length > 0) {
+        await prisma.mF_OP_DailyAssignment.createMany({
+          data: activeEmployeeIds.map((opId: string) => ({
             dailySheetId: dailySheet.id,
             employeeId: opId,
-          },
+          })),
+          skipDuplicates: true,
         });
       }
     }
 
-    // Pre-load operator snapshots for bulk processing
+    // Pre-load operator snapshots, equipment, and existing operator entries in parallel
     const opIds = entries.map((e: any) => e.operatorId || e.id).filter(Boolean);
-    const opEmployees = await prisma.mF_P_Employee.findMany({
-      where: { id: { in: opIds } },
-      select: {
-        id: true,
-        dailyRate: true,
-        businessPartnerId: true,
-        tradeGroup: { select: { standardDailyRate: true } },
-      },
-    });
+    const [opEmployees, allEqRecords, allExistingOpDateEntries] = await Promise.all([
+      prisma.mF_P_Employee.findMany({
+        where: { id: { in: opIds } },
+        select: {
+          id: true,
+          dailyRate: true,
+          businessPartnerId: true,
+          tradeGroup: { select: { standardDailyRate: true } },
+        },
+      }),
+      prisma.mF_P_Equipment.findMany({
+        where: { projectId },
+        select: { id: true },
+      }),
+      prisma.mF_OP_TimeEntry.findMany({
+        where: {
+          projectId,
+          date: targetDate,
+        },
+        include: {
+          dailySheet: {
+            select: {
+              supervisor: { select: { fullName: true, username: true } },
+            },
+          },
+          equipment: {
+            select: {
+              corporateEquipment: { select: { standardEquipmentNumber: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const validEquipmentSet = new Set(allEqRecords.map((e) => e.id));
+
+    const existingOpByEmp = new Map<string, typeof allExistingOpDateEntries>();
+    for (const entry of allExistingOpDateEntries) {
+      if (!existingOpByEmp.has(entry.employeeId)) {
+        existingOpByEmp.set(entry.employeeId, []);
+      }
+      existingOpByEmp.get(entry.employeeId)!.push(entry);
+    }
+
     const opEmpMap = new Map(
       opEmployees.map((e) => [
         e.id,
@@ -2715,6 +2755,8 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
         },
       ])
     );
+
+    const opTimeEntryOps: Promise<any>[] = [];
 
     for (const item of entries) {
       const opId = item.operatorId || item.id;
@@ -2726,28 +2768,20 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
 
       const rawEqId = item.assignedEquipmentId || item.equipmentId;
       let validEquipmentId: string | null = null;
-      if (rawEqId && rawEqId !== 'ZXQOPRIDLE') {
-        const eqExists = await prisma.mF_P_Equipment.findUnique({
-          where: { id: rawEqId },
-          select: { id: true },
-        });
-        validEquipmentId = eqExists ? eqExists.id : null;
+      if (rawEqId && rawEqId !== 'ZXQOPRIDLE' && validEquipmentSet.has(rawEqId)) {
+        validEquipmentId = rawEqId;
       }
 
       const rawSplits = Array.isArray(item.splits) && item.splits.length > 0
         ? item.splits
         : (Array.isArray(item.equipmentSplits) && item.equipmentSplits.length > 0 ? item.equipmentSplits : []);
 
-      // Validate all machine splits
+      // Validate all machine splits in-memory
       const validSplits: Array<{ equipmentId: string; hours: number }> = [];
       for (const s of rawSplits) {
         if (!s.equipmentId || s.equipmentId === 'ZXQOPRIDLE') continue;
-        const eqExists = await prisma.mF_P_Equipment.findUnique({
-          where: { id: s.equipmentId },
-          select: { id: true },
-        });
-        if (eqExists && Number(s.hours) > 0) {
-          validSplits.push({ equipmentId: eqExists.id, hours: Number(s.hours) });
+        if (validEquipmentSet.has(s.equipmentId) && Number(s.hours) > 0) {
+          validSplits.push({ equipmentId: s.equipmentId, hours: Number(s.hours) });
         }
       }
 
@@ -2773,29 +2807,10 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
         const isExternal = Boolean(snapBpId);
 
         if (item.inTime && item.outTime) {
-          // Conflict Protection: Check if operator is already booked on overlapping hours by another supervisor
-          const otherSupOpEntries = await prisma.mF_OP_TimeEntry.findMany({
-            where: {
-              projectId,
-              employeeId: opId,
-              date: targetDate,
-              dailySheetId: { not: dailySheet.id },
-              inTime: { not: null },
-              outTime: { not: null },
-            },
-            include: {
-              dailySheet: {
-                select: {
-                  supervisor: { select: { fullName: true, username: true } },
-                },
-              },
-              equipment: {
-                select: {
-                  corporateEquipment: { select: { standardEquipmentNumber: true } },
-                },
-              },
-            },
-          });
+          // Conflict Protection in-memory: Check if operator is already booked on overlapping hours by another supervisor
+          const otherSupOpEntries = (existingOpByEmp.get(opId) || []).filter(
+            (oe) => oe.dailySheetId !== dailySheet.id && oe.inTime && oe.outTime
+          );
 
           const conflictingOp = otherSupOpEntries.find((oe) => {
             if (!oe.inTime || !oe.outTime) return false;
@@ -2853,20 +2868,15 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           });
         }
 
+        const existingSheetOpEntries = (existingOpByEmp.get(opId) || []).filter(
+          (oe) => oe.dailySheetId === dailySheet.id
+        );
+
         if (validSplits.length > 0) {
           // Persist a time entry per machine split for granular ERP reporting
           for (let sIdx = 0; sIdx < validSplits.length; sIdx++) {
             const split = validSplits[sIdx];
-            // Strictly scope to current supervisor dailySheet to prevent cross-supervisor overwriting
-            const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
-              where: {
-                projectId,
-                dailySheetId: dailySheet.id,
-                employeeId: opId,
-                date: targetDate,
-                equipmentId: split.equipmentId,
-              },
-            });
+            const existingTe = existingSheetOpEntries.find((oe) => oe.equipmentId === split.equipmentId);
 
             const teData: any = {
               projectId,
@@ -2896,26 +2906,23 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
                 delete teData.appliedDailyRate;
                 delete teData.appliedBusinessPartnerId;
               }
-              await prisma.mF_OP_TimeEntry.update({
-                where: { id: existingTe.id },
-                data: teData,
-              });
+              opTimeEntryOps.push(
+                prisma.mF_OP_TimeEntry.update({
+                  where: { id: existingTe.id },
+                  data: teData,
+                })
+              );
             } else {
-              await prisma.mF_OP_TimeEntry.create({
-                data: teData,
-              });
+              opTimeEntryOps.push(
+                prisma.mF_OP_TimeEntry.create({
+                  data: teData,
+                })
+              );
             }
           }
         } else {
           // No equipment (e.g. idle operator)
-          const existingTe = await prisma.mF_OP_TimeEntry.findFirst({
-            where: {
-              projectId,
-              dailySheetId: dailySheet.id,
-              employeeId: opId,
-              date: targetDate,
-            },
-          });
+          const existingTe = existingSheetOpEntries.find((oe) => !oe.equipmentId);
 
           const teData: any = {
             projectId,
@@ -2945,17 +2952,25 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
               delete teData.appliedDailyRate;
               delete teData.appliedBusinessPartnerId;
             }
-            await prisma.mF_OP_TimeEntry.update({
-              where: { id: existingTe.id },
-              data: teData,
-            });
+            opTimeEntryOps.push(
+              prisma.mF_OP_TimeEntry.update({
+                where: { id: existingTe.id },
+                data: teData,
+              })
+            );
           } else {
-            await prisma.mF_OP_TimeEntry.create({
-              data: teData,
-            });
+            opTimeEntryOps.push(
+              prisma.mF_OP_TimeEntry.create({
+                data: teData,
+              })
+            );
           }
         }
       }
+    }
+
+    if (opTimeEntryOps.length > 0) {
+      await Promise.all(opTimeEntryOps);
     }
 
     res.json({ success: true, count: entries.length });
@@ -3216,9 +3231,6 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         });
       }
     }
-    const activityResolutionCache = new Map<string, string>();
-    const equipmentValidationCache = new Map<string, string | null>();
-
     // Group incoming entries by employeeId
     const entriesByEmployee = new Map<string, typeof entries>();
     for (const item of entries) {
@@ -3230,17 +3242,43 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
       entriesByEmployee.get(employeeId)!.push(item);
     }
 
-    // Pre-load labor snapshots for bulk processing
+    // Pre-load labor snapshots, project activities, equipment, and existing date entries in parallel
     const allEmpIds = Array.from(entriesByEmployee.keys());
-    const empRecords = await prisma.mF_P_Employee.findMany({
-      where: { id: { in: allEmpIds } },
-      select: {
-        id: true,
-        dailyRate: true,
-        businessPartnerId: true,
-        tradeGroup: { select: { standardDailyRate: true } },
-      },
-    });
+    const [empRecords, projectActivities, allEqRecords, allExistingDateEntries] = await Promise.all([
+      prisma.mF_P_Employee.findMany({
+        where: { id: { in: allEmpIds } },
+        select: {
+          id: true,
+          dailyRate: true,
+          businessPartnerId: true,
+          tradeGroup: { select: { standardDailyRate: true } },
+        },
+      }),
+      prisma.mF_P_ActivityCode.findMany({
+        where: { projectId },
+        select: { id: true, code: true },
+      }),
+      prisma.mF_P_Equipment.findMany({
+        where: { projectId },
+        select: { id: true },
+      }),
+      prisma.mF_OP_TimeEntry.findMany({
+        where: {
+          projectId,
+          date: targetDate,
+        },
+        include: {
+          dailySheet: {
+            select: {
+              id: true,
+              supervisor: { select: { fullName: true, username: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
     const empSnapMap = new Map(
       empRecords.map((e) => [
         e.id,
@@ -3250,6 +3288,30 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         },
       ])
     );
+
+    const activityResolutionCache = new Map<string, string>();
+    const actIdToCode = new Map<string, string>();
+    for (const pa of projectActivities) {
+      if (pa.code) {
+        activityResolutionCache.set(`${projectId}_${pa.code.toUpperCase()}`, pa.id);
+        actIdToCode.set(pa.id, pa.code.toUpperCase());
+      }
+    }
+    const zidleId = await resolveProjectActivityId('ZIDLE', projectId, activityResolutionCache);
+    actIdToCode.set(zidleId, 'ZIDLE');
+
+    const validEquipmentSet = new Set(allEqRecords.map((e) => e.id));
+
+    const existingByEmp = new Map<string, typeof allExistingDateEntries>();
+    for (const entry of allExistingDateEntries) {
+      if (!existingByEmp.has(entry.employeeId)) {
+        existingByEmp.set(entry.employeeId, []);
+      }
+      existingByEmp.get(entry.employeeId)!.push(entry);
+    }
+
+    const allRedundantIds: string[] = [];
+    const timeEntryOps: Promise<{ parentId: string; splits: Array<{ activityCodeId: string; hours: number }> }>[] = [];
 
     for (const [employeeId, empEntries] of entriesByEmployee.entries()) {
       const empSnap = empSnapMap.get(employeeId);
@@ -3266,17 +3328,8 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
 
       let validEquipmentId: string | null = null;
       const eqIdCandidate = empEntries.find((e) => e.equipmentId)?.equipmentId;
-      if (eqIdCandidate) {
-        if (equipmentValidationCache.has(eqIdCandidate)) {
-          validEquipmentId = equipmentValidationCache.get(eqIdCandidate)!;
-        } else {
-          const eqExists = await prisma.mF_P_Equipment.findUnique({
-            where: { id: eqIdCandidate },
-            select: { id: true },
-          });
-          validEquipmentId = eqExists ? eqExists.id : null;
-          equipmentValidationCache.set(eqIdCandidate, validEquipmentId);
-        }
+      if (eqIdCandidate && validEquipmentSet.has(eqIdCandidate)) {
+        validEquipmentId = eqIdCandidate;
       }
       const combinedRemarks = empEntries.map((e) => e.remarks).filter(Boolean).join('; ') || null;
 
@@ -3317,30 +3370,15 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         }
       }
 
-      // Conflict Protection: Check if worker has an active overlapping shift logged by another supervisor
+      // Conflict Protection in-memory: Check if worker has an active overlapping shift logged by another supervisor
       if (finalInTime && finalOutTime) {
-        const otherSupEntries = await prisma.mF_OP_TimeEntry.findMany({
-          where: {
-            projectId,
-            employeeId,
-            date: targetDate,
-            dailySheetId: { not: dailySheet?.id },
-            inTime: { not: null },
-            outTime: { not: null },
-          },
-          include: {
-            dailySheet: {
-              select: {
-                supervisor: { select: { fullName: true, username: true } },
-              },
-            },
-          },
-        });
+        const otherSupEntries = (existingByEmp.get(employeeId) || []).filter(
+          (oe) => oe.dailySheetId !== dailySheet?.id && oe.inTime && oe.outTime
+        );
 
-        const conflicting = otherSupEntries.find((oe) => {
-          if (!oe.inTime || !oe.outTime) return false;
-          return finalInTime < oe.outTime && finalOutTime > oe.inTime;
-        });
+        const conflicting = otherSupEntries.find(
+          (oe) => finalInTime < oe.outTime! && finalOutTime > oe.inTime!
+        );
 
         if (conflicting) {
           const supName = conflicting.dailySheet?.supervisor?.fullName || conflicting.dailySheet?.supervisor?.username || 'another supervisor';
@@ -3351,145 +3389,33 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         }
       }
 
-      // Scope to employee and date to find existing entries (consolidates any historical duplicates)
-      const existingEntries = await prisma.mF_OP_TimeEntry.findMany({
-        where: {
-          projectId,
-          employeeId,
-          date: targetDate,
-        },
-        orderBy: { createdAt: 'asc' },
-      });
-
-      let parentEntryId: string;
+      // Scope to employee and date to find existing entries in memory
+      const existingEntries = existingByEmp.get(employeeId) || [];
       const primary = existingEntries[0];
       const redundant = existingEntries.slice(1);
-
-      if (primary) {
-        parentEntryId = primary.id;
-        if (primary.status !== 'submitted' && primary.status !== 'approved') {
-          await prisma.mF_OP_TimeEntry.update({
-            where: { id: primary.id },
-            data: {
-              dailySheetId: dailySheet?.id || primary.dailySheetId || null,
-              recordedById: effectiveSupId || primary.recordedById || null,
-              hours: totalActivityHours,
-              shiftHours: shiftHoursVal,
-              overtimeHours,
-              breakHours,
-              isLunchDeducted,
-              isDinnerDeducted,
-              additionalHours: addHoursVal,
-              inTime: finalInTime,
-              outTime: finalOutTime,
-              activityId: primaryResolvedActivityId,
-              equipmentId: validEquipmentId ?? primary.equipmentId,
-              remarks: combinedRemarks ?? primary.remarks,
-              ...(primary.appliedDailyRate === null && snapRate !== null ? {
-                appliedDailyRate: snapRate,
-                appliedBusinessPartnerId: snapBpId,
-              } : {}),
-            },
-          });
-        }
-      } else {
-        try {
-          const created = await prisma.mF_OP_TimeEntry.create({
-            data: {
-              projectId,
-              dailySheetId: dailySheet?.id || null,
-              employeeId,
-              recordedById: effectiveSupId || null,
-              date: targetDate,
-              activityId: primaryResolvedActivityId,
-              equipmentId: validEquipmentId,
-              effectiveDayTypeId,
-              inTime: finalInTime,
-              outTime: finalOutTime,
-              hours: totalActivityHours,
-              shiftHours: shiftHoursVal,
-              overtimeHours,
-              breakHours,
-              isLunchDeducted,
-              isDinnerDeducted,
-              additionalHours: addHoursVal,
-              appliedDailyRate: snapRate,
-              appliedBusinessPartnerId: snapBpId,
-              remarks: combinedRemarks,
-              status: 'draft',
-            },
-          });
-          parentEntryId = created.id;
-        } catch (err: any) {
-          if (err?.code === 'P2002') {
-            const existing = await prisma.mF_OP_TimeEntry.findUnique({
-              where: {
-                projectId_employeeId_date: {
-                  projectId,
-                  employeeId,
-                  date: targetDate,
-                },
-              },
-            });
-            parentEntryId = existing!.id;
-          } else {
-            throw err;
-          }
-        }
-      }
-
-      // Delete any redundant secondary entries from previous multi-activity records
       if (redundant.length > 0) {
-        const redIds = redundant.map((r) => r.id);
-        await prisma.mF_OP_LaborActivitySplit.deleteMany({
-          where: { timeEntryId: { in: redIds } },
-        });
-        await prisma.mF_OP_TimeEntry.deleteMany({
-          where: { id: { in: redIds } },
-        });
+        allRedundantIds.push(...redundant.map((r) => r.id));
       }
 
-      // Sync MF_OP_LaborActivitySplit child records for this parentEntryId
-      await prisma.mF_OP_LaborActivitySplit.deleteMany({
-        where: { timeEntryId: parentEntryId },
-      });
-
+      // Calculate splits and ZIDLE in-memory
       let totalSavedSplitHours = 0;
       let hasZidleExplicit = false;
+      const workerSplits: Array<{ activityCodeId: string; hours: number }> = [];
 
       for (const item of empEntries) {
         const resolvedId = await resolveProjectActivityId(item.activityId, projectId, activityResolutionCache);
         const itemHours = item.hours !== undefined ? parseFloat(item.hours) : 0;
         if (itemHours > 0) {
-          const actCodeRecord = await prisma.mF_P_ActivityCode.findUnique({
-            where: { id: resolvedId },
-            select: { code: true },
-          });
-          if (actCodeRecord?.code?.toUpperCase() === 'ZIDLE') {
+          const actCode = actIdToCode.get(resolvedId);
+          if (actCode === 'ZIDLE') {
             hasZidleExplicit = true;
           }
 
           totalSavedSplitHours += itemHours;
-          await prisma.mF_OP_LaborActivitySplit.upsert({
-            where: {
-              timeEntryId_activityCodeId: {
-                timeEntryId: parentEntryId,
-                activityCodeId: resolvedId,
-              },
-            },
-            update: { hours: itemHours },
-            create: {
-              timeEntryId: parentEntryId,
-              activityCodeId: resolvedId,
-              hours: itemHours,
-            },
-          });
+          workerSplits.push({ activityCodeId: resolvedId, hours: itemHours });
         }
       }
 
-      // Auto-balance Idle (ZIDLE) into Database:
-      // Only finalize ZIDLE if this sheet is locked/submitted OR if supervisor marked this worker as 'done'.
-      // While in pure 'draft' mode, supervisor is actively entering hours so we do NOT inject premature ZIDLE records.
       const isSheetLockedOrSubmitted = dailySheet?.status === 'submitted' || dailySheet?.status === 'approved' || dailySheet?.isLocked;
       const isDone = empEntries.some((e: any) => e.status === 'done');
 
@@ -3499,33 +3425,133 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         : 0;
 
       if (idleShortage > 0 && (isSheetLockedOrSubmitted || isDone)) {
-        const zidleId = await resolveProjectActivityId('ZIDLE', projectId, activityResolutionCache);
-        await prisma.mF_OP_LaborActivitySplit.upsert({
-          where: {
-            timeEntryId_activityCodeId: {
-              timeEntryId: parentEntryId,
-              activityCodeId: zidleId,
-            },
-          },
-          update: { hours: idleShortage },
-          create: {
-            timeEntryId: parentEntryId,
-            activityCodeId: zidleId,
-            hours: idleShortage,
-          },
-        });
+        workerSplits.push({ activityCodeId: zidleId, hours: idleShortage });
         totalSavedSplitHours += idleShortage;
       }
 
-      // Update parent TimeEntry hours to match the full shift / total of all splits (productive + ZIDLE)
-      if (totalSavedSplitHours > 0) {
-        await prisma.mF_OP_TimeEntry.update({
-          where: { id: parentEntryId },
-          data: {
-            hours: totalSavedSplitHours,
-          },
+      const finalHours = totalSavedSplitHours > 0 ? totalSavedSplitHours : totalActivityHours;
+
+      if (primary) {
+        if (primary.status !== 'submitted' && primary.status !== 'approved') {
+          timeEntryOps.push(
+            prisma.mF_OP_TimeEntry.update({
+              where: { id: primary.id },
+              data: {
+                dailySheetId: dailySheet?.id || primary.dailySheetId || null,
+                recordedById: effectiveSupId || primary.recordedById || null,
+                hours: finalHours,
+                shiftHours: shiftHoursVal,
+                overtimeHours,
+                breakHours,
+                isLunchDeducted,
+                isDinnerDeducted,
+                additionalHours: addHoursVal,
+                inTime: finalInTime,
+                outTime: finalOutTime,
+                activityId: primaryResolvedActivityId,
+                equipmentId: validEquipmentId ?? primary.equipmentId,
+                remarks: combinedRemarks ?? primary.remarks,
+                ...(primary.appliedDailyRate === null && snapRate !== null ? {
+                  appliedDailyRate: snapRate,
+                  appliedBusinessPartnerId: snapBpId,
+                } : {}),
+              },
+              select: { id: true },
+            }).then((res) => ({ parentId: res.id, splits: workerSplits }))
+          );
+        } else {
+          timeEntryOps.push(Promise.resolve({ parentId: primary.id, splits: workerSplits }));
+        }
+      } else {
+        timeEntryOps.push(
+          (async () => {
+            try {
+              const created = await prisma.mF_OP_TimeEntry.create({
+                data: {
+                  projectId,
+                  dailySheetId: dailySheet?.id || null,
+                  employeeId,
+                  recordedById: effectiveSupId || null,
+                  date: targetDate,
+                  activityId: primaryResolvedActivityId,
+                  equipmentId: validEquipmentId,
+                  effectiveDayTypeId,
+                  inTime: finalInTime,
+                  outTime: finalOutTime,
+                  hours: finalHours,
+                  shiftHours: shiftHoursVal,
+                  overtimeHours,
+                  breakHours,
+                  isLunchDeducted,
+                  isDinnerDeducted,
+                  additionalHours: addHoursVal,
+                  appliedDailyRate: snapRate,
+                  appliedBusinessPartnerId: snapBpId,
+                  remarks: combinedRemarks,
+                  status: 'draft',
+                },
+                select: { id: true },
+              });
+              return { parentId: created.id, splits: workerSplits };
+            } catch (err: any) {
+              if (err?.code === 'P2002') {
+                const existing = await prisma.mF_OP_TimeEntry.findUnique({
+                  where: {
+                    projectId_employeeId_date: {
+                      projectId,
+                      employeeId,
+                      date: targetDate,
+                    },
+                  },
+                  select: { id: true },
+                });
+                return { parentId: existing!.id, splits: workerSplits };
+              }
+              throw err;
+            }
+          })()
+        );
+      }
+    }
+
+    const savedParents = await Promise.all(timeEntryOps);
+
+    // Delete redundant entries
+    if (allRedundantIds.length > 0) {
+      await prisma.mF_OP_LaborActivitySplit.deleteMany({
+        where: { timeEntryId: { in: allRedundantIds } },
+      });
+      await prisma.mF_OP_TimeEntry.deleteMany({
+        where: { id: { in: allRedundantIds } },
+      });
+    }
+
+    // Delete existing splits for all parents in a single fast query
+    const allParentIds = savedParents.map((p) => p.parentId).filter(Boolean);
+    if (allParentIds.length > 0) {
+      await prisma.mF_OP_LaborActivitySplit.deleteMany({
+        where: { timeEntryId: { in: allParentIds } },
+      });
+    }
+
+    // Batch insert all splits in a single multi-row query
+    const splitsToInsert: Array<{ id: string; timeEntryId: string; activityCodeId: string; hours: number }> = [];
+    for (const sp of savedParents) {
+      for (const split of sp.splits) {
+        splitsToInsert.push({
+          id: crypto.randomUUID(),
+          timeEntryId: sp.parentId,
+          activityCodeId: split.activityCodeId,
+          hours: split.hours,
         });
       }
+    }
+
+    if (splitsToInsert.length > 0) {
+      await prisma.mF_OP_LaborActivitySplit.createMany({
+        data: splitsToInsert,
+        skipDuplicates: true,
+      });
     }
 
     res.json({ success: true, count: entries.length });
