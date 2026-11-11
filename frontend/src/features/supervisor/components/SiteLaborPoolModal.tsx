@@ -331,7 +331,7 @@ export function SiteLaborPoolModal({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                      Copy Past Gang
+                      Copy Past Team 
                     </span>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                       {mostRecentGang.workerCount} workers on {mostRecentGang.date} ({mostRecentGang.dayName})
