@@ -123,8 +123,16 @@ export default function RunningChartTable({ data }: Props) {
                         <span className="text-slate-400">0.0</span>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-semibold text-slate-900 tabular-nums whitespace-nowrap">
-                      {row.totalHours.toFixed(1)}
+                    <td
+                      className="px-3 py-2.5 text-right font-semibold text-slate-900 tabular-nums whitespace-nowrap"
+                      title={row.totalGrossHours ? `Gross: ${row.totalGrossHours.toFixed(1)}h (Break: ${(row.breakHours || 0).toFixed(1)}h)` : undefined}
+                    >
+                      <div>{row.totalHours.toFixed(1)}</div>
+                      {row.breakHours && row.breakHours > 0 ? (
+                        <div className="text-[10px] text-slate-400 font-normal">
+                          -{(row.breakHours).toFixed(1)}h brk
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-2.5">
                       {row.activities.length === 0 ? (

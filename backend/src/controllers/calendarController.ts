@@ -105,12 +105,13 @@ async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date
     select: {
       id: true,
       hours: true,
+      shiftHours: true,
     },
   });
 
   if (unapproved.length > 0) {
     for (const entry of unapproved) {
-      const netHours = Number(entry.hours) || 0;
+      const netHours = Number(entry.shiftHours ?? entry.hours) || 0;
       let otHours = 0;
 
       if (netHours <= 0) {

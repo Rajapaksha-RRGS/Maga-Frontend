@@ -368,7 +368,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
 
         const inTime = dayEntries.find((e) => e.inTime)?.inTime;
         const outTime = dayEntries.find((e) => e.outTime)?.outTime;
-        const activitySum = dayEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+        const activitySum = dayEntries.reduce((s, e) => s + (Number(e.shiftHours ?? e.hours) || 0), 0);
         const precomputedShift = dayEntries.find((e) => e.shiftHours !== null && e.shiftHours !== undefined)?.shiftHours;
         const precomputedOt = dayEntries.find((e) => e.overtimeHours !== null && e.overtimeHours !== undefined)?.overtimeHours;
 
@@ -522,7 +522,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
         const { standardCap, isAllOvertime } = getDayTypeRule(dateKey);
         const inTime = dayEntries.find((e) => e.inTime)?.inTime;
         const outTime = dayEntries.find((e) => e.outTime)?.outTime;
-        const activitySum = dayEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+        const activitySum = dayEntries.reduce((s, e) => s + (Number(e.shiftHours ?? e.hours) || 0), 0);
         const precomputedShift = dayEntries.find((e) => e.shiftHours !== null)?.shiftHours;
         const precomputedOt = dayEntries.find((e) => e.overtimeHours !== null)?.overtimeHours;
 
@@ -644,8 +644,8 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
       const effectiveBp = entry.appliedBusinessPartner || entry.employee.businessPartner;
       const bpName = effectiveBp?.name || 'Direct / Maga';
       const empId = entry.employeeId;
-      // entry.hours represents the actual hours worked on this activity. Do not add overtimeHours here as hours already includes total shift work.
-      const hours = Number(entry.hours || entry.shiftHours || 0);
+      // entry.shiftHours represents the actual effective worked hours (Gross - breaks + additional).
+      const hours = Number(entry.shiftHours ?? entry.hours ?? 0);
 
       const isEmployeeActive = entry.employee.status === 'active' && entry.employee.corporateEmployee.status === 'active';
       const isPartnerActive = !effectiveBp || effectiveBp.status === 'active';
@@ -958,12 +958,12 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
       // Determine physical shift effective hours (Gross hours - Lunch break)
       const inTime = groupEntries.find((e) => e.inTime)?.inTime;
       const outTime = groupEntries.find((e) => e.outTime)?.outTime;
-      let shiftEffectiveHours = 0;
+      let shiftEffectiveHours = Number(groupEntries.find((e) => e.shiftHours !== null && Number(e.shiftHours) > 0)?.shiftHours) || 0;
 
       const inH = parseTimeToHours(inTime);
       const outH = parseTimeToHours(outTime);
 
-      if (inH !== null && outH !== null) {
+      if (shiftEffectiveHours === 0 && inH !== null && outH !== null) {
         let grossH = outH - inH;
         if (grossH < 0) grossH += 24;
         let breakH = Number(groupEntries.find((e) => e.breakHours !== null)?.breakHours) || 0;
@@ -997,7 +997,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
             totalHours += splitHours;
           }
         } else {
-          const hours = Number(entry.hours);
+          const hours = Number(entry.shiftHours ?? entry.hours);
           totalDayHours += hours;
           finalRows.push({
             id: `erp-${rowIdx++}`,
@@ -1200,7 +1200,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
         } else {
           const code = e.activity?.code || '00-00-11-11-M';
           const desc = e.activity?.description || code;
-          const h = Number(e.hours) || 0;
+          const h = Number(e.shiftHours ?? e.hours) || 0;
           if (h > 0) {
             const prev = activitiesMap.get(code) || { code, description: desc, hours: 0 };
             prev.hours += h;
@@ -1237,7 +1237,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       }
 
       let totalDayHours = activities.reduce((sum, a) => sum + a.hours, 0) ||
-        groupEntries.reduce((sum, e) => sum + (Number(e.hours) || 0), 0);
+        groupEntries.reduce((sum, e) => sum + (Number(e.shiftHours ?? e.hours) || 0), 0);
 
       if (totalDayHours === 0 && inTime !== '—' && outTime !== '—') {
         const [inH, inM] = inTime.split(':').map(Number);
@@ -1280,6 +1280,15 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       const supervisorName = supervisorObj?.fullName ||
         (supervisorObj?.username ? `@${supervisorObj.username}` : 'Site Supervisor');
 
+      let totalGrossHours = 0;
+      if (inTime !== '—' && outTime !== '—') {
+        const [inH, inM] = inTime.split(':').map(Number);
+        const [outH, outM] = outTime.split(':').map(Number);
+        let diffMins = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
+        if (diffMins <= 0) diffMins += 24 * 60;
+        totalGrossHours = Math.round((diffMins / 60) * 100) / 100;
+      }
+
       items.push({
         id: `rc-${key}`,
         date: dateKey,
@@ -1290,6 +1299,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
         inTime,
         outTime,
         breakHours,
+        totalGrossHours: totalGrossHours || undefined,
         workHours,
         otHours,
         totalHours,
@@ -1601,7 +1611,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
           // For multi-activity split rows (e.g. 6h Act A + 7h Act B = 13h):
           // Activity hours should be summed, but shiftHours and overtimeHours are daily attributes
           // and must NOT be multiplied/summed across splits, otherwise OT gets duplicated!
-          const sumActivityHours = dayEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+          const sumActivityHours = dayEntries.reduce((s, e) => s + (Number(e.shiftHours ?? e.hours) || 0), 0);
           const sumShiftHours = Number(first.shiftHours) > 0 ? Number(first.shiftHours) : sumActivityHours;
           const sumOtHours = Math.max(...dayEntries.map((e) => Number(e.overtimeHours) || 0));
 
@@ -1748,7 +1758,7 @@ export const getReportsHubStats = async (req: Request, res: Response): Promise<v
           date: { gte: startOfMonth, lte: endOfMonth },
           employee: { isOperator: false },
         },
-        _sum: { hours: true, overtimeHours: true },
+        _sum: { hours: true, shiftHours: true, overtimeHours: true },
       }),
       prisma.mF_OP_TimeEntry.aggregate({
         where: {
@@ -1757,7 +1767,7 @@ export const getReportsHubStats = async (req: Request, res: Response): Promise<v
           date: { gte: startOfMonth, lte: endOfMonth },
           employee: { isOperator: true },
         },
-        _sum: { hours: true, overtimeHours: true },
+        _sum: { hours: true, shiftHours: true, overtimeHours: true },
       }),
       prisma.mF_OP_DailyEquipmentAssignment.count({
         where: {
@@ -1772,8 +1782,8 @@ export const getReportsHubStats = async (req: Request, res: Response): Promise<v
       }),
     ]);
 
-    const laborTotalHours = (Number(laborHoursAgg._sum.hours) || 0) + (Number(laborHoursAgg._sum.overtimeHours) || 0);
-    const operatorTotalHours = (Number(operatorHoursAgg._sum.hours) || 0) + (Number(operatorHoursAgg._sum.overtimeHours) || 0);
+    const laborTotalHours = Number(laborHoursAgg._sum.shiftHours) || (Number(laborHoursAgg._sum.hours) || 0);
+    const operatorTotalHours = Number(operatorHoursAgg._sum.shiftHours) || (Number(operatorHoursAgg._sum.hours) || 0);
 
     res.json({
       labor: {
@@ -2629,7 +2639,7 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
         const eqCode = te.equipment.corporateEquipment?.standardEquipmentNumber || te.equipment.corporateEquipment?.vehicleNo || "EQUIP";
         const cond = (te.equipment.condition || "DRY").toUpperCase();
         const unit = (te.equipment.meterUnitCode || te.equipment.corporateEquipment?.unit || "hrs").toLowerCase();
-        const h = Number(te.hours) || 0;
+        const h = Number(te.shiftHours || te.hours) || 0;
 
         if (dayData.machines.has(eqCode)) {
           dayData.machines.get(eqCode)!.hours += h;

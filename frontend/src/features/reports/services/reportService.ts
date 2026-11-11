@@ -194,6 +194,7 @@ export interface RunningChartItem {
   inTime: string;
   outTime: string;
   breakHours?: number;
+  totalGrossHours?: number;
   workHours: number;
   otHours: number;
   totalHours: number;
