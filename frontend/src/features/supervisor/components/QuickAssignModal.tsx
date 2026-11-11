@@ -63,7 +63,7 @@ export function QuickAssignModal({
       outTime: '17:00',
       shiftHours: 8.0,
       otHours: 0,
-      activities: [{ id: `act-${Date.now()}`, activityCode: 'ACT-101', hours: 8.0 }],
+      activities: [],
       isStandbyAssigned: true,
       lastSavedAt: 'Just now',
     });

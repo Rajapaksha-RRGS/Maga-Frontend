@@ -849,7 +849,8 @@ export const supervisorStorage = {
               actHours = Math.max(0, totalShift - sumAssigned);
             }
 
-            const resolvedActId = codeToIdMap.get(act.activityCode?.trim().toUpperCase()) || defaultId;
+            if (!act.activityCode || !act.activityCode.trim()) continue;
+            const resolvedActId = codeToIdMap.get(act.activityCode.trim().toUpperCase());
             if (resolvedActId && actHours > 0) {
               entries.push({
                 employeeId: lab.id,

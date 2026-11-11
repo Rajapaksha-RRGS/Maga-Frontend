@@ -164,14 +164,6 @@ export function LaborEntryView({
     supervisorStorage.getActivityCodes().then((codes) => {
       if (Array.isArray(codes) && codes.length > 0) {
         setActivityOptions(codes);
-        // Automatically set first real activity code for batch
-        setBatchActivities((prev) => {
-          const currentHours = prev[0]?.hours || defaultBatchShift;
-          if (prev.length === 0 || !prev[0].activityCode || !codes.some((c) => c.code === prev[0].activityCode)) {
-            return [{ id: 'batch-act-1', activityCode: codes[0].code, hours: currentHours }];
-          }
-          return prev;
-        });
       }
     }).catch(() => {});
   }, [defaultBatchShift]);
@@ -412,7 +404,7 @@ export function LaborEntryView({
         if (prev.length <= 1) {
           return [{
             id: 'batch-act-1',
-            activityCode: prev[0]?.activityCode || activityOptions[0]?.code || '',
+            activityCode: prev[0]?.activityCode || '',
             hours: shift,
           }];
         } else {
@@ -466,7 +458,7 @@ export function LaborEntryView({
           if (prev.length <= 1) {
             return [{
               id: 'batch-act-1',
-              activityCode: prev[0]?.activityCode || activityOptions[0]?.code || '',
+              activityCode: prev[0]?.activityCode || '',
               hours,
             }];
           } else {
@@ -499,10 +491,9 @@ export function LaborEntryView({
     const diffMins = Math.max(0, targetMins - currentMins);
     const fillHours = diffMins > 0 ? minutesToHhmm(diffMins) : 0;
 
-    const nextActivity = (activityOptions[batchActivities.length % activityOptions.length] || activityOptions[0])?.code || '';
     const newRow: BatchActivityItem = {
       id: `batch-act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      activityCode: nextActivity,
+      activityCode: '',
       hours: fillHours,
     };
     setBatchActivities((prev) => [...prev, newRow]);
@@ -825,7 +816,7 @@ export function LaborEntryView({
 
     const newSplit: ActivitySplit = {
       id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      activityCode: activityOptions.find((o) => !laborer.activities.some((a) => a.activityCode === o.code))?.code || activityOptions[0]?.code || '',
+      activityCode: '',
       hours: fillHours,
     };
 
@@ -1806,7 +1797,7 @@ export function LaborEntryView({
                                 key={act.id}
                                 className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
                               >
-                                <span>{act.activityCode}: {formatHourWithClockText(act.hours)}</span>
+                                <span>{act.activityCode ? `${act.activityCode}: ` : 'Select Code: '}{formatHourWithClockText(act.hours)}</span>
                                 {!isDayLocked && (
                                   <button
                                     type="button"
@@ -1815,7 +1806,7 @@ export function LaborEntryView({
                                       handleRemoveIndividualActivitySplit(worker.id, act.id);
                                     }}
                                     className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
-                                    title={`Delete ${act.activityCode}`}
+                                    title={act.activityCode ? `Delete ${act.activityCode}` : 'Delete task'}
                                   >
                                     <X size={10} />
                                   </button>

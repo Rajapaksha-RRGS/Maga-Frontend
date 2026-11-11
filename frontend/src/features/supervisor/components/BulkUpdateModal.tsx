@@ -27,12 +27,10 @@ export function BulkUpdateModal({
   useEffect(() => {
     if (propActivities && propActivities.length > 0) {
       setActivityOptions(propActivities);
-      setBulkActivity(propActivities[0].code);
     } else {
       supervisorStorage.getActivityCodes().then((codes) => {
         if (Array.isArray(codes) && codes.length > 0) {
           setActivityOptions(codes);
-          setBulkActivity((prev) => prev || codes[0].code);
         }
       }).catch(() => {});
     }
@@ -126,6 +124,7 @@ export function BulkUpdateModal({
               onChange={(e) => setBulkActivity(e.target.value)}
               className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 font-medium"
             >
+              <option value="">Select activity code (optional)...</option>
               {activityOptions.map((act) => (
                 <option key={act.code} value={act.code}>
                   {act.code} — {act.name}
