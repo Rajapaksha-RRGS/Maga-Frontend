@@ -209,15 +209,16 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
 
   // Inline edit calculation helper
   const computePreviewHours = (inTime: string, outTime: string, addHours = 0, worker?: ConsolidatedWorkerItem) => {
-    if (!inTime || !outTime) return { hours: 0, otHours: 0, effectiveHours: 0 };
+    if (!inTime || !outTime) return { hours: 0, otHours: 0, effectiveHours: 0, totalHours: 0 };
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
     const inMins = inH * 60 + (inM || 0);
     const outMins = outH * 60 + (outM || 0);
     let diff = outMins - inMins;
     if (diff <= 0) diff += 24 * 60;
-    if (diff <= 0) return { hours: 0, otHours: 0, effectiveHours: 0 };
+    if (diff <= 0) return { hours: 0, otHours: 0, effectiveHours: 0, totalHours: 0 };
 
+    const totalHours = parseFloat((diff / 60).toFixed(2));
     const { breakMinutes: breakMins } = computeBreakMinutes(inMins, outMins);
     const netMins = Math.max(0, diff - breakMins);
     const rawEffective = netMins > 0 ? parseFloat((netMins / 60).toFixed(2)) : 0;
@@ -249,7 +250,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
         ot = parseFloat((effectiveHours - 4.0).toFixed(2));
       }
     }
-    return { hours: reg, otHours: ot, effectiveHours };
+    return { hours: reg, otHours: ot, effectiveHours, totalHours };
   };
 
   const startEditing = (w: ConsolidatedWorkerItem) => {
@@ -292,6 +293,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                     ...worker,
                     inTime: editInTime,
                     outTime: editOutTime,
+                    totalHours: res.totalHours ?? preview?.totalHours ?? worker.totalHours,
                     hours: res.hours ?? hours,
                     otHours: res.overtimeHours ?? otHours,
                     additionalHours: addVal,
@@ -531,6 +533,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                   <th className="py-3 px-3.5 min-w-[150px]">Worker</th>
                   <th className="py-3 px-3 min-w-[140px]">Trade & Partner</th>
                   <th className="py-3 px-3 min-w-[150px]">In / Out Time</th>
+                  <th className="py-3 px-3 text-center min-w-[90px]">Total Hours</th>
                   <th className="py-3 px-3">Effective Hours</th>
                   <th className="py-3 px-3">OT Hrs</th>
                   <th className="py-3 px-3 min-w-[170px]">Activities Worked</th>
@@ -541,7 +544,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
               <tbody className="divide-y divide-slate-100">
                 {displayedWorkers.length === 0 ? (
                   <tr>
-                    <td colSpan={isApprovedView ? 8 : 9} className="py-12 text-center text-slate-400">
+                    <td colSpan={isApprovedView ? 9 : 10} className="py-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <Users size={28} className="text-slate-300" />
                         <span className="font-medium text-slate-600">
@@ -678,6 +681,34 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                               Not Recorded
                             </span>
                           )}
+                        </td>
+
+                        {/* TOTAL HOURS (GROSS) */}
+                        <td className="py-2.5 px-3 text-center">
+                          {(() => {
+                            const curIn = isEditingThis ? editInTime : w.inTime;
+                            const curOut = isEditingThis ? editOutTime : w.outTime;
+                            let grossVal = isEditingThis && preview ? preview.totalHours : (w.totalHours || 0);
+                            if (!grossVal && curIn && curOut) {
+                              const [inH, inM] = curIn.split(':').map(Number);
+                              const [outH, outM] = curOut.split(':').map(Number);
+                              if (!isNaN(inH) && !isNaN(outH)) {
+                                let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
+                                if (diff <= 0) diff += 24 * 60;
+                                grossVal = Math.round((diff / 60) * 100) / 100;
+                              }
+                            }
+                            return grossVal > 0 ? (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-md font-mono font-bold text-xs bg-slate-100 text-slate-800 border border-slate-200 shadow-2xs"
+                                title={`Total Presence (Gross Out - In): ${formatHoursDisplay(grossVal)}`}
+                              >
+                                {formatHoursDisplay(grossVal)}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-mono text-xs">-</span>
+                            );
+                          })()}
                         </td>
 
                         {/* EFFECTIVE HOURS */}
@@ -877,6 +908,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                   <th className="py-3 px-3.5 min-w-[150px]">Machine Operator</th>
                   <th className="py-3 px-3 min-w-[140px]">Assigned Machine</th>
                   <th className="py-3 px-3 min-w-[140px]">In / Out Time</th>
+                  <th className="py-3 px-3 text-center min-w-[90px]">Total Hours</th>
                   <th className="py-3 px-3">Effective Hours</th>
                   <th className="py-3 px-3">OT Hrs</th>
                   <th className="py-3 px-3 text-right">Status</th>
@@ -885,7 +917,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
               <tbody className="divide-y divide-slate-100">
                 {displayedOperators.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-400">
+                    <td colSpan={8} className="py-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <HardHat size={28} className="text-slate-300" />
                         <span className="font-medium text-slate-600">
@@ -987,6 +1019,32 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                               Not Recorded
                             </span>
                           )}
+                        </td>
+
+                        {/* TOTAL HOURS (GROSS) */}
+                        <td className="py-2.5 px-3 text-center">
+                          {(() => {
+                            let grossVal = op.totalHours || 0;
+                            if (!grossVal && op.inTime && op.outTime) {
+                              const [inH, inM] = op.inTime.split(':').map(Number);
+                              const [outH, outM] = op.outTime.split(':').map(Number);
+                              if (!isNaN(inH) && !isNaN(outH)) {
+                                let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
+                                if (diff <= 0) diff += 24 * 60;
+                                grossVal = Math.round((diff / 60) * 100) / 100;
+                              }
+                            }
+                            return grossVal > 0 ? (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-md font-mono font-bold text-xs bg-slate-100 text-slate-800 border border-slate-200 shadow-2xs"
+                                title={`Total Presence (Gross Out - In): ${formatHoursDisplay(grossVal)}`}
+                              >
+                                {formatHoursDisplay(grossVal)}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-mono text-xs">-</span>
+                            );
+                          })()}
                         </td>
 
                         {/* EFFECTIVE HOURS */}

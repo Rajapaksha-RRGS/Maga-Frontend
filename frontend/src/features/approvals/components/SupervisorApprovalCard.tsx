@@ -110,15 +110,16 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 
   // Preview hours calculation (1-hr standard break deduction; 2-hr deduction if shift passes 11:00 PM / 23:00)
   const computePreviewHours = (inTime: string, outTime: string, addHours = 0) => {
-    if (!inTime || !outTime) return { hours: 0, otHours: 0, effectiveHours: 0 };
+    if (!inTime || !outTime) return { hours: 0, otHours: 0, effectiveHours: 0, totalHours: 0 };
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
     const inMins = inH * 60 + (inM || 0);
     const outMins = outH * 60 + (outM || 0);
     let diff = outMins - inMins;
     if (diff <= 0) diff += 24 * 60;
-    if (diff <= 0) return { hours: 0, otHours: 0, effectiveHours: 0 };
+    if (diff <= 0) return { hours: 0, otHours: 0, effectiveHours: 0, totalHours: 0 };
 
+    const totalHours = parseFloat((diff / 60).toFixed(2));
     // Window-based break deduction (12:00-13:00 Lunch, 22:00-23:00 Dinner)
     const { breakMinutes: breakMins } = computeBreakMinutes(inMins, outMins);
 
@@ -153,7 +154,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
         ot = parseFloat((effectiveHours - 4.0).toFixed(2));
       }
     }
-    return { hours: reg, otHours: ot, effectiveHours };
+    return { hours: reg, otHours: ot, effectiveHours, totalHours };
   };
 
   const startEditing = (w: ApprovalWorkerItem) => {
@@ -191,6 +192,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                 ...w,
                 inTime: editInTime,
                 outTime: editOutTime,
+                totalHours: res.totalHours ?? preview?.totalHours ?? w.totalHours,
                 hours: res.hours ?? hours,
                 otHours: res.overtimeHours ?? otHours,
                 additionalHours: addVal,
@@ -520,6 +522,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                       <th className="py-2.5 px-3.5">Worker</th>
                       <th className="py-2.5 px-3">Trade & Partner</th>
                       <th className="py-2.5 px-3 min-w-[140px]">In / Out Time</th>
+                      <th className="py-2.5 px-3 text-center min-w-[90px]">Total Hours</th>
                       <th className="py-2.5 px-3">Effective Hours</th>
                       <th className="py-2.5 px-3">OT Hrs</th>
                       <th className="py-2.5 px-3">Activities Worked</th>
@@ -530,7 +533,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                   <tbody className="divide-y divide-slate-100">
                     {displayedWorkers.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-6 text-center text-slate-400">
+                        <td colSpan={9} className="py-6 text-center text-slate-400">
                           {q ? `No laborers match "${searchQuery}" for this supervisor.` : 'No workers assigned for this supervisor.'}
                         </td>
                       </tr>
@@ -625,6 +628,33 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                   Not Recorded
                                 </span>
                               )}
+                            </td>
+                            {/* TOTAL HOURS (GROSS) */}
+                            <td className="py-2.5 px-3 text-center">
+                              {(() => {
+                                const curIn = isEditingThis ? editInTime : w.inTime;
+                                const curOut = isEditingThis ? editOutTime : w.outTime;
+                                let grossVal = isEditingThis && preview ? preview.totalHours : (w.totalHours || 0);
+                                if (!grossVal && curIn && curOut) {
+                                  const [inH, inM] = curIn.split(':').map(Number);
+                                  const [outH, outM] = curOut.split(':').map(Number);
+                                  if (!isNaN(inH) && !isNaN(outH)) {
+                                    let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
+                                    if (diff <= 0) diff += 24 * 60;
+                                    grossVal = Math.round((diff / 60) * 100) / 100;
+                                  }
+                                }
+                                return grossVal > 0 ? (
+                                  <span
+                                    className="inline-flex items-center px-2 py-0.5 rounded-md font-mono font-bold text-xs bg-slate-100 text-slate-800 border border-slate-200 shadow-2xs"
+                                    title={`Total Presence (Gross Out - In): ${formatHoursDisplay(grossVal)}`}
+                                  >
+                                    {formatHoursDisplay(grossVal)}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 font-mono text-xs">-</span>
+                                );
+                              })()}
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
                               {isEditingThis && preview ? (
@@ -810,6 +840,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                       <th className="py-2.5 px-3.5">Operator</th>
                       <th className="py-2.5 px-3">Assigned Machine</th>
                       <th className="py-2.5 px-3 min-w-[130px]">In / Out Time</th>
+                      <th className="py-2.5 px-3 text-center min-w-[90px]">Total Hours</th>
                       <th className="py-2.5 px-3">Effective Hours</th>
                       <th className="py-2.5 px-3">OT Hrs</th>
                       <th className="py-2.5 px-3 text-right">Status</th>
@@ -818,7 +849,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                   <tbody className="divide-y divide-slate-100">
                     {!displayedOperators || displayedOperators.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-6 text-center text-slate-400">
+                        <td colSpan={7} className="py-6 text-center text-slate-400">
                           {q ? `No machine operators match "${searchQuery}" for this supervisor.` : 'No machine operators assigned for this supervisor.'}
                         </td>
                       </tr>
@@ -887,6 +918,31 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                   Not Recorded
                                 </span>
                               )}
+                            </td>
+                            {/* TOTAL HOURS (GROSS) */}
+                            <td className="py-2.5 px-3 text-center">
+                              {(() => {
+                                let grossVal = op.totalHours || 0;
+                                if (!grossVal && op.inTime && op.outTime) {
+                                  const [inH, inM] = op.inTime.split(':').map(Number);
+                                  const [outH, outM] = op.outTime.split(':').map(Number);
+                                  if (!isNaN(inH) && !isNaN(outH)) {
+                                    let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
+                                    if (diff <= 0) diff += 24 * 60;
+                                    grossVal = Math.round((diff / 60) * 100) / 100;
+                                  }
+                                }
+                                return grossVal > 0 ? (
+                                  <span
+                                    className="inline-flex items-center px-2 py-0.5 rounded-md font-mono font-bold text-xs bg-slate-100 text-slate-800 border border-slate-200 shadow-2xs"
+                                    title={`Total Presence (Gross Out - In): ${formatHoursDisplay(grossVal)}`}
+                                  >
+                                    {formatHoursDisplay(grossVal)}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 font-mono text-xs">-</span>
+                                );
+                              })()}
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
                               {effectiveVal > 0 ? (

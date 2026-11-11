@@ -188,6 +188,7 @@ export function calculateShiftAndOvertime(
   isLunchDeducted: boolean;
   isDinnerDeducted: boolean;
   additionalHours: number;
+  grossHours: number;
 } {
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
@@ -202,7 +203,7 @@ export function calculateShiftAndOvertime(
   const shiftHours = Math.max(0, Math.round((rawShiftHours + (additionalHours || 0)) * 100) / 100);
 
   if (shiftHours <= 0) {
-    return { shiftHours: 0, otHours: 0, breakHours, regularHours: 0, daysWorked: 0, isLunchDeducted, isDinnerDeducted, additionalHours: 0 };
+    return { shiftHours: 0, otHours: 0, breakHours, regularHours: 0, daysWorked: 0, isLunchDeducted, isDinnerDeducted, additionalHours: 0, grossHours };
   }
 
   let otHours = 0;
@@ -244,7 +245,7 @@ export function calculateShiftAndOvertime(
     }
   }
 
-  return { shiftHours, otHours, breakHours, regularHours, daysWorked, isLunchDeducted, isDinnerDeducted, additionalHours };
+  return { shiftHours, otHours, breakHours, regularHours, daysWorked, isLunchDeducted, isDinnerDeducted, additionalHours, grossHours };
 }
 
 async function getOrCreateDailySheet(projectId: string, supervisorId: string, date: Date) {
@@ -804,10 +805,12 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
     let isLunchDeducted = false;
     let isDinnerDeducted = false;
 
+    let grossHours = 0;
     if (inTime) {
       const mealPolicy = await getSiteMealPolicy(projectId);
       const { standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, entryDate);
       const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime, isSaturday, false, mealPolicy);
+      grossHours = calc.grossHours;
       shiftHours = calc.shiftHours;
       otHours = calc.otHours;
       breakHours = calc.breakHours;
@@ -819,6 +822,7 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
       where: { projectId, employeeId, date: entryDate },
       data: {
         outTime,
+        hours: grossHours,
         breakHours,
         isLunchDeducted,
         isDinnerDeducted,
@@ -827,7 +831,7 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
       },
     });
 
-    res.json({ success: true, employeeId, outTime, shiftHours, otHours, breakHours, isLunchDeducted, isDinnerDeducted });
+    res.json({ success: true, employeeId, outTime, totalHours: grossHours, shiftHours, otHours, breakHours, isLunchDeducted, isDinnerDeducted });
   } catch (error) {
     console.error('Error in checkOutEmployee:', error);
     res.status(500).json({ error: 'Failed to record check-out' });
@@ -1641,6 +1645,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           (emp.businessPartner?.name && !emp.businessPartner?.name?.toLowerCase().includes('direct'))
         );
 
+        let grossHours = 0;
         if (inTime && outTime) {
           const calc = calculateShiftAndOvertime(
             inTime,
@@ -1652,6 +1657,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
             mealPolicy,
             additionalHours
           );
+          grossHours = calc.grossHours;
           shiftHours = calc.shiftHours;
           otHours = calc.otHours;
           regularHours = calc.regularHours;
@@ -1660,6 +1666,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           isLunchDeducted = calc.isLunchDeducted;
           isDinnerDeducted = calc.isDinnerDeducted;
         } else if (entries.length > 0) {
+          grossHours = entries.reduce((sum: number, e: any) => sum + Number(e.hours || e.shiftHours || 0), 0);
           shiftHours = entries.reduce((sum: number, e: any) => sum + Number(e.shiftHours ?? e.hours ?? 0), 0);
           otHours = entries.reduce((sum: number, e: any) => sum + Number(e.overtimeHours || 0), 0);
           regularHours = entries.reduce((sum: number, e: any) => sum + Number(e.hours || 0), 0);
@@ -1723,6 +1730,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           isExternal,
           inTime,
           outTime,
+          totalHours: grossHours,
           hours: regularHours,
           otHours,
           shiftHours,
@@ -1829,6 +1837,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         let isLunchDeducted = Boolean(firstOpTe?.isLunchDeducted);
         let isDinnerDeducted = Boolean(firstOpTe?.isDinnerDeducted);
 
+        let grossHours = 0;
         if (inTime && outTime) {
           const calc = calculateShiftAndOvertime(
             inTime,
@@ -1840,6 +1849,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
             mealPolicy,
             additionalHours
           );
+          grossHours = calc.grossHours;
           shiftHours = calc.shiftHours;
           otHours = calc.otHours;
           hours = calc.regularHours;
@@ -1848,6 +1858,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           isLunchDeducted = calc.isLunchDeducted;
           isDinnerDeducted = calc.isDinnerDeducted;
         } else if (opTeList.length > 0) {
+          grossHours = opTeList.reduce((sum, t) => sum + Number(t.hours || t.shiftHours || 0), 0);
           shiftHours = opTeList.reduce((sum, t) => sum + Number(t.shiftHours ?? t.hours ?? 0), 0);
           otHours = opTeList.reduce((sum, t) => sum + Number(t.overtimeHours || 0), 0);
           hours = opTeList.reduce((sum, t) => sum + Number(t.hours || 0), 0);
@@ -1864,6 +1875,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           isExternal,
           inTime,
           outTime,
+          totalHours: grossHours,
           hours,
           otHours,
           shiftHours,
@@ -2257,8 +2269,10 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
     });
     const isExternal = Boolean(emp?.businessPartnerId || emp?.corporateEmployee?.corporateBusinessPartnerId);
 
+    let grossHours = 0;
     if (inTime && outTime) {
       const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime, isSaturday, isExternal, mealPolicy, addHoursVal);
+      grossHours = calc.grossHours;
       calculatedHours = calc.shiftHours;
       calculatedOt = calc.otHours;
       breakHours = calc.breakHours;
@@ -2321,7 +2335,7 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
           isDinnerDeducted,
           additionalHours: addHoursVal,
           shiftHours: calculatedHours,
-          hours: calculatedHours,
+          hours: grossHours || calculatedHours,
           overtimeHours: calculatedOt,
           remarks: 'Adjusted by Admin',
         },
@@ -2371,6 +2385,7 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
       employeeId,
       inTime,
       outTime,
+      totalHours: grossHours || calculatedHours,
       hours: regularHours,
       shiftHours: calculatedHours,
       effectiveHours: calculatedHours,

@@ -168,7 +168,7 @@ function calculateShiftAndOvertime(
   inTime: string,
   outTime: string,
   standardCap = 8.0
-): { shiftHours: number; otHours: number; breakHours: number } {
+): { shiftHours: number; otHours: number; breakHours: number; grossHours: number } {
   const [inH, inM] = inTime.split(':').map(Number);
   const [outH, outM] = outTime.split(':').map(Number);
 
@@ -184,7 +184,7 @@ function calculateShiftAndOvertime(
     otHours = Math.round((shiftHours - standardCap) * 100) / 100;
   }
 
-  return { shiftHours, otHours, breakHours };
+  return { shiftHours, otHours, breakHours, grossHours };
 }
 
 // Helper: Parse raw text file (supports tab-delimited, comma-delimited, semicolon)
@@ -712,6 +712,7 @@ async function main() {
       const finalOutTime = group.outTime || '17:00';
 
       const calc = calculateShiftAndOvertime(finalInTime, finalOutTime, 8.0);
+      const totalGrossHours = calc.grossHours; // Total hours (In-Out Gross presence duration)
       const totalCsvHours = Math.round(group.activities.reduce((s, a) => s + a.hours, 0) * 100) / 100;
       const baseShift = calc.shiftHours; // gross - breaks
       let additionalHours = group.additionalHours !== undefined && group.additionalHours > 0 ? group.additionalHours : 0;
@@ -902,7 +903,7 @@ async function main() {
             recordedById: supervisor.id,
             inTime: finalInTime,
             outTime: finalOutTime,
-            hours: finalCsvHours,
+            hours: totalGrossHours,
             shiftHours: finalShiftHours,
             additionalHours: additionalHours,
             overtimeHours: finalOt,
@@ -930,7 +931,7 @@ async function main() {
             effectiveDayTypeId,
             inTime: finalInTime,
             outTime: finalOutTime,
-            hours: finalCsvHours,
+            hours: totalGrossHours,
             shiftHours: finalShiftHours,
             additionalHours: additionalHours,
             overtimeHours: finalOt,

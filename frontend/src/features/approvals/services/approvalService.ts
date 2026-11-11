@@ -34,6 +34,7 @@ export interface ApprovalWorkerItem {
   daysWorked?: number;
   inTime: string;
   outTime: string;
+  totalHours?: number;
   hours: number;
   otHours: number;
   breakHours?: number;
@@ -57,6 +58,7 @@ export interface ApprovalOperatorItem {
   daysWorked?: number;
   inTime: string;
   outTime: string;
+  totalHours?: number;
   hours: number;
   otHours: number;
   breakHours?: number;
@@ -248,6 +250,7 @@ export async function adminAdjustWorker(payload: {
   employeeId: string;
   inTime: string;
   outTime: string;
+  totalHours?: number;
   hours: number;
   overtimeHours: number;
   additionalHours?: number;

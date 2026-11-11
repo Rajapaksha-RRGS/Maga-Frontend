@@ -1288,7 +1288,7 @@ export function OperatorEntryView({
                         value={operator.inTime || ''}
                         onChange={(e) => handleIndividualTimeChange(operator.id, e.target.value, operator.outTime)}
                         className={[
-                          'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
+                          'w-[88px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
                           operator.inTime
                             ? 'text-emerald-800 dark:text-emerald-200 font-mono'
                             : 'text-slate-400 dark:text-slate-500'
@@ -1318,7 +1318,7 @@ export function OperatorEntryView({
                         value={operator.outTime || ''}
                         onChange={(e) => handleIndividualTimeChange(operator.id, operator.inTime, e.target.value)}
                         className={[
-                          'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
+                          'w-[88px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
                           operator.outTime
                             ? 'text-blue-800 dark:text-blue-200 font-mono'
                             : 'text-slate-400 dark:text-slate-500'

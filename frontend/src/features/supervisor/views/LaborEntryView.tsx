@@ -1690,7 +1690,7 @@ export function LaborEntryView({
                           value={worker.inTime || ''}
                           onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
                           className={[
-                            'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
+                            'w-[88px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
                             worker.inTime
                               ? 'text-slate-800 dark:text-slate-100 font-mono'
                               : 'text-slate-400 dark:text-slate-500'
@@ -1720,7 +1720,7 @@ export function LaborEntryView({
                           value={worker.outTime || ''}
                           onChange={(e) => handleIndividualTimeChange(worker.id, worker.inTime, e.target.value)}
                           className={[
-                            'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
+                            'w-[88px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
                             worker.outTime
                               ? 'text-slate-800 dark:text-slate-100 font-mono'
                               : 'text-slate-400 dark:text-slate-500'
