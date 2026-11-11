@@ -35,6 +35,13 @@ export interface CrossTenantStatusItem {
   employeeId?: string;
 }
 
+export interface MasterImportResult {
+  success?: boolean;
+  importedCount?: number;
+  skippedCount?: number;
+  [key: string]: any;
+}
+
 interface Props<T> {
   isOpen: boolean;
   onClose: () => void;
@@ -48,7 +55,7 @@ interface Props<T> {
   getItemCategory: (item: T) => string;
   getItemSourceProject: (item: T) => string;
   columns: ColumnDef<T>[];
-  onImport: (selectedItems: T[]) => Promise<void>;
+  onImport: (selectedItems: T[]) => Promise<MasterImportResult | void> | void;
   crossTenantStatusMap?: Record<string, CrossTenantStatusItem>;
   onTransfer?: (item: T, status: CrossTenantStatusItem) => Promise<void>;
   isLoadingStatus?: boolean;

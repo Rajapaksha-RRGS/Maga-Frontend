@@ -21,7 +21,7 @@ import {
   type ApprovalOverviewResponse,
 } from '../features/approvals/services/approvalService';
 import { ApprovalStatsBar } from '../features/approvals/components/ApprovalStatsBar';
-import { SupervisorApprovalCard } from '../features/approvals/components/SupervisorApprovalCard';
+import { ConsolidatedApprovalView } from '../features/approvals/components/ConsolidatedApprovalView';
 import { NotSubmittedCard } from '../features/approvals/components/NotSubmittedCard';
 import Breadcrumb from '../components/Breadcrumb';
 import { 
@@ -494,19 +494,19 @@ export default function ApprovalsPage() {
                     </p>
                   </div>
                 ) : (
-                  submittedFiltered.map((group) => (
-                    <SupervisorApprovalCard
-                      key={group.supervisorId}
-                      group={group}
-                      selectedDate={selectedDate}
-                      onApprove={handleApproveSupervisor}
-                      onReject={handleRejectSupervisor}
-                      onRefresh={() => loadData(selectedDate)}
-                      isProcessing={processingId === group.supervisorId}
-                      searchQuery={searchQuery}
-                      searchScope={searchScope}
-                    />
-                  ))
+                  <ConsolidatedApprovalView
+                    groups={submittedFiltered}
+                    selectedDate={selectedDate}
+                    dayType={data?.dayType}
+                    isApprovedView={false}
+                    onApproveSupervisor={handleApproveSupervisor}
+                    onRejectSupervisor={handleRejectSupervisor}
+                    onRefresh={() => loadData(selectedDate)}
+                    processingId={processingId}
+                    searchQuery={searchQuery}
+                    searchScope={searchScope}
+                    onSearchScopeChange={setSearchScope}
+                  />
                 )}
               </>
             )}
@@ -550,19 +550,19 @@ export default function ApprovalsPage() {
                     </p>
                   </div>
                 ) : (
-                  approvedFiltered.map((group) => (
-                    <SupervisorApprovalCard
-                      key={group.supervisorId}
-                      group={group}
-                      selectedDate={selectedDate}
-                      onApprove={handleApproveSupervisor}
-                      onReject={handleRejectSupervisor}
-                      onRefresh={() => loadData(selectedDate)}
-                      isProcessing={processingId === group.supervisorId}
-                      searchQuery={searchQuery}
-                      searchScope={searchScope}
-                    />
-                  ))
+                  <ConsolidatedApprovalView
+                    groups={approvedFiltered}
+                    selectedDate={selectedDate}
+                    dayType={data?.dayType}
+                    isApprovedView={true}
+                    onApproveSupervisor={handleApproveSupervisor}
+                    onRejectSupervisor={handleRejectSupervisor}
+                    onRefresh={() => loadData(selectedDate)}
+                    processingId={processingId}
+                    searchQuery={searchQuery}
+                    searchScope={searchScope}
+                    onSearchScopeChange={setSearchScope}
+                  />
                 )}
               </>
             )}
