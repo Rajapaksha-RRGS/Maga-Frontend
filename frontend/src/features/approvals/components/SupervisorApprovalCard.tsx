@@ -172,7 +172,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
     setIsSavingEdit(true);
     try {
       const addVal = parseFloat(editAdditionalHours) || 0;
-      const { hours, otHours, effectiveHours } = computePreviewHours(editInTime, editOutTime, addVal);
+      const { hours, otHours, effectiveHours, totalHours } = computePreviewHours(editInTime, editOutTime, addVal);
       const res = await adminAdjustWorker({
         supervisorId: group.supervisorId,
         employeeId,
@@ -192,7 +192,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                 ...w,
                 inTime: editInTime,
                 outTime: editOutTime,
-                totalHours: res.totalHours ?? preview?.totalHours ?? w.totalHours,
+                totalHours: res.totalHours ?? totalHours ?? w.totalHours,
                 hours: res.hours ?? hours,
                 otHours: res.overtimeHours ?? otHours,
                 additionalHours: addVal,

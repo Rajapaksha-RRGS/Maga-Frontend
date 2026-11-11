@@ -268,7 +268,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
     setIsSavingEdit(true);
     try {
       const addVal = parseFloat(editAdditionalHours) || 0;
-      const { hours, otHours, effectiveHours } = computePreviewHours(editInTime, editOutTime, addVal, w);
+      const { hours, otHours, effectiveHours, totalHours } = computePreviewHours(editInTime, editOutTime, addVal, w);
 
       const res = await adminAdjustWorker({
         supervisorId: w.supervisorId,
@@ -293,7 +293,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                     ...worker,
                     inTime: editInTime,
                     outTime: editOutTime,
-                    totalHours: res.totalHours ?? preview?.totalHours ?? worker.totalHours,
+                    totalHours: res.totalHours ?? totalHours ?? worker.totalHours,
                     hours: res.hours ?? hours,
                     otHours: res.overtimeHours ?? otHours,
                     additionalHours: addVal,
