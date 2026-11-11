@@ -175,6 +175,141 @@ export const getRecentGangSummaries = async (req: Request, res: Response): Promi
   }
 };
 
+// 2b. GET /api/assignments/supervisor-past-gangs — Fast single-query past gang lookup for supervisor
+export const getSupervisorPastGangs = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const supervisorId = req.query.supervisorId as string;
+    const beforeDateStr = req.query.before as string;
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string, 10) || 5, 1), 14);
+    const type = (req.query.type as string) || 'labor';
+
+    if (!supervisorId) {
+      res.status(400).json({ error: 'supervisorId query parameter is required' });
+      return;
+    }
+
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (await getDefaultTenantId());
+
+    const beforeDate = beforeDateStr ? parseDate(beforeDateStr) : new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    if (type === 'operator') {
+      const sheets = await prisma.mF_OP_DailySheet.findMany({
+        where: {
+          projectId,
+          supervisorId,
+          date: { lt: beforeDate },
+          equipmentAssignments: { some: { operatorId: { not: null } } },
+        },
+        select: {
+          date: true,
+          equipmentAssignments: {
+            where: { operatorId: { not: null } },
+            select: {
+              equipmentId: true,
+              operator: {
+                select: {
+                  id: true,
+                  callingName: true,
+                  corporateEmployee: {
+                    select: { employeeCode: true, fullName: true },
+                  },
+                  tradeGroup: { select: { name: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { date: 'desc' },
+        take: limit,
+      });
+
+      const results = sheets.map((s) => {
+        const dateStr = s.date.toISOString().split('T')[0];
+        const dayName = dayNames[s.date.getUTCDay()];
+        const validOps = s.equipmentAssignments.filter((ea) => ea.operator);
+        const opIds = Array.from(new Set(validOps.map((ea) => ea.operator!.id)));
+        const operators = validOps.map((ea) => ({
+          id: ea.operator!.id,
+          callingName: ea.operator!.callingName || ea.operator!.corporateEmployee?.fullName || 'Operator',
+          employeeNumber: ea.operator!.corporateEmployee?.employeeCode || '',
+          licenseNo: '',
+          designation: ea.operator!.tradeGroup?.name || 'Machine Operator',
+          inTime: '',
+          outTime: '',
+          shiftHours: 0,
+          otHours: 0,
+          assignedEquipmentId: ea.equipmentId || '',
+          equipmentSplits: [],
+        }));
+        return {
+          date: dateStr,
+          dayName,
+          operatorIds: opIds,
+          operatorCount: opIds.length,
+          operators,
+        };
+      });
+
+      res.json(results);
+      return;
+    }
+
+    // Labor past gangs
+    const sheets = await prisma.mF_OP_DailySheet.findMany({
+      where: {
+        projectId,
+        supervisorId,
+        date: { lt: beforeDate },
+        assignments: {
+          some: {
+            employee: {
+              isOperator: false,
+              corporateEmployee: { isOperator: false },
+            },
+          },
+        },
+      },
+      select: {
+        date: true,
+        assignments: {
+          where: {
+            employee: {
+              isOperator: false,
+              corporateEmployee: { isOperator: false },
+            },
+          },
+          select: { employeeId: true },
+        },
+      },
+      orderBy: { date: 'desc' },
+      take: limit,
+    });
+
+    const results = sheets.map((s) => {
+      const dateStr = s.date.toISOString().split('T')[0];
+      const dayName = dayNames[s.date.getUTCDay()];
+      const wIds = Array.from(new Set(s.assignments.map((a) => a.employeeId)));
+      return {
+        date: dateStr,
+        dayName,
+        workerIds: wIds,
+        workerCount: wIds.length,
+      };
+    });
+
+    res.json(results);
+  } catch (error) {
+    console.error('Error fetching supervisor past gangs:', error);
+    res.status(500).json({ error: 'Failed to fetch supervisor past gangs' });
+  }
+};
+
 // 3. POST /api/assignments — Assign employees to supervisor for a date
 export const assignEmployees = async (req: Request, res: Response): Promise<void> => {
   try {

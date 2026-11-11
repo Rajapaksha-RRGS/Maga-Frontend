@@ -7,5 +7,15 @@ export default defineConfig({
   server: {
     host: true, // Listen on all local IPs (including 192.168.10.243)
     port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      '/uploads': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+    },
   },
 })

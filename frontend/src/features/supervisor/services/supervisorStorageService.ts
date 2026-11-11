@@ -1073,8 +1073,7 @@ export const supervisorStorage = {
     currentDate?: string,
     daysCount: number = 5
   ): Promise<Array<{ date: string; dayName: string; workerIds: string[]; workerCount: number }>> {
-    const results: Array<{ date: string; dayName: string; workerIds: string[]; workerCount: number }> = [];
-    if (!currentDate) return results;
+    if (!currentDate) return [];
 
     let effectiveSupId = supervisorId;
     if (!effectiveSupId && typeof window !== 'undefined') {
@@ -1089,64 +1088,25 @@ export const supervisorStorage = {
       }
     }
 
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    if (!effectiveSupId) return [];
 
-    const shiftDateStr = (dateStr: string, days: number): string => {
-      const [y, m, d] = dateStr.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d));
-      dt.setUTCDate(dt.getUTCDate() + days);
-      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
-    };
-
-    for (let i = 1; i <= daysCount; i++) {
-      const pastDate = shiftDateStr(currentDate, -i);
-      const [y, m, d] = pastDate.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d));
-      const dayName = dayNames[dt.getUTCDay()];
-
-      // 1. Try local storage cache/draft first if available
-      if (typeof window !== 'undefined') {
-        try {
-          const saved = localStorage.getItem(`maga_supervisor_data_laborers_${pastDate}`);
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              results.push({
-                date: pastDate,
-                dayName,
-                workerIds: parsed.map((emp: any) => emp.id),
-                workerCount: parsed.length,
-              });
-              continue;
-            }
-          }
-        } catch {
-          // ignore
+    try {
+      const activeProjId = this.getActiveSite().id || getCurrentTenantId();
+      const pIdParam = activeProjId && activeProjId !== 'site-default' ? `&projectId=${encodeURIComponent(activeProjId)}` : '';
+      const res = await apiFetch(
+        `${API_URL}/assignments/supervisor-past-gangs?supervisorId=${encodeURIComponent(effectiveSupId)}&before=${encodeURIComponent(currentDate)}&limit=${daysCount}&type=labor${pIdParam}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data;
         }
       }
-
-      // 2. Try backend query with effective supervisor ID
-      if (effectiveSupId) {
-        try {
-          const res = await apiFetch(`${API_URL}/time-entries/assigned?supervisorId=${encodeURIComponent(effectiveSupId)}&date=${encodeURIComponent(pastDate)}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
-              results.push({
-                date: pastDate,
-                dayName,
-                workerIds: data.map((emp: any) => emp.id),
-                workerCount: data.length,
-              });
-            }
-          }
-        } catch {
-          // ignore network hiccups
-        }
-      }
+    } catch (err) {
+      console.warn('Fast supervisor past gangs query failed:', err);
     }
 
-    return results;
+    return [];
   },
 
   /**
@@ -1157,8 +1117,7 @@ export const supervisorStorage = {
     currentDate?: string,
     daysCount: number = 5
   ): Promise<Array<{ date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }>> {
-    const results: Array<{ date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }> = [];
-    if (!currentDate) return results;
+    if (!currentDate) return [];
 
     let effectiveSupId = supervisorId;
     if (!effectiveSupId && typeof window !== 'undefined') {
@@ -1173,79 +1132,25 @@ export const supervisorStorage = {
       }
     }
 
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    if (!effectiveSupId) return [];
 
-    const shiftDateStr = (dateStr: string, days: number): string => {
-      const [y, m, d] = dateStr.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d));
-      dt.setUTCDate(dt.getUTCDate() + days);
-      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
-    };
-
-    for (let i = 1; i <= daysCount; i++) {
-      const pastDate = shiftDateStr(currentDate, -i);
-      const [y, m, d] = pastDate.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d));
-      const dayName = dayNames[dt.getUTCDay()];
-
-      // 1. Try local storage cache/draft first if available
-      if (typeof window !== 'undefined') {
-        try {
-          const saved = localStorage.getItem(`maga_supervisor_data_operators_${pastDate}`);
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              results.push({
-                date: pastDate,
-                dayName,
-                operatorIds: parsed.map((o: any) => o.id),
-                operatorCount: parsed.length,
-                operators: parsed,
-              });
-              continue;
-            }
-          }
-        } catch {
-          // ignore
+    try {
+      const activeProjId = this.getActiveSite().id || getCurrentTenantId();
+      const pIdParam = activeProjId && activeProjId !== 'site-default' ? `&projectId=${encodeURIComponent(activeProjId)}` : '';
+      const res = await apiFetch(
+        `${API_URL}/assignments/supervisor-past-gangs?supervisorId=${encodeURIComponent(effectiveSupId)}&before=${encodeURIComponent(currentDate)}&limit=${daysCount}&type=operator${pIdParam}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data;
         }
       }
-
-      // 2. Try backend query with effective supervisor ID
-      if (effectiveSupId) {
-        try {
-          const res = await apiFetch(`${API_URL}/assignments/operator?date=${encodeURIComponent(pastDate)}&supervisorId=${encodeURIComponent(effectiveSupId)}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
-              const mapped: OperatorEntry[] = data.map((asgn: any) => ({
-                id: asgn.operatorId || asgn.id,
-                callingName: asgn.operatorName || asgn.callingName || 'Operator',
-                employeeNumber: asgn.operatorCode || asgn.employeeCode || '',
-                licenseNo: asgn.licenseNo || '',
-                designation: asgn.operatorTrade || 'Machine Operator',
-                inTime: '',
-                outTime: '',
-                shiftHours: 0,
-                otHours: 0,
-                assignedEquipmentId: asgn.equipmentId || '',
-                equipmentSplits: asgn.equipmentId ? [{ id: '1', equipmentId: asgn.equipmentId, hours: 0 }] : [],
-                status: 'pending',
-              }));
-              results.push({
-                date: pastDate,
-                dayName,
-                operatorIds: mapped.map((o) => o.id),
-                operatorCount: mapped.length,
-                operators: mapped,
-              });
-            }
-          }
-        } catch {
-          // ignore network hiccups
-        }
-      }
+    } catch (err) {
+      console.warn('Fast supervisor past operators query failed:', err);
     }
 
-    return results;
+    return [];
+  },
   },
 };

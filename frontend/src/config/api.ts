@@ -7,7 +7,18 @@
  */
 export function getApiBaseUrl(): string {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
-  const raw = (envUrl && typeof envUrl === 'string' ? envUrl : 'http://localhost:5000/api').trim().replace(/\/+$/, '');
+  let raw = (envUrl && typeof envUrl === 'string' ? envUrl : 'http://localhost:5000/api').trim().replace(/\/+$/, '');
+
+  // If accessed from another device on the local network (e.g. http://192.168.10.243:5173),
+  // dynamically replace localhost / 127.0.0.1 with the actual host IP so the device talks to the host PC's backend
+  if (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    if (raw.includes('localhost')) {
+      raw = raw.replace('localhost', window.location.hostname);
+    } else if (raw.includes('127.0.0.1')) {
+      raw = raw.replace('127.0.0.1', window.location.hostname);
+    }
+  }
+
   return raw.endsWith('/api') ? raw : `${raw}/api`;
 }
 

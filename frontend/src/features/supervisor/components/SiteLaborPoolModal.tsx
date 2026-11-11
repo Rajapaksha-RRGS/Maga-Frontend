@@ -48,12 +48,14 @@ export function SiteLaborPoolModal({
   const [affiliationFilter, setAffiliationFilter] = useState<'all' | 'direct' | 'subcontractor'>('all');
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [pastGangs, setPastGangs] = useState<Array<{ date: string; dayName: string; workerIds: string[]; workerCount: number }>>([]);
+  const [isPastGangsLoading, setIsPastGangsLoading] = useState(true);
   const [showPastDaysDropdown, setShowPastDaysDropdown] = useState(false);
   const [pastGangNotice, setPastGangNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     setIsLoading(true);
+    setIsPastGangsLoading(true);
     setCheckedIds(new Set());
     setPastGangNotice(null);
     setShowPastDaysDropdown(false);
@@ -67,7 +69,8 @@ export function SiteLaborPoolModal({
     supervisorStorage
       .getPastGangsForSupervisor(user?.id || '', selectedDate, 5)
       .then((gangs) => setPastGangs(gangs))
-      .catch((err) => console.warn('Could not load past gangs:', err));
+      .catch((err) => console.warn('Could not load past gangs:', err))
+      .finally(() => setIsPastGangsLoading(false));
   }, [isOpen, selectedDate, projectId, user?.id]);
 
   // Set of IDs already in the current supervisor's active daily list
@@ -307,7 +310,18 @@ export function SiteLaborPoolModal({
         </div>
 
         {/* ── Quick Copy Past Gang Banner ── */}
-        {pastGangs.length > 0 && mostRecentGang && (
+        {isPastGangsLoading ? (
+          <div className="p-3 sm:px-5 sm:py-2.5 border-b border-blue-100/60 dark:border-blue-900/40 bg-blue-50/40 dark:bg-slate-850/60 flex items-center justify-between gap-3 animate-pulse">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-blue-200 dark:bg-blue-900/50 flex-shrink-0" />
+              <div className="space-y-1">
+                <div className="h-3 w-36 bg-blue-200/80 dark:bg-blue-900/50 rounded" />
+                <div className="h-2.5 w-52 bg-slate-200 dark:bg-slate-700 rounded" />
+              </div>
+            </div>
+            <div className="h-8 w-28 bg-blue-200/80 dark:bg-blue-900/50 rounded-xl shrink-0" />
+          </div>
+        ) : pastGangs.length > 0 && mostRecentGang && (
           <div className="p-3 sm:px-5 sm:py-3 border-b border-blue-100 dark:border-blue-900/60 bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-blue-50/90 dark:from-slate-850 dark:via-blue-950/30 dark:to-slate-850">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
               <div className="flex items-center gap-2.5 min-w-0">

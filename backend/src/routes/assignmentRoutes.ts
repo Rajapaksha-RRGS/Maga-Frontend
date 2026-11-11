@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getAssignmentsForDate,
   getRecentGangSummaries,
+  getSupervisorPastGangs,
   assignEmployees,
   unassignEmployee,
   copyGangsFromDate,
@@ -36,6 +37,7 @@ router.delete('/equipment/:id', unassignEquipment);
 // ── Labour Assignments ───────────────────────────────────────────────
 router.get('/', getAssignmentsForDate);
 router.get('/recent-gangs', getRecentGangSummaries);
+router.get('/supervisor-past-gangs', getSupervisorPastGangs);
 router.post('/', assignEmployees);
 router.post('/copy', copyGangsFromDate);
 router.delete('/:id', unassignEmployee);
