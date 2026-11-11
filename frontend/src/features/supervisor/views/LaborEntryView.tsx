@@ -34,6 +34,9 @@ import {
 import {
   computeHours,
   formatHhmm,
+  formatHourWithClockText,
+  formatClockMinutes,
+  getTimeInputHint,
   sumHhmm,
   hhmmToMinutes,
   minutesToHhmm
@@ -120,7 +123,19 @@ export function LaborEntryView({
   // Trade Group & Shift Filter states
   const [selectedTradeFilter, setSelectedTradeFilter] = useState<string>('all');
   const [selectedShiftFilter, setSelectedShiftFilter] = useState<string>('all');
-  const [targetShiftHours, setTargetShiftHours] = useState<number>(8.0);
+  // ── IN MODE BATCH STATE ──
+  const [batchInTime, setBatchInTime] = useState('07:00');
+
+  // ── OUT MODE BATCH STATE ──
+  const [batchOutTime, setBatchOutTime] = useState('17:00');
+  const [batchAdditionalHours, setBatchAdditionalHours] = useState('0.0');
+
+  // Initial computed shift for default 07:00 - 17:00
+  const defaultBatchShift = useMemo(() => {
+    return computeHours('07:00', '17:00', selectedDate).shift || 9.0;
+  }, [selectedDate]);
+
+  const [targetShiftHours, setTargetShiftHours] = useState<number>(defaultBatchShift);
   const [showShiftMismatchModal, setShowShiftMismatchModal] = useState<boolean>(false);
   const [mismatchData, setMismatchData] = useState<{
     groups: Record<string, LaborerEntry[]>;
@@ -140,6 +155,10 @@ export function LaborEntryView({
   // Dynamic real activity codes from Backend
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
 
+  const [batchActivities, setBatchActivities] = useState<BatchActivityItem[]>([
+    { id: 'batch-act-1', activityCode: '', hours: defaultBatchShift }
+  ]);
+
   // Load real tenant activity codes on mount
   useEffect(() => {
     supervisorStorage.getActivityCodes().then((codes) => {
@@ -147,27 +166,18 @@ export function LaborEntryView({
         setActivityOptions(codes);
         // Automatically set first real activity code for batch
         setBatchActivities((prev) => {
+          const currentHours = prev[0]?.hours || defaultBatchShift;
           if (prev.length === 0 || !prev[0].activityCode || !codes.some((c) => c.code === prev[0].activityCode)) {
-            return [{ id: 'batch-act-1', activityCode: codes[0].code, hours: 8.0 }];
+            return [{ id: 'batch-act-1', activityCode: codes[0].code, hours: currentHours }];
           }
           return prev;
         });
       }
     }).catch(() => {});
-  }, []);
+  }, [defaultBatchShift]);
 
   // ── BATCH CONTROLS ACCORDION (COLLAPSIBLE) ──
   const [isBatchOpen, setIsBatchOpen] = useState(false);
-
-  // ── IN MODE BATCH STATE ──
-  const [batchInTime, setBatchInTime] = useState('07:00');
-
-  // ── OUT MODE BATCH STATE ──
-  const [batchOutTime, setBatchOutTime] = useState('17:00');
-  const [batchAdditionalHours, setBatchAdditionalHours] = useState('0.0');
-  const [batchActivities, setBatchActivities] = useState<BatchActivityItem[]>([
-    { id: 'batch-act-1', activityCode: '', hours: 8.0 }
-  ]);
 
   // Derived unique shift hours for Shift Hours filter chips
   const shiftGroupStats = useMemo(() => {
@@ -387,21 +397,15 @@ export function LaborEntryView({
     setSelectedWorkerIds([]);
   };
 
-  const handleSetPreset = (inVal: string, outVal: string) => {
-    setBatchInTime(inVal);
-    handleBatchOutTimeChange(outVal);
-  };
-
-  // ── DYNAMIC OUT-TIME CHANGE HANDLER ──
-  const handleBatchOutTimeChange = (newOutTime: string) => {
+  // ── UNIFIED REACTIVE BATCH TIME UPDATER ──
+  const updateBatchTimes = (newInTime: string, newOutTime: string, newAddStr?: string) => {
+    setBatchInTime(newInTime);
     setBatchOutTime(newOutTime);
-    // Compute effective shift for active/sample workers with this new out-time
-    const sampleWorker = laborers.find((l) => selectedWorkerIds.includes(l.id) && l.inTime) ||
-      laborers.find((l) => l.inTime) ||
-      { inTime: batchInTime || '07:00' };
-    const inTime = sampleWorker.inTime || '07:00';
-    const addVal = parseFloat(batchAdditionalHours) || 0;
-    const { shift } = computeHours(inTime, newOutTime, selectedDate, undefined, addVal);
+    const addStr = newAddStr !== undefined ? newAddStr : batchAdditionalHours;
+    if (newAddStr !== undefined) setBatchAdditionalHours(newAddStr);
+
+    const addVal = parseFloat(addStr) || 0;
+    const { shift } = computeHours(newInTime, newOutTime, selectedDate, undefined, addVal);
     if (shift > 0) {
       setTargetShiftHours(shift);
       setBatchActivities((prev) => {
@@ -417,9 +421,10 @@ export function LaborEntryView({
             let allocated = 0;
             return prev.map((a, idx) => {
               if (idx === prev.length - 1) {
-                return { ...a, hours: parseFloat(Math.max(0.5, shift - allocated).toFixed(1)) };
+                const remainder = Math.round(Math.max(0, shift - allocated) * 100) / 100;
+                return { ...a, hours: remainder };
               }
-              const share = parseFloat(((a.hours / sum) * shift).toFixed(1));
+              const share = Math.round(((a.hours / sum) * shift) * 100) / 100;
               allocated += share;
               return { ...a, hours: share };
             });
@@ -430,41 +435,8 @@ export function LaborEntryView({
     }
   };
 
-  // ── DYNAMIC BATCH ADDITIONAL HOURS HANDLER ──
-  const handleBatchAdditionalHoursChange = (newAddStr: string) => {
-    setBatchAdditionalHours(newAddStr);
-    const addVal = parseFloat(newAddStr) || 0;
-    const sampleWorker = laborers.find((l) => selectedWorkerIds.includes(l.id) && l.inTime) ||
-      laborers.find((l) => l.inTime) ||
-      { inTime: batchInTime || '07:00' };
-    const inTime = sampleWorker.inTime || '07:00';
-    const { shift } = computeHours(inTime, batchOutTime, selectedDate, undefined, addVal);
-    if (shift > 0) {
-      setTargetShiftHours(shift);
-      setBatchActivities((prev) => {
-        if (prev.length <= 1) {
-          return [{
-            id: 'batch-act-1',
-            activityCode: prev[0]?.activityCode || activityOptions[0]?.code || '',
-            hours: shift,
-          }];
-        } else {
-          const sum = prev.reduce((acc, a) => acc + (a.hours || 0), 0);
-          if (sum > 0) {
-            let allocated = 0;
-            return prev.map((a, idx) => {
-              if (idx === prev.length - 1) {
-                return { ...a, hours: parseFloat(Math.max(0.5, shift - allocated).toFixed(1)) };
-              }
-              const share = parseFloat(((a.hours / sum) * shift).toFixed(1));
-              allocated += share;
-              return { ...a, hours: share };
-            });
-          }
-          return prev;
-        }
-      });
-    }
+  const handleSetPreset = (inVal: string, outVal: string) => {
+    updateBatchTimes(inVal, outVal);
   };
 
   // ── SHIFT FILTER SELECTOR (DYNAMIC TARGET HOURS & AUTO-SELECT COHORT) ──
@@ -504,9 +476,10 @@ export function LaborEntryView({
               let allocated = 0;
               return prev.map((a, idx) => {
                 if (idx === prev.length - 1) {
-                  return { ...a, hours: parseFloat(Math.max(0.5, hours - allocated).toFixed(1)) };
+                  const remainder = Math.round(Math.max(0, hours - allocated) * 100) / 100;
+                  return { ...a, hours: remainder };
                 }
-                const share = parseFloat(((a.hours / sum) * hours).toFixed(1));
+                const share = Math.round(((a.hours / sum) * hours) * 100) / 100;
                 allocated += share;
                 return { ...a, hours: share };
               });
@@ -1138,7 +1111,7 @@ export function LaborEntryView({
               Filter by Shift Hours:
             </span>
             <span className="text-[10px] text-slate-500 font-medium">
-              Target: <strong className="text-blue-700 dark:text-blue-400 font-mono">{formatHhmm(targetShiftHours)}h</strong>
+              Target: <strong className="text-blue-700 dark:text-blue-400 font-mono">{formatHourWithClockText(targetShiftHours)}</strong>
             </span>
           </div>
 
@@ -1301,6 +1274,14 @@ export function LaborEntryView({
                 </button>
                 <button
                   type="button"
+                  onClick={() => handleSetPreset('08:00', '17:00')}
+                  className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                  title="Set Batch In to 08:00 and Out to 17:00 (8.0h shift)"
+                >
+                  Std (08-17)
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleSetPreset('07:00', '12:00')}
                   className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
                   title="Set Batch In to 07:00 and Out to 12:00 (Half Day 5.0h)"
@@ -1327,7 +1308,7 @@ export function LaborEntryView({
                 <input
                   type="time"
                   value={batchInTime}
-                  onChange={(e) => setBatchInTime(e.target.value)}
+                  onChange={(e) => updateBatchTimes(e.target.value, batchOutTime)}
                   className="text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
                 />
               </div>
@@ -1339,7 +1320,7 @@ export function LaborEntryView({
                 <input
                   type="time"
                   value={batchOutTime}
-                  onChange={(e) => handleBatchOutTimeChange(e.target.value)}
+                  onChange={(e) => updateBatchTimes(batchInTime, e.target.value)}
                   className="text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
                 />
               </div>
@@ -1355,7 +1336,7 @@ export function LaborEntryView({
                     min="0"
                     max="24"
                     value={batchAdditionalHours}
-                    onChange={(e) => handleBatchAdditionalHoursChange(e.target.value)}
+                    onChange={(e) => updateBatchTimes(batchInTime, batchOutTime, e.target.value)}
                     placeholder="0.0"
                     className="w-12 text-xs font-bold font-mono text-amber-900 dark:text-amber-200 bg-transparent focus:outline-none text-right cursor-pointer"
                     title="Batch Additional Hours"
@@ -1372,7 +1353,7 @@ export function LaborEntryView({
                   <Briefcase size={12} className="text-blue-600" />
                   Activity Codes Split 
                   <span className="text-[10px] text-slate-500 font-normal ml-1">
-                    (Target: <strong className="text-blue-700 dark:text-blue-300 font-mono">{formatHhmm(targetShiftHours)}h</strong>)
+                    (Target: <strong className="text-blue-700 dark:text-blue-300 font-mono">{formatHourWithClockText(targetShiftHours)}</strong>)
                   </span>
                 </span>
                 <button
@@ -1393,7 +1374,7 @@ export function LaborEntryView({
                     placeholder="Search activity code..."
                   />
 
-                  <div className="w-16 flex-shrink-0">
+                  <div className="w-20 flex-shrink-0 flex flex-col items-center">
                     <input
                       type="number"
                       step="0.5"
@@ -1402,8 +1383,18 @@ export function LaborEntryView({
                       value={row.hours}
                       onChange={(e) => handleUpdateBatchActivityRow(row.id, 'hours', parseFloat(e.target.value) || 0)}
                       placeholder="Hrs"
-                      className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-center text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                      className="w-full px-1.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-center text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 font-mono"
                     />
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400">
+                        {formatClockMinutes(row.hours)}
+                      </span>
+                      {getTimeInputHint(row.hours) && (
+                        <span className="text-[8px] font-bold text-amber-600 dark:text-amber-400" title={getTimeInputHint(row.hours)!}>
+                          ⚠️
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <button
@@ -1427,35 +1418,39 @@ export function LaborEntryView({
                 return (
                   <div
                     className={[
-                      'flex items-center justify-between px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors',
+                      'flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors',
                       isBalanced
                         ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
                         : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
                     ].join(' ')}
                   >
-                    <span className="flex items-center gap-1 font-mono">
-                      <span>Total: {formatHhmm(currentSum)}h</span>
+                    <span className="flex items-center gap-1.5 font-mono">
+                      <span>Total: {formatHourWithClockText(currentSum)}</span>
                       <span>/</span>
-                      <span>Shift: {formatHhmm(targetShiftHours)}h</span>
+                      <span>Shift: {formatHourWithClockText(targetShiftHours)}</span>
                     </span>
                     <span>
                       {isBalanced ? (
-                        <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
+                        <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-bold">
                           <Check size={12} /> Balanced
                         </span>
                       ) : diffMinutes > 0 ? (
-                        <span className="text-amber-700 dark:text-amber-400">
-                          +{formatHhmm(diffHhmm)}h over target
+                        <span className="text-red-700 dark:text-red-400 font-bold">
+                          +{formatHourWithClockText(diffHhmm)} Over Target
                         </span>
                       ) : (
-                        <span className="text-amber-700 dark:text-amber-400">
-                          {formatHhmm(diffHhmm)}h idel
+                        <span className="text-amber-700 dark:text-amber-400 font-bold">
+                          {formatHourWithClockText(diffHhmm)} Idle Remaining
                         </span>
                       )}
                     </span>
                   </div>
                 );
               })()}
+
+              <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 pt-0.5">
+                <span>Rule: 0.50h = 30m · 0.25h = 15m · 0.75h = 45m (Decimal Hours)</span>
+              </div>
             </div>
 
             {/* Selection Controls & Unified Actions */}
@@ -1769,7 +1764,7 @@ export function LaborEntryView({
                       {/* Net Shift & OT Hours Badge */}
                       {worker.inTime && worker.outTime && (
                         <span className="text-[11px] font-bold font-mono px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shadow-2xs" title={`Computed shift: ${worker.shiftHours}h (OT: ${worker.otHours}h)`}>
-                          {formatHhmm(worker.shiftHours)}h
+                          {formatHourWithClockText(worker.shiftHours)}
                           {Number(worker.additionalHours || 0) > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5"> (+{worker.additionalHours}h)</span>}
                           {worker.otHours > 0 && <span className="text-[9px] text-emerald-600 dark:text-emerald-400 ml-0.5">:+{worker.otHours}h OT</span>}
                           {worker.otHours < 0 && <span className="text-[9px] text-rose-600 dark:text-rose-400 ml-0.5">:{worker.otHours}h OT</span>}
@@ -1811,7 +1806,7 @@ export function LaborEntryView({
                                 key={act.id}
                                 className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
                               >
-                                <span>{act.activityCode}: {act.hours}h</span>
+                                <span>{act.activityCode}: {formatHourWithClockText(act.hours)}</span>
                                 {!isDayLocked && (
                                   <button
                                     type="button"
@@ -1834,7 +1829,7 @@ export function LaborEntryView({
                         {worker.shiftHours > 0 && idleMinutes > 0 && (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800 shadow-2xs">
                             <PauseCircle size={11} className="text-amber-600" />
-                            <span>Idle (ZIDLE): {formatHhmm(idleHours)}h</span>
+                            <span>Idle (ZIDLE): {formatHourWithClockText(idleHours)}</span>
                           </span>
                         )}
 
@@ -1850,7 +1845,7 @@ export function LaborEntryView({
                         {isOverShift && (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-700 shadow-2xs">
                             <AlertTriangle size={11} />
-                            <span>+{formatHhmm(minutesToHhmm(hhmmToMinutes(currentSum) - hhmmToMinutes(worker.shiftHours)))}h Over</span>
+                            <span>+{formatHourWithClockText(minutesToHhmm(hhmmToMinutes(currentSum) - hhmmToMinutes(worker.shiftHours)))} Over</span>
                           </span>
                         )}
                       </div>
@@ -1919,7 +1914,7 @@ export function LaborEntryView({
                                 placeholder="Select activity code..."
                               />
 
-                              <div className="w-16 flex-shrink-0">
+                              <div className="w-20 flex-shrink-0 flex flex-col items-center">
                                 <input
                                   type="number"
                                   step="0.5"
@@ -1928,8 +1923,18 @@ export function LaborEntryView({
                                   disabled={isDayLocked}
                                   value={act.hours}
                                   onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'hours', parseFloat(e.target.value) || 0)}
-                                  className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600"
+                                  className="w-full px-1.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600 font-mono"
                                 />
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400">
+                                    {formatClockMinutes(act.hours)}
+                                  </span>
+                                  {getTimeInputHint(act.hours) && (
+                                    <span className="text-[8px] font-bold text-amber-600 dark:text-amber-400" title={getTimeInputHint(act.hours)!}>
+                                      ⚠️
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
                               {!isDayLocked && (
@@ -1961,7 +1966,7 @@ export function LaborEntryView({
                               <div className="p-2.5 rounded-xl bg-amber-50/90 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/80 flex items-center justify-between text-xs">
                                 <div className="flex items-center gap-1.5 text-amber-900 dark:text-amber-200 font-bold">
                                   <PauseCircle size={14} className="text-amber-600 shrink-0" />
-                                  <span> Idle (ZIDLE): <strong className="font-mono text-sm">{formatHhmm(idleHhmm)}h</strong></span>
+                                  <span> Idle (ZIDLE): <strong className="font-mono text-sm">{formatHourWithClockText(idleHhmm)}</strong></span>
                                 </div>
                                 <span className="text-[10px] text-amber-800/80 dark:text-amber-400 font-medium">
                                   Auto-decreases
@@ -1972,7 +1977,7 @@ export function LaborEntryView({
                             {/* Total Summary Row */}
                             <div className="flex items-center justify-between text-xs px-1">
                               <span className="text-slate-500 dark:text-slate-400">
-                                Tasks: <strong className="text-slate-800 dark:text-slate-200 font-mono">{formatHhmm(currentSum)}h</strong> / Shift: {formatHhmm(worker.shiftHours)}h
+                                Tasks: <strong className="text-slate-800 dark:text-slate-200 font-mono">{formatHourWithClockText(currentSum)}</strong> / Shift: {formatHourWithClockText(worker.shiftHours)}
                               </span>
                               {isBalanced ? (
                                 <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
@@ -1980,11 +1985,11 @@ export function LaborEntryView({
                                 </span>
                               ) : diffMinutes < 0 ? (
                                 <span className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 dark:text-red-400">
-                                  <AlertTriangle size={13} /> +{formatHhmm(minutesToHhmm(Math.abs(diffMinutes)))}h Excess
+                                  <AlertTriangle size={13} /> +{formatHourWithClockText(minutesToHhmm(Math.abs(diffMinutes)))} Excess
                                 </span>
                               ) : (
                                 <span className="text-amber-700 dark:text-amber-400 font-semibold text-[11px]">
-                                  {formatHhmm(idleHhmm)}h Idle Remaining
+                                  {formatHourWithClockText(idleHhmm)} Idle Remaining
                                 </span>
                               )}
                             </div>

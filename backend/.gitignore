@@ -1,5 +1,8 @@
-# Logs
-logs
+# Database backups & tools
+backups/
+tools/
+*.dump
+*.sql
 *.log
 npm-debug.log*
 yarn-debug.log*

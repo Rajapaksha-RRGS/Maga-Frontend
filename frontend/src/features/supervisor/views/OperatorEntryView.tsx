@@ -35,7 +35,7 @@ import type {
 } from '../services/supervisorStorageService';
 import {
   computeHours,
-  formatHhmm,
+  formatHourWithClockText,
   sumHhmm,
   hhmmToMinutes,
   minutesToHhmm
@@ -958,6 +958,13 @@ export function OperatorEntryView({
                 </button>
                 <button
                   type="button"
+                  onClick={() => handleSetPreset('08:00', '17:00')}
+                  className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  Std (08-17)
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleSetPreset('07:00', '12:00')}
                   className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
                 >
@@ -1354,7 +1361,7 @@ export function OperatorEntryView({
                   {/* Shift Hours Badge */}
                   {operator.inTime && operator.outTime && (
                     <span className="text-[11px] font-bold font-mono px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 shadow-2xs flex-shrink-0" title={`Computed shift: ${shift}h (Operating: ${operatingHours}h, Idle: ${idleHours}h)`}>
-                      {formatHhmm(shift)}h
+                      {formatHourWithClockText(shift)}
                       {Number(operator.additionalHours || 0) > 0 && <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-0.5"> (+{operator.additionalHours}h)</span>}
                       {operator.otHours > 0 && <span className="text-[9px] text-emerald-600 dark:text-emerald-400 ml-0.5">:+{operator.otHours}h OT</span>}
                       {operator.otHours < 0 && <span className="text-[9px] text-rose-600 dark:text-rose-400 ml-0.5">:{operator.otHours}h OT</span>}
@@ -1508,18 +1515,18 @@ export function OperatorEntryView({
                       <div className="pt-2.5 border-t border-slate-100 dark:border-slate-700/80 flex items-center justify-between text-xs flex-wrap gap-2">
                         <div className="flex items-center gap-2">
                           <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                            Shift: <strong className="text-slate-800 dark:text-slate-200 font-mono">{formatHhmm(shift)}h</strong>
+                            Shift: <strong className="text-slate-800 dark:text-slate-200 font-mono">{formatHourWithClockText(shift)}</strong>
                           </span>
                           <span className="text-slate-300 dark:text-slate-600">•</span>
                           <span className="text-[11px] text-blue-700 dark:text-blue-300 font-semibold">
-                            Operating: <strong className="font-mono">{formatHhmm(operatingHours)}h</strong>
+                            Operating: <strong className="font-mono">{formatHourWithClockText(operatingHours)}</strong>
                           </span>
                         </div>
 
                         {idleHours > 0 ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100/70 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800">
                             <PauseCircle size={11} className="text-amber-600" />
-                            <span>Auto-Idle (ZXQOPRIDLE): {formatHhmm(idleHours)}h</span>
+                            <span>Auto-Idle (ZXQOPRIDLE): {formatHourWithClockText(idleHours)}</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">

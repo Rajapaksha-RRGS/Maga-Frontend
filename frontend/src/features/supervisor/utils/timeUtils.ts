@@ -82,6 +82,42 @@ export function formatHourWithClockText(val: number | string | undefined | null)
 }
 
 /**
+ * Formats decimal hours into a concise clock string e.g.:
+ *   8.50 -> "8h 30m"
+ *   8.00 -> "8h"
+ *   0.50 -> "30m"
+ *   8.25 -> "8h 15m"
+ *   8.75 -> "8h 45m"
+ */
+export function formatClockMinutes(val: number | string | undefined | null): string {
+  if (val === undefined || val === null || val === '') return '0m';
+  const num = typeof val === 'string' ? parseFloat(val) : val;
+  if (isNaN(num) || num === 0) return '0m';
+
+  const totalMins = Math.round(num * 60);
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/**
+ * Detects if a supervisor entered clock-style minutes in a decimal input
+ * (e.g. entered .30 expecting 30 mins instead of .50, or .15 instead of .25, or .45 instead of .75).
+ * Returns a helpful tip string if detected.
+ */
+export function getTimeInputHint(hours: number): string | null {
+  if (!hours || isNaN(hours)) return null;
+  const dec = Math.round((hours % 1) * 100);
+  if (dec === 30) return 'Tip: 30m = 0.50h';
+  if (dec === 15) return 'Tip: 15m = 0.25h';
+  if (dec === 45) return 'Tip: 45m = 0.75h';
+  return null;
+}
+
+/**
  * Subtracts two decimal hour values.
  * e.g., subHhmm(14.00, 13.50) = 0.50
  * e.g., subHhmm(14.00, 8.00) = 6.00
