@@ -120,9 +120,8 @@ export function LaborEntryView({
 
   // Internal search and filters
   const [localSearch, setLocalSearch] = useState('');
-  // Trade Group & Shift Filter states
+  // Trade Group Filter state
   const [selectedTradeFilter, setSelectedTradeFilter] = useState<string>('all');
-  const [selectedShiftFilter, setSelectedShiftFilter] = useState<string>('all');
   // ── IN MODE BATCH STATE ──
   const [batchInTime, setBatchInTime] = useState('07:00');
 
@@ -171,24 +170,6 @@ export function LaborEntryView({
   // ── BATCH CONTROLS ACCORDION (COLLAPSIBLE) ──
   const [isBatchOpen, setIsBatchOpen] = useState(false);
 
-  // Derived unique shift hours for Shift Hours filter chips
-  const shiftGroupStats = useMemo(() => {
-    const counts: Record<string, number> = {};
-    laborers.forEach((l) => {
-      const info = getWorkerEffectiveShift(l, batchOutTime, selectedDate);
-      const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
-      counts[key] = (counts[key] || 0) + 1;
-    });
-
-    // Sort: highest hours first, pending_in at the end
-    const keys = Object.keys(counts).sort((a, b) => {
-      if (a === 'pending_in') return 1;
-      if (b === 'pending_in') return -1;
-      return parseFloat(b) - parseFloat(a);
-    });
-
-    return { counts, keys };
-  }, [laborers, batchOutTime, selectedDate]);
 
   // Derived unique Trade Groups for Trade filter chips
   const tradeGroupStats = useMemo(() => {
@@ -226,15 +207,6 @@ export function LaborEntryView({
         return false;
       }
 
-      // Shift Hours filter
-      if (selectedShiftFilter !== 'all') {
-        const info = getWorkerEffectiveShift(l, batchOutTime, selectedDate);
-        const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
-        if (key !== selectedShiftFilter) {
-          return false;
-        }
-      }
-
       // Status filter
       if (effectiveStatus === 'pending') {
         return !l.inTime || !l.outTime || l.activities.length === 0;
@@ -265,7 +237,7 @@ export function LaborEntryView({
       if (fullCompare !== 0) return fullCompare;
       return (a.employeeCode || '').localeCompare(b.employeeCode || '', undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [laborers, effectiveSearch, selectedTradeFilter, selectedShiftFilter, batchOutTime, effectiveStatus]);
+  }, [laborers, effectiveSearch, selectedTradeFilter, batchOutTime, effectiveStatus]);
 
   // Stats
   const inMarkedCount = laborers.filter((l) => !l.isAbsent && !!l.inTime).length;
@@ -431,23 +403,9 @@ export function LaborEntryView({
     updateBatchTimes(inVal, outVal);
   };
 
-  // ── SHIFT FILTER SELECTOR (DYNAMIC TARGET HOURS & AUTO-SELECT COHORT) ──
-  const handleSelectShiftFilter = (shiftKey: string) => {
-    setSelectedShiftFilter(shiftKey);
-
-    if (shiftKey === 'all') {
-      // Clear selection so supervisor can choose cleanly in All view
-      setSelectedWorkerIds([]);
-    } else {
-      // Auto-select all workers belonging to this specific shift cohort!
-      const matchingCohortIds = laborers.filter((l) => {
-        const info = getWorkerEffectiveShift(l, batchOutTime, selectedDate);
-        const key = !info.hasIn ? 'pending_in' : `${formatHhmm(info.shift)}h`;
-        return key === shiftKey;
-      }).map((l) => l.id);
-
-      setSelectedWorkerIds(matchingCohortIds);
-    }
+  // Helper to adjust batch activities when supervisor selects a specific cohort from mismatch modal
+  const handleSelectShiftCohort = (shiftKey: string, workerIds: string[]) => {
+    setSelectedWorkerIds(workerIds);
 
     if (shiftKey !== 'all' && shiftKey !== 'pending_in') {
       const hours = parseFloat(shiftKey.replace('h', ''));
@@ -1092,57 +1050,9 @@ export function LaborEntryView({
         )}
       </div>
 
-      {/* ── 4. Shift Hours & Status Filter Chips (Under Search Bar) ────────────── */}
-       <div className="py-2 px-2.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3.5">
-        {/* Shift Hours Chips */}
-        <div>
-          <div className="flex items-center justify-between mb-1 px-0.5">
-            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-              <Clock size={12} className="text-blue-600 dark:text-blue-400" />
-              Filter by Shift Hours:
-            </span>
-            <span className="text-[10px] text-slate-500 font-medium">
-              Target: <strong className="text-blue-700 dark:text-blue-400 font-mono">{formatHourWithClockText(targetShiftHours)}</strong>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs"> 
-            <button
-              type="button"
-              onClick={() => handleSelectShiftFilter('all')}
-              className={[
-                'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer',
-                selectedShiftFilter === 'all'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
-              ].join(' ')}
-            >
-              All Shifts ({laborers.length})
-            </button>
-            {shiftGroupStats.keys.map((key) => {
-              const count = shiftGroupStats.counts[key];
-              const isSelected = selectedShiftFilter === key;
-              const label = key === 'pending_in' ? 'Pending In' : `${key} Shift`;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => handleSelectShiftFilter(key)}
-                  className={[
-                    'py-1.5 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 font-mono cursor-pointer',
-                    isSelected
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
-                  ].join(' ')}
-                >
-                  {label} ({count})
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Trade Group Filter Chips (Replaces Shift Status) */}
+      {/* ── 4. Trade Group Filter Chips (Under Search Bar) ────────────── */}
+      <div className="py-2 px-2.5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-800 shadow-2xs">
+        {/* Trade Group Filter Chips */}
         <div>
           <div className="flex items-center justify-between mb-1.5 px-0.5">
             <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -2081,8 +1991,7 @@ export function LaborEntryView({
                       type="button"
                       onClick={() => {
                         const groupIds = workers.map((w) => w.id);
-                        setSelectedWorkerIds(groupIds);
-                        handleSelectShiftFilter(shiftKey);
+                        handleSelectShiftCohort(shiftKey, groupIds);
                         setShowShiftMismatchModal(false);
                       }}
                       className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
@@ -2095,7 +2004,7 @@ export function LaborEntryView({
             </div>
 
             <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-              💡 Click <strong>"Select only"</strong> above or use <strong>Filter by Shift Hours</strong> to assign activities to workers with matching hours.
+              💡 Click <strong>"Select only"</strong> above to assign activities to workers with matching hours.
             </p>
 
             <button
