@@ -54,7 +54,6 @@ async function run() {
         }
       },
       appliedBusinessPartner: true,
-      activity: true,
       activitySplits: {
         include: {
           activityCode: true
@@ -187,9 +186,6 @@ async function run() {
         actSum += h;
         actDetails.push(`${code}: ${h}h`);
       });
-    } else if (e.activity) {
-      actSum = actualEffective;
-      actDetails.push(`${e.activity.code}: ${actualEffective}h`);
     }
 
     actSum = parseFloat(actSum.toFixed(2));

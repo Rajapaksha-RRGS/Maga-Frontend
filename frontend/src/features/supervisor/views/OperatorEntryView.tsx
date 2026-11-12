@@ -405,20 +405,6 @@ export function OperatorEntryView({
     setBatchOutTime(outVal);
   };
 
-  const handleBatchResetToDraft = () => {
-    if (selectedOperatorIds.length === 0) return;
-    const updated = operators.map((o) => {
-      if (!selectedOperatorIds.includes(o.id)) return o;
-      return {
-        ...o,
-        status: 'draft' as const,
-        lastSavedAt: 'Reset to Draft',
-      };
-    });
-    onSaveOperators(updated);
-    setSelectedOperatorIds([]);
-  };
-
   // ── INDIVIDUAL TIME CHANGES ──
   const handleIndividualAdditionalHoursChange = (id: string, additionalHours: number) => {
     const updated = operators.map((o) => {
@@ -433,7 +419,11 @@ export function OperatorEntryView({
         undefined,
         addVal
       );
-      const splits = o.equipmentSplits;
+      let splits = o.equipmentSplits || [];
+      if (splits.length === 1 && shift > 0) {
+        splits = [{ ...splits[0], hours: shift }];
+      }
+      const isComplete = Boolean(inTime && outTime);
       return {
         ...o,
         additionalHours: addVal,
@@ -443,7 +433,7 @@ export function OperatorEntryView({
         isLunchDeducted,
         isDinnerDeducted,
         equipmentSplits: splits,
-        status: 'draft' as const,
+        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
         lastSavedAt: `+Add: ${addVal}h`,
       };
     });
@@ -462,41 +452,11 @@ export function OperatorEntryView({
     );
     const updated = operators.map((o) => {
       if (o.id !== id) return o;
-      const splits = o.equipmentSplits;
-      return {
-        ...o,
-        inTime,
-        outTime,
-        shiftHours: shift,
-        otHours: ot,
-        breakHours,
-        isLunchDeducted,
-        isDinnerDeducted,
-        equipmentSplits: splits,
-        status: 'draft' as const, // Editing keeps/sets it as draft
-        lastSavedAt: `Draft: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-      };
-    });
-    onSaveOperators(updated);
-  };
-
-  const handleMarkOperatorDone = (id: string) => {
-    const updated = operators.map((o) => {
-      if (o.id !== id) return o;
-      const inTime = o.inTime || '07:00';
-      const outTime = o.outTime || batchOutTime || '17:00';
-      const addVal = o.additionalHours || 0;
-      const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
-        inTime,
-        outTime,
-        selectedDate,
-        undefined,
-        addVal
-      );
       let splits = o.equipmentSplits || [];
       if (splits.length === 1 && shift > 0) {
         splits = [{ ...splits[0], hours: shift }];
       }
+      const isComplete = Boolean(inTime && outTime);
       return {
         ...o,
         inTime,
@@ -507,26 +467,11 @@ export function OperatorEntryView({
         isLunchDeducted,
         isDinnerDeducted,
         equipmentSplits: splits,
-        status: 'done' as const,
-        lastSavedAt: `Done at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        status: (isComplete ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+        lastSavedAt: `Saved: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
       };
     });
     onSaveOperators(updated);
-    setExpandedId(null);
-  };
-
-  const handleToggleOperatorDone = (id: string) => {
-    const op = operators.find((o) => o.id === id);
-    if (!op) return;
-
-    if (op.status === 'done') {
-      const updated = operators.map((o) => 
-        o.id === id ? { ...o, status: 'draft' as const, lastSavedAt: 'Reverted to Draft' } : o
-      );
-      onSaveOperators(updated);
-    } else {
-      handleMarkOperatorDone(id);
-    }
   };
 
   // ── MULTI-VEHICLE SPLIT HANDLERS ──
@@ -1044,27 +989,15 @@ export function OperatorEntryView({
 
               <div className="flex items-center gap-1.5 flex-wrap">
                 {selectedOperatorIds.length > 0 && !isDayLocked && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleBatchResetToDraft}
-                      className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
-                      title="Revert selected operators to Draft"
-                    >
-                      <Clock size={12} />
-                      <span>Draft</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleBatchRemoveOperators}
-                      className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
-                      title={`Remove ${selectedOperatorIds.length} selected operator(s) from today`}
-                    >
-                      <Trash2 size={12} />
-                      <span>Remove (${selectedOperatorIds.length})</span>
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={handleBatchRemoveOperators}
+                    className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-600 dark:text-red-400 font-semibold text-xs transition-colors cursor-pointer"
+                    title={`Remove ${selectedOperatorIds.length} selected operator(s) from today`}
+                  >
+                    <Trash2 size={12} />
+                    <span>Remove (${selectedOperatorIds.length})</span>
+                  </button>
                 )}
 
                 <button
@@ -1164,9 +1097,7 @@ export function OperatorEntryView({
             const { shift, operatingHours, idleHours } = getOperatorHourBreakdown(operator);
             const splits = operator.equipmentSplits || [];
 
-            const isDone = Boolean(operator.inTime) && 
-              Boolean(operator.outTime) && 
-              operator.status === 'done';
+            const isDone = Boolean(operator.inTime && operator.outTime);
 
             return (
               <div
@@ -1229,26 +1160,8 @@ export function OperatorEntryView({
                     )}
                   </div>
 
-                  {/* Top-Right Controls: Remove, Done Button & Expand Chevron */}
+                  {/* Top-Right Controls: Remove & Expand Chevron */}
                   <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                    {/* Quick Done / Revert Toggle Button */}
-                    {!isDayLocked && (
-                      <button
-                        type="button"
-                        onClick={() => handleToggleOperatorDone(operator.id)}
-                        className={[
-                          'inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-xl shadow-2xs transition-all active:scale-95 cursor-pointer',
-                          isDone
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-700 hover:bg-emerald-200'
-                            : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                        ].join(' ')}
-                        title={isDone ? 'Marked as Done. Click to revert back to Draft' : 'Mark operator as Done'}
-                      >
-                        <Check size={12} className={isDone ? 'stroke-[2.5]' : 'stroke-[3]'} />
-                        <span>Done</span>
-                      </button>
-                    )}
-
                     {/* Remove Operator button */}
                     {!isDayLocked && (
                       <button
@@ -1537,10 +1450,10 @@ export function OperatorEntryView({
                       </div>
                     </div>
 
-                    {/* ── Auto-save Status & Done Button ── */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
+                    {/* ── Auto-save Status ── */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 flex-wrap text-[11px] text-slate-400 dark:text-slate-500">
                       <div className="flex items-center gap-3">
-                        <span className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-[10px]">
+                        <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
                           <Check size={13} className="text-emerald-500" />
                           <span>Auto-saved</span>
                         </span>
@@ -1556,22 +1469,7 @@ export function OperatorEntryView({
                           </button>
                         )}
                       </div>
-                      {!isDayLocked && (
-                        <button
-                          type="button"
-                          onClick={() => handleToggleOperatorDone(operator.id)}
-                          className={[
-                            'flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer',
-                            isDone
-                              ? 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200'
-                              : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white'
-                          ].join(' ')}
-                          title={isDone ? 'Click to revert card back to Draft' : 'Save and mark card as completed'}
-                        >
-                          <CheckCircle2 size={14} />
-                          <span>{isDone ? 'Revert to Draft' : 'Done'}</span>
-                        </button>
-                      )}
+                      <span className="text-[10px]">Changes save automatically</span>
                     </div>
                   </div>
                 )}

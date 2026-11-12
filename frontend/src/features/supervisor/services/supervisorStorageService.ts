@@ -661,29 +661,19 @@ export const supervisorStorage = {
           const backendShift = Number(myEntries[0]?.shiftHours || myEntries.reduce((sum: number, e: any) => sum + (Number(e.hours) || 0), 0));
           const backendOt = Number(myEntries[0]?.overtimeHours ?? myEntries.reduce((sum: number, e: any) => sum + (Number(e.overtimeHours) || 0), 0));
           
-          let backendActivities: ActivitySplit[] = [];
-          if (myEntries[0]?.activitySplits && myEntries[0].activitySplits.length > 0) {
-            backendActivities = myEntries[0].activitySplits.map((s: any, idx: number) => ({
-              id: s.id || `act-${idx}`,
-              activityCode: s.activityCode?.code || '',
-              hours: Number(s.hours) || 0,
-            }));
-          } else {
-            backendActivities = myEntries
-              .filter((e: any) => e.activity?.code || e.activityId)
-              .map((e: any, idx: number) => ({
-                id: e.id || `act-${idx}`,
-                activityCode: e.activity?.code || '',
-                hours: Number(e.hours) || 0,
-              }));
-          }
+          const backendActivities: ActivitySplit[] = (myEntries[0]?.activitySplits || []).map((s: any, idx: number) => ({
+            id: s.id || `act-${idx}`,
+            activityCode: s.activityCode?.code || '',
+            hours: Number(s.hours) || 0,
+          }));
 
-          const hasTimes = Boolean(backendInTime || backendOutTime || backendActivities.length > 0);
+          const hasBothTimes = Boolean(backendInTime && backendOutTime);
+          const hasAnyData = Boolean(backendInTime || backendOutTime || backendActivities.length > 0);
           const serverStatus = myEntries[0]?.status;
           let status: 'draft' | 'pending' | 'done' = 'pending';
-          if (serverStatus === 'approved' || serverStatus === 'submitted' || serverStatus === 'done') {
+          if (serverStatus === 'approved' || serverStatus === 'submitted' || serverStatus === 'done' || hasBothTimes) {
             status = 'done';
-          } else if (hasTimes) {
+          } else if (hasAnyData) {
             status = 'draft';
           }
 

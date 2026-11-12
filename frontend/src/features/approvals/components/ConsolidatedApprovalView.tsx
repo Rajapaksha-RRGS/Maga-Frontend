@@ -25,7 +25,11 @@ import {
 } from '../services/approvalService';
 import { computeBreakMinutes } from '../../supervisor/utils/timeUtils';
 import { formatHoursDisplay, toHhMmTooltip } from './SupervisorApprovalCard';
-import { exportConsolidatedLaborToExcel } from '../utils/exportConsolidatedExcel';
+import {
+  exportConsolidatedLaborToExcel,
+  exportConsolidatedOperatorsToExcel,
+  exportConsolidatedEquipmentToExcel,
+} from '../utils/exportConsolidatedExcel';
 
 export interface ConsolidatedWorkerItem extends ApprovalWorkerItem {
   supervisorId: string;
@@ -319,12 +323,51 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
   };
 
   const handleExportExcel = async () => {
+    const supGroup =
+      selectedSupervisorId !== 'all'
+        ? localGroups.find((g) => g.supervisorId === selectedSupervisorId)
+        : null;
+    const supName = supGroup ? supGroup.supervisorName : 'All_Supervisors';
+
     if (activeTab === 'labor') {
-      const supGroup = selectedSupervisorId !== 'all' ? localGroups.find((g) => g.supervisorId === selectedSupervisorId) : null;
-      const supName = supGroup ? supGroup.supervisorName : 'All_Supervisors';
-      await exportConsolidatedLaborToExcel(displayedWorkers, selectedDate, supName);
+      await exportConsolidatedLaborToExcel(displayedWorkers, selectedDate, supName, isApprovedView);
+    } else if (activeTab === 'operators') {
+      await exportConsolidatedOperatorsToExcel(
+        displayedOperators,
+        selectedDate,
+        supName,
+        isApprovedView
+      );
+    } else if (activeTab === 'equipment') {
+      await exportConsolidatedEquipmentToExcel(
+        displayedEquipment,
+        selectedDate,
+        supName,
+        isApprovedView
+      );
     }
   };
+
+  const activeDisplayedCount =
+    activeTab === 'labor'
+      ? displayedWorkers.length
+      : activeTab === 'operators'
+      ? displayedOperators.length
+      : displayedEquipment.length;
+
+  const activeTotalCount =
+    activeTab === 'labor'
+      ? allWorkers.length
+      : activeTab === 'operators'
+      ? allOperators.length
+      : allEquipment.length;
+
+  const exportButtonTitle =
+    activeTab === 'labor'
+      ? 'Download currently filtered worker entries to Excel sheet'
+      : activeTab === 'operators'
+      ? 'Download currently filtered machine operator entries to Excel sheet'
+      : 'Download currently filtered plant & equipment entries to Excel sheet';
 
   return (
     <div className="space-y-4">
@@ -396,29 +439,16 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
         {/* Status Count Helper & Export Button */}
         <div className="flex items-center gap-3 text-xs text-slate-500 px-2 flex-wrap">
           <span>
-            Showing{' '}
-            <strong className="text-slate-800">
-              {activeTab === 'labor'
-                ? displayedWorkers.length
-                : activeTab === 'operators'
-                ? displayedOperators.length
-                : displayedEquipment.length}
-            </strong>{' '}
-            of{' '}
-            {activeTab === 'labor'
-              ? allWorkers.length
-              : activeTab === 'operators'
-              ? allOperators.length
-              : allEquipment.length}{' '}
-            record(s)
+            Showing <strong className="text-slate-800">{activeDisplayedCount}</strong> of{' '}
+            {activeTotalCount} record(s)
           </span>
 
-          {activeTab === 'labor' && displayedWorkers.length > 0 && (
+          {activeDisplayedCount > 0 && (
             <button
               type="button"
               onClick={handleExportExcel}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors shadow-2xs cursor-pointer ml-auto"
-              title="Download currently filtered worker entries to Excel sheet"
+              title={exportButtonTitle}
             >
               <FileSpreadsheet size={14} className="text-emerald-600" />
               <span>Export to Excel</span>

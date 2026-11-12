@@ -1,6 +1,2 @@
-Line,Equipment,Date,Activity,Utilization,Reason
-2,"MRVI0339","01/07/2026","03-11-13-50",5,"Activity code ""03-11-13-50"" not found in project M00000527"
-4,"MDCA0274","01/07/2026","00-00-11-12",1,"Activity code ""00-00-11-12"" not found in project M00000527"
-5,"MLBH0028","01/07/2026","04-22-13-25",6.5,"Activity code ""04-22-13-25"" not found in project M00000527"
-6,"MTDU0074","01/07/2026","09-32-00-20",0.5,"Activity code ""09-32-00-20"" not found in project M00000527"
-7,"MTDU0074","01/07/2026","01-51-13-00",0.5,"Activity code ""01-51-13-00"" not found in project M00000527"
+Line,Category,Equipment,Condition,Unit,Date,Activity,Utilization,Reason
+112,"Zero Utilization","MDCA0150","DRY","mth","03/07/2026","00-00-11-40","0.00","Zero utilization (0.00) — skipped to avoid empty daily log"

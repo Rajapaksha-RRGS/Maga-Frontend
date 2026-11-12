@@ -49,10 +49,10 @@ export const ApprovalStatsBar: React.FC<ApprovalStatsBarProps> = ({
           </div>
           <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-mono">
             <span className="text-slate-600">
-              Normal: <strong className="text-slate-900">{laborNormal.toFixed(1)}h</strong>
+              Normal: <strong className="text-slate-900">{laborNormal.toFixed(2)}h</strong>
             </span>
             <span className="text-amber-700">
-              OT: <strong>{laborOt.toFixed(1)}h</strong>
+              OT: <strong>{laborOt.toFixed(2)}h</strong>
             </span>
           </div>
         </div>

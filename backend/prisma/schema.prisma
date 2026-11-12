@@ -350,7 +350,6 @@ model MF_P_ActivityCode {
   corporateActivityCode       MF_G_ActivityCode?               @relation(fields: [corporateActivityCodeId], references: [id])
   parentActivity              MF_P_ActivityCode?               @relation("DerivedActivities", fields: [parentActivityId], references: [id], onDelete: SetNull)
   derivedActivities           MF_P_ActivityCode[]              @relation("DerivedActivities")
-  timeEntries                 MF_OP_TimeEntry[]
   activitySplits              MF_OP_LaborActivitySplit[]
   equipmentDailyLogActivities MF_OP_EquipmentDailyLogActivity[]
 
@@ -501,7 +500,6 @@ model MF_OP_TimeEntry {
   dailySheetId       String?   @map("daily_sheet_id")
   employeeId         String    @map("employee_id")
   date               DateTime  @db.Date
-  activityId         String    @map("activity_code_id")
   equipmentId        String?   @map("equipment_id")
   effectiveDayTypeId String    @map("day_type_id")
   inTime             String?   @map("in_time")
@@ -525,7 +523,6 @@ model MF_OP_TimeEntry {
   project                MF_P_Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
   dailySheet             MF_OP_DailySheet?            @relation(fields: [dailySheetId], references: [id], onDelete: Cascade)
   employee               MF_P_Employee                @relation(fields: [employeeId], references: [id])
-  activity               MF_P_ActivityCode            @relation(fields: [activityId], references: [id])
   equipment              MF_P_Equipment?              @relation(fields: [equipmentId], references: [id])
   effectiveDayType       MF_G_DayType                 @relation(fields: [effectiveDayTypeId], references: [id])
   recordedBy             MF_P_User?                   @relation("TimeEntryRecordedBy", fields: [recordedById], references: [id])
@@ -536,7 +533,6 @@ model MF_OP_TimeEntry {
   @@index([projectId, date])
   @@index([dailySheetId])
   @@index([employeeId])
-  @@index([activityId])
   @@index([equipmentId])
   @@index([effectiveDayTypeId])
   @@index([recordedById])

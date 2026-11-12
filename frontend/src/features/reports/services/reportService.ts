@@ -98,6 +98,8 @@ export interface DayOtDailyEntry {
 export interface DayOtSummaryItem {
   id: string;
   employeeId: string;
+  employeeCode?: string;
+  callingName?: string;
   employeeName: string;
   tradeGroup: string;
   businessPartner: string;
@@ -297,6 +299,7 @@ export async function getDayOtSummaryReport(filters: ReportFilters): Promise<Day
       const _r = await apiFetch(API_URL + '/reports/day-ot-summary?' + buildParams(filters));
       if (_r.ok) {
         const _d = await _r.json();
+        console.log(_r);
         if (_d?.items) return _d as DayOtSummaryResponse;
       }
     } catch (_e) {

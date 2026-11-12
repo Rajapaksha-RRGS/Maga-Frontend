@@ -240,14 +240,13 @@ export const deleteActivityCode = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // Check if time entries or logs reference this activity
-    const [timeEntriesCount, splitsCount, equipLogsCount] = await Promise.all([
-      prisma.mF_OP_TimeEntry.count({ where: { activityId: id } }),
+    // Check if labor activity splits or equipment logs reference this activity
+    const [splitsCount, equipLogsCount] = await Promise.all([
       prisma.mF_OP_LaborActivitySplit.count({ where: { activityCodeId: id } }),
       prisma.mF_OP_EquipmentDailyLogActivity.count({ where: { activityCodeId: id } }),
     ]);
 
-    const totalUsage = timeEntriesCount + splitsCount + equipLogsCount;
+    const totalUsage = splitsCount + equipLogsCount;
     if (totalUsage > 0) {
       res.status(400).json({
         error: `Cannot delete: ${totalUsage} active record(s) reference this activity code.`,

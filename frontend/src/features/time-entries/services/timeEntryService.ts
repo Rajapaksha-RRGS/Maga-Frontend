@@ -9,7 +9,6 @@
  *   GET  /api/time-entries/assigned?supervisorId=&date=
  *   POST /api/time-entries/check-in
  *   POST /api/time-entries/assign-activity (bulk)
- *   POST /api/time-entries/upsert
  *   POST /api/time-entries/submit
  */
 
@@ -27,18 +26,6 @@ export interface ActivityCode {
   description: string;
   isDerived?: boolean;
   parentActivityId?: string | null;
-}
-
-export interface TimeEntryPayload {
-  employeeId: string;
-  supervisorId: string;
-  date: string; // ISO date "YYYY-MM-DD"
-  activityId: string;
-  hours: number;
-  inTime?: string;  // "HH:mm"
-  outTime?: string; // "HH:mm"
-  equipmentId?: string;
-  remarks?: string;
 }
 
 export interface BulkAssignPayload {
@@ -145,7 +132,6 @@ export interface BackendTimeEntry {
   employeeId: string;
   supervisorId: string;
   date: string;
-  activityId: string;
   inTime: string | null;
   outTime: string | null;
   hours: number | string;
@@ -153,11 +139,16 @@ export interface BackendTimeEntry {
   remarks: string | null;
   status: 'draft' | 'submitted' | 'approved';
   submittedAt: string | null;
-  activity?: {
+  activitySplits?: {
     id: string;
-    code: string;
-    description: string | null;
-  };
+    activityCodeId: string;
+    hours: number | string;
+    activityCode?: {
+      id: string;
+      code: string;
+      description: string | null;
+    };
+  }[];
   supervisor?: {
     id: string;
     fullName: string;
@@ -251,29 +242,6 @@ export async function assignActivityBulk(
     }
   } catch (err) {
     console.warn('Failed to assign activity bulk on backend:', err);
-  }
-  cacheManager.invalidate('reports');
-  return { success: true };
-}
-
-/**
- * Upsert (create or update) a single time entry row.
- */
-export async function saveTimeEntry(
-  payload: TimeEntryPayload
-): Promise<{ success: boolean }> {
-  try {
-    const res = await apiFetch(`${API_URL}/time-entries/upsert`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      cacheManager.invalidate('reports');
-      return await res.json();
-    }
-  } catch (err) {
-    console.warn('Failed to save time entry on backend:', err);
   }
   cacheManager.invalidate('reports');
   return { success: true };

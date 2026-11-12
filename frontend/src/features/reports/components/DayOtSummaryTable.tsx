@@ -114,13 +114,15 @@ export default function DayOtSummaryTable({ data }: Props) {
             <tbody className="divide-y divide-slate-100">
               {items.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
+                 
                   {/* Sticky Employee Name */}
                   <td className="sticky left-0 z-10 bg-white hover:bg-slate-50 px-4 py-2.5 border-r border-slate-200 shadow-[1px_0_0_0_#e2e8f0]">
-                    <div className="font-medium text-slate-800 truncate max-w-[160px]">
-                      {row.employeeName}
+                    
+                    <div className="font-medium font-mono text-slate-900 truncate max-w-[160px]">
+                      {row.employeeCode }
                     </div>
-                    <div className="text-[10px] font-mono text-slate-400">
-                      {row.employeeId}
+                    <div className="text-[10px] text-slate-400 truncate max-w-[160px]">
+                      {row.employeeName}
                     </div>
                   </td>
 
@@ -158,10 +160,10 @@ export default function DayOtSummaryTable({ data }: Props) {
 
                   {/* Row Totals */}
                   <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900 bg-slate-50/40">
-                    {row.totalWorkHours != null ? row.totalWorkHours.toFixed(1) : row.totalDays}
+                    {row.totalWorkHours != null ? row.totalWorkHours.toFixed(2) : row.totalDays}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-amber-700 bg-amber-50/20">
-                    {row.totalOtHours > 0 ? row.totalOtHours.toFixed(1) : '0.0'}
+                    {row.totalOtHours > 0 ? row.totalOtHours.toFixed(2) : '0.00'}
                   </td>
                 </tr>
               ))}

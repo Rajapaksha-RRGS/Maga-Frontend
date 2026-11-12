@@ -160,14 +160,15 @@ export function useTimeEntry(
             const firstWithOutTime = empRecords.find((r) => r.outTime)?.outTime || null;
 
             const activities: ActivityHourItem[] = empRecords
-              .filter((r) => Number(r.hours) > 0)
-              .map((r) => ({
-                activityId: r.activityId,
-                hours: Number(r.hours),
+              .flatMap((r) => r.activitySplits || [])
+              .filter((s) => Number(s.hours) > 0)
+              .map((s) => ({
+                activityId: s.activityCodeId,
+                hours: Number(s.hours),
               }));
 
             const totalHours = activities.reduce((sum, a) => sum + a.hours, 0);
-            const primaryActivityId = activities[0]?.activityId || empRecords[0]?.activityId || null;
+            const primaryActivityId = activities[0]?.activityId || empRecords[0]?.activitySplits?.[0]?.activityCodeId || null;
 
             next[empId] = {
               employeeId: empId,

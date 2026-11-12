@@ -168,6 +168,15 @@ function buildEmployeeFilter(workerType?: string, businessPartner?: string, empl
   return Object.keys(filter).length > 0 ? filter : undefined;
 }
 
+// ─── Helper: build activity code filter matching child labor splits ────────────
+function buildActivityCodeFilter(activityCode?: string, matchMode: 'equals' | 'contains' = 'equals') {
+  if (!activityCode) return undefined;
+  const codeCondition = { [matchMode]: activityCode, mode: 'insensitive' as const };
+  return {
+    activitySplits: { some: { activityCode: { code: codeCondition } } },
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. SUMMARY REPORT
 // GET /api/reports/summary?dateFrom=&dateTo=&employeeQuery=&businessPartner=&workerType=&tenantId=
@@ -486,7 +495,9 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
       if (!empInfoMap.has(empId)) {
         empInfoMap.set(empId, {
           employeeId: empId,
-          employeeName: corp.fullName || emp.callingName || '',
+          employeeCode: corp?.employeeCode || '',
+          callingName: emp.callingName || corp?.fullName || '',
+          employeeName: corp?.fullName || emp.callingName || '',
           tradeGroup: emp.tradeGroup?.name || '',
           businessPartner: effectiveBp?.name || '',
         });
@@ -561,6 +572,8 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
       return {
         id: `dayot-${idx}`,
         employeeId: empId,
+        employeeCode: empInfo?.employeeCode || '',
+        callingName: empInfo?.callingName || '',
         employeeName: empInfo?.employeeName || '',
         tradeGroup: empInfo?.tradeGroup || '',
         businessPartner: empInfo?.businessPartner || '',
@@ -909,13 +922,18 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
+    const normalizedActivityFilter = activityCode?.trim().toUpperCase();
+    const isDynamicErpCode = normalizedActivityFilter === 'ZIDLE' || normalizedActivityFilter === 'OT';
+    const activityFilter = isDynamicErpCode ? undefined : buildActivityCodeFilter(activityCode, 'equals');
+    const matchesActivityFilter = (code: string): boolean =>
+      !normalizedActivityFilter || code.trim().toUpperCase() === normalizedActivityFilter;
 
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
         status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
-        ...(activityCode ? { activity: { code: activityCode } } : {}),
+        ...(activityFilter ?? {}),
         ...(empFilter ? { employee: empFilter } : {}),
       },
       include: {
@@ -924,7 +942,6 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
             corporateEmployee: true,
           },
         },
-        activity: true,
         activitySplits: {
           include: {
             activityCode: true,
@@ -983,34 +1000,24 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
           for (const split of entry.activitySplits) {
             const splitHours = Number(split.hours) || 0;
             totalDayHours += splitHours;
-            finalRows.push({
-              id: `erp-${rowIdx++}`,
-              employeeId: entry.employee.corporateEmployee.employeeCode || entry.employeeId,
-              employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
-              date: dateKey,
-              activityCode: split.activityCode.code,
-              activityDescription: split.activityCode.description || split.activityCode.code,
-              hours: splitHours,
-              overtimeHours: 0,
-              remarks: entry.remarks || '',
-            });
-            totalHours += splitHours;
+            if (matchesActivityFilter(split.activityCode.code)) {
+              finalRows.push({
+                id: `erp-${rowIdx++}`,
+                employeeId: entry.employee.corporateEmployee.employeeCode || entry.employeeId,
+                employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
+                date: dateKey,
+                activityCode: split.activityCode.code,
+                activityDescription: split.activityCode.description || split.activityCode.code,
+                hours: splitHours,
+                overtimeHours: 0,
+                remarks: entry.remarks || '',
+              });
+              totalHours += splitHours;
+            }
           }
         } else {
           const hours = Number(entry.shiftHours ?? entry.hours);
           totalDayHours += hours;
-          finalRows.push({
-            id: `erp-${rowIdx++}`,
-            employeeId: entry.employee.corporateEmployee.employeeCode || entry.employeeId,
-            employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
-            date: dateKey,
-            activityCode: entry.activity.code,
-            activityDescription: entry.activity.description || entry.activity.code,
-            hours,
-            overtimeHours: 0,
-            remarks: entry.remarks || '',
-          });
-          totalHours += hours;
         }
       }
 
@@ -1019,18 +1026,20 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
       // the unallocated shortage is added as an idle time row (ZIDLE) to account for full shift attendance.
       if (shiftEffectiveHours > 0 && totalDayHours < shiftEffectiveHours) {
         const idleHours = Math.round((shiftEffectiveHours - totalDayHours) * 100) / 100;
-        finalRows.push({
-          id: `erp-zidle-${first.employeeId}-${dateKey}`,
-          employeeId: first.employee.corporateEmployee.employeeCode || first.employeeId,
-          employeeName: first.employee.corporateEmployee.fullName || first.employee.callingName || '',
-          date: dateKey,
-          activityCode: 'ZIDLE',
-          activityDescription: 'Idle / Unallocated Hours',
-          hours: idleHours,
-          overtimeHours: 0,
-          remarks: 'Unallocated idle shift hours',
-        });
-        totalHours += idleHours;
+        if (matchesActivityFilter('ZIDLE')) {
+          finalRows.push({
+            id: `erp-zidle-${first.employeeId}-${dateKey}`,
+            employeeId: first.employee.corporateEmployee.employeeCode || first.employeeId,
+            employeeName: first.employee.corporateEmployee.fullName || first.employee.callingName || '',
+            date: dateKey,
+            activityCode: 'ZIDLE',
+            activityDescription: 'Idle / Unallocated Hours',
+            hours: idleHours,
+            overtimeHours: 0,
+            remarks: 'Unallocated idle shift hours',
+          });
+          totalHours += idleHours;
+        }
       }
 
       // Calculate OT line based on day type calendar rules on the effective hours
@@ -1048,7 +1057,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
         if (explicitOt > otHours) otHours = explicitOt;
       }
 
-      if (otHours > 0) {
+      if (otHours > 0 && matchesActivityFilter('OT')) {
         finalRows.push({
           id: `erp-ot-${first.employeeId}-${dateKey}`,
           employeeId: first.employee.corporateEmployee.employeeCode || first.employeeId,
@@ -1125,6 +1134,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
+    const activityFilter = buildActivityCodeFilter(activityCode, 'contains');
 
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
@@ -1132,9 +1142,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
         status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(empFilter ? { employee: empFilter } : {}),
-        ...(activityCode
-          ? { activity: { code: { contains: activityCode, mode: 'insensitive' } } }
-          : {}),
+        ...(activityFilter ?? {}),
       },
       include: {
         employee: {
@@ -1150,7 +1158,6 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
             supervisor: { select: { id: true, fullName: true, username: true } },
           },
         },
-        activity: { select: { id: true, code: true, description: true } },
         activitySplits: {
           include: {
             activityCode: { select: { id: true, code: true, description: true } },
@@ -1196,15 +1203,6 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
               prev.hours += h;
               activitiesMap.set(code, prev);
             }
-          }
-        } else {
-          const code = e.activity?.code || '00-00-11-11-M';
-          const desc = e.activity?.description || code;
-          const h = Number(e.shiftHours ?? e.hours) || 0;
-          if (h > 0) {
-            const prev = activitiesMap.get(code) || { code, description: desc, hours: 0 };
-            prev.hours += h;
-            activitiesMap.set(code, prev);
           }
         }
       }

@@ -943,7 +943,6 @@ async function main() {
           projectId: defaultProjectId,
           employeeId: empId,
           date: yesterdayUtc,
-          activityId: entry.actId,
         },
       });
 
@@ -966,7 +965,6 @@ async function main() {
             projectId: defaultProjectId,
             dailySheetId: yesterdaySheet.id,
             employeeId: empId,
-            activityId: entry.actId,
             effectiveDayTypeId: dayTypeMap['NORMAL'],
             recordedById: sup1Id,
             date: yesterdayUtc,

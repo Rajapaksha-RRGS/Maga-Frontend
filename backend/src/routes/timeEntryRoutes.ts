@@ -4,7 +4,6 @@ import {
   checkInEmployee,
   checkOutEmployee,
   assignActivityBulk,
-  upsertTimeEntry,
   getTimeEntries,
   submitDay,
   getDayStatus,
@@ -28,7 +27,6 @@ router.get('/', getTimeEntries);
 router.post('/check-in', checkInEmployee);
 router.post('/check-out', checkOutEmployee);
 router.post('/assign-activity', assignActivityBulk);
-router.post('/upsert', upsertTimeEntry);
 router.post('/labor/bulk', saveBulkLaborTimeEntries);
 router.post('/submit', submitDay);
 router.get('/day-status', getDayStatus);

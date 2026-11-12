@@ -910,7 +910,6 @@ async function main() {
             breakHours: calc.breakHours,
             isLunchDeducted: calc.breakHours >= 1.0,
             isDinnerDeducted: calc.breakHours >= 2.0,
-            activityId: resolvedActivities[0].actId,
             ...(primaryEntry.appliedDailyRate === null ? {
               appliedDailyRate: snapRate,
               appliedBusinessPartnerId: snapBpId,
@@ -927,7 +926,6 @@ async function main() {
             employeeId: localEmp.id,
             recordedById: supervisor.id,
             date: group.date,
-            activityId: resolvedActivities[0].actId,
             effectiveDayTypeId,
             inTime: finalInTime,
             outTime: finalOutTime,

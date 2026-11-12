@@ -20,8 +20,7 @@ import {
   Clock,
   Lock,
   PauseCircle,
-  UserX,
-  RotateCcw
+  UserX
 } from 'lucide-react';
 import { SearchableActivitySelect } from '../components/SearchableActivitySelect';
 import { SiteLaborPoolModal } from '../components/SiteLaborPoolModal';
@@ -146,10 +145,6 @@ export function LaborEntryView({
 
   // Expanded card state for individual inspection
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // Micro-feedback: toast banner and recently updated worker highlight
-  const [toastMessage, setToastMessage] = useState<{ id: string; name: string; isDone: boolean } | null>(null);
-  const [recentlyUpdatedId, setRecentlyUpdatedId] = useState<string | null>(null);
 
   // Dynamic real activity codes from Backend
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
@@ -486,7 +481,7 @@ export function LaborEntryView({
       return {
         ...l,
         activities: [],
-        status: 'draft' as const,
+        status: (!l.isAbsent && l.inTime && l.outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
       };
     });
     onSaveLaborers(updated);
@@ -609,7 +604,7 @@ export function LaborEntryView({
         isLunchDeducted,
         isDinnerDeducted,
         activities,
-        status: 'draft' as const,
+        status: (!l.isAbsent && inTime && outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
         lastSavedAt: `+Add: ${addVal}h`,
       };
     });
@@ -658,8 +653,8 @@ export function LaborEntryView({
         isDinnerDeducted,
         activities,
         isAbsent: inTime ? false : l.isAbsent,
-        status: 'draft' as const, // Always keep as draft while editing until explicitly marked Done
-        lastSavedAt: `Draft: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        status: (inTime && outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+        lastSavedAt: `Saved: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
       };
     });
     onSaveLaborers(updated);
@@ -683,85 +678,6 @@ export function LaborEntryView({
     onSaveLaborers(updated);
   };
 
-  const handleMarkIndividualDone = (id: string) => {
-    const laborer = laborers.find((l) => l.id === id);
-    if (!laborer) return;
-    const inTime = laborer.inTime || batchInTime || '07:00';
-    const outTime = laborer.outTime || batchOutTime || '17:00';
-    const addVal = laborer.additionalHours || 0;
-    const { shift, ot, breakHours, isLunchDeducted, isDinnerDeducted } = computeHours(
-      inTime,
-      outTime,
-      selectedDate,
-      undefined,
-      addVal
-    );
-    const actSum = sumHhmm((laborer.activities || []).map((a) => a.hours));
-    if (shift > 0 && hhmmToMinutes(actSum) > hhmmToMinutes(shift)) {
-      alert(`Activity hours (${formatHhmm(actSum)}h) cannot exceed shift hours (${formatHhmm(shift)}h). Please reduce activity hours.`);
-      return;
-    }
-
-    const updated = laborers.map((l) => {
-      if (l.id !== id) return l;
-
-      return {
-        ...l,
-        inTime,
-        outTime,
-        shiftHours: shift,
-        otHours: ot,
-        breakHours,
-        isLunchDeducted,
-        isDinnerDeducted,
-        activities: l.activities || [],
-        isAbsent: false,
-        status: 'done' as const,
-        lastSavedAt: `Done: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-      };
-    });
-    onSaveLaborers(updated);
-    setExpandedId(null);
-    setRecentlyUpdatedId(id);
-    setTimeout(() => setRecentlyUpdatedId(null), 1800);
-    setToastMessage({ id, name: laborer?.callingName || 'Worker', isDone: true });
-    setTimeout(() => setToastMessage(null), 2500);
-  };
-
-  const handleToggleIndividualDone = (id: string) => {
-    const laborer = laborers.find((l) => l.id === id);
-    if (!laborer) return;
-
-    if (laborer.status === 'done') {
-      const updated = laborers.map((l) => 
-        l.id === id ? { ...l, status: 'draft' as const, lastSavedAt: 'Reverted to Draft' } : l
-      );
-      onSaveLaborers(updated);
-      setRecentlyUpdatedId(id);
-      setTimeout(() => setRecentlyUpdatedId(null), 1200);
-      setToastMessage({ id, name: laborer.callingName || 'Worker', isDone: false });
-      setTimeout(() => setToastMessage(null), 2500);
-    } else {
-      handleMarkIndividualDone(id);
-    }
-  };
-
-  // Reset selected workers to draft status (removes green Done border)
-  const handleBatchResetToDraft = () => {
-    const targetIds = selectedFilteredWorkerIds;
-    if (targetIds.length === 0) return;
-
-    const updated = laborers.map((l) => {
-      if (!targetIds.includes(l.id)) return l;
-      return {
-        ...l,
-        status: 'draft' as const,
-        lastSavedAt: 'Reset to Draft',
-      };
-    });
-    onSaveLaborers(updated);
-  };
-
   const handleAddIndividualActivitySplit = (laborerId: string) => {
     const laborer = laborers.find((l) => l.id === laborerId);
     if (!laborer) return;
@@ -780,7 +696,11 @@ export function LaborEntryView({
 
     const updated = laborers.map((l) => 
       l.id === laborerId 
-        ? { ...l, activities: [...l.activities, newSplit], status: 'draft' as const }
+        ? {
+            ...l,
+            activities: [...l.activities, newSplit],
+            status: (!l.isAbsent && l.inTime && l.outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
+          }
         : l
     );
     onSaveLaborers(updated);
@@ -789,6 +709,7 @@ export function LaborEntryView({
   const handleUpdateIndividualActivitySplit = (laborerId: string, splitId: string, field: 'activityCode' | 'hours', value: any) => {
     const updated = laborers.map((l) => {
       if (l.id !== laborerId) return l;
+      const autoStatus = (!l.isAbsent && l.inTime && l.outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done';
 
       if (field === 'hours') {
         const valNum = value === '' ? 0 : parseFloat(value);
@@ -797,13 +718,13 @@ export function LaborEntryView({
         const activities = l.activities.map((a) =>
           a.id === splitId ? { ...a, hours: safeHours } : a
         );
-        return { ...l, activities, status: 'draft' as const };
+        return { ...l, activities, status: autoStatus };
       }
 
       const activities = l.activities.map((a) => 
         a.id === splitId ? { ...a, [field]: value } : a
       );
-      return { ...l, activities, status: 'draft' as const };
+      return { ...l, activities, status: autoStatus };
     });
     onSaveLaborers(updated);
   };
@@ -815,7 +736,7 @@ export function LaborEntryView({
       return { 
         ...l, 
         activities, 
-        status: 'draft' as const,
+        status: (!l.isAbsent && l.inTime && l.outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
       };
     });
     onSaveLaborers(updated);
@@ -827,7 +748,7 @@ export function LaborEntryView({
       return {
         ...l,
         activities: [],
-        status: 'draft' as const,
+        status: (!l.isAbsent && l.inTime && l.outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done',
       };
     });
     onSaveLaborers(updated);
@@ -881,7 +802,7 @@ export function LaborEntryView({
     }
   };
 
-  void [inMarkedCount, outMarkedCount, handleApplyBatchIn, handleBatchClearActivities, handleApplyBatchOut, handleBatchResetToDraft, handleBatchRemoveLaborers];
+  void [inMarkedCount, outMarkedCount, handleApplyBatchIn, handleBatchClearActivities, handleApplyBatchOut, handleBatchRemoveLaborers];
 
   const isAllFilteredSelected = 
     filteredLaborers.length > 0 && 
@@ -1436,8 +1357,7 @@ export function LaborEntryView({
           filteredLaborers.map((worker) => {
             const isSelected = selectedWorkerIds.includes(worker.id);
             const isExpanded = expandedId === worker.id;
-            const isDone = !worker.isAbsent && worker.status === 'done';
-            const isRecentlyUpdated = recentlyUpdatedId === worker.id;
+            const isDone = !worker.isAbsent && Boolean(worker.inTime && worker.outTime);
             const activitySum = sumHhmm(worker.activities.map((a) => a.hours));
             void activitySum; // consumed if needed
 
@@ -1446,9 +1366,7 @@ export function LaborEntryView({
                 key={worker.id}
                 className={[
                   'rounded-2xl border transition-all duration-200 overflow-hidden shadow-2xs',
-                  isRecentlyUpdated
-                    ? 'ring-2 ring-emerald-500 scale-[1.01] border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/40 shadow-emerald-500/10'
-                    : isSelected
+                  isSelected
                     ? 'border-blue-500 bg-blue-50/20 dark:bg-blue-950/40 ring-1 ring-blue-500/20'
                     : worker.isAbsent
                     ? 'border-rose-300 dark:border-rose-900/60 bg-rose-50/25 dark:bg-rose-950/20'
@@ -1522,9 +1440,9 @@ export function LaborEntryView({
                     )}
                   </div>
 
-                  {/* Top-Right Controls: Absent Badge / Done Button & Expand Chevron */}
+                  {/* Top-Right Controls: Absent Badge & Expand Chevron */}
                   <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                    {worker.isAbsent ? (
+                    {worker.isAbsent && (
                       <div className="flex items-center gap-1">
                         <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-800 px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-2xs">
                           <UserX size={12} className="text-rose-600" />
@@ -1541,26 +1459,6 @@ export function LaborEntryView({
                           </button>
                         )}
                       </div>
-                    ) : (
-                      <>
-                        {/* Quick Done / Revert Toggle Button */}
-                        {!isDayLocked && (
-                          <button
-                            type="button"
-                            onClick={() => handleToggleIndividualDone(worker.id)}
-                            className={[
-                              'inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-xl shadow-2xs transition-all active:scale-95 cursor-pointer',
-                              isDone
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-700 hover:bg-emerald-200'
-                                : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                            ].join(' ')}
-                            title={isDone ? 'Marked as Done. Click to revert back to Draft' : 'Mark card as Done'}
-                          >
-                            <Check size={12} className={isDone ? 'stroke-[2.5]' : 'stroke-[3]'} />
-                            <span>Done</span>
-                          </button>
-                        )}
-                      </>
                     )}
 
                     {/* Chevron Button - Always visible right at top corner */}
@@ -1899,10 +1797,10 @@ export function LaborEntryView({
                       })()}
                     </div>
 
-                    {/* ── Auto-save Status & Mark as Done button ── */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
+                    {/* ── Auto-save Status ── */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 flex-wrap text-[11px] text-slate-400 dark:text-slate-500">
                       <div className="flex items-center gap-3">
-                        <span className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-[10px]">
+                        <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
                           <Check size={13} className="text-emerald-500" />
                           <span>Auto-saved</span>
                         </span>
@@ -1918,22 +1816,7 @@ export function LaborEntryView({
                           </button>
                         )}
                       </div>
-                      {!isDayLocked && (
-                        <button
-                          type="button"
-                          onClick={() => handleToggleIndividualDone(worker.id)}
-                          className={[
-                            'flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer',
-                            isDone
-                              ? 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200'
-                              : 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
-                          ].join(' ')}
-                          title={isDone ? 'Click to revert card back to Draft' : 'Save and mark card as completed'}
-                        >
-                          {isDone ? <RotateCcw size={14} /> : <CheckCircle2 size={14} />}
-                          <span>{isDone ? 'Revert to Draft' : 'Done'}</span>
-                        </button>
-                      )}
+                      <span className="text-[10px]">Changes save automatically</span>
                     </div>
                   </div>
                 )}
@@ -2018,23 +1901,6 @@ export function LaborEntryView({
         </div>
       )}
 
-      {/* ── 8. Floating Feedback Toast ── */}
-      {toastMessage && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-slate-900/95 dark:bg-slate-800/95 text-white text-xs font-semibold shadow-2xl border border-slate-700 backdrop-blur-xs animate-in fade-in slide-in-from-bottom-3 duration-200 pointer-events-none">
-          {toastMessage.isDone ? (
-            <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
-              <Check size={12} className="stroke-[3.5]" />
-            </div>
-          ) : (
-            <div className="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
-              <RotateCcw size={11} />
-            </div>
-          )}
-          <span>
-            {toastMessage.isDone ? `${toastMessage.name} marked as Done!` : `${toastMessage.name} reverted to Draft`}
-          </span>
-        </div>
-      )}
       {/* ── Site Labor Pool Modal ── */}
       {isPoolMode && (
         <SiteLaborPoolModal

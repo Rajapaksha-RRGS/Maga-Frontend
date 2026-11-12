@@ -32,7 +32,7 @@ export default function ErpUploadTable({ data }: Props) {
             <Clock size={14} className="text-slate-400" /> Total Standard Hours
           </span>
           <span className="text-xl font-medium text-slate-800 tabular-nums">
-            {totalHours.toFixed(1)}
+            {totalHours.toFixed(2)}
           </span>
         </div>
 
@@ -41,7 +41,7 @@ export default function ErpUploadTable({ data }: Props) {
             <Timer size={14} className="text-amber-500" /> Total OT Hours
           </span>
           <span className="text-xl font-medium text-amber-800 tabular-nums">
-            {totalOtHours.toFixed(1)}
+            {totalOtHours.toFixed(2)}
           </span>
         </div>
       </div>

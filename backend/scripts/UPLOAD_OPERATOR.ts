@@ -1,22 +1,28 @@
 /**
  * UPLOAD_OPERATOR.ts
  * 
- * Maga Operator Bulk Time & Machine Assignment Upload Script
+ * Maga Company Operator Master Bulk Upload Script
  * 
- * Takes 6 primary fields:
- *   Operator | In | Out | Equipment | Hours | Date
+ * Supports both:
+ * 1. Standard 9-Column Format (Latest Company Sheet):
+ *    Employee | In | Out | Additional Hours | Date | Equipment | Condition | Unit | Hours
  * 
- * Capabilities & Robust Error Handling:
- * 1. Reads CSV / TSV (comma, tab, or semicolon delimited) with automatic header detection.
- * 2. Matches operator against Project & Corporate Employees (by Employee Code, EPF, Calling Name, or Full Name).
- * 3. Matches equipment against Project & Corporate Equipment (by Standard Equipment No, Vehicle No, or normalized code).
- * 4. Ensures the employee is flagged as `isOperator: true` in the project.
- * 5. Handles all Time formats: Integers ("7" -> "07:00"), Standard ("7:30" -> "07:30"), and Decimals ("12.5" -> "12:30", "22.25" -> "22:15").
- * 6. Day-Type Aware Overtime: Saturday (5.5h base), Sunday (100% Overtime), Weekdays (8h base).
- * 7. Meal Policy Break Deductions with snapshot recording (breakHours, isLunchDeducted, isDinnerDeducted).
- * 8. Links Operator to Equipment in Daily Equipment Assignment (MF_L_DAILY_EQUIPMENT_ASSIGNMENT).
- * 9. Protection for Approved Entries: Preserves any entries already approved by Admin/PM without accidental overwrite.
- * 10. Zero-Crash Policy: Row-level try/catch with detailed terminal report & export to skipped_operator_records.csv.
+ * 2. Legacy 6-Column Format:
+ *    Operator | In | Out | Equipment | Hours | Date
+ * 
+ * Target Project: 539 (539M-CEP-Kadawatha Interchange / subdomain: 539)
+ * 
+ * Supervisor Workflow Emulation:
+ * 1. Target Project Lock: Dedicated to Project 539 (subdomain '539').
+ * 2. Supervisor / Admin Sheet: Automatically ensures MF_OP_DailySheet exists for each date with status 'submitted'.
+ * 3. Daily Attendance Roster: Automatically registers operators into MF_OP_DailyAssignment.
+ * 4. Idle Equipment Handling: Automatically detects 'ZXQOPRIDLE', 'IDLE', 'NONE', '-' and records operator shift with equipmentId = null without crashing or skipping.
+ * 5. Equipment Resolution: Matches against Project & Corporate Equipment master. Supports aliases (e.g. MCH12 -> MCHM0012) and auto-registers new machines with Condition & Unit.
+ * 6. Daily Equipment Assignment: Links assigned machine to operator in MF_OP_DailyEquipmentAssignment.
+ * 7. Meal & Shift Calculation: Computes lunch (12:00-13:00) and dinner (22:00-23:00) breaks.
+ * 8. Additional Hours: Accurately applies positive/negative additional hours (shiftHours = rawShiftHours + additionalHours).
+ * 9. Overtime (OT) Calculation: Calculates Sunday 100% OT, Saturday 5.5h base, and Weekday 8h base.
+ * 10. Database Write: Saves directly to MF_OP_TimeEntry with status 'submitted'.
  */
 
 import fs from 'fs';
@@ -35,9 +41,12 @@ interface RawOperatorRow {
   operatorIdentifier: string;
   inTime?: string;
   outTime?: string;
-  equipmentIdentifier?: string;
-  hours: number;
+  additionalHours?: number;
   dateStr: string;
+  equipmentIdentifier?: string;
+  condition?: string;
+  unit?: string;
+  hours: number;
   rawLineIndex: number;
 }
 
@@ -48,6 +57,7 @@ interface ProcessError {
   dateStr?: string;
   inTime?: string;
   outTime?: string;
+  additionalHours?: number;
   hours?: number;
   reason: string;
 }
@@ -136,6 +146,30 @@ export function parseDateInput(val: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// Helper: Check if equipment code indicates idle or unassigned machine
+export function isIdleEquipment(eq?: string | null): boolean {
+  if (!eq) return true;
+  const clean = eq.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return (
+    clean === '' ||
+    clean === 'ZXQOPRIDLE' ||
+    clean === 'IDLE' ||
+    clean === 'NONE' ||
+    clean === 'NOEQ' ||
+    clean === 'NA' ||
+    clean === 'NIL' ||
+    clean === '0'
+  );
+}
+
+// Helper: Normalize known equipment aliases
+export function normalizeEquipmentCode(eq?: string | null): string {
+  if (!eq) return '';
+  const clean = eq.trim().toUpperCase();
+  if (clean === 'MCH12' || clean === 'MCH0012') return 'MCHM0012';
+  return clean;
+}
+
 // Helper: Window-based break deductions (Lunch 12:00-13:00, Dinner 22:00-23:00)
 function computeBreakHoursAndSnapshots(inTime?: string | null, outTime?: string | null): {
   breakHours: number;
@@ -186,7 +220,8 @@ function calculateShiftAndOvertime(
   inTime: string,
   outTime: string,
   targetDate: Date,
-  isExternal: boolean = false
+  isExternal: boolean = false,
+  additionalHours: number = 0
 ): {
   shiftHours: number;
   otHours: number;
@@ -203,7 +238,8 @@ function calculateShiftAndOvertime(
 
   const grossHours = Math.round((diff / 60) * 100) / 100;
   const { breakHours, isLunchDeducted, isDinnerDeducted } = computeBreakHoursAndSnapshots(inTime, outTime);
-  const shiftHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
+  const rawShiftHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
+  const shiftHours = Math.max(0, Math.round((rawShiftHours + (additionalHours || 0)) * 100) / 100);
 
   const dow = targetDate.getUTCDay(); // 0 = Sun, 6 = Sat
   let otHours = 0;
@@ -221,15 +257,15 @@ function calculateShiftAndOvertime(
   } else if (dow === 6) {
     // Saturday: Standard base is 5.5h
     regularHours = Math.min(shiftHours, 5.5);
-    otHours = Math.round((shiftHours - 5.5) * 100) / 100;
+    otHours = Math.max(0, Math.round((shiftHours - 5.5) * 100) / 100);
   } else {
     // Weekday: > 6h => Full Day (8.0h base); <= 6h => Half Day (4.0h base)
     if (shiftHours > 6.0) {
       regularHours = Math.min(shiftHours, 8.0);
-      otHours = Math.round((shiftHours - 8.0) * 100) / 100;
+      otHours = Math.max(0, Math.round((shiftHours - 8.0) * 100) / 100);
     } else {
       regularHours = Math.min(shiftHours, 4.0);
-      otHours = Math.round((shiftHours - 4.0) * 100) / 100;
+      otHours = Math.max(0, Math.round((shiftHours - 4.0) * 100) / 100);
     }
   }
 
@@ -262,21 +298,30 @@ function parseRawFile(content: string): RawOperatorRow[] {
     operator: -1,
     in: -1,
     out: -1,
-    equipment: -1,
-    hours: -1,
+    additionalHours: -1,
     date: -1,
+    equipment: -1,
+    condition: -1,
+    unit: -1,
+    hours: -1,
   };
 
   if (hasHeader) {
     headerTokens.forEach((tok, idx) => {
-      if (tok.includes('operat') || tok.includes('emp') || tok.includes('epf') || tok.includes('driver')) {
-        colMap.operator = idx;
+      if (tok.includes('add') || tok.includes('additional') || tok.includes('extra')) {
+        colMap.additionalHours = idx;
       } else if (tok === 'in' || tok.includes('in_time') || tok.includes('intime')) {
         colMap.in = idx;
       } else if (tok === 'out' || tok.includes('out_time') || tok.includes('outtime')) {
         colMap.out = idx;
+      } else if (tok.includes('operat') || tok.includes('emp') || tok.includes('epf') || tok.includes('driver')) {
+        colMap.operator = idx;
       } else if (tok.includes('equip') || tok.includes('machine') || tok.includes('vehicle')) {
         colMap.equipment = idx;
+      } else if (tok.includes('cond')) {
+        colMap.condition = idx;
+      } else if (tok.includes('unit')) {
+        colMap.unit = idx;
       } else if (tok.includes('hour')) {
         colMap.hours = idx;
       } else if (tok.includes('date')) {
@@ -285,15 +330,35 @@ function parseRawFile(content: string): RawOperatorRow[] {
     });
   }
 
+  // Fallback defaults if header was missing or incomplete
   if (colMap.operator === -1) {
-    colMap = {
-      operator: 0,
-      in: 1,
-      out: 2,
-      equipment: 3,
-      hours: 4,
-      date: 5,
-    };
+    if (headerTokens.length >= 8) {
+      // 9-column format
+      colMap = {
+        operator: 0,
+        in: 1,
+        out: 2,
+        additionalHours: 3,
+        date: 4,
+        equipment: 5,
+        condition: 6,
+        unit: 7,
+        hours: 8,
+      };
+    } else {
+      // Legacy 6-column format
+      colMap = {
+        operator: 0,
+        in: 1,
+        out: 2,
+        additionalHours: -1,
+        equipment: 3,
+        hours: 4,
+        date: 5,
+        condition: -1,
+        unit: -1,
+      };
+    }
   }
 
   const startIndex = hasHeader ? 1 : 0;
@@ -306,21 +371,28 @@ function parseRawFile(content: string): RawOperatorRow[] {
     const op = colMap.operator >= 0 ? rawTokens[colMap.operator] : '';
     const inT = colMap.in >= 0 ? rawTokens[colMap.in] : '';
     const outT = colMap.out >= 0 ? rawTokens[colMap.out] : '';
-    const eq = colMap.equipment >= 0 ? rawTokens[colMap.equipment] : '';
-    const hrsStr = colMap.hours >= 0 ? rawTokens[colMap.hours] : '8';
+    const addHrsStr = colMap.additionalHours >= 0 ? rawTokens[colMap.additionalHours] : '';
     const dt = colMap.date >= 0 ? rawTokens[colMap.date] : '';
+    const eq = colMap.equipment >= 0 ? rawTokens[colMap.equipment] : '';
+    const cond = colMap.condition >= 0 ? rawTokens[colMap.condition] : '';
+    const unt = colMap.unit >= 0 ? rawTokens[colMap.unit] : '';
+    const hrsStr = colMap.hours >= 0 ? rawTokens[colMap.hours] : '8';
 
     if (!op && !eq) continue;
 
     const parsedHours = parseFloat(hrsStr);
+    const parsedAddHours = addHrsStr !== '' && !isNaN(parseFloat(addHrsStr)) ? parseFloat(addHrsStr) : undefined;
 
     rows.push({
       operatorIdentifier: op,
       inTime: normalizeTime(inT) || undefined,
       outTime: normalizeTime(outT) || undefined,
-      equipmentIdentifier: eq || undefined,
-      hours: !isNaN(parsedHours) ? parsedHours : 8.0,
+      additionalHours: parsedAddHours,
       dateStr: dt,
+      equipmentIdentifier: eq || undefined,
+      condition: cond || undefined,
+      unit: unt || undefined,
+      hours: !isNaN(parsedHours) ? parsedHours : 8.0,
       rawLineIndex: i + 1,
     });
   }
@@ -375,66 +447,27 @@ async function main() {
 
   let targetFilePath = explicitFilePath || defaultFilePath;
 
-  // Resolve Target Project
+  // 1. Resolve Target Project: Dedicated Project 539 Lock
   const allProjects = await prisma.mF_P_Project.findMany({
     select: { id: true, projectCode: true, projectName: true, subdomain: true },
   });
 
-  let project: typeof allProjects[0] | null = null;
+  const targetProjectQuery = explicitProject || '539';
+  const cleanReq = targetProjectQuery.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-  if (explicitProject) {
-    const cleanReq = explicitProject.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    project = allProjects.find((p) => {
-      const pCode = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      const sCode = (p.subdomain || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-      const pName = p.projectName.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      return (
-        p.id.toLowerCase() === explicitProject!.toLowerCase() ||
-        pCode === cleanReq ||
-        sCode === cleanReq ||
-        pCode.includes(cleanReq) ||
-        cleanReq.includes(pCode) ||
-        sCode.includes(cleanReq) ||
-        pName.includes(cleanReq)
-      );
-    }) || null;
-  }
-
-  // Auto-detect project from CSV operators if not explicitly supplied
-  if (!project && fs.existsSync(targetFilePath)) {
-    const previewContent = fs.readFileSync(targetFilePath, 'utf-8');
-    const previewRows = parseRawFile(previewContent).slice(0, 15);
-    const sampleOpCodes = previewRows.map((r) => r.operatorIdentifier.trim()).filter(Boolean);
-
-    if (sampleOpCodes.length > 0) {
-      const match = await prisma.mF_P_Employee.findFirst({
-        where: {
-          corporateEmployee: {
-            employeeCode: { in: sampleOpCodes },
-          },
-        },
-        select: { projectId: true },
-      });
-      if (match) {
-        project = allProjects.find((p) => p.id === match.projectId) || null;
-        if (project) {
-          console.log(`🔍 ${GREEN}Auto-detected Project from CSV operators:${RESET} ${BOLD}${project.projectName} (${project.projectCode})${RESET}`);
-        }
-      }
-    }
-  }
+  let project = allProjects.find((p) => {
+    const sCode = (p.subdomain || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const pCode = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return sCode === cleanReq || sCode === '539' || pCode.includes(cleanReq);
+  }) || allProjects.find((p) => p.subdomain === '539') || allProjects[0];
 
   if (!project) {
-    project = allProjects[0] || null;
-  }
-
-  if (!project) {
-    console.error(`${RED}❌ Error: No active project found in database!${RESET}`);
+    console.error(`${RED}❌ Error: Project 539 not found in database!${RESET}`);
     process.exit(1);
   }
-  console.log(`📌 Target Project: ${BOLD}${project.projectName} (${project.projectCode})${RESET}`);
+  console.log(`📌 Target Project: ${BOLD}${project.projectName} (${project.projectCode}) [Subdomain: ${project.subdomain}]${RESET}`);
 
-  // Resolve Supervisor or Admin
+  // 2. Resolve Active Supervisor / Admin for Project 539
   let supervisor: { id: string; username: string; fullName: string } | null = null;
 
   if (explicitSupervisor) {
@@ -450,9 +483,6 @@ async function main() {
       },
       select: { id: true, username: true, fullName: true },
     });
-    if (!supervisor) {
-      console.log(`${YELLOW}⚠️ Specified supervisor "${explicitSupervisor}" not found in project ${project.projectCode}. Falling back to default active supervisor.${RESET}`);
-    }
   }
 
   if (!supervisor) {
@@ -522,6 +552,7 @@ async function main() {
   for (const ce of corporateEmployees) {
     if (ce.employeeCode) corpEmpMap.set(ce.employeeCode.trim().toLowerCase(), ce);
     if (ce.epfNo) corpEmpMap.set(ce.epfNo.trim().toLowerCase(), ce);
+    if (ce.fullName) corpEmpMap.set(ce.fullName.trim().toLowerCase(), ce);
   }
 
   const projectEquipmentList = await prisma.mF_P_Equipment.findMany({
@@ -558,42 +589,28 @@ async function main() {
     }
   }
 
-  // Resolve default activity code for operator time entry
-  let defaultActivity = await prisma.mF_P_ActivityCode.findFirst({
-    where: { projectId: project.id },
-    orderBy: { code: 'asc' },
-  });
-
-  if (!defaultActivity) {
-    defaultActivity = await prisma.mF_P_ActivityCode.create({
-      data: {
-        projectId: project.id,
-        code: 'GEN-OPERATOR',
-        description: 'General Machine Operation',
-      },
-    });
-  }
-  const defaultActivityId = defaultActivity.id;
-
   const defaultDayType =
     (await prisma.mF_G_DayType.findFirst({ where: { code: 'NORMAL' } })) ||
     (await prisma.mF_G_DayType.findFirst());
   const effectiveDayTypeId = defaultDayType?.id || '';
 
-  // Group Rows by (Operator, Date, Equipment) to support multiple machine assignments
+  // Group Rows by (Operator, Date) to enforce 1 TimeEntry per Operator per Date
   console.log(`🔗 Validating and grouping operator shifts...`);
-  interface OperatorGroup {
+  interface OperatorShiftGroup {
     operatorIdentifier: string;
     dateStr: string;
     date: Date;
     inTime?: string;
     outTime?: string;
+    additionalHours: number;
     equipmentIdentifier?: string;
+    condition?: string;
+    unit?: string;
     hours: number;
     rawLineIndex: number;
   }
 
-  const groupedEntries = new Map<string, OperatorGroup>();
+  const groupedEntries = new Map<string, OperatorShiftGroup>();
   const errors: ProcessError[] = [];
   let lastOperator = '';
   let lastDateStr = '';
@@ -611,6 +628,7 @@ async function main() {
         dateStr: r.dateStr,
         inTime: r.inTime,
         outTime: r.outTime,
+        additionalHours: r.additionalHours,
         hours: r.hours,
         reason: 'Missing Operator Code or EPF Number',
       });
@@ -626,6 +644,7 @@ async function main() {
         dateStr: '',
         inTime: r.inTime,
         outTime: r.outTime,
+        additionalHours: r.additionalHours,
         hours: r.hours,
         reason: 'Missing Date',
       });
@@ -642,23 +661,9 @@ async function main() {
         dateStr: dtStr,
         inTime: r.inTime,
         outTime: r.outTime,
+        additionalHours: r.additionalHours,
         hours: r.hours,
         reason: `Invalid Date format: "${dtStr}". Expected DD/MM/YYYY or YYYY-MM-DD.`,
-      });
-      continue;
-    }
-
-    // Validation 4: Negative or NaN Hours
-    if (isNaN(r.hours) || r.hours < 0) {
-      errors.push({
-        line: r.rawLineIndex,
-        operator: opKey,
-        equipment: r.equipmentIdentifier,
-        dateStr: dtStr,
-        inTime: r.inTime,
-        outTime: r.outTime,
-        hours: r.hours,
-        reason: `Invalid hours value: "${r.hours}"`,
       });
       continue;
     }
@@ -666,8 +671,7 @@ async function main() {
     lastOperator = opKey;
     lastDateStr = dtStr;
 
-    const eqKey = (r.equipmentIdentifier || 'NO_EQ').trim().toUpperCase();
-    const groupKey = `${opKey.trim().toUpperCase()}___${parsedDate.toISOString().slice(0, 10)}___${eqKey}`;
+    const groupKey = `${opKey.trim().toUpperCase()}___${parsedDate.toISOString().slice(0, 10)}`;
 
     if (!groupedEntries.has(groupKey)) {
       groupedEntries.set(groupKey, {
@@ -676,7 +680,10 @@ async function main() {
         date: parsedDate,
         inTime: r.inTime,
         outTime: r.outTime,
+        additionalHours: r.additionalHours || 0,
         equipmentIdentifier: r.equipmentIdentifier?.trim(),
+        condition: r.condition?.trim(),
+        unit: r.unit?.trim(),
         hours: r.hours,
         rawLineIndex: r.rawLineIndex,
       });
@@ -684,24 +691,30 @@ async function main() {
       const existing = groupedEntries.get(groupKey)!;
       if (!existing.inTime && r.inTime) existing.inTime = r.inTime;
       if (!existing.outTime && r.outTime) existing.outTime = r.outTime;
+      if (r.additionalHours !== undefined) existing.additionalHours += r.additionalHours;
+      if (!existing.equipmentIdentifier || isIdleEquipment(existing.equipmentIdentifier)) {
+        if (r.equipmentIdentifier && !isIdleEquipment(r.equipmentIdentifier)) {
+          existing.equipmentIdentifier = r.equipmentIdentifier.trim();
+        }
+      }
+      if (r.condition && !existing.condition) existing.condition = r.condition.trim();
+      if (r.unit && !existing.unit) existing.unit = r.unit.trim();
       existing.hours += r.hours;
     }
   }
 
   console.log(`📦 Unique Operator Shifts to process: ${BOLD}${groupedEntries.size}${RESET}\n`);
 
-  // Process Groups with Zero-Crash Policy and Row-Level try/catch
   let successCount = 0;
   let skippedCount = 0;
   const processedDailySheets = new Map<string, string>(); // dateKey -> dailySheetId
-  const deletedOperatorDates = new Set<string>(); // "empId___dateKey" to prevent multi-machine delete collisions
 
-  for (const [groupKey, group] of groupedEntries) {
+  for (const [, group] of groupedEntries) {
     try {
       const cleanOpKey = group.operatorIdentifier.toLowerCase();
       let localEmp = empMap.get(cleanOpKey);
 
-      // Auto-link from corporate employee master if not yet linked to this project
+      // Auto-link from corporate employee master if not yet linked to Project 539
       if (!localEmp) {
         const corpEmp = corpEmpMap.get(cleanOpKey);
         if (corpEmp) {
@@ -710,7 +723,7 @@ async function main() {
               data: {
                 projectId: project.id,
                 corporateEmployeeId: corpEmp.id,
-                callingName: corpEmp.callingName || corpEmp.fullName.split(' ')[0],
+                callingName: corpEmp.fullName.split(' ')[0],
                 dailyRate: corpEmp.dailyRate || 1400.0,
                 isOperator: true,
                 status: 'active',
@@ -729,7 +742,7 @@ async function main() {
               id: 'dry-run-op-id',
               projectId: project.id,
               corporateEmployeeId: corpEmp.id,
-              callingName: corpEmp.callingName || '',
+              callingName: corpEmp.fullName.split(' ')[0],
               dailyRate: corpEmp.dailyRate || 1400.0,
               isOperator: true,
               status: 'active',
@@ -751,6 +764,7 @@ async function main() {
           dateStr: group.dateStr,
           inTime: group.inTime,
           outTime: group.outTime,
+          additionalHours: group.additionalHours,
           hours: group.hours,
           reason: `Operator '${group.operatorIdentifier}' not found in project or corporate master`,
         });
@@ -758,26 +772,62 @@ async function main() {
         continue;
       }
 
-      // Resolve Equipment if provided
+      // Resolve Equipment (with idle equipment and auto-creation support)
       let localEq: typeof projectEquipmentList[0] | null = null;
-      if (group.equipmentIdentifier) {
-        const cleanEqKey = group.equipmentIdentifier.toLowerCase();
+      const isIdle = isIdleEquipment(group.equipmentIdentifier);
+
+      if (!isIdle && group.equipmentIdentifier) {
+        const normalizedCode = normalizeEquipmentCode(group.equipmentIdentifier);
+        const cleanEqKey = normalizedCode.toLowerCase();
         const strippedEqKey = cleanEqKey.replace(/[^a-z0-9]/g, '');
+
         localEq = eqMap.get(cleanEqKey) || eqMap.get(strippedEqKey) || null;
 
-        // Auto-link from corporate equipment master if not yet in project
+        // Auto-link from corporate equipment master if not yet linked to Project 539
         if (!localEq) {
-          const corpEq = corpEqMap.get(cleanEqKey) || corpEqMap.get(strippedEqKey);
+          let corpEq = corpEqMap.get(cleanEqKey) || corpEqMap.get(strippedEqKey);
+
+          // If still not in corporate equipment master, auto-create to ensure zero upload failure
+          if (!corpEq) {
+            if (!isDryRun) {
+              corpEq = await prisma.mF_G_Equipment.create({
+                data: {
+                  standardEquipmentNumber: normalizedCode,
+                  equipmentName: `${normalizedCode} (Machine)`,
+                  condition: group.condition || 'DRY',
+                  unit: group.unit || 'hrs',
+                  dailyRate: 2500,
+                  costRate: 0,
+                  status: 'active',
+                  currentProjectId: project.id,
+                },
+              });
+              corpEqMap.set(cleanEqKey, corpEq);
+              corpEqMap.set(strippedEqKey, corpEq);
+            } else {
+              corpEq = {
+                id: 'dry-run-corp-eq-id',
+                standardEquipmentNumber: normalizedCode,
+                equipmentName: `${normalizedCode} (Machine)`,
+                condition: group.condition || 'DRY',
+                unit: group.unit || 'hrs',
+                dailyRate: 2500,
+                costRate: 0,
+                status: 'active',
+              } as any;
+            }
+          }
+
           if (corpEq) {
             if (!isDryRun) {
               const created = await prisma.mF_P_Equipment.create({
                 data: {
                   projectId: project.id,
                   corporateEquipmentId: corpEq.id,
-                  condition: corpEq.condition || 'DRY',
+                  condition: group.condition || corpEq.condition || 'DRY',
                   costRate: corpEq.costRate || corpEq.dailyRate || 0,
                   status: 'active',
-                  meterUnitCode: corpEq.unit || 'Hrs',
+                  meterUnitCode: group.unit || corpEq.unit || 'hrs',
                 },
                 include: {
                   corporateEquipment: true,
@@ -785,23 +835,16 @@ async function main() {
               });
               localEq = created;
               eqMap.set(cleanEqKey, created);
-              if (corpEq.standardEquipmentNumber) {
-                eqMap.set(corpEq.standardEquipmentNumber.toLowerCase(), created);
-                eqMap.set(corpEq.standardEquipmentNumber.toLowerCase().replace(/[^a-z0-9]/g, ''), created);
-              }
-              if (corpEq.vehicleNo) {
-                eqMap.set(corpEq.vehicleNo.toLowerCase(), created);
-                eqMap.set(corpEq.vehicleNo.toLowerCase().replace(/[^a-z0-9]/g, ''), created);
-              }
+              eqMap.set(strippedEqKey, created);
             } else {
               localEq = {
                 id: 'dry-run-eq-id',
                 projectId: project.id,
                 corporateEquipmentId: corpEq.id,
-                condition: corpEq.condition || 'DRY',
+                condition: group.condition || corpEq.condition || 'DRY',
                 costRate: corpEq.costRate || corpEq.dailyRate || 0,
                 status: 'active',
-                meterUnitCode: corpEq.unit || 'Hrs',
+                meterUnitCode: group.unit || corpEq.unit || 'hrs',
                 ownerPartnerId: null,
                 createdAt: new Date(),
                 corporateEquipment: corpEq,
@@ -810,19 +853,19 @@ async function main() {
           }
         }
 
-        if (!localEq) {
-          errors.push({
-            line: group.rawLineIndex,
-            operator: group.operatorIdentifier,
-            equipment: group.equipmentIdentifier,
-            dateStr: group.dateStr,
-            inTime: group.inTime,
-            outTime: group.outTime,
-            hours: group.hours,
-            reason: `Equipment '${group.equipmentIdentifier}' not found in project or corporate master`,
-          });
-          skippedCount++;
-          continue;
+        // If localEq exists, update condition or meterUnitCode if specified in CSV
+        if (localEq && !isDryRun) {
+          const needCondUpdate = group.condition && group.condition !== localEq.condition;
+          const needUnitUpdate = group.unit && group.unit !== localEq.meterUnitCode;
+          if (needCondUpdate || needUnitUpdate) {
+            await prisma.mF_P_Equipment.update({
+              where: { id: localEq.id },
+              data: {
+                condition: group.condition || localEq.condition,
+                meterUnitCode: group.unit || localEq.meterUnitCode,
+              },
+            });
+          }
         }
       }
 
@@ -856,6 +899,7 @@ async function main() {
           dateStr: group.dateStr,
           inTime: group.inTime,
           outTime: group.outTime,
+          additionalHours: group.additionalHours,
           hours: group.hours,
           reason: `Time Entry on ${dateKey} is already APPROVED by Admin/PM. Did not overwrite.`,
         });
@@ -863,7 +907,7 @@ async function main() {
         continue;
       }
 
-      // Resolve DailySheet
+      // Ensure DailySheet exists for date under supervisor/admin
       let dailySheetId = processedDailySheets.get(dateKey);
       if (!dailySheetId && !isDryRun) {
         const dailySheet = await prisma.mF_OP_DailySheet.upsert({
@@ -886,6 +930,7 @@ async function main() {
         processedDailySheets.set(dateKey, dailySheetId);
       }
 
+      // Calculate shift hours, overtime, and break deductions
       let finalInTime: string | null = group.inTime || null;
       let finalOutTime: string | null = group.outTime || null;
       let shiftHours = Number(group.hours || 0);
@@ -898,7 +943,13 @@ async function main() {
       const isExt = Boolean(localEmp.businessPartnerId);
 
       if (group.inTime && group.outTime) {
-        const calc = calculateShiftAndOvertime(group.inTime, group.outTime, targetUtcDate, isExt);
+        const calc = calculateShiftAndOvertime(
+          group.inTime,
+          group.outTime,
+          targetUtcDate,
+          isExt,
+          group.additionalHours
+        );
         shiftHours = calc.shiftHours;
         otHours = calc.otHours;
         breakHours = calc.breakHours;
@@ -908,7 +959,8 @@ async function main() {
         finalInTime = group.inTime;
         finalOutTime = group.outTime;
       } else {
-        // Fallback when only total hours provided (e.g. cumulative monthly or flat day)
+        // Fallback when flat hours provided
+        shiftHours = Math.max(0, shiftHours + group.additionalHours);
         const dow = targetUtcDate.getUTCDay();
         if (dow === 0) {
           otHours = shiftHours;
@@ -919,13 +971,19 @@ async function main() {
         }
       }
 
+      const eqDisplay = localEq
+        ? localEq.corporateEquipment?.standardEquipmentNumber || group.equipmentIdentifier
+        : 'ZXQOPRIDLE (Idle)';
+
       if (isDryRun) {
-        console.log(`  ${GREEN}✓ [DRY RUN]${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName}) | Eq: ${localEq?.corporateEquipment?.standardEquipmentNumber || 'None'} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} | Shift: ${shiftHours}h (OT: ${otHours}h)`);
+        console.log(
+          `  ${GREEN}✓ [DRY RUN]${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
+        );
         successCount++;
         continue;
       }
 
-      // Step 1: Ensure DailyAssignment exists for operator
+      // Step 1: Ensure DailyAssignment exists for operator (Attendance gang)
       await prisma.mF_OP_DailyAssignment.upsert({
         where: {
           dailySheetId_employeeId: {
@@ -940,7 +998,7 @@ async function main() {
         },
       });
 
-      // Step 2: Ensure DailyEquipmentAssignment exists linking operator to machine
+      // Step 2: Ensure DailyEquipmentAssignment exists linking operator to machine (if not idle)
       if (localEq) {
         await prisma.mF_OP_DailyEquipmentAssignment.upsert({
           where: {
@@ -960,28 +1018,17 @@ async function main() {
         });
       }
 
-      // Step 3: Clear prior unapproved time entry for this operator and date on first machine encounter
-      const empDateKey = `${localEmp.id}___${dateKey}`;
-      if (!deletedOperatorDates.has(empDateKey)) {
-        await prisma.mF_OP_TimeEntry.deleteMany({
-          where: {
+      // Step 3: Upsert into MF_OP_TimeEntry with unique composite key (projectId, employeeId, date)
+      await prisma.mF_OP_TimeEntry.upsert({
+        where: {
+          projectId_employeeId_date: {
             projectId: project.id,
             employeeId: localEmp.id,
             date: targetUtcDate,
-            status: { in: ['draft', 'submitted'] },
           },
-        });
-        deletedOperatorDates.add(empDateKey);
-      }
-
-      // Step 4: Create Time Entry with equipmentId directly attached
-      await prisma.mF_OP_TimeEntry.create({
-        data: {
-          projectId: project.id,
+        },
+        update: {
           dailySheetId: dailySheetId!,
-          employeeId: localEmp.id,
-          date: targetUtcDate,
-          activityId: defaultActivityId,
           equipmentId: localEq ? localEq.id : null,
           effectiveDayTypeId,
           inTime: finalInTime,
@@ -991,6 +1038,27 @@ async function main() {
           breakHours,
           isLunchDeducted,
           isDinnerDeducted,
+          additionalHours: group.additionalHours || 0.0,
+          hours: regularHours,
+          status: 'submitted',
+          submittedAt: new Date(),
+          appliedDailyRate: localEmp.dailyRate ? Number(localEmp.dailyRate) : 1400.0,
+        },
+        create: {
+          projectId: project.id,
+          dailySheetId: dailySheetId!,
+          employeeId: localEmp.id,
+          date: targetUtcDate,
+          equipmentId: localEq ? localEq.id : null,
+          effectiveDayTypeId,
+          inTime: finalInTime,
+          outTime: finalOutTime,
+          shiftHours,
+          overtimeHours: otHours,
+          breakHours,
+          isLunchDeducted,
+          isDinnerDeducted,
+          additionalHours: group.additionalHours || 0.0,
           hours: regularHours,
           status: 'submitted',
           submittedAt: new Date(),
@@ -998,7 +1066,9 @@ async function main() {
         },
       });
 
-      console.log(`  ${GREEN}✓${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${localEq?.corporateEquipment?.standardEquipmentNumber || 'None'} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} | Shift: ${shiftHours}h (OT: ${otHours}h)`);
+      console.log(
+        `  ${GREEN}✓${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
+      );
       successCount++;
     } catch (err: any) {
       errors.push({
@@ -1008,6 +1078,7 @@ async function main() {
         dateStr: group.dateStr,
         inTime: group.inTime,
         outTime: group.outTime,
+        additionalHours: group.additionalHours,
         hours: group.hours,
         reason: `Unexpected database error: ${err.message || String(err)}`,
       });
@@ -1027,11 +1098,11 @@ async function main() {
     console.log(`❌ Errors Encountered:     ${RED}${BOLD}${errors.length}${RESET}`);
 
     const skippedCsvPath = path.join(__dirname, 'skipped_operator_records.csv');
-    const csvHeader = 'Line,Operator,Equipment,Date,In,Out,Hours,Reason\n';
+    const csvHeader = 'Line,Operator,Equipment,Date,In,Out,AdditionalHours,Hours,Reason\n';
     const csvRows = errors
       .map(
         (e) =>
-          `${e.line},"${e.operator}","${e.equipment || ''}","${e.dateStr || ''}","${e.inTime || ''}","${e.outTime || ''}",${e.hours || 0},"${e.reason.replace(/\"/g, '""')}"`
+          `${e.line},"${e.operator}","${e.equipment || ''}","${e.dateStr || ''}","${e.inTime || ''}","${e.outTime || ''}",${e.additionalHours || 0},${e.hours || 0},"${e.reason.replace(/\"/g, '""')}"`
       )
       .join('\n');
 

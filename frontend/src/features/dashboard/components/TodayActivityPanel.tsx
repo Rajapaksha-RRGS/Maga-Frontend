@@ -296,39 +296,39 @@ export default function TodayActivityPanel({
     }>();
 
     (entries || []).forEach((entry) => {
-      const rawCode = entry.activity?.code || (entry.activityId ? `ACT-${entry.activityId.slice(0, 4)}` : '');
-      const code = rawCode || 'GENERAL';
-      const name =
-        entry.activity?.description ||
-        activityCodeMap.get(code.toLowerCase()) ||
-        activityCodeMap.get(entry.activityId) ||
-        entry.activity?.code ||
-        'General Construction Activity';
+      (entry.activitySplits || []).forEach((split) => {
+        const rawCode = split.activityCode?.code || (split.activityCodeId ? `ACT-${split.activityCodeId.slice(0, 4)}` : '');
+        const code = rawCode || 'GENERAL';
+        const name =
+          split.activityCode?.description ||
+          activityCodeMap.get(code.toLowerCase()) ||
+          activityCodeMap.get(split.activityCodeId) ||
+          split.activityCode?.code ||
+          'General Construction Activity';
 
-      const reg = Number(entry.hours) || 0;
-      const ot = Number(entry.overtimeHours) || 0;
-      const total = reg + ot;
+        const splitHours = Number(split.hours) || 0;
+        if (splitHours <= 0) return;
 
-      if (!map.has(code)) {
-        map.set(code, {
-          code,
-          name,
-          trade: 'Site Works',
-          category: 'Civil',
-          regularHours: 0,
-          otHours: 0,
-          hours: 0,
-          workerIds: new Set<string>(),
-        });
-      }
+        if (!map.has(code)) {
+          map.set(code, {
+            code,
+            name,
+            trade: 'Site Works',
+            category: 'Civil',
+            regularHours: 0,
+            otHours: 0,
+            hours: 0,
+            workerIds: new Set<string>(),
+          });
+        }
 
-      const item = map.get(code)!;
-      item.regularHours += reg;
-      item.otHours += ot;
-      item.hours += total;
-      if (entry.employeeId) {
-        item.workerIds.add(entry.employeeId);
-      }
+        const item = map.get(code)!;
+        item.regularHours += splitHours;
+        item.hours += splitHours;
+        if (entry.employeeId) {
+          item.workerIds.add(entry.employeeId);
+        }
+      });
     });
 
     const activeList = Array.from(map.values())
