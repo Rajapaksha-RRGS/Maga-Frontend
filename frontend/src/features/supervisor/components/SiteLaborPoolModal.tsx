@@ -140,21 +140,23 @@ export function SiteLaborPoolModal({
     });
   };
 
+  const isLockedByOther = (w: any) => Boolean(w.claimedSheetLocked && !w.claimedByMe);
+
   const mostRecentGang = pastGangs[0];
   const recentAvailableCount = useMemo(() => {
     if (!mostRecentGang) return 0;
     const idSet = new Set(mostRecentGang.workerIds);
-    return poolWorkers.filter((w) => idSet.has(w.id) && !currentIds.has(w.id)).length;
+    return poolWorkers.filter((w) => idSet.has(w.id) && !currentIds.has(w.id) && !isLockedByOther(w)).length;
   }, [mostRecentGang, poolWorkers, currentIds]);
 
   const handleSelectPastGang = (pg: { date: string; dayName: string; workerIds: string[]; workerCount: number }) => {
     const idSet = new Set(pg.workerIds);
     const matchingAvailable = poolWorkers
-      .filter((w) => idSet.has(w.id) && !currentIds.has(w.id))
+      .filter((w) => idSet.has(w.id) && !currentIds.has(w.id) && !isLockedByOther(w))
       .map((w) => w.id);
 
     if (matchingAvailable.length === 0) {
-      setPastGangNotice(`All ${pg.workerCount} workers from ${pg.date} are already in today's gang.`);
+      setPastGangNotice(`No unlocked available workers from ${pg.date} to add.`);
       setTimeout(() => setPastGangNotice(null), 3000);
       return;
     }
@@ -167,10 +169,10 @@ export function SiteLaborPoolModal({
 
   const handleDirectAddPastGang = (pg: { date: string; dayName: string; workerIds: string[]; workerCount: number }) => {
     const idSet = new Set(pg.workerIds);
-    const toAddWorkers = poolWorkers.filter((w) => idSet.has(w.id) && !currentIds.has(w.id));
+    const toAddWorkers = poolWorkers.filter((w) => idSet.has(w.id) && !currentIds.has(w.id) && !isLockedByOther(w));
 
     if (toAddWorkers.length === 0) {
-      setPastGangNotice(`All workers from ${pg.date} are already in today's gang.`);
+      setPastGangNotice(`No unlocked available workers from ${pg.date} to add.`);
       setTimeout(() => setPastGangNotice(null), 3000);
       return;
     }
@@ -202,8 +204,8 @@ export function SiteLaborPoolModal({
   };
 
   const handleSelectAllAvailable = () => {
-    const available = filtered.filter((w) => !currentIds.has(w.id));
-    if (available.every((w) => checkedIds.has(w.id))) {
+    const available = filtered.filter((w) => !currentIds.has(w.id) && !isLockedByOther(w));
+    if (available.length > 0 && available.every((w) => checkedIds.has(w.id))) {
       // Deselect all
       setCheckedIds(new Set());
     } else {
@@ -214,7 +216,8 @@ export function SiteLaborPoolModal({
 
   const handleAddSelected = () => {
     if (checkedIds.size === 0) return;
-    const selectedWorkers = poolWorkers.filter((w) => checkedIds.has(w.id));
+    const selectedWorkers = poolWorkers.filter((w) => checkedIds.has(w.id) && !isLockedByOther(w));
+    if (selectedWorkers.length === 0) return;
     const newEntries: LaborerEntry[] = selectedWorkers.map((w) => ({
       id: w.id,
       employeeCode: w.employeeCode || '',
@@ -268,8 +271,8 @@ export function SiteLaborPoolModal({
 
   if (!isOpen) return null;
 
-  const availableCount = filtered.filter((w) => !currentIds.has(w.id)).length;
-  const allChecked = availableCount > 0 && filtered.filter((w) => !currentIds.has(w.id)).every((w) => checkedIds.has(w.id));
+  const availableCount = filtered.filter((w) => !currentIds.has(w.id) && !isLockedByOther(w)).length;
+  const allChecked = availableCount > 0 && filtered.filter((w) => !currentIds.has(w.id) && !isLockedByOther(w)).every((w) => checkedIds.has(w.id));
 
   return (
     <div
@@ -539,16 +542,18 @@ export function SiteLaborPoolModal({
           ) : (
             filtered.map((worker) => {
               const isAlreadyAdded = currentIds.has(worker.id);
+              const isLockedElsewhere = isLockedByOther(worker);
+              const isDisabled = isAlreadyAdded || isLockedElsewhere;
               const isChecked = checkedIds.has(worker.id);
               const isSubcon = worker.businessPartner && worker.businessPartner !== 'Direct';
 
               return (
                 <div
                   key={worker.id}
-                  onClick={() => !isAlreadyAdded && handleToggleCheck(worker.id)}
+                  onClick={() => !isDisabled && handleToggleCheck(worker.id)}
                   className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 select-none ${
-                    isAlreadyAdded
-                      ? 'bg-slate-50/70 dark:bg-slate-850/60 border-slate-200 dark:border-slate-800 opacity-60 cursor-default'
+                    isDisabled
+                      ? 'bg-slate-50/70 dark:bg-slate-850/60 border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed'
                       : isChecked
                       ? 'bg-emerald-50/40 dark:bg-emerald-950/30 border-emerald-500/80 ring-1 ring-emerald-500/30 cursor-pointer'
                       : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-slate-300 shadow-2xs cursor-pointer'
@@ -560,6 +565,10 @@ export function SiteLaborPoolModal({
                       {isAlreadyAdded ? (
                         <div className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-500">
                           <Check size={12} className="stroke-[3]" />
+                        </div>
+                      ) : isLockedElsewhere ? (
+                        <div className="w-5 h-5 rounded-md bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center text-rose-500" title="Locked on another submitted sheet">
+                          <Lock size={11} />
                         </div>
                       ) : (
                         <button
@@ -608,9 +617,12 @@ export function SiteLaborPoolModal({
 
                       {/* Claimed Context Badge */}
                       {worker.claimedBySupervisor && !worker.claimedByMe && (
-                        <div className="mt-1 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 font-semibold">
-                          <Lock size={10} className="text-amber-600" />
-                          <span>Logged by Sup. {worker.claimedBySupervisor} ({worker.claimedInTime || '--:--'} - {worker.claimedOutTime || '--:--'})</span>
+                        <div className={`mt-1 flex items-center gap-1 text-[10px] font-semibold ${isLockedElsewhere ? 'text-rose-700 dark:text-rose-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                          <Lock size={10} className={isLockedElsewhere ? 'text-rose-600' : 'text-amber-600'} />
+                          <span>
+                            {isLockedElsewhere ? 'Locked (Submitted) by ' : 'Logged by '}
+                            Sup. {worker.claimedBySupervisor} ({worker.claimedInTime || '--:--'} - {worker.claimedOutTime || '--:--'})
+                          </span>
                         </div>
                       )}
                     </div>
@@ -621,6 +633,10 @@ export function SiteLaborPoolModal({
                     {isAlreadyAdded ? (
                       <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 flex items-center gap-1">
                         <UserCheck size={14} className="text-emerald-500" /> In Gang
+                      </span>
+                    ) : isLockedElsewhere ? (
+                      <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                        <Lock size={12} /> Locked
                       </span>
                     ) : (
                       <button

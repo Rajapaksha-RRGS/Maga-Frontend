@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   supervisorStorage, 
+  DayLockedError,
   type LaborerEntry, 
   type OperatorEntry, 
   type EquipmentLogEntry, 
@@ -76,12 +77,34 @@ export default function SupervisorMobileApp() {
   const laborSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const operatorSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const equipmentSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInFlightSaveRef = useRef<boolean>(false);
+  const isCheckingServerRef = useRef<boolean>(false);
+  const lastSyncVersionRef = useRef<string | null>(null);
+  const lastIsLockedRef = useRef<boolean>(false);
+  const lastStatusRef = useRef<SupervisorDayStatus['status']>('draft');
+  const [statusToast, setStatusToast] = useState<{ type: 'returned' | 'approved' | 'info'; message: string } | null>(null);
+  const statusToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showStatusToast = (type: 'returned' | 'approved' | 'info', message: string) => {
+    setStatusToast({ type, message });
+    if (statusToastTimerRef.current) clearTimeout(statusToastTimerRef.current);
+    statusToastTimerRef.current = setTimeout(() => setStatusToast(null), 6000);
+  };
+
+  const hasPendingLocalEdits = () =>
+    Boolean(
+      laborSaveTimeoutRef.current ||
+        operatorSaveTimeoutRef.current ||
+        equipmentSaveTimeoutRef.current ||
+        isInFlightSaveRef.current
+    );
 
   useEffect(() => {
     return () => {
       if (laborSaveTimeoutRef.current) clearTimeout(laborSaveTimeoutRef.current);
       if (operatorSaveTimeoutRef.current) clearTimeout(operatorSaveTimeoutRef.current);
       if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
+      if (statusToastTimerRef.current) clearTimeout(statusToastTimerRef.current);
     };
   }, []);
 
@@ -103,6 +126,7 @@ export default function SupervisorMobileApp() {
 
     // Reset view states while fetching fresh records from Database
     let isCancelled = false;
+    lastSyncVersionRef.current = null;
 
     Promise.all([
       supervisorStorage.fetchDayStatus(user.id, selectedDate),
@@ -112,8 +136,13 @@ export default function SupervisorMobileApp() {
       fetchSupervisorReminders(user.id, selectedDate).catch(() => []),
     ]).then(([freshStatus, freshLaborers, freshOperators, freshEquipment, freshReminders]) => {
       if (isCancelled) return;
-      setDayStatus(freshStatus);
-      setIsDayLocked(freshStatus.isLocked);
+      if (!freshStatus.isFallback) {
+        setDayStatus(freshStatus);
+        setIsDayLocked(freshStatus.isLocked);
+        lastIsLockedRef.current = freshStatus.isLocked;
+        lastStatusRef.current = freshStatus.status;
+        lastSyncVersionRef.current = freshStatus.syncVersion ?? null;
+      }
       setLaborers(freshLaborers);
       setOperators(freshOperators);
       setEquipment(freshEquipment);
@@ -133,7 +162,7 @@ export default function SupervisorMobileApp() {
     };
   }, [selectedDate, user?.id]);
 
-  // Initialize native local & push notifications channel & background poll for incoming admin events every 30 seconds
+  // Initialize native local & push notifications channel (manual refresh only — no background polling)
   useEffect(() => {
     if (!user?.id) return;
 
@@ -152,20 +181,6 @@ export default function SupervisorMobileApp() {
         setNotificationsModalOpen(true);
       },
     });
-
-    const intervalId = setInterval(async () => {
-      try {
-        const latest = await fetchSupervisorReminders(user.id, selectedDate);
-        setReminders(latest);
-        notifyNewAdminEvents(latest, () => {
-          setNotificationsModalOpen(true);
-        });
-      } catch (err) {
-        // silent polling catch
-      }
-    }, 30000);
-
-    return () => clearInterval(intervalId);
   }, [user?.id, selectedDate]);
 
   const handleMarkReminderAsRead = (id: string) => {
@@ -190,22 +205,99 @@ export default function SupervisorMobileApp() {
     });
   };
 
-  // Network online listener to re-verify state
-  useEffect(() => {
-    const handleOnline = async () => {
-      if (!user?.id) return;
-      try {
-        const fresh = await supervisorStorage.fetchDayStatus(user.id, selectedDate);
-        setDayStatus(fresh);
-        setIsDayLocked(fresh.isLocked);
-      } catch (err) {
-        console.warn('Could not refresh day status on reconnect:', err);
+  const refreshDayLockAndData = async (supId: string, date: string, reloadRecords: boolean = false) => {
+    if (isCheckingServerRef.current && !reloadRecords) return null;
+    isCheckingServerRef.current = true;
+    try {
+      const freshStatus = await supervisorStorage.fetchDayStatus(supId, date);
+      if (freshStatus.isFallback) {
+        return null;
       }
-    };
 
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
-  }, [user?.id, selectedDate]);
+      const wasLocked = lastIsLockedRef.current;
+      const prevStatus = lastStatusRef.current;
+      const syncChanged =
+        lastSyncVersionRef.current !== null &&
+        freshStatus.syncVersion !== undefined &&
+        freshStatus.syncVersion !== lastSyncVersionRef.current;
+
+      lastIsLockedRef.current = freshStatus.isLocked;
+      lastStatusRef.current = freshStatus.status;
+      lastSyncVersionRef.current = freshStatus.syncVersion ?? null;
+
+      setDayStatus(freshStatus);
+      setIsDayLocked(freshStatus.isLocked);
+
+      const lockTransition = wasLocked !== freshStatus.isLocked;
+      const statusTransition = prevStatus !== freshStatus.status;
+
+      if (wasLocked && !freshStatus.isLocked) {
+        showStatusToast(
+          'returned',
+          freshStatus.remarks || 'Sheet returned by Admin — unlocked for editing.'
+        );
+      } else if (statusTransition && freshStatus.status === 'approved') {
+        showStatusToast('approved', 'Daily sheet has been approved by Management.');
+      }
+
+      const shouldReload =
+        reloadRecords ||
+        lockTransition ||
+        (syncChanged && !hasPendingLocalEdits());
+
+      if (shouldReload) {
+        const [freshLaborers, freshOperators, freshEquipment] = await Promise.all([
+          supervisorStorage.getAssignedEmployees(supId, date),
+          supervisorStorage.fetchOperators(supId, date),
+          supervisorStorage.fetchEquipment(supId, date),
+        ]);
+        // Guard against overwriting edits started while fetch was in-flight
+        if (reloadRecords || lockTransition || !hasPendingLocalEdits()) {
+          setLaborers(freshLaborers);
+          setOperators(freshOperators);
+          setEquipment(freshEquipment);
+          if (syncChanged && !lockTransition && !reloadRecords) {
+            showStatusToast('info', 'Shift data updated from server.');
+          }
+        }
+      }
+      return freshStatus;
+    } finally {
+      isCheckingServerRef.current = false;
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    if (!user?.id) return;
+    setIsSyncing(true);
+    try {
+      const prevLocked = lastIsLockedRef.current;
+      const prevStatus = lastStatusRef.current;
+      const pendingEdits = hasPendingLocalEdits();
+      const fresh = await refreshDayLockAndData(user.id, selectedDate, !pendingEdits);
+      const latestReminders = await fetchSupervisorReminders(user.id, selectedDate).catch(() => null);
+      if (latestReminders) setReminders(latestReminders);
+
+      if (fresh) {
+        const unlockedOrApproved =
+          (prevLocked && !fresh.isLocked) ||
+          (prevStatus !== fresh.status && fresh.status === 'approved');
+        if (!unlockedOrApproved) {
+          showStatusToast(
+            'info',
+            pendingEdits
+              ? 'Server status checked — tap Sync to push pending local drafts.'
+              : 'Refreshed from server.'
+          );
+        }
+      }
+    } catch (err) {
+      console.warn('Manual refresh failed:', err);
+      showStatusToast('info', 'Could not reach server. Please try again.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Site change
   const handleSelectSite = (site: SiteProject) => {
@@ -213,89 +305,142 @@ export default function SupervisorMobileApp() {
     supervisorStorage.setActiveSite(site);
   };
 
+  const refreshSyncVersionAfterLocalSave = async (supId: string, date: string) => {
+    try {
+      const freshStatus = await supervisorStorage.fetchDayStatus(supId, date);
+      if (!freshStatus.isFallback) {
+        lastIsLockedRef.current = freshStatus.isLocked;
+        lastStatusRef.current = freshStatus.status;
+        lastSyncVersionRef.current = freshStatus.syncVersion ?? null;
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   // Sync trigger to backend
   const handleSync = async () => {
     if (!user?.id || isDayLocked) return;
     setIsSyncing(true);
+    isInFlightSaveRef.current = true;
     try {
-      if (laborSaveTimeoutRef.current) clearTimeout(laborSaveTimeoutRef.current);
-      if (operatorSaveTimeoutRef.current) clearTimeout(operatorSaveTimeoutRef.current);
-      if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
+      if (laborSaveTimeoutRef.current) { clearTimeout(laborSaveTimeoutRef.current); laborSaveTimeoutRef.current = null; }
+      if (operatorSaveTimeoutRef.current) { clearTimeout(operatorSaveTimeoutRef.current); operatorSaveTimeoutRef.current = null; }
+      if (equipmentSaveTimeoutRef.current) { clearTimeout(equipmentSaveTimeoutRef.current); equipmentSaveTimeoutRef.current = null; }
 
       await supervisorStorage.syncToBackend(user.id, selectedDate, laborers, operators, equipment);
       
       // Re-fetch fresh state directly from backend to guarantee synchronization
-      const [freshStatus, freshLaborers, freshOperators, freshEquipment] = await Promise.all([
-        supervisorStorage.fetchDayStatus(user.id, selectedDate),
-        supervisorStorage.getAssignedEmployees(user.id, selectedDate),
-        supervisorStorage.fetchOperators(user.id, selectedDate),
-        supervisorStorage.fetchEquipment(user.id, selectedDate),
-      ]);
-      setDayStatus(freshStatus);
-      setIsDayLocked(freshStatus.isLocked);
-      setLaborers(freshLaborers);
-      setOperators(freshOperators);
-      setEquipment(freshEquipment);
+      await refreshDayLockAndData(user.id, selectedDate, true);
       setPendingSyncCount(0);
     } catch (err: any) {
-      console.error('Sync failed:', err);
+      if (err instanceof DayLockedError) {
+        await refreshDayLockAndData(user.id, selectedDate, true).catch(() => {});
+        setPendingSyncCount(0);
+        alert(err.message);
+      } else {
+        console.error('Sync failed:', err);
+      }
     } finally {
+      isInFlightSaveRef.current = false;
       setIsSyncing(false);
     }
   };
 
+  const handleLockedSyncRejection = async (message: string) => {
+    setPendingSyncCount(0);
+    if (user?.id) {
+      await refreshDayLockAndData(user.id, selectedDate, true).catch(() => {});
+    }
+    alert(message);
+  };
+
   // Live Auto-Save Data update handlers (Debounced to Backend API)
   const handleSaveLaborers = (updated: LaborerEntry[]) => {
+    if (isDayLocked) return;
     setLaborers(updated);
-    if (!user?.id || isDayLocked) return;
+    if (!user?.id) return;
+    const supId = user.id;
     setPendingSyncCount(1);
     if (laborSaveTimeoutRef.current) clearTimeout(laborSaveTimeoutRef.current);
     laborSaveTimeoutRef.current = setTimeout(async () => {
+      laborSaveTimeoutRef.current = null;
+      isInFlightSaveRef.current = true;
       try {
-        await supervisorStorage.syncLaborersToBackend(user.id, selectedDate, updated);
+        await supervisorStorage.syncLaborersToBackend(supId, selectedDate, updated);
         setPendingSyncCount(0);
-      } catch (err) {
-        console.warn('Auto-save laborers error:', err);
+        await refreshSyncVersionAfterLocalSave(supId, selectedDate);
+      } catch (err: any) {
+        if (err instanceof DayLockedError) {
+          await handleLockedSyncRejection(err.message);
+        } else {
+          console.warn('Auto-save laborers error:', err);
+        }
+      } finally {
+        isInFlightSaveRef.current = false;
       }
     }, 800);
   };
 
   const handleSaveOperators = (updated: OperatorEntry[]) => {
+    if (isDayLocked) return;
     setOperators(updated);
-    if (!user?.id || isDayLocked) return;
+    if (!user?.id) return;
+    const supId = user.id;
     setPendingSyncCount(1);
     if (operatorSaveTimeoutRef.current) clearTimeout(operatorSaveTimeoutRef.current);
     operatorSaveTimeoutRef.current = setTimeout(async () => {
+      operatorSaveTimeoutRef.current = null;
+      isInFlightSaveRef.current = true;
       try {
-        await supervisorStorage.syncOperatorsToBackend(user.id, selectedDate, updated);
+        await supervisorStorage.syncOperatorsToBackend(supId, selectedDate, updated);
         setPendingSyncCount(0);
-      } catch (err) {
-        console.warn('Auto-save operators error:', err);
+        await refreshSyncVersionAfterLocalSave(supId, selectedDate);
+      } catch (err: any) {
+        if (err instanceof DayLockedError) {
+          await handleLockedSyncRejection(err.message);
+        } else {
+          console.warn('Auto-save operators error:', err);
+        }
+      } finally {
+        isInFlightSaveRef.current = false;
       }
     }, 800);
   };
 
   const handleSaveEquipment = (updated: EquipmentLogEntry[]) => {
+    if (isDayLocked) return;
     setEquipment(updated);
-    if (!user?.id || isDayLocked) return;
+    if (!user?.id) return;
+    const supId = user.id;
     setPendingSyncCount(1);
     if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
     equipmentSaveTimeoutRef.current = setTimeout(async () => {
+      equipmentSaveTimeoutRef.current = null;
+      isInFlightSaveRef.current = true;
       try {
-        await supervisorStorage.syncEquipmentToBackend(user.id, selectedDate, updated);
+        await supervisorStorage.syncEquipmentToBackend(supId, selectedDate, updated);
         setPendingSyncCount(0);
-      } catch (err) {
-        console.warn('Auto-save equipment error:', err);
+        await refreshSyncVersionAfterLocalSave(supId, selectedDate);
+      } catch (err: any) {
+        if (err instanceof DayLockedError) {
+          await handleLockedSyncRejection(err.message);
+        } else {
+          console.warn('Auto-save equipment error:', err);
+        }
+      } finally {
+        isInFlightSaveRef.current = false;
       }
     }, 800);
   };
 
   const handleLockDay = async () => {
     if (!user?.id) return;
+    isInFlightSaveRef.current = true;
     try {
-      if (laborSaveTimeoutRef.current) clearTimeout(laborSaveTimeoutRef.current);
-      if (operatorSaveTimeoutRef.current) clearTimeout(operatorSaveTimeoutRef.current);
-      if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
+      if (laborSaveTimeoutRef.current) { clearTimeout(laborSaveTimeoutRef.current); laborSaveTimeoutRef.current = null; }
+      if (operatorSaveTimeoutRef.current) { clearTimeout(operatorSaveTimeoutRef.current); operatorSaveTimeoutRef.current = null; }
+      if (equipmentSaveTimeoutRef.current) { clearTimeout(equipmentSaveTimeoutRef.current); equipmentSaveTimeoutRef.current = null; }
 
       const result = await supervisorStorage.submitDayToBackend(user.id, selectedDate, laborers, operators, equipment);
       if (result.status && result.isLocked !== undefined) {
@@ -303,12 +448,21 @@ export default function SupervisorMobileApp() {
           status: result.status,
           isLocked: result.isLocked,
           submittedAt: result.submittedAt,
+          remarks: null,
         });
         setIsDayLocked(result.isLocked);
+        lastIsLockedRef.current = result.isLocked;
+        lastStatusRef.current = result.status;
+        await refreshSyncVersionAfterLocalSave(user.id, selectedDate);
       } else {
         const freshStatus = await supervisorStorage.fetchDayStatus(user.id, selectedDate);
-        setDayStatus(freshStatus);
-        setIsDayLocked(freshStatus.isLocked);
+        if (!freshStatus.isFallback) {
+          setDayStatus(freshStatus);
+          setIsDayLocked(freshStatus.isLocked);
+          lastIsLockedRef.current = freshStatus.isLocked;
+          lastStatusRef.current = freshStatus.status;
+          lastSyncVersionRef.current = freshStatus.syncVersion ?? null;
+        }
       }
       setPendingSyncCount(0);
       if (result.offline && result.message) {
@@ -317,6 +471,8 @@ export default function SupervisorMobileApp() {
     } catch (err: any) {
       alert(err.message || 'Failed to submit and lock day on backend');
       throw err;
+    } finally {
+      isInFlightSaveRef.current = false;
     }
   };
 
@@ -352,12 +508,35 @@ export default function SupervisorMobileApp() {
         onSelectSite={handleSelectSite}
         pendingSyncCount={pendingSyncCount}
         onSync={handleSync}
+        onRefresh={handleManualRefresh}
         isSyncing={isSyncing}
         onOpenDrawer={() => setDrawerOpen(true)}
         isDayLocked={isDayLocked}
         unreadNotificationsCount={unreadNotificationsCount}
         onOpenNotifications={() => setNotificationsModalOpen(true)}
       />
+
+      {/* ── Live Status Change Toast ─────────────────────────────────────────── */}
+      {statusToast && (
+        <div
+          className={`mx-auto mt-2 w-[calc(100%-1.5rem)] max-w-md px-3.5 py-2.5 rounded-xl text-xs font-semibold shadow-md border flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-1 ${
+            statusToast.type === 'returned'
+              ? 'bg-rose-50 dark:bg-rose-950/80 border-rose-300 dark:border-rose-700 text-rose-900 dark:text-rose-100'
+              : statusToast.type === 'approved'
+              ? 'bg-emerald-50 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-100'
+              : 'bg-blue-50 dark:bg-blue-950/80 border-blue-300 dark:border-blue-700 text-blue-900 dark:text-blue-100'
+          }`}
+        >
+          <span>{statusToast.message}</span>
+          <button
+            type="button"
+            onClick={() => setStatusToast(null)}
+            className="text-[11px] font-bold opacity-70 hover:opacity-100 px-1.5 py-0.5 rounded"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* ── Slide Drawer ────────────────────────────────────────────────────── */}
       <SupervisorDrawer
@@ -388,6 +567,8 @@ export default function SupervisorMobileApp() {
             equipment={equipment}
             pendingSyncCount={pendingSyncCount}
             isDayLocked={isDayLocked}
+            dayStatus={dayStatus.status}
+            adminRemarks={dayStatus.remarks}
             reminders={reminders}
             onOpenNotifications={() => setNotificationsModalOpen(true)}
             onNavigateTab={(tab) => {
@@ -395,6 +576,8 @@ export default function SupervisorMobileApp() {
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             onQuickSync={handleSync}
+            onRefresh={handleManualRefresh}
+            isRefreshing={isSyncing}
           />
         )}
 

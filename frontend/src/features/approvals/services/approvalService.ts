@@ -10,6 +10,13 @@
  */
 
 import { API_URL, apiFetch } from '../../../config/api';
+import { cacheManager } from '../../../utils/cacheManager';
+
+function invalidateApprovalRelatedCaches(): void {
+  cacheManager.invalidate('dashboard');
+  cacheManager.invalidate('reports');
+  cacheManager.invalidate('assignments');
+}
 
 export interface ApprovalDayTypeInfo {
   name: string;
@@ -198,6 +205,7 @@ export async function approveSupervisor(supervisorId: string, date: string): Pro
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || 'Failed to approve supervisor entries');
   }
+  invalidateApprovalRelatedCaches();
   return res.json();
 }
 
@@ -214,6 +222,7 @@ export async function approveAllSubmitted(date: string): Promise<{ success: bool
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || 'Failed to batch approve entries');
   }
+  invalidateApprovalRelatedCaches();
   return res.json();
 }
 
@@ -230,6 +239,7 @@ export async function rejectSupervisor(supervisorId: string, date: string, reaso
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || 'Failed to return entries to draft');
   }
+  invalidateApprovalRelatedCaches();
   return res.json();
 }
 
@@ -266,6 +276,7 @@ export async function adminAdjustWorker(payload: {
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || 'Failed to adjust worker time entry');
   }
+  invalidateApprovalRelatedCaches();
   return res.json();
 }
 

@@ -2,11 +2,11 @@
  * SupervisorPanel.tsx — Right panel: supervisors with their assigned employees.
  * Card design with assign buttons, collapsible employee lists, and unassign controls.
  */
-import { UserPlus, X as XIcon, UserCog, ChevronDown } from 'lucide-react';
+import { UserPlus, X as XIcon, UserCog, ChevronDown, Lock } from 'lucide-react';
 import { useState } from 'react';
 import type { Employee } from '../../employees/services/employeeService';
 import type { Supervisor } from '../../supervisors/services/supervisorService';
-import type { Assignment } from '../services/assignmentService';
+import type { Assignment, DailySheetLockStatus } from '../services/assignmentService';
 
 interface SupervisorWithEmployees {
   supervisor: Supervisor;
@@ -18,6 +18,7 @@ interface Props {
   selectedCount: number;
   onAssignTo: (supervisorId: string) => void;
   onUnassign: (assignmentId: string) => void;
+  sheetStatuses?: Record<string, DailySheetLockStatus>;
 }
 
 // Color palette for supervisor avatars — cycles through these
@@ -30,7 +31,7 @@ const AVATAR_COLORS = [
   { bg: '#e0e7ff', text: '#4338ca', border: '#a5b4fc' }, // indigo
 ];
 
-export default function SupervisorPanel({ data, selectedCount, onAssignTo, onUnassign }: Props) {
+export default function SupervisorPanel({ data, selectedCount, onAssignTo, onUnassign, sheetStatuses }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const toggleCollapse = (id: string) => {
@@ -76,9 +77,12 @@ export default function SupervisorPanel({ data, selectedCount, onAssignTo, onUna
           data.map(({ supervisor, employees }, index) => {
             const color = AVATAR_COLORS[index % AVATAR_COLORS.length];
             const isCollapsed = collapsed.has(supervisor.id);
+            const lockInfo = sheetStatuses?.[supervisor.id];
+            const isLocked = Boolean(lockInfo?.isLocked);
+            const lockLabel = lockInfo?.status === 'approved' ? 'Approved' : 'Submitted';
 
             return (
-              <div key={supervisor.id} className="group">
+              <div key={supervisor.id} className={isLocked ? 'group bg-amber-50/20' : 'group'}>
                 {/* Supervisor row */}
                 <div className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50/50 transition-colors">
                   {/* Avatar */}
@@ -95,8 +99,18 @@ export default function SupervisorPanel({ data, selectedCount, onAssignTo, onUna
                     onClick={() => toggleCollapse(supervisor.id)}
                     className="flex-1 min-w-0 text-left flex items-center gap-2"
                   >
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
                       <p className="text-sm font-medium text-slate-800 truncate">{supervisor.fullName}</p>
+                      {isLocked && (
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
+                          lockInfo?.status === 'approved'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>
+                          <Lock size={10} />
+                          {lockLabel}
+                        </span>
+                      )}
                     </div>
                     <span className={[
                       'text-xs font-medium px-1.5 py-0.5 rounded tabular-nums',
@@ -116,7 +130,15 @@ export default function SupervisorPanel({ data, selectedCount, onAssignTo, onUna
                   </button>
 
                   {/* Assign button */}
-                  {selectedCount > 0 && (
+                  {isLocked ? (
+                    <span
+                      title={`Daily sheet is ${lockLabel.toLowerCase()} and locked`}
+                      className="flex items-center gap-1 text-xs text-slate-400 font-medium bg-slate-100 border border-slate-200 px-2.5 py-1.5 rounded-lg min-h-[32px] flex-shrink-0 cursor-not-allowed"
+                    >
+                      <Lock size={12} />
+                      <span>Locked</span>
+                    </span>
+                  ) : selectedCount > 0 ? (
                     <button
                       onClick={() => onAssignTo(supervisor.id)}
                       className="flex items-center gap-1 text-xs text-white font-medium bg-blue-600 hover:bg-blue-700 active:bg-blue-800 px-3 py-1.5 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-blue-600 min-h-[32px] flex-shrink-0"
@@ -124,7 +146,7 @@ export default function SupervisorPanel({ data, selectedCount, onAssignTo, onUna
                       <UserPlus size={13} />
                       <span>Assign {selectedCount}</span>
                     </button>
-                  )}
+                  ) : null}
                 </div>
 
                 {/* Assigned employees (collapsible) */}
@@ -146,8 +168,13 @@ export default function SupervisorPanel({ data, selectedCount, onAssignTo, onUna
                         </div>
                         <button
                           onClick={() => onUnassign(assignment.id)}
-                          title="Unassign"
-                          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0"
+                          disabled={isLocked}
+                          title={isLocked ? `Sheet is ${lockLabel.toLowerCase()} and locked` : 'Unassign'}
+                          className={
+                            isLocked
+                              ? 'w-7 h-7 rounded-md flex items-center justify-center text-slate-300 cursor-not-allowed flex-shrink-0'
+                              : 'w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0'
+                          }
                         >
                           <XIcon size={14} />
                         </button>

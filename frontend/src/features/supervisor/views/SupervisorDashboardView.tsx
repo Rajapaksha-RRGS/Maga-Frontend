@@ -6,7 +6,8 @@ import {
   CheckCircle2, 
   RotateCw, 
   ChevronRight, 
-  FileEdit
+  FileEdit,
+  AlertTriangle
 } from 'lucide-react';
 import type { 
   LaborerEntry, 
@@ -25,10 +26,14 @@ interface SupervisorDashboardViewProps {
   equipment: EquipmentLogEntry[];
   pendingSyncCount: number;
   isDayLocked: boolean;
+  dayStatus?: 'draft' | 'pending_submit' | 'submitted' | 'approved';
+  adminRemarks?: string | null;
   reminders?: CalendarEvent[];
   onOpenNotifications?: () => void;
   onNavigateTab: (tab: 'labor' | 'operators' | 'equipment' | 'summary') => void;
   onQuickSync: () => void;
+  onRefresh?: () => Promise<void>;
+  isRefreshing?: boolean;
 }
 
 export function SupervisorDashboardView({
@@ -39,10 +44,14 @@ export function SupervisorDashboardView({
   equipment,
   pendingSyncCount,
   isDayLocked,
+  dayStatus,
+  adminRemarks,
   reminders: _reminders = [],
   onOpenNotifications: _onOpenNotifications,
   onNavigateTab,
   onQuickSync,
+  onRefresh,
+  isRefreshing = false,
 }: SupervisorDashboardViewProps) {
   // Metrics calculation
   const totalLaborers = laborers.length;
@@ -94,25 +103,58 @@ export function SupervisorDashboardView({
 
   return (
     <div className="space-y-4 pb-20 animate-in fade-in duration-200">
-      {/* ── Lock / Submission Banner if submitted ───────────────────────────── */}
-      {isDayLocked && (
+      {/* ── Lock / Submission / Admin Returned Banner ──────────────────────── */}
+      {isDayLocked ? (
         <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-3.5 flex items-start gap-3 shadow-xs">
           <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
-                Daily Work Roster Submitted & Locked
+                {dayStatus === 'approved' ? 'Approved by Management' : 'Daily Work Roster Submitted & Locked'}
               </h4>
               <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100">
-                Verified
+                {dayStatus === 'approved' ? 'Approved' : 'Verified'}
               </span>
             </div>
             <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5">
-              Attendance and machine meter readings for this shift have been signed off and locked.
+              {dayStatus === 'approved'
+                ? 'Audited and approved by Project Management. Roster is finalized and read-only.'
+                : 'Attendance and machine meter readings for this shift have been signed off and locked.'}
+            </p>
+            {onRefresh && dayStatus !== 'approved' && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={isRefreshing}
+                className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-white dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-900 active:scale-95 transition-all disabled:opacity-60"
+              >
+                <RotateCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
+                <span>{isRefreshing ? 'Checking Server…' : 'Check / Refresh Status'}</span>
+              </button>
+            )}
+          </div>
+        </div>
+      ) : adminRemarks ? (
+        <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-2xl p-3.5 flex items-start gap-3 shadow-xs">
+          <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-rose-900 dark:text-rose-200">
+                Returned for Corrections by Admin
+              </h4>
+              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-200">
+                Action Required
+              </span>
+            </div>
+            <p className="text-xs text-rose-800 dark:text-rose-300 mt-0.5 font-medium">
+              {adminRemarks}
+            </p>
+            <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-0.5">
+              Your shift sheet is unlocked for editing. Please update the records and re-submit.
             </p>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* ── Hero Welcome Card ─────────────────────────────────────────────────── */}
       <div className="bg-gradient-to-br from-blue-700 via-blue-800 to-indigo-900 rounded-2xl p-4 text-white shadow-md relative overflow-hidden">

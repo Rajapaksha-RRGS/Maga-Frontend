@@ -39,6 +39,7 @@ function getDefaultFilters(defaultWorkerType: 'labor' | 'operator' = 'labor'): R
     businessPartner: '',
     activityCode: '',
     workerType: defaultWorkerType,
+    employeeType: '',
   };
 }
 
@@ -67,6 +68,7 @@ export function useReports() {
   const [operatorErpData, setOperatorErpData] = useState<OperatorErpUploadResponse | null>(null);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoadingActivityCodes, setIsLoadingActivityCodes] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   // Always false on mount — user must click "Run Report" each time they visit the page
   const [hasQueried, setHasQueried] = useState<boolean>(false);
@@ -75,9 +77,7 @@ export function useReports() {
   const [businessPartners, setBusinessPartners] = useState<string[]>(
     () => cacheManager.get<string[]>('reports:filter-opts:bp') || []
   );
-  const [activityCodes, setActivityCodes] = useState<{ code: string; description: string }[]>(
-    () => cacheManager.get<{ code: string; description: string }[]>('reports:filter-opts:act') || []
-  );
+  const [activityCodes, setActivityCodes] = useState<{ code: string; description: string }[]>([]);
 
   useEffect(() => {
     // Clear stale result caches on every page mount — ensures fresh data on next query
@@ -90,10 +90,46 @@ export function useReports() {
     cacheManager.invalidate('reports:last-equipment-summary');
     cacheManager.invalidate('reports:last-equipment-erp');
     cacheManager.invalidate('reports:last-operator-erp');
-    // Load filter dropdown options (these are stable reference data — OK to cache)
+    // Load business partner options
     svc.getBusinessPartnerOptions().then(setBusinessPartners);
-    svc.getActivityCodeOptions().then(setActivityCodes);
   }, []);
+
+  // Dynamically load activity codes that actually occurred within the selected date range & employee scope
+  useEffect(() => {
+    if (activeTab !== 'erp-upload' && activeTab !== 'equipment-erp-upload') return;
+    let cancelled = false;
+    setIsLoadingActivityCodes(true);
+    svc
+      .getActivityCodeOptions({
+        dateFrom: filters.dateFrom,
+        dateTo: filters.dateTo,
+        workerType: filters.workerType,
+        employeeType: filters.employeeType,
+        reportType: activeTab,
+      })
+      .then((codes) => {
+        if (cancelled) return;
+        setActivityCodes(codes);
+        setFilters((prev) => {
+          if (
+            prev.activityCode &&
+            !codes.some((c) => c.code.toUpperCase() === prev.activityCode!.toUpperCase())
+          ) {
+            const updated = { ...prev, activityCode: undefined };
+            cacheManager.set('reports:active-filters', updated);
+            return updated;
+          }
+          return prev;
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingActivityCodes(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, filters.dateFrom, filters.dateTo, filters.workerType, filters.employeeType]);
 
   // Update a single filter field
   const updateFilter = useCallback((key: keyof ReportFilters, value: string) => {
@@ -187,12 +223,12 @@ export function useReports() {
     }
   }, [activeTab, filters, user]);
 
-  // Auto-fetch report data when tab or worker category changes
+  // Auto-fetch report data when tab, worker category, or employee type changes
   useEffect(() => {
     if (activeTab !== 'time-card') {
       runQuery();
     }
-  }, [activeTab, filters.workerType]);
+  }, [activeTab, filters.workerType, filters.employeeType]);
 
   // Export current report as Excel (.xlsx) file download with tenant letterhead
   const exportExcel = useCallback(async () => {
@@ -242,6 +278,7 @@ export function useReports() {
     runQuery,
     exportExcel,
     isLoading,
+    isLoadingActivityCodes,
     isExporting,
     hasQueried,
     hasResults,

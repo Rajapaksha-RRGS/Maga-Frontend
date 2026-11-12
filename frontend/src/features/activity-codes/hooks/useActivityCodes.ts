@@ -13,14 +13,18 @@ export function useActivityCodes() {
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (forceRefresh = false) => {
-    if (forceRefresh || !cacheManager.get('activity-codes:list')) {
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent && (forceRefresh || !cacheManager.get('activity-codes:list'))) {
       setIsLoading(true);
     }
-    try { setItems(await svc.getAll()); } finally { setIsLoading(false); }
+    try { setItems(await svc.getAll(undefined, forceRefresh)); } finally {
+      if (!silent) setIsLoading(false);
+    }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load(true, Boolean(cacheManager.get('activity-codes:list')));
+  }, [load]);
 
   const filtered = items.filter((c) => {
     const q = search.toLowerCase();

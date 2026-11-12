@@ -44,6 +44,7 @@ export default function ReportsPage() {
     runQuery,
     exportExcel,
     isLoading,
+    isLoadingActivityCodes,
     isExporting,
     hasQueried,
     hasResults,
@@ -205,6 +206,7 @@ export default function ReportsPage() {
             onResetFilters={resetFilters}
             onQuery={runQuery}
             isLoading={isLoading}
+            isLoadingActivityCodes={isLoadingActivityCodes}
             businessPartners={businessPartners}
             activityCodes={activityCodes}
           />

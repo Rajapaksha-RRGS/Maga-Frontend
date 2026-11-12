@@ -18,6 +18,7 @@ interface Props {
   onResetFilters: () => void;
   onQuery: () => void;
   isLoading: boolean;
+  isLoadingActivityCodes?: boolean;
   businessPartners: string[];
   activityCodes: { code: string; description: string }[];
 }
@@ -35,11 +36,16 @@ export default function ReportFiltersBar({
   onResetFilters,
   onQuery,
   isLoading,
+  isLoadingActivityCodes = false,
   businessPartners,
   activityCodes,
 }: Props) {
   const showBusinessPartner = activeTab !== 'erp-upload' && activeTab !== 'equipment-erp-upload';
   const showActivityCode = activeTab === 'erp-upload' || activeTab === 'equipment-erp-upload';
+  const showEmployeeType =
+    activeTab !== 'equipment-running-chart' &&
+    activeTab !== 'equipment-summary' &&
+    activeTab !== 'equipment-erp-upload';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,7 +57,11 @@ export default function ReportFiltersBar({
       onSubmit={handleSubmit}
       className="bg-white rounded-xl border border-slate-300 p-4 shadow-2xs"
     >
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5 items-end">
+      <div
+        className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${
+          showEmployeeType ? 'lg:grid-cols-6' : 'lg:grid-cols-5'
+        } gap-3.5 items-end`}
+      >
         {/* Date From */}
         <div className="flex flex-col gap-1">
           <label htmlFor="filter-date-from" className={LABEL_CLASS}>
@@ -101,6 +111,25 @@ export default function ReportFiltersBar({
           </div>
         </div>
 
+        {/* Employee Type Filter — Internal / External */}
+        {showEmployeeType && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="filter-employee-type" className={LABEL_CLASS}>
+              Employee type
+            </label>
+            <select
+              id="filter-employee-type"
+              value={filters.employeeType ?? ''}
+              onChange={(e) => onFilterChange('employeeType', e.target.value)}
+              className={INPUT_CLASS}
+            >
+              <option value="">All (Internal &amp; External)</option>
+              <option value="internal">Internal only</option>
+              <option value="external">External only</option>
+            </select>
+          </div>
+        )}
+
         {/* Business Partner Filter — Shown for Summary, Day & OT Summary, BP Bill */}
         {showBusinessPartner && (
           <div className="flex flex-col gap-1">
@@ -133,9 +162,16 @@ export default function ReportFiltersBar({
               id="filter-activity"
               value={filters.activityCode ?? ''}
               onChange={(e) => onFilterChange('activityCode', e.target.value)}
-              className={`${INPUT_CLASS} font-mono`}
+              disabled={isLoadingActivityCodes}
+              className={`${INPUT_CLASS} font-mono disabled:bg-slate-50 disabled:text-slate-400`}
             >
-              <option value="">All activity codes</option>
+              <option value="">
+                {isLoadingActivityCodes
+                  ? 'Loading activities…'
+                  : activityCodes.length === 0
+                  ? 'No activities in selected dates'
+                  : 'All activity codes'}
+              </option>
               {activityCodes.map((act) => (
                 <option key={act.code} value={act.code}>
                   {act.code} — {act.description}
@@ -165,7 +201,7 @@ export default function ReportFiltersBar({
             )}
           </button>
 
-          {(filters.employeeQuery || filters.businessPartner || filters.activityCode || filters.dateFrom || filters.dateTo) && (
+          {(filters.employeeQuery || filters.businessPartner || filters.activityCode || filters.employeeType || filters.dateFrom || filters.dateTo) && (
             <button
               type="button"
               onClick={onResetFilters}

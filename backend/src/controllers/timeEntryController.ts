@@ -14,6 +14,11 @@ function parseDate(dateStr: string): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
+function isSheetLocked(sheet: { status?: string | null; isLocked?: boolean | null } | null | undefined): boolean {
+  if (!sheet) return false;
+  return sheet.status === 'submitted' || sheet.status === 'approved' || Boolean(sheet.isLocked);
+}
+
 // Site Meal Policy configuration
 export interface SiteMealPolicy {
   lunchBreakEnabled: boolean;
@@ -686,6 +691,10 @@ export const checkInEmployee = async (req: Request, res: Response): Promise<void
     }
 
     const dailySheet = effectiveSupId ? await getOrCreateDailySheet(projectId, effectiveSupId, entryDate) : null;
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({ error: 'Cannot check in: Daily sheet is already submitted or approved.' });
+      return;
+    }
 
     // Check existing entries
     const existingEntries = await prisma.mF_OP_TimeEntry.findMany({
@@ -764,13 +773,34 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
         projectId,
         date: entryDate,
         employeeId,
-        status: { in: ['submitted', 'approved'] },
+        OR: [
+          { status: { in: ['submitted', 'approved'] } },
+          { dailySheet: { isLocked: true } },
+          { dailySheet: { status: { in: ['submitted', 'approved'] } } },
+        ],
       },
     });
 
     if (lockedCheck) {
       res.status(403).json({ error: 'Cannot check out: Daily attendance is locked or approved.' });
       return;
+    }
+
+    if (supervisorId) {
+      const sheet = await prisma.mF_OP_DailySheet.findUnique({
+        where: {
+          projectId_supervisorId_date: {
+            projectId,
+            supervisorId,
+            date: entryDate,
+          },
+        },
+        select: { status: true, isLocked: true },
+      });
+      if (isSheetLocked(sheet)) {
+        res.status(403).json({ error: 'Cannot check out: Daily sheet is already submitted or approved.' });
+        return;
+      }
     }
 
     const existingEntries = await prisma.mF_OP_TimeEntry.findMany({
@@ -870,6 +900,10 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
     }
 
     const dailySheet = effectiveSupId ? await getOrCreateDailySheet(projectId, effectiveSupId, targetDate) : null;
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({ error: 'Cannot save labor entries: Daily sheet is already submitted or approved.' });
+      return;
+    }
     const createdEntries = [];
 
     // Pre-load employee snapshots for bulk assignment
@@ -1154,6 +1188,7 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
         status: 'submitted',
         isLocked: true,
         submittedAt,
+        remarks: null,
       },
     });
 
@@ -1280,6 +1315,14 @@ export const getDayStatus = async (req: Request, res: Response): Promise<void> =
         submittedAt: true,
         approvedAt: true,
         remarks: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            assignments: true,
+            equipmentAssignments: true,
+            timeEntries: true,
+          },
+        },
       },
     });
 
@@ -1290,16 +1333,31 @@ export const getDayStatus = async (req: Request, res: Response): Promise<void> =
         submittedAt: null,
         approvedAt: null,
         remarks: null,
+        updatedAt: null,
+        syncVersion: 'empty',
       });
       return;
     }
 
+    const isLocked = dailySheet.status === 'submitted' || dailySheet.status === 'approved' || dailySheet.isLocked;
+    const syncVersion = [
+      dailySheet.status,
+      isLocked ? '1' : '0',
+      dailySheet.remarks || '',
+      dailySheet.updatedAt?.toISOString() || '',
+      dailySheet._count.assignments,
+      dailySheet._count.equipmentAssignments,
+      dailySheet._count.timeEntries,
+    ].join('|');
+
     res.json({
       status: dailySheet.status,
-      isLocked: dailySheet.status === 'submitted' || dailySheet.status === 'approved' || dailySheet.isLocked,
+      isLocked,
       submittedAt: dailySheet.submittedAt,
       approvedAt: dailySheet.approvedAt,
       remarks: dailySheet.remarks,
+      updatedAt: dailySheet.updatedAt,
+      syncVersion,
     });
   } catch (error) {
     console.error('Error fetching day status:', error);
@@ -2028,15 +2086,18 @@ export const rejectTimeEntries = async (req: Request, res: Response): Promise<vo
       },
     });
 
+    const cleanReason = typeof reason === 'string' ? reason.trim() : '';
+    const returnedRemark = cleanReason ? `Returned: ${cleanReason}` : 'Returned for corrections by Admin.';
+
     if (sheet) {
       await prisma.mF_OP_DailySheet.update({
         where: { id: sheet.id },
-        data: { status: 'draft', isLocked: false, remarks: reason ? `Returned: ${reason}` : null },
+        data: { status: 'draft', isLocked: false, remarks: returnedRemark },
       });
 
       await prisma.mF_OP_TimeEntry.updateMany({
         where: { dailySheetId: sheet.id },
-        data: { status: 'draft', remarks: reason ? `Returned: ${reason}` : undefined },
+        data: { status: 'draft', remarks: cleanReason ? `Returned: ${cleanReason}` : undefined },
       });
 
       const eqAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
@@ -2185,6 +2246,13 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
           data: { hours: calculatedHours },
         });
       }
+
+      if (primary.dailySheetId) {
+        await prisma.mF_OP_DailySheet.update({
+          where: { id: primary.dailySheetId },
+          data: { updatedAt: new Date() },
+        });
+      }
     }
 
     res.json({
@@ -2305,6 +2373,10 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
     }
 
     const dailySheet = await getOrCreateDailySheet(projectId, effectiveSupId, targetDate);
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({ error: 'Cannot save equipment logs: Daily sheet is already submitted or approved.' });
+      return;
+    }
 
     // Resolve an equipment
     let rawEqId = assignedEquipmentId;
@@ -2478,6 +2550,10 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
     }
 
     const dailySheet = await getOrCreateDailySheet(projectId, effectiveSupId, targetDate);
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({ error: 'Cannot save equipment logs: Daily sheet is already submitted or approved.' });
+      return;
+    }
 
     if (Array.isArray(activeEmployeeIds) && dailySheet) {
       await prisma.mF_OP_TimeEntry.deleteMany({
@@ -2824,6 +2900,10 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
     }
 
     const dailySheet = await getOrCreateDailySheet(projectId, effectiveSupId, targetDate);
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({ error: 'Cannot save equipment logs: Daily sheet is already submitted or approved.' });
+      return;
+    }
 
     // Reconcile: delete stale draft equipment assignments removed by supervisor
     const incomingEqIds = (entries || []).map((item: any) => item.id || item.equipmentId).filter(Boolean);
@@ -3006,6 +3086,10 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
     }
 
     const dailySheet = effectiveSupId ? await getOrCreateDailySheet(projectId, effectiveSupId, targetDate) : null;
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({ error: 'Cannot save labor entries: Daily sheet is already submitted or approved.' });
+      return;
+    }
 
     if (Array.isArray(activeEmployeeIds) && dailySheet) {
       await prisma.mF_OP_TimeEntry.deleteMany({

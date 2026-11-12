@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   Clock,
   Coins,
+  Lock,
 } from 'lucide-react';
 import Breadcrumb from '../components/Breadcrumb';
 import { useEquipmentAssignments } from '../features/assignments/hooks/useEquipmentAssignments';
@@ -71,6 +72,7 @@ export default function EquipmentAssignmentsPage({
     isSaving,
     unassignedEquipment,
     supervisorAssignments,
+    sheetStatuses,
     totalEquipment,
     assignedCount,
     unassignedCount,
@@ -121,7 +123,7 @@ export default function EquipmentAssignmentsPage({
             <button
               type="button"
               disabled={isSaving || isLoading}
-              onClick={refresh}
+              onClick={() => refresh()}
               className="p-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
               title="Refresh equipment assignments"
             >
@@ -269,6 +271,19 @@ export default function EquipmentAssignmentsPage({
             ))}
           </select>
         )}
+
+        {hideHeader && (
+          <button
+            type="button"
+            disabled={isSaving || isLoading}
+            onClick={() => refresh()}
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 hover:text-blue-600 transition-colors shadow-xs min-h-[44px] disabled:opacity-50 cursor-pointer"
+            title="Refresh equipment assignments"
+          >
+            <RotateCw size={14} className={isLoading ? 'animate-spin text-blue-600' : ''} />
+            <span>Refresh</span>
+          </button>
+        )}
       </div>
 
       {/* ── Loading State ── */}
@@ -410,11 +425,18 @@ export default function EquipmentAssignmentsPage({
                 supervisorAssignments.map(({ supervisor, equipmentList: assignedEqs }, idx) => {
                   const avatarColor = AVATAR_COLORS[idx % AVATAR_COLORS.length];
                   const hasSelection = selectedEquipmentIds.size > 0;
+                  const lockInfo = sheetStatuses[supervisor.id];
+                  const isLocked = Boolean(lockInfo?.isLocked);
+                  const lockLabel = lockInfo?.status === 'approved' ? 'Approved' : 'Submitted';
 
                   return (
                     <div
                       key={supervisor.id}
-                      className="border border-slate-200 rounded-xl p-3 bg-white hover:border-slate-300 transition-colors shadow-2xs"
+                      className={`border rounded-xl p-3 transition-colors shadow-2xs ${
+                        isLocked
+                          ? 'border-amber-200 bg-amber-50/20'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
                     >
                       {/* Supervisor Header */}
                       <div className="flex items-center justify-between gap-3 mb-2.5">
@@ -430,9 +452,21 @@ export default function EquipmentAssignmentsPage({
                             {supervisor.fullName.charAt(0).toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <h3 className="text-xs font-semibold text-slate-900 truncate">
-                              {supervisor.fullName}
-                            </h3>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <h3 className="text-xs font-semibold text-slate-900 truncate">
+                                {supervisor.fullName}
+                              </h3>
+                              {isLocked && (
+                                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
+                                  lockInfo?.status === 'approved'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                                }`}>
+                                  <Lock size={10} />
+                                  {lockLabel}
+                                </span>
+                              )}
+                            </div>
                             <span className="text-[11px] text-slate-500 font-medium">
                               {assignedEqs.length} equipment item{assignedEqs.length !== 1 ? 's' : ''} assigned
                             </span>
@@ -442,18 +476,19 @@ export default function EquipmentAssignmentsPage({
                         {/* Assign Button */}
                         <button
                           type="button"
-                          disabled={!hasSelection || isSaving}
+                          disabled={!hasSelection || isSaving || isLocked}
                           onClick={() => assignToSupervisor(supervisor.id)}
+                          title={isLocked ? `Sheet is ${lockLabel.toLowerCase()} and locked` : undefined}
                           className={[
-                            'px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow-xs cursor-pointer',
-                            hasSelection
-                              ? 'bg-amber-600 hover:bg-amber-700 text-white active:scale-98'
-                              : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed',
+                            'px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow-xs',
+                            isLocked || !hasSelection
+                              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                              : 'bg-amber-600 hover:bg-amber-700 text-white active:scale-98 cursor-pointer',
                           ].join(' ')}
                         >
-                          <UserPlus size={13} />
+                          {isLocked ? <Lock size={12} /> : <UserPlus size={13} />}
                           <span>
-                            {hasSelection ? `Assign (${selectedEquipmentIds.size})` : 'Assign'}
+                            {isLocked ? 'Locked' : hasSelection ? `Assign (${selectedEquipmentIds.size})` : 'Assign'}
                           </span>
                         </button>
                       </div>
@@ -485,10 +520,14 @@ export default function EquipmentAssignmentsPage({
                               </div>
                               <button
                                 type="button"
-                                disabled={isSaving}
+                                disabled={isSaving || isLocked}
                                 onClick={() => unassignEquipment(assignment.id)}
-                                className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer"
-                                title={`Unassign ${eq.name || 'equipment'}`}
+                                className={
+                                  isLocked
+                                    ? 'text-slate-300 p-1 rounded cursor-not-allowed'
+                                    : 'text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer'
+                                }
+                                title={isLocked ? `Sheet is ${lockLabel.toLowerCase()} and locked` : `Unassign ${eq.name || 'equipment'}`}
                               >
                                 <X size={13} />
                               </button>

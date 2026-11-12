@@ -15,20 +15,24 @@ export function useSupervisors() {
   const [search, setSearch] = useState('');
   const [tempPasswordResult, setTempPasswordResult] = useState<{ name: string; password: string } | null>(null);
 
-  const load = useCallback(async (forceRefresh = false) => {
-    if (forceRefresh || !cacheManager.get('supervisors:list')) {
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent && (forceRefresh || !cacheManager.get('supervisors:list'))) {
       setIsLoading(true);
     }
     try {
-      const [sups, emps] = await Promise.all([svc.getAll(), svc.getAvailableEmployees()]);
+      const [sups, emps] = await Promise.all([svc.getAll(forceRefresh), svc.getAvailableEmployees()]);
       setSupervisors(sups);
       setEmployees(emps);
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load(true, Boolean(cacheManager.get('supervisors:list')));
+  }, [load]);
 
   const filtered = supervisors.filter((s) => {
     const q = search.toLowerCase();

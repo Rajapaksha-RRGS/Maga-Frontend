@@ -125,13 +125,14 @@ export function OperatorEntryView({
   };
 
   const handleAddMultipleOperatorsFromPool = async (newOps: OperatorEntry[]) => {
+    if (isDayLocked) {
+      alert('Daily sheet is already submitted or approved and cannot be modified.');
+      return;
+    }
     const existingIds = new Set(operators.map((o) => o.id));
     const toAdd = newOps.filter((o) => !existingIds.has(o.id));
     if (toAdd.length > 0) {
-      const updated = [...operators, ...toAdd];
-      onSaveOperators(updated);
-
-      // Real-time backend operator assignment
+      // Persist assignment to backend first so locked/conflict checks reject before mutating UI state
       if (selectedDate && (supervisorId || user?.id)) {
         try {
           await assignmentService.assignOperators(
@@ -140,9 +141,12 @@ export function OperatorEntryView({
             toAdd.map((o) => o.id)
           );
         } catch (err: any) {
-          console.warn('[OperatorEntryView] Background assignment sync error:', err);
+          alert(err?.message || 'Cannot add operators: daily sheet may be submitted, approved, or operator locked.');
+          return;
         }
       }
+      const updated = [...operators, ...toAdd];
+      onSaveOperators(updated);
     }
   };
   // Mode: In Time or Out Time (matching Labor view layout)

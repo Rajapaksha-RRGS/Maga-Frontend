@@ -47,7 +47,7 @@ function buildDateFilter(dateFrom?: string, dateTo?: string) {
   if (dateFrom) filter.gte = new Date(dateFrom);
   if (dateTo) {
     const d = new Date(dateTo);
-    d.setHours(23, 59, 59, 999);
+    d.setUTCHours(23, 59, 59, 999);
     filter.lte = d;
   }
   return Object.keys(filter).length > 0 ? filter : undefined;
@@ -147,12 +147,20 @@ function computeAttendanceHoursAndOt(
   return { workHours: fallbackHours, otHours: ot };
 }
 
-function buildEmployeeFilter(workerType?: string, businessPartner?: string, employeeQuery?: string) {
+function buildEmployeeFilter(
+  workerType?: string,
+  businessPartner?: string,
+  employeeQuery?: string,
+  employeeType?: string
+) {
   const filter: any = {};
   if (workerType === 'operator') {
     filter.isOperator = true;
   } else if (workerType === 'labor') {
     filter.isOperator = false;
+  }
+  if (employeeType === 'internal' || employeeType === 'external') {
+    filter.corporateEmployee = { employeeType };
   }
   if (businessPartner) {
     filter.businessPartner = { name: { contains: businessPartner, mode: 'insensitive' } };
@@ -189,9 +197,10 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
     const workerType = qStr(req.query.workerType) || 'labor';
+    const employeeType = qStr(req.query.employeeType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
-    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
 
     // Fetch time entries with employee + corporateEmployee + business partner data
     const entries = await prisma.mF_OP_TimeEntry.findMany({
@@ -277,26 +286,14 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
 
     // Also include operators assigned to equipment
     if (workerType === 'operator') {
+      const opEmployeeFilter = buildEmployeeFilter('operator', businessPartner, employeeQuery, employeeType);
       const opAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
         where: {
           dailySheet: {
             projectId,
             ...(dateFilter ? { date: dateFilter } : {}),
           },
-          ...(businessPartner
-            ? { operator: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
-            : {}),
-          ...(employeeQuery
-            ? {
-                operator: {
-                  OR: [
-                    { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                    { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
-                    { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
-                  ],
-                },
-              }
-            : {}),
+          ...(opEmployeeFilter ? { operator: opEmployeeFilter } : {}),
         },
         include: {
           dailySheet: { select: { date: true } },
@@ -452,9 +449,10 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
     const workerType = qStr(req.query.workerType) || 'labor';
+    const employeeType = qStr(req.query.employeeType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
-    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
 
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
@@ -612,9 +610,10 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     const employeeQuery = qStr(req.query.employeeQuery);
     const businessPartner = qStr(req.query.businessPartner);
     const workerType = qStr(req.query.workerType) || 'labor';
+    const employeeType = qStr(req.query.employeeType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
-    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
 
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
@@ -702,26 +701,14 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
 
     // Also include operators if applicable
     if (workerType === 'operator') {
+      const opEmployeeFilter = buildEmployeeFilter('operator', businessPartner, employeeQuery, employeeType);
       const opAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
         where: {
           dailySheet: {
             projectId,
             ...(dateFilter ? { date: dateFilter } : {}),
           },
-          ...(businessPartner
-            ? { operator: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
-            : {}),
-          ...(employeeQuery
-            ? {
-                operator: {
-                  OR: [
-                    { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                    { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
-                    { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
-                  ],
-                },
-              }
-            : {}),
+          ...(opEmployeeFilter ? { operator: opEmployeeFilter } : {}),
         },
         include: {
           dailySheet: { select: { date: true } },
@@ -906,9 +893,67 @@ function parseTimeToHours(t: string | null | undefined): number | null {
   return null;
 }
 
+// ─── Helper: compute shift effective hours, activity sum, ZIDLE & OT for a day group ─
+function computeErpDayMetrics(groupEntries: any[]) {
+  const first = groupEntries[0];
+  const dateKey = first.date.toISOString().split('T')[0];
+  const dayRule = getDayTypeRule(dateKey);
+
+  const inTime = groupEntries.find((e) => e.inTime)?.inTime;
+  const outTime = groupEntries.find((e) => e.outTime)?.outTime;
+  let shiftEffectiveHours =
+    Number(groupEntries.find((e) => e.shiftHours !== null && Number(e.shiftHours) > 0)?.shiftHours) || 0;
+
+  const inH = parseTimeToHours(inTime);
+  const outH = parseTimeToHours(outTime);
+
+  if (shiftEffectiveHours === 0 && inH !== null && outH !== null) {
+    let grossH = outH - inH;
+    if (grossH < 0) grossH += 24;
+    let breakH = Number(groupEntries.find((e) => e.breakHours !== null)?.breakHours) || 0;
+    if (breakH === 0) {
+      if (grossH >= 5.0) breakH += 1.0;
+      const isPast11PM = outH >= inH ? outH >= 23.0 : inH <= 23.0 || outH >= 23.0;
+      if (isPast11PM) breakH += 1.0;
+    }
+    shiftEffectiveHours = Math.max(0, Math.round((grossH - breakH) * 100) / 100);
+  }
+
+  let totalDayHours = 0;
+  for (const entry of groupEntries) {
+    if (entry.activitySplits && entry.activitySplits.length > 0) {
+      for (const split of entry.activitySplits) {
+        totalDayHours += Number(split.hours) || 0;
+      }
+    } else {
+      totalDayHours += Number(entry.shiftHours ?? entry.hours) || 0;
+    }
+  }
+
+  const idleHours =
+    shiftEffectiveHours > 0 && totalDayHours < shiftEffectiveHours
+      ? Math.round((shiftEffectiveHours - totalDayHours) * 100) / 100
+      : 0;
+
+  const effectiveForOt = shiftEffectiveHours > 0 ? shiftEffectiveHours : totalDayHours;
+  let otHours = 0;
+  if (dayRule.isAllOvertime) {
+    otHours = effectiveForOt;
+  } else if (effectiveForOt > dayRule.standardCap) {
+    otHours = parseFloat((effectiveForOt - dayRule.standardCap).toFixed(2));
+  }
+
+  if (shiftEffectiveHours === 0) {
+    const explicitOt = groupEntries.reduce((s, e) => s + Number(e.overtimeHours), 0);
+    if (explicitOt > otHours) otHours = explicitOt;
+  }
+
+  return { dateKey, dayRule, shiftEffectiveHours, totalDayHours, idleHours, otHours };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. ERP UPLOAD EXPORT
-// GET /api/reports/erp-upload?dateFrom=&dateTo=&employeeQuery=&activityCode=
+// GET /api/reports/erp-upload?dateFrom=&dateTo=&employeeQuery=&activityCode=&employeeType=
 // ─────────────────────────────────────────────────────────────────────────────
 export const getErpUploadReport = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -919,9 +964,10 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
     const activityCode = qStr(req.query.activityCode);
     const businessPartner = qStr(req.query.businessPartner);
     const workerType = qStr(req.query.workerType) || 'labor';
+    const employeeType = qStr(req.query.employeeType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
-    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
     const normalizedActivityFilter = activityCode?.trim().toUpperCase();
     const isDynamicErpCode = normalizedActivityFilter === 'ZIDLE' || normalizedActivityFilter === 'OT';
     const activityFilter = isDynamicErpCode ? undefined : buildActivityCodeFilter(activityCode, 'equals');
@@ -931,7 +977,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
-        status: 'approved',
+        status: { in: ['submitted', 'approved'] },
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(activityFilter ?? {}),
         ...(empFilter ? { employee: empFilter } : {}),
@@ -969,42 +1015,21 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
 
     for (const [, groupEntries] of groups) {
       const first = groupEntries[0];
-      const dateKey = first.date.toISOString().split('T')[0];
-      const { standardCap, isAllOvertime, label } = getDayTypeRule(dateKey);
-
-      // Determine physical shift effective hours (Gross hours - Lunch break)
-      const inTime = groupEntries.find((e) => e.inTime)?.inTime;
-      const outTime = groupEntries.find((e) => e.outTime)?.outTime;
-      let shiftEffectiveHours = Number(groupEntries.find((e) => e.shiftHours !== null && Number(e.shiftHours) > 0)?.shiftHours) || 0;
-
-      const inH = parseTimeToHours(inTime);
-      const outH = parseTimeToHours(outTime);
-
-      if (shiftEffectiveHours === 0 && inH !== null && outH !== null) {
-        let grossH = outH - inH;
-        if (grossH < 0) grossH += 24;
-        let breakH = Number(groupEntries.find((e) => e.breakHours !== null)?.breakHours) || 0;
-        if (breakH === 0) {
-          if (grossH >= 5.0) breakH += 1.0;
-          const isPast11PM = (outH >= inH) ? (outH >= 23.0) : (inH <= 23.0 || outH >= 23.0);
-          if (isPast11PM) breakH += 1.0;
-        }
-        shiftEffectiveHours = Math.max(0, Math.round((grossH - breakH) * 100) / 100);
-      }
-
-      let totalDayHours = 0;
+      const empType = first.employee.corporateEmployee.employeeType || 'internal';
+      const { dateKey, dayRule, idleHours, otHours } = computeErpDayMetrics(groupEntries);
+      const { standardCap, isAllOvertime, label } = dayRule;
 
       // Regular activity rows
       for (const entry of groupEntries) {
         if (entry.activitySplits && entry.activitySplits.length > 0) {
           for (const split of entry.activitySplits) {
             const splitHours = Number(split.hours) || 0;
-            totalDayHours += splitHours;
             if (matchesActivityFilter(split.activityCode.code)) {
               finalRows.push({
                 id: `erp-${rowIdx++}`,
                 employeeId: entry.employee.corporateEmployee.employeeCode || entry.employeeId,
                 employeeName: entry.employee.corporateEmployee.fullName || entry.employee.callingName || '',
+                employeeType: empType,
                 date: dateKey,
                 activityCode: split.activityCode.code,
                 activityDescription: split.activityCode.description || split.activityCode.code,
@@ -1015,46 +1040,24 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
               totalHours += splitHours;
             }
           }
-        } else {
-          const hours = Number(entry.shiftHours ?? entry.hours);
-          totalDayHours += hours;
         }
       }
 
       // ── ZIDLE Balancing Row ────────────────────────────────────────────────
-      // When sum of activity hours is LESS than actual physical effective shift hours,
-      // the unallocated shortage is added as an idle time row (ZIDLE) to account for full shift attendance.
-      if (shiftEffectiveHours > 0 && totalDayHours < shiftEffectiveHours) {
-        const idleHours = Math.round((shiftEffectiveHours - totalDayHours) * 100) / 100;
-        if (matchesActivityFilter('ZIDLE')) {
-          finalRows.push({
-            id: `erp-zidle-${first.employeeId}-${dateKey}`,
-            employeeId: first.employee.corporateEmployee.employeeCode || first.employeeId,
-            employeeName: first.employee.corporateEmployee.fullName || first.employee.callingName || '',
-            date: dateKey,
-            activityCode: 'ZIDLE',
-            activityDescription: 'Idle / Unallocated Hours',
-            hours: idleHours,
-            overtimeHours: 0,
-            remarks: 'Unallocated idle shift hours',
-          });
-          totalHours += idleHours;
-        }
-      }
-
-      // Calculate OT line based on day type calendar rules on the effective hours
-      const effectiveForOt = shiftEffectiveHours > 0 ? shiftEffectiveHours : totalDayHours;
-      let otHours = 0;
-      if (isAllOvertime) {
-        otHours = effectiveForOt; // Sunday/Holiday: 100% OT
-      } else if (effectiveForOt > standardCap) {
-        otHours = parseFloat((effectiveForOt - standardCap).toFixed(2));
-      }
-
-      // If no shift bounds were recorded, fallback to explicit overtime stored in entries
-      if (shiftEffectiveHours === 0) {
-        const explicitOt = groupEntries.reduce((s, e) => s + Number(e.overtimeHours), 0);
-        if (explicitOt > otHours) otHours = explicitOt;
+      if (idleHours > 0 && matchesActivityFilter('ZIDLE')) {
+        finalRows.push({
+          id: `erp-zidle-${first.employeeId}-${dateKey}`,
+          employeeId: first.employee.corporateEmployee.employeeCode || first.employeeId,
+          employeeName: first.employee.corporateEmployee.fullName || first.employee.callingName || '',
+          employeeType: empType,
+          date: dateKey,
+          activityCode: 'ZIDLE',
+          activityDescription: 'Idle / Unallocated Hours',
+          hours: idleHours,
+          overtimeHours: 0,
+          remarks: 'Unallocated idle shift hours',
+        });
+        totalHours += idleHours;
       }
 
       if (otHours > 0 && matchesActivityFilter('OT')) {
@@ -1062,6 +1065,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
           id: `erp-ot-${first.employeeId}-${dateKey}`,
           employeeId: first.employee.corporateEmployee.employeeCode || first.employeeId,
           employeeName: first.employee.corporateEmployee.fullName || first.employee.callingName || '',
+          employeeType: empType,
           date: dateKey,
           activityCode: 'OT',
           activityDescription: isAllOvertime
@@ -1094,23 +1098,99 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
 export const getReportFilterOptions = async (req: Request, res: Response): Promise<void> => {
   try {
     const projectId = await resolveProjectId(req);
+    const dateFrom = qStr(req.query.dateFrom);
+    const dateTo = qStr(req.query.dateTo);
+    const reportType = qStr(req.query.reportType);
+    const workerType = qStr(req.query.workerType) || 'labor';
+    const employeeType = qStr(req.query.employeeType);
+    const employeeQuery = qStr(req.query.employeeQuery);
+    const businessPartner = qStr(req.query.businessPartner);
 
-    const [partners, activityCodes] = await Promise.all([
-      prisma.mF_G_BusinessPartner.findMany({
-        where: { status: 'active' },
-        select: { id: true, name: true, code: true },
-        orderBy: { name: 'asc' },
-      }),
-      prisma.mF_P_ActivityCode.findMany({
+    const partners = await prisma.mF_G_BusinessPartner.findMany({
+      where: { status: 'active' },
+      select: { id: true, name: true, code: true },
+      orderBy: { name: 'asc' },
+    });
+
+    let formattedActivityCodes: Array<{ code: string; description: string }> = [];
+
+    if (reportType === 'erp-upload' || (reportType !== 'equipment-erp-upload' && (dateFrom || dateTo))) {
+      const dateFilter = buildDateFilter(dateFrom, dateTo);
+      const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
+
+      const entries = await prisma.mF_OP_TimeEntry.findMany({
+        where: {
+          projectId,
+          status: { in: ['submitted', 'approved'] },
+          ...(dateFilter ? { date: dateFilter } : {}),
+          ...(empFilter ? { employee: empFilter } : {}),
+        },
+        include: {
+          activitySplits: {
+            include: {
+              activityCode: {
+                select: { code: true, description: true },
+              },
+            },
+          },
+        },
+      });
+
+      const codeMap = new Map<string, { code: string; description: string }>();
+      const groups = new Map<string, typeof entries>();
+
+      for (const entry of entries) {
+        const dateKey = entry.date.toISOString().split('T')[0];
+        const key = `${entry.employeeId}___${dateKey}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(entry);
+
+        if (entry.activitySplits && entry.activitySplits.length > 0) {
+          for (const split of entry.activitySplits) {
+            const rawCode = split.activityCode?.code;
+            if (!rawCode) continue;
+            const norm = rawCode.trim().toUpperCase();
+            if (!codeMap.has(norm)) {
+              codeMap.set(norm, {
+                code: rawCode,
+                description: split.activityCode.description || rawCode,
+              });
+            }
+          }
+        }
+      }
+
+      let hasZidle = false;
+      let hasOt = false;
+      for (const [, groupEntries] of groups) {
+        const { idleHours, otHours } = computeErpDayMetrics(groupEntries);
+        if (idleHours > 0) hasZidle = true;
+        if (otHours > 0) hasOt = true;
+        if (hasZidle && hasOt) break;
+      }
+
+      formattedActivityCodes = Array.from(codeMap.values()).sort((a, b) => a.code.localeCompare(b.code));
+      if (hasZidle && !codeMap.has('ZIDLE')) {
+        formattedActivityCodes.push({ code: 'ZIDLE', description: 'Idle / Unallocated Hours' });
+      }
+      if (hasOt && !codeMap.has('OT')) {
+        formattedActivityCodes.push({ code: 'OT', description: 'Overtime Hours' });
+      }
+    } else {
+      const activityCodes = await prisma.mF_P_ActivityCode.findMany({
         where: { projectId },
         select: { id: true, code: true, description: true },
         orderBy: { code: 'asc' },
-      }),
-    ]);
+      });
+      formattedActivityCodes = activityCodes.map((a) => ({
+        code: a.code,
+        description: a.description || a.code,
+      }));
+    }
 
     res.json({
       businessPartners: partners.map((p) => p.name),
-      activityCodes: activityCodes.map((a) => ({ code: a.code, description: a.description || a.code })),
+      activityCodes: formattedActivityCodes,
     });
   } catch (error) {
     console.error('Error fetching report filter options:', error);
@@ -1131,9 +1211,10 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
     const businessPartner = qStr(req.query.businessPartner);
     const activityCode = qStr(req.query.activityCode);
     const workerType = qStr(req.query.workerType) || 'operator';
+    const employeeType = qStr(req.query.employeeType);
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
-    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery);
+    const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
     const activityFilter = buildActivityCodeFilter(activityCode, 'contains');
 
     const entries = await prisma.mF_OP_TimeEntry.findMany({
@@ -1307,26 +1388,14 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
     }
 
     if (workerType === 'operator') {
+      const opEmpFilter = buildEmployeeFilter('operator', businessPartner, employeeQuery, employeeType);
       const opAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
         where: {
           dailySheet: {
             projectId,
             ...(dateFilter ? { date: dateFilter } : {}),
           },
-          ...(businessPartner
-            ? { operator: { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } }
-            : {}),
-          ...(employeeQuery
-            ? {
-                operator: {
-                  OR: [
-                    { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                    { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
-                    { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
-                  ],
-                },
-              }
-            : {}),
+          ...(opEmpFilter ? { operator: opEmpFilter } : {}),
         },
         include: {
           dailySheet: {
@@ -1410,6 +1479,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
     const monthParam = qStr(req.query.month) || new Date().toISOString().slice(0, 7); // YYYY-MM
     const employeeId = qStr(req.query.employeeId);
     const workerType = qStr(req.query.workerType) || 'all'; // 'all' | 'labor' | 'operator'
+    const employeeType = qStr(req.query.employeeType);
     const bpId = qStr(req.query.businessPartnerId);
 
     const [yearStr, monthNumStr] = monthParam.split('-');
@@ -1457,6 +1527,9 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
       empWhere.isOperator = false;
     } else if (workerType === 'operator') {
       empWhere.isOperator = true;
+    }
+    if (employeeType === 'internal' || employeeType === 'external') {
+      empWhere.corporateEmployee = { employeeType };
     }
 
     const employees = await prisma.mF_P_Employee.findMany({
@@ -2435,6 +2508,7 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
     const month = qStr(req.query.month);
     const businessPartner = qStr(req.query.businessPartner);
     const employeeQuery = qStr(req.query.employeeQuery);
+    const employeeType = qStr(req.query.employeeType);
 
     let from = dateFrom;
     let to = dateTo;
@@ -2447,27 +2521,14 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
     }
 
     const dateFilter = buildDateFilter(from, to);
+    const opEmpFilter = buildEmployeeFilter('operator', businessPartner, employeeQuery, employeeType)!;
 
     // 1. Fetch all Operator Time Entries (which contain granular machine splits)
     const operatorTimeEntries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
         status: 'approved',
-        employee: {
-          isOperator: true,
-          ...(businessPartner
-            ? { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } }
-            : {}),
-          ...(employeeQuery
-            ? {
-                OR: [
-                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
-                  { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
-                ],
-              }
-            : {}),
-        },
+        employee: opEmpFilter,
         ...(dateFilter ? { date: dateFilter } : {}),
       },
       include: {
@@ -2494,21 +2555,7 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
           status: 'approved',
           ...(dateFilter ? { date: dateFilter } : {}),
         },
-        operator: {
-          isOperator: true,
-          ...(businessPartner
-            ? { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } }
-            : {}),
-          ...(employeeQuery
-            ? {
-                OR: [
-                  { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-                  { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
-                  { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
-                ],
-              }
-            : {}),
-        },
+        operator: opEmpFilter,
       },
       include: {
         dailySheet: { select: { date: true } },

@@ -85,7 +85,7 @@ export async function getNextPartnerCode(): Promise<string> {
   return 'BP1001001';
 }
 
-export async function getAll(scope?: 'site' | 'corporate'): Promise<BusinessPartner[]> {
+export async function getAll(scope?: 'site' | 'corporate', forceRefresh: boolean = false): Promise<BusinessPartner[]> {
   const cacheKey = scope === 'corporate' ? 'business-partners:corporate' : 'business-partners:list';
   return cacheManager.fetchWithCache(cacheKey, async () => {
     const url = scope === 'corporate' ? `${API_URL}/business-partners?scope=corporate` : `${API_URL}/business-partners`;
@@ -97,7 +97,7 @@ export async function getAll(scope?: 'site' | 'corporate'): Promise<BusinessPart
     const data = await res.json();
     if (Array.isArray(data)) return data.map(mapPartner);
     return [];
-  });
+  }, null, forceRefresh);
 }
 
 export async function getById(id: string): Promise<BusinessPartner | undefined> {

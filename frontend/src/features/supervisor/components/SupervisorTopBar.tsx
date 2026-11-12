@@ -19,6 +19,7 @@ interface SupervisorTopBarProps {
   onSelectSite?: (site: SiteProject) => void;
   pendingSyncCount: number;
   onSync: () => Promise<void>;
+  onRefresh?: () => Promise<void>;
   isSyncing: boolean;
   onOpenDrawer: () => void;
   isDayLocked?: boolean;
@@ -30,6 +31,7 @@ export function SupervisorTopBar({
   currentSite,
   pendingSyncCount,
   onSync,
+  onRefresh,
   isSyncing,
   onOpenDrawer,
   isDayLocked = false,
@@ -44,6 +46,15 @@ export function SupervisorTopBar({
     await onSync();
     setSyncSuccessToast(true);
     setTimeout(() => setSyncSuccessToast(false), 2500);
+  };
+
+  const handleRefreshClick = async () => {
+    if (isSyncing) return;
+    if (onRefresh) {
+      await onRefresh();
+    } else {
+      await onSync();
+    }
   };
 
   return (
@@ -70,15 +81,22 @@ export function SupervisorTopBar({
 
         {/* Right Actions: Sync Status, Theme Toggle, Drawer */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {/* Offline Sync Status or Locked indicator */}
+          {/* Offline Sync Status or Locked indicator (with Refresh) */}
           {isDayLocked ? (
-            <div 
-              title="Shift Roster Locked & Submitted"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 shadow-2xs"
+            <button
+              type="button"
+              onClick={handleRefreshClick}
+              disabled={isSyncing}
+              title="Shift Roster Locked & Submitted — Tap to check for Admin updates"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 shadow-2xs hover:bg-emerald-100 dark:hover:bg-emerald-900/50 active:scale-95 transition-all"
             >
-              <Lock size={13} className="text-emerald-600 dark:text-emerald-400" />
-              <span>Locked</span>
-            </div>
+              {isSyncing ? (
+                <RotateCw size={13} className="animate-spin text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <Lock size={13} className="text-emerald-600 dark:text-emerald-400" />
+              )}
+              <span>{isSyncing ? 'Checking…' : 'Locked'}</span>
+            </button>
           ) : (
             <button
               type="button"
@@ -102,6 +120,20 @@ export function SupervisorTopBar({
               <span className="tabular-nums">
                 {isSyncing ? 'Syncing…' : pendingSyncCount > 0 ? `${pendingSyncCount}` : 'Synced'}
               </span>
+            </button>
+          )}
+
+          {/* Manual Refresh Button (Always available — locked or unlocked) */}
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={handleRefreshClick}
+              disabled={isSyncing}
+              aria-label="Refresh data from server"
+              title="Refresh data from server"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors active:scale-95 border border-slate-200/70 dark:border-slate-700/70 disabled:opacity-50"
+            >
+              <RotateCw size={15} className={isSyncing ? 'animate-spin text-blue-600 dark:text-blue-400' : ''} />
             </button>
           )}
 

@@ -87,7 +87,20 @@ export default function ErpUploadTable({ data }: Props) {
                   >
                     <td className="px-4 py-3">
                       <span className="font-medium text-slate-800">{row.employeeName}</span>
-                      <span className="block text-[10px] font-mono text-slate-400">{row.employeeId}</span>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10px] font-mono text-slate-400">{row.employeeId}</span>
+                        {row.employeeType && (
+                          <span
+                            className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-semibold uppercase tracking-wide border ${
+                              row.employeeType === 'internal'
+                                ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                : 'bg-violet-50 text-violet-700 border-violet-200'
+                            }`}
+                          >
+                            {row.employeeType}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 font-mono text-slate-600 text-xs">
                       {row.date}

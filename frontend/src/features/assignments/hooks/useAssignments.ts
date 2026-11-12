@@ -2,7 +2,7 @@
  * useAssignments.ts — State management for daily assignments.
  * Handles selected date, context data, multi-select, assign/unassign/copy/bulk.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Assignment } from '../services/assignmentService';
 import type { Employee } from '../../employees/services/employeeService';
 import type { Supervisor } from '../../supervisors/services/supervisorService';
@@ -29,34 +29,46 @@ export function useAssignments(controlledDate?: string, onDateChange?: (date: st
   const setSelectedDate = onDateChange || setInternalDate;
 
   const initialAsgn = cacheManager.get<Assignment[]>(`assignments:date:${initialDate}`) || [];
-  const initialCtx = cacheManager.get<{ employees: Employee[]; supervisors: Supervisor[] }>('assignments:context');
+  const initialCtx = cacheManager.get<{ employees: Employee[]; supervisors: Supervisor[] }>(`assignments:context:${initialDate}`);
 
   const [assignments, setAssignments] = useState<Assignment[]>(initialAsgn);
   const [employees, setEmployees] = useState<Employee[]>(initialCtx?.employees || []);
   const [supervisors, setSupervisors] = useState<Supervisor[]>(initialCtx?.supervisors || []);
+  const [sheetStatuses, setSheetStatuses] = useState<Record<string, svc.DailySheetLockStatus>>({});
   const [isLoading, setIsLoading] = useState<boolean>(() => !cacheManager.get(`assignments:date:${initialDate}`) || !initialCtx);
+  const isSavingRef = useRef<boolean>(false);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set());
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [employeeBPFilter, setEmployeeBPFilter] = useState('');
   const [employeeTGFilter, setEmployeeTGFilter] = useState('');
 
-  const load = useCallback(async (forceRefresh = false) => {
-    setIsLoading(true);
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent) {
+      setIsLoading(true);
+    }
     try {
-      const [asgn, ctx] = await Promise.all([
+      const [asgn, ctx, statuses] = await Promise.all([
         svc.getForDate(selectedDate, forceRefresh),
         svc.getAssignmentContext(selectedDate, forceRefresh),
+        svc.getDailySheetStatuses(selectedDate),
       ]);
       setAssignments(asgn);
       setEmployees(ctx.employees);
       setSupervisors(ctx.supervisors);
-      setSelectedEmployeeIds(new Set());
+      setSheetStatuses(statuses);
+      if (!silent) {
+        setSelectedEmployeeIds(new Set());
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, [selectedDate]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load(true, Boolean(cacheManager.get(`assignments:date:${selectedDate}`)));
+  }, [load, selectedDate]);
 
   // Derived: unassigned employees
   const assignedEmpIds = new Set(assignments.map((a) => a.employeeId));
@@ -97,38 +109,82 @@ export function useAssignments(controlledDate?: string, onDateChange?: (date: st
   const deselectAll = () => setSelectedEmployeeIds(new Set());
 
   const assignToSupervisor = async (supervisorId: string) => {
-    if (selectedEmployeeIds.size === 0) return;
-    await svc.assign(selectedDate, supervisorId, [...selectedEmployeeIds]);
-    await load();
+    if (selectedEmployeeIds.size === 0 || isSavingRef.current) return;
+    isSavingRef.current = true;
+    try {
+      await svc.assign(selectedDate, supervisorId, [...selectedEmployeeIds]);
+      await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot assign laborers to this supervisor.');
+      await load(true);
+    } finally {
+      isSavingRef.current = false;
+    }
   };
 
   const unassignEmployee = async (assignmentId: string) => {
-    await svc.unassign(selectedDate, assignmentId);
-    await load();
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    try {
+      await svc.unassign(selectedDate, assignmentId);
+      await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot remove assignment.');
+      await load(true);
+    } finally {
+      isSavingRef.current = false;
+    }
   };
 
   const copyPreviousDay = async () => {
-    const prev = prevDateStr(selectedDate);
-    await svc.copyFromDate(prev, selectedDate);
-    await load(true);
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    try {
+      const prev = prevDateStr(selectedDate);
+      await svc.copyFromDate(prev, selectedDate);
+      await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot copy previous day gang.');
+      await load(true);
+    } finally {
+      isSavingRef.current = false;
+    }
   };
 
   const copyFromSpecificDate = async (sourceDate: string, supervisorIds?: string[]) => {
-    await svc.copyFromDate(sourceDate, selectedDate, supervisorIds);
-    await load(true);
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    try {
+      await svc.copyFromDate(sourceDate, selectedDate, supervisorIds);
+      await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot copy gang from selected date.');
+      await load(true);
+    } finally {
+      isSavingRef.current = false;
+    }
   };
 
   const bulkAssignByGroup = async (
     supervisorId: string,
     filter: { tradeGroup?: string; businessPartner?: string }
   ) => {
-    await svc.bulkAssign(selectedDate, supervisorId, filter);
-    await load();
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    try {
+      await svc.bulkAssign(selectedDate, supervisorId, filter);
+      await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot bulk assign laborers.');
+      await load(true);
+    } finally {
+      isSavingRef.current = false;
+    }
   };
 
   return {
     selectedDate, setSelectedDate,
-    assignments, employees, supervisors,
+    assignments, employees, supervisors, sheetStatuses,
     isLoading,
     unassignedEmployees, supervisorAssignments, unassignedCount,
     selectedEmployeeIds, toggleEmployeeSelection, selectAllUnassigned, deselectAll,

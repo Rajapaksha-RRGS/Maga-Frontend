@@ -195,6 +195,7 @@ export default function AssignmentsPage({
             selectedCount={hook.selectedEmployeeIds.size}
             onAssignTo={hook.assignToSupervisor}
             onUnassign={hook.unassignEmployee}
+            sheetStatuses={hook.sheetStatuses}
           />
         </div>
       )}

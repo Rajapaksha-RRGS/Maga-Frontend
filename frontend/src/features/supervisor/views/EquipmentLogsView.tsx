@@ -153,9 +153,25 @@ export function EquipmentLogsView({
     }).catch(() => {});
   }, [projectId, selectedDate]);
 
-  const handleAddFromPool = (newEntry: EquipmentLogEntry) => {
+  const handleAddFromPool = async (newEntry: EquipmentLogEntry) => {
+    if (isDayLocked) {
+      alert('Daily sheet is already submitted or approved and cannot be modified.');
+      return;
+    }
     const exists = equipment.some((e) => e.id === newEntry.id);
     if (!exists) {
+      if (selectedDate && effectiveSupervisorId) {
+        try {
+          await assignmentService.assignEquipment(
+            selectedDate,
+            effectiveSupervisorId,
+            [newEntry.id]
+          );
+        } catch (err: any) {
+          alert(err?.message || 'Cannot add equipment: daily sheet may be submitted, approved, or equipment locked.');
+          return;
+        }
+      }
       const updated = [newEntry, ...equipment];
       onSaveEquipment(updated);
     }

@@ -8,6 +8,7 @@
  *   - [Today's Activity  |  Needs Attention]  (2-col on lg+)
  *   - [Quick Actions     |  Recent Activity]  (2-col on lg+)
  */
+import { RotateCw } from 'lucide-react';
 import { useDashboardStats } from '../features/dashboard/hooks/useDashboardStats';
 import DashboardStatCards from '../features/dashboard/components/DashboardStatCards';
 import TodayActivityPanel from '../features/dashboard/components/TodayActivityPanel';
@@ -61,6 +62,24 @@ export default function AdminDashboardPage() {
       className="px-4 md:px-6 py-5 min-h-0 flex flex-col gap-5 " //bg  
      style={{ background: '#F7F8FA' }}
     >
+      {/* ── Manual Refresh Bar ─────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-bold text-slate-900">Operations Overview</h1>
+          <p className="text-xs text-slate-500">Click Refresh to pull the latest supervisor & attendance updates.</p>
+        </div>
+        <button
+          type="button"
+          onClick={stats.refresh}
+          disabled={stats.isRefreshing}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 hover:text-blue-600 transition-colors shadow-xs disabled:opacity-60 cursor-pointer"
+          title="Refresh dashboard stats"
+        >
+          <RotateCw size={14} className={stats.isRefreshing ? 'animate-spin text-blue-600' : ''} />
+          <span>{stats.isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+        </button>
+      </div>
+
       {/* ── Stat Cards ────────────────────────────────────────────── */}
       <DashboardStatCards
         totalEmployees={stats.totalEmployees}

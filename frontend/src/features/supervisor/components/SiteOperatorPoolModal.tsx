@@ -86,11 +86,13 @@ export function SiteOperatorPoolModal({
     return Array.from(trades).sort();
   }, [poolOperators]);
 
+  const isLockedByOther = (op: any) => Boolean(op.claimedSheetLocked && !op.claimedByMe);
+
   const mostRecentGang = pastOperatorsGangs[0];
   const recentAvailableCount = useMemo(() => {
     if (!mostRecentGang) return 0;
     const pastIds = new Set(mostRecentGang.operatorIds);
-    return poolOperators.filter((op) => pastIds.has(op.id) && !currentIds.has(op.id)).length;
+    return poolOperators.filter((op) => pastIds.has(op.id) && !currentIds.has(op.id) && !isLockedByOther(op)).length;
   }, [mostRecentGang, poolOperators, currentIds]);
 
   const createOperatorEntry = (op: any, pastOp?: any): OperatorEntry => ({
@@ -119,10 +121,10 @@ export function SiteOperatorPoolModal({
 
   const handleDirectAddPastGang = (pg: { date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }) => {
     const idSet = new Set(pg.operatorIds);
-    const toAddOps = poolOperators.filter((op) => idSet.has(op.id) && !currentIds.has(op.id));
+    const toAddOps = poolOperators.filter((op) => idSet.has(op.id) && !currentIds.has(op.id) && !isLockedByOther(op));
 
     if (toAddOps.length === 0) {
-      setPastNotice(`All operators from ${pg.date} are already in today's shift.`);
+      setPastNotice(`No unlocked available operators from ${pg.date} to add.`);
       setTimeout(() => setPastNotice(null), 3000);
       return;
     }
@@ -141,11 +143,11 @@ export function SiteOperatorPoolModal({
   const handleSelectPastGang = (pg: { date: string; dayName: string; operatorIds: string[]; operatorCount: number; operators: OperatorEntry[] }) => {
     const idSet = new Set(pg.operatorIds);
     const matchingAvailable = poolOperators
-      .filter((op) => idSet.has(op.id) && !currentIds.has(op.id))
+      .filter((op) => idSet.has(op.id) && !currentIds.has(op.id) && !isLockedByOther(op))
       .map((op) => op.id);
 
     if (matchingAvailable.length === 0) {
-      setPastNotice(`All ${pg.operatorCount} operators from ${pg.date} are already in today's shift.`);
+      setPastNotice(`No unlocked available operators from ${pg.date} to add.`);
       setTimeout(() => setPastNotice(null), 3000);
       return;
     }
@@ -172,8 +174,8 @@ export function SiteOperatorPoolModal({
   }, [poolOperators, search, selectedTrade]);
 
   // Available count in current filtered list
-  const availableCount = filtered.filter((op) => !currentIds.has(op.id)).length;
-  const allChecked = availableCount > 0 && filtered.filter((op) => !currentIds.has(op.id)).every((op) => checkedIds.has(op.id));
+  const availableCount = filtered.filter((op) => !currentIds.has(op.id) && !isLockedByOther(op)).length;
+  const allChecked = availableCount > 0 && filtered.filter((op) => !currentIds.has(op.id) && !isLockedByOther(op)).every((op) => checkedIds.has(op.id));
 
   // Toggle selection for a single operator
   const handleToggleCheck = (id: string) => {
@@ -187,8 +189,8 @@ export function SiteOperatorPoolModal({
 
   // Select all or deselect all available
   const handleSelectAllAvailable = () => {
-    const available = filtered.filter((op) => !currentIds.has(op.id));
-    if (available.every((op) => checkedIds.has(op.id))) {
+    const available = filtered.filter((op) => !currentIds.has(op.id) && !isLockedByOther(op));
+    if (available.length > 0 && available.every((op) => checkedIds.has(op.id))) {
       setCheckedIds(new Set());
     } else {
       setCheckedIds(new Set(available.map((op) => op.id)));
@@ -198,7 +200,7 @@ export function SiteOperatorPoolModal({
   // Batch add selected operators
   const handleAddSelected = () => {
     if (checkedIds.size === 0) return;
-    const toAddOps = poolOperators.filter((op) => checkedIds.has(op.id) && !currentIds.has(op.id));
+    const toAddOps = poolOperators.filter((op) => checkedIds.has(op.id) && !currentIds.has(op.id) && !isLockedByOther(op));
     if (toAddOps.length === 0) return;
 
     const newEntries: OperatorEntry[] = toAddOps.map((op) => createOperatorEntry(op));
@@ -440,15 +442,17 @@ export function SiteOperatorPoolModal({
           ) : (
             filtered.map((op) => {
               const isAlreadyAdded = currentIds.has(op.id);
+              const isLockedElsewhere = isLockedByOther(op);
+              const isDisabled = isAlreadyAdded || isLockedElsewhere;
               const isChecked = checkedIds.has(op.id);
 
               return (
                 <div
                   key={op.id}
-                  onClick={() => !isAlreadyAdded && handleToggleCheck(op.id)}
+                  onClick={() => !isDisabled && handleToggleCheck(op.id)}
                   className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 select-none ${
-                    isAlreadyAdded
-                      ? 'bg-slate-50/70 dark:bg-slate-850/60 border-slate-200 dark:border-slate-800 opacity-60 cursor-default'
+                    isDisabled
+                      ? 'bg-slate-50/70 dark:bg-slate-850/60 border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed'
                       : isChecked
                       ? 'bg-blue-50/50 dark:bg-blue-950/40 border-blue-500/80 ring-1 ring-blue-500/30 cursor-pointer'
                       : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-slate-300 shadow-2xs cursor-pointer'
@@ -460,6 +464,10 @@ export function SiteOperatorPoolModal({
                       {isAlreadyAdded ? (
                         <div className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-500">
                           <Check size={12} className="stroke-[3]" />
+                        </div>
+                      ) : isLockedElsewhere ? (
+                        <div className="w-5 h-5 rounded-md bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center text-rose-500" title="Locked on another submitted sheet">
+                          <Lock size={11} />
                         </div>
                       ) : (
                         <button
@@ -499,9 +507,12 @@ export function SiteOperatorPoolModal({
 
                       {/* Claimed / Shared Info */}
                       {op.claimedBySupervisor && !op.claimedByMe && (
-                        <div className="flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 font-semibold pt-0.5">
-                          <Lock size={10} className="text-amber-600" />
-                          <span>Logged by Sup. {op.claimedBySupervisor} ({op.claimedInTime || '--:--'} - {op.claimedOutTime || '--:--'}{op.claimedMachineCodes && op.claimedMachineCodes.length > 0 ? ` on ${op.claimedMachineCodes.join(', ')}` : ''})</span>
+                        <div className={`flex items-center gap-1 text-[10px] font-semibold pt-0.5 ${isLockedElsewhere ? 'text-rose-700 dark:text-rose-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                          <Lock size={10} className={isLockedElsewhere ? 'text-rose-600' : 'text-amber-600'} />
+                          <span>
+                            {isLockedElsewhere ? 'Locked (Submitted) by ' : 'Logged by '}
+                            Sup. {op.claimedBySupervisor} ({op.claimedInTime || '--:--'} - {op.claimedOutTime || '--:--'}{op.claimedMachineCodes && op.claimedMachineCodes.length > 0 ? ` on ${op.claimedMachineCodes.join(', ')}` : ''})
+                          </span>
                         </div>
                       )}
                     </div>
@@ -512,6 +523,10 @@ export function SiteOperatorPoolModal({
                     {isAlreadyAdded ? (
                       <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 flex items-center gap-1">
                         <UserCheck size={14} className="text-blue-500" /> Added
+                      </span>
+                    ) : isLockedElsewhere ? (
+                      <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                        <Lock size={12} /> Locked
                       </span>
                     ) : (
                       <button

@@ -39,6 +39,24 @@ export interface RecentGangSummary {
 import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
+export interface DailySheetLockStatus {
+  status: 'draft' | 'submitted' | 'approved' | string;
+  isLocked: boolean;
+  submittedAt?: string | null;
+  approvedAt?: string | null;
+}
+
+export async function getDailySheetStatuses(date: string): Promise<Record<string, DailySheetLockStatus>> {
+  try {
+    const res = await apiFetch(`${API_URL}/assignments/sheet-statuses?date=${encodeURIComponent(date)}`);
+    if (!res.ok) return {};
+    const data = await res.json();
+    return data?.statuses && typeof data.statuses === 'object' ? data.statuses : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function getForDate(date: string, forceRefresh: boolean = false): Promise<Assignment[]> {
   return cacheManager.fetchWithCache(`assignments:date:${date}`, async () => {
     const res = await apiFetch(`${API_URL}/assignments?date=${encodeURIComponent(date)}`);

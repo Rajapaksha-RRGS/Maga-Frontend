@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import {
+  getDailySheetStatusesForDate,
   getAssignmentsForDate,
   getRecentGangSummaries,
   getSupervisorPastGangs,
@@ -18,6 +19,9 @@ import {
 } from '../controllers/assignmentController';
 
 const router = Router();
+
+// ── Daily Sheet Lock Statuses ─────────────────────────────────────────
+router.get('/sheet-statuses', getDailySheetStatusesForDate);
 
 // ── Standby Pool ──────────────────────────────────────────────────────
 router.get('/standby-pool', getStandbyPoolForDate);

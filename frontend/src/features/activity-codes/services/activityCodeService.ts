@@ -45,7 +45,7 @@ export interface ActivityCodeFormData {
 import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
-export async function getAll(projectCode?: string): Promise<ActivityCode[]> {
+export async function getAll(projectCode?: string, forceRefresh: boolean = false): Promise<ActivityCode[]> {
   const cacheKey = projectCode ? `activity-codes:list:${projectCode}` : 'activity-codes:list';
   return cacheManager.fetchWithCache(cacheKey, async () => {
     const url = projectCode ? `${API_URL}/activity-codes?projectCode=${encodeURIComponent(projectCode)}` : `${API_URL}/activity-codes`;
@@ -71,7 +71,7 @@ export async function getAll(projectCode?: string): Promise<ActivityCode[]> {
       }));
     }
     return [];
-  });
+  }, null, forceRefresh);
 }
 
 export async function isCodeUnique(code: string, excludeId?: string): Promise<boolean> {

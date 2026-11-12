@@ -4,7 +4,7 @@
  * State management for daily operator-to-supervisor assignments.
  * Handles selected date, operator context data, multi-select, assign/unassign/copy.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { OperatorAssignment } from '../services/assignmentService';
 import type { Employee } from '../../employees/services/employeeService';
 import type { Supervisor } from '../../supervisors/services/supervisorService';
@@ -34,29 +34,40 @@ export function useOperatorAssignments(controlledDate?: string, onDateChange?: (
   const [supervisors, setSupervisors] = useState<Supervisor[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const isSavingRef = useRef<boolean>(false);
+  isSavingRef.current = isSaving;
+  const [sheetStatuses, setSheetStatuses] = useState<Record<string, svc.DailySheetLockStatus>>({});
 
   const [selectedOperatorIds, setSelectedOperatorIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [bpFilter, setBPFilter] = useState('');
 
-  const load = useCallback(async (forceRefresh = false) => {
-    setIsLoading(true);
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent) {
+      setIsLoading(true);
+    }
     try {
-      const [asgn, ctx] = await Promise.all([
+      const [asgn, ctx, statuses] = await Promise.all([
         svc.getOperatorAssignments(selectedDate, forceRefresh),
         svc.getOperatorAssignmentContext(forceRefresh),
+        svc.getDailySheetStatuses(selectedDate),
       ]);
       setAssignments(asgn);
       setOperators(ctx.operators);
       setSupervisors(ctx.supervisors);
-      setSelectedOperatorIds(new Set());
+      setSheetStatuses(statuses);
+      if (!silent) {
+        setSelectedOperatorIds(new Set());
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, [selectedDate]);
 
   useEffect(() => {
-    load();
+    load(true, false);
   }, [load]);
 
   // Derived: unassigned operators
@@ -133,6 +144,9 @@ export function useOperatorAssignments(controlledDate?: string, onDateChange?: (
     try {
       await svc.assignOperators(selectedDate, supervisorId, [...selectedOperatorIds]);
       await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot assign operators to this supervisor.');
+      await load(true);
     } finally {
       setIsSaving(false);
     }
@@ -143,6 +157,9 @@ export function useOperatorAssignments(controlledDate?: string, onDateChange?: (
     setIsSaving(true);
     try {
       await svc.unassignOperator(assignmentId);
+      await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot remove operator assignment.');
       await load(true);
     } finally {
       setIsSaving(false);
@@ -156,6 +173,9 @@ export function useOperatorAssignments(controlledDate?: string, onDateChange?: (
       const prev = prevDateStr(selectedDate);
       await svc.copyOperatorGangsFromDate(prev, selectedDate);
       await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot copy previous day operators.');
+      await load(true);
     } finally {
       setIsSaving(false);
     }
@@ -167,6 +187,7 @@ export function useOperatorAssignments(controlledDate?: string, onDateChange?: (
     assignments,
     operators,
     supervisors,
+    sheetStatuses,
     isLoading,
     isSaving,
     unassignedOperators,

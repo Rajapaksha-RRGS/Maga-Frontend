@@ -64,6 +64,7 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
     }
   }, [defaultWorkerType]);
   const [selectedBp, setSelectedBp] = useState<string>('');
+  const [employeeType, setEmployeeType] = useState<'' | 'internal' | 'external'>('');
   const [searchQuery, setSearchQuery] = useState('');
   
   // View mode: 'table' (default modern table) vs 'card' (paper document view)
@@ -91,6 +92,7 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
     getTimeCardReport({
       month: selectedMonth,
       workerType: workerType,
+      employeeType: employeeType || undefined,
       businessPartner: selectedBp || undefined,
     }).then((res) => {
       if (isMounted) {
@@ -103,7 +105,7 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [selectedMonth, workerType, selectedBp]);
+  }, [selectedMonth, workerType, employeeType, selectedBp]);
 
   const cards = data?.cards || [];
 
@@ -255,6 +257,20 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
                 }}
                 className="w-full pl-8 pr-3 py-1 text-xs rounded-lg border border-slate-300 bg-white text-slate-800 placeholder-slate-400 focus:ring-1 focus:ring-blue-500"
               />
+            </div>
+
+            {/* Employee Type Filter (Internal / External) */}
+            <div className="flex items-center gap-1.5">
+              <select
+                aria-label="Employee type"
+                value={employeeType}
+                onChange={(e) => setEmployeeType(e.target.value as '' | 'internal' | 'external')}
+                className="px-2.5 py-1 text-xs rounded-lg border border-slate-300 bg-white text-slate-800"
+              >
+                <option value="">All (Internal &amp; External)</option>
+                <option value="internal">Internal only</option>
+                <option value="external">External only</option>
+              </select>
             </div>
 
             {/* Subcontractor Filter */}

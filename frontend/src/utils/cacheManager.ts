@@ -14,8 +14,8 @@ interface CacheEntry<T> {
 class CacheManager {
   private cache = new Map<string, CacheEntry<any>>();
   private inFlight = new Map<string, Promise<any>>();
-  // null = Session lifetime (held in memory until browser tab is closed/refreshed)
-  private defaultTTL: number | null = null;
+  // Default TTL for fetched API entries (15s) prevents multi-user stale data across tabs/sessions
+  private defaultTTL: number = 15_000;
 
   /**
    * Get cached data if present and unexpired
@@ -35,9 +35,9 @@ class CacheManager {
 
   /**
    * Set cached data with optional TTL (ms).
-   * Passing null or omitting ttlMs keeps it for the whole tab session.
+   * Passing null or omitting ttlMs keeps UI state for the tab session.
    */
-  set<T>(key: string, data: T, ttlMs: number | null = this.defaultTTL): void {
+  set<T>(key: string, data: T, ttlMs: number | null = null): void {
     this.cache.set(key, {
       data,
       expiry: ttlMs ? Date.now() + ttlMs : null,
@@ -86,10 +86,11 @@ class CacheManager {
       }
     }
 
+    const effectiveTtl = ttlMs ?? this.defaultTTL;
     const promise = (async () => {
       try {
         const result = await fetcher();
-        this.set(key, result, ttlMs);
+        this.set(key, result, effectiveTtl);
         return result;
       } finally {
         this.inFlight.delete(key);

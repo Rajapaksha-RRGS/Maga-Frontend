@@ -20,23 +20,25 @@ export function useBusinessPartners(initialFilter: PartnerStatusFilter = 'all') 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<PartnerStatusFilter>(initialFilter);
 
-  const load = useCallback(async (forceRefresh = false) => {
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
     if (forceRefresh) {
       cacheManager.invalidate('business-partners');
     }
-    if (forceRefresh || !cacheManager.get('business-partners:list')) {
+    if (!silent && (forceRefresh || !cacheManager.get('business-partners:list'))) {
       setIsLoading(true);
     }
     try {
-      const data = await bpService.getAll();
+      const data = await bpService.getAll(undefined, forceRefresh);
       setPartners(data);
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    load();
+    load(true, Boolean(cacheManager.get('business-partners:list')));
   }, [load]);
 
   // Filtered partners by search & status

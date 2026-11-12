@@ -94,13 +94,14 @@ export function LaborEntryView({
   }, [projectId]);
 
   const handleAddLaborersFromPool = async (newLaborers: LaborerEntry[]) => {
+    if (isDayLocked) {
+      alert('Daily sheet is already submitted or approved and cannot be modified.');
+      return;
+    }
     const existingIds = new Set(laborers.map((l) => l.id));
     const toAdd = newLaborers.filter((nl) => !existingIds.has(nl.id));
     if (toAdd.length > 0) {
-      const updated = [...laborers, ...toAdd];
-      onSaveLaborers(updated);
-
-      // Real-time backend assignment
+      // Persist assignment to backend first so locked/conflict checks reject before mutating UI state
       if (selectedDate && effectiveSupervisorId) {
         try {
           await assignmentService.assign(
@@ -109,9 +110,12 @@ export function LaborEntryView({
             toAdd.map((nl) => nl.id)
           );
         } catch (err: any) {
-          console.warn('[LaborEntryView] Background assignment sync error:', err);
+          alert(err?.message || 'Cannot add laborers: daily sheet may be submitted, approved, or worker locked.');
+          return;
         }
       }
+      const updated = [...laborers, ...toAdd];
+      onSaveLaborers(updated);
     }
   };
   // Mode: In Time or Out Time (matching hand-drawn sketch)

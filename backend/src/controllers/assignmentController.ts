@@ -28,6 +28,56 @@ async function getOrCreateDailySheet(projectId: string, supervisorId: string, da
   });
 }
 
+function isSheetLocked(sheet: { status?: string | null; isLocked?: boolean | null } | null | undefined): boolean {
+  if (!sheet) return false;
+  return sheet.status === 'submitted' || sheet.status === 'approved' || Boolean(sheet.isLocked);
+}
+
+// 0. GET /api/assignments/sheet-statuses?date=YYYY-MM-DD — Supervisor daily sheet lock statuses for a date
+export const getDailySheetStatusesForDate = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const dateStr = req.query.date as string;
+    if (!dateStr) {
+      res.status(400).json({ error: 'Date query parameter (YYYY-MM-DD) is required' });
+      return;
+    }
+
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (req.query.tenantId as string) ||
+      (await getDefaultTenantId());
+
+    const targetDate = parseDate(dateStr);
+    const sheets = await prisma.mF_OP_DailySheet.findMany({
+      where: { projectId, date: targetDate },
+      select: {
+        supervisorId: true,
+        status: true,
+        isLocked: true,
+        submittedAt: true,
+        approvedAt: true,
+      },
+    });
+
+    const statuses: Record<string, { status: string; isLocked: boolean; submittedAt: Date | null; approvedAt: Date | null }> = {};
+    for (const s of sheets) {
+      statuses[s.supervisorId] = {
+        status: s.status,
+        isLocked: isSheetLocked(s),
+        submittedAt: s.submittedAt,
+        approvedAt: s.approvedAt,
+      };
+    }
+
+    res.json(statuses);
+  } catch (error) {
+    console.error('Error fetching daily sheet statuses:', error);
+    res.status(500).json({ error: 'Failed to fetch daily sheet statuses' });
+  }
+};
+
 // 1. GET /api/assignments?date=YYYY-MM-DD
 export const getAssignmentsForDate = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -337,8 +387,14 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    // Ensure DailySheet exists
+    // Ensure DailySheet exists & verify it is not already submitted/approved
     const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({
+        error: 'Cannot assign employees: This supervisor\'s daily sheet for this date is already submitted or approved.',
+      });
+      return;
+    }
 
     // Strictly validate that operators CANNOT be assigned as laborers
     const validLaborers = await prisma.mF_P_Employee.findMany({
@@ -357,7 +413,45 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    // 1. Remove any existing assignment on the same date under other sheets in bulk
+    // Prevent stealing workers who are already locked on another supervisor's submitted/approved sheet
+    const lockedElsewhere = await prisma.mF_OP_DailyAssignment.findMany({
+      where: {
+        employeeId: { in: validLaborIds },
+        dailySheet: {
+          projectId,
+          date: targetDate,
+          id: { not: dailySheet.id },
+          OR: [
+            { status: { in: ['submitted', 'approved'] } },
+            { isLocked: true },
+          ],
+        },
+      },
+      select: {
+        employee: {
+          select: {
+            callingName: true,
+            corporateEmployee: { select: { employeeCode: true, fullName: true } },
+          },
+        },
+        dailySheet: {
+          select: { supervisor: { select: { fullName: true } } },
+        },
+      },
+    });
+
+    if (lockedElsewhere.length > 0) {
+      const names = lockedElsewhere
+        .map((l) => l.employee.callingName || l.employee.corporateEmployee?.fullName || l.employee.corporateEmployee?.employeeCode)
+        .filter(Boolean)
+        .join(', ');
+      res.status(409).json({
+        error: `Cannot reassign worker(s) already locked on a submitted/approved sheet: ${names}`,
+      });
+      return;
+    }
+
+    // 1. Remove any existing assignment on the same date under other unlocked sheets in bulk
     await prisma.mF_OP_DailyAssignment.deleteMany({
       where: {
         employeeId: { in: validLaborIds },
@@ -365,6 +459,8 @@ export const assignEmployees = async (req: Request, res: Response): Promise<void
           projectId,
           date: targetDate,
           id: { not: dailySheet.id },
+          status: 'draft',
+          isLocked: false,
         },
       },
     });
@@ -417,19 +513,6 @@ export const unassignEmployee = async (req: Request, res: Response): Promise<voi
     const existingAsgn = await prisma.mF_OP_DailyAssignment.findFirst({
       where: {
         OR: [{ id }, { employeeId: id }],
-      },
-      select: { id: true, employeeId: true },
-    });
-    const targetEmpId = existingAsgn?.employeeId || id;
-
-    // 1. Delete from DailyAssignment
-    await prisma.mF_OP_DailyAssignment.deleteMany({
-      where: {
-        OR: [
-          { id },
-          { employeeId: id },
-          ...(targetEmpId ? [{ employeeId: targetEmpId }] : []),
-        ],
         ...(targetDate || supervisorId ? {
           dailySheet: {
             ...(targetDate ? { date: targetDate } : {}),
@@ -437,9 +520,72 @@ export const unassignEmployee = async (req: Request, res: Response): Promise<voi
           },
         } : {}),
       },
+      select: {
+        id: true,
+        employeeId: true,
+        dailySheet: {
+          select: { id: true, status: true, isLocked: true, date: true, supervisorId: true },
+        },
+      },
+    });
+    const targetEmpId = existingAsgn?.employeeId || id;
+
+    if (isSheetLocked(existingAsgn?.dailySheet)) {
+      res.status(403).json({
+        error: 'Cannot unassign employee: This daily sheet is already submitted or approved.',
+      });
+      return;
+    }
+
+    const lockedTimeEntry = await prisma.mF_OP_TimeEntry.findFirst({
+      where: {
+        ...(targetDate ? { date: targetDate } : {}),
+        ...(supervisorId ? { dailySheet: { supervisorId } } : {}),
+        AND: [
+          {
+            OR: [
+              { employeeId: id },
+              { id },
+              ...(targetEmpId ? [{ employeeId: targetEmpId }] : []),
+            ],
+          },
+          {
+            OR: [
+              { status: { in: ['submitted', 'approved'] } },
+              { dailySheet: { isLocked: true } },
+              { dailySheet: { status: { in: ['submitted', 'approved'] } } },
+            ],
+          },
+        ],
+      },
+      select: { id: true },
     });
 
-    // 2. Also delete any non-approved time entries for this employee
+    if (lockedTimeEntry) {
+      res.status(403).json({
+        error: 'Cannot unassign employee: Time entries for this daily sheet are already submitted or approved.',
+      });
+      return;
+    }
+
+    // 1. Delete from DailyAssignment (only unlocked draft sheets)
+    await prisma.mF_OP_DailyAssignment.deleteMany({
+      where: {
+        OR: [
+          { id },
+          { employeeId: id },
+          ...(targetEmpId ? [{ employeeId: targetEmpId }] : []),
+        ],
+        dailySheet: {
+          status: 'draft',
+          isLocked: false,
+          ...(targetDate ? { date: targetDate } : {}),
+          ...(supervisorId ? { supervisorId } : {}),
+        },
+      },
+    });
+
+    // 2. Also delete any draft time entries for this employee
     await prisma.mF_OP_TimeEntry.deleteMany({
       where: {
         OR: [
@@ -447,7 +593,7 @@ export const unassignEmployee = async (req: Request, res: Response): Promise<voi
           { id },
           ...(targetEmpId ? [{ employeeId: targetEmpId }] : []),
         ],
-        status: { not: 'approved' },
+        status: 'draft',
         ...(targetDate ? { date: targetDate } : {}),
         ...(supervisorId ? { dailySheet: { supervisorId } } : {}),
       },
@@ -493,11 +639,32 @@ export const copyGangsFromDate = async (req: Request, res: Response): Promise<vo
     });
 
     let copiedCount = 0;
+    let skippedLockedCount = 0;
+
+    // Pre-find workers locked on any submitted/approved sheet on tgtDateParsed
+    const lockedTargetAssignments = await prisma.mF_OP_DailyAssignment.findMany({
+      where: {
+        dailySheet: {
+          projectId,
+          date: tgtDateParsed,
+          OR: [
+            { status: { in: ['submitted', 'approved'] } },
+            { isLocked: true },
+          ],
+        },
+      },
+      select: { employeeId: true },
+    });
+    const lockedEmpIdSet = new Set(lockedTargetAssignments.map((a) => a.employeeId));
 
     for (const srcSheet of sourceSheets) {
       if (srcSheet.assignments.length === 0) continue;
 
       const targetSheet = await getOrCreateDailySheet(projectId, srcSheet.supervisorId, tgtDateParsed);
+      if (isSheetLocked(targetSheet)) {
+        skippedLockedCount++;
+        continue;
+      }
 
       if (overwrite) {
         await prisma.mF_OP_DailyAssignment.deleteMany({
@@ -505,9 +672,10 @@ export const copyGangsFromDate = async (req: Request, res: Response): Promise<vo
         });
       }
 
-      if (srcSheet.assignments.length > 0) {
+      const eligibleAssignments = srcSheet.assignments.filter((a) => !lockedEmpIdSet.has(a.employeeId));
+      if (eligibleAssignments.length > 0) {
         const createRes = await prisma.mF_OP_DailyAssignment.createMany({
-          data: srcSheet.assignments.map((assign) => ({
+          data: eligibleAssignments.map((assign) => ({
             dailySheetId: targetSheet.id,
             employeeId: assign.employeeId,
             isStandby: assign.isStandby,
@@ -518,10 +686,20 @@ export const copyGangsFromDate = async (req: Request, res: Response): Promise<vo
       }
     }
 
+    if (copiedCount === 0 && skippedLockedCount > 0) {
+      res.status(403).json({
+        error: 'Cannot copy gang: Target supervisor daily sheet(s) are already submitted or approved.',
+      });
+      return;
+    }
+
     res.json({
       success: true,
       copiedCount,
-      message: `Successfully copied ${copiedCount} gang assignment(s) from ${sourceDate} to ${targetDate}.`,
+      skippedLockedCount,
+      message: skippedLockedCount > 0
+        ? `Copied ${copiedCount} gang assignment(s). Skipped ${skippedLockedCount} locked/submitted supervisor sheet(s).`
+        : `Successfully copied ${copiedCount} gang assignment(s) from ${sourceDate} to ${targetDate}.`,
     });
   } catch (error) {
     console.error('Error copying gangs from date:', error);
@@ -906,6 +1084,46 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
 
     const targetDate = parseDate(date);
     const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({
+        error: 'Cannot assign operators: This supervisor\'s daily sheet for this date is already submitted or approved.',
+      });
+      return;
+    }
+
+    // Prevent stealing operators locked on another supervisor's submitted/approved sheet
+    const lockedElsewhere = await prisma.mF_OP_DailyAssignment.findMany({
+      where: {
+        employeeId: { in: operatorIds },
+        dailySheet: {
+          projectId,
+          date: targetDate,
+          id: { not: dailySheet.id },
+          OR: [
+            { status: { in: ['submitted', 'approved'] } },
+            { isLocked: true },
+          ],
+        },
+      },
+      select: {
+        employee: {
+          select: {
+            callingName: true,
+            corporateEmployee: { select: { employeeCode: true, fullName: true } },
+          },
+        },
+      },
+    });
+    if (lockedElsewhere.length > 0) {
+      const names = lockedElsewhere
+        .map((l) => l.employee.callingName || l.employee.corporateEmployee?.fullName || l.employee.corporateEmployee?.employeeCode)
+        .filter(Boolean)
+        .join(', ');
+      res.status(409).json({
+        error: `Cannot reassign operator(s) already locked on a submitted/approved sheet: ${names}`,
+      });
+      return;
+    }
 
     // 1. ALWAYS assign operators to the dailySheet in MF_OP_DailyAssignment in bulk!
     await prisma.mF_OP_DailyAssignment.deleteMany({
@@ -915,6 +1133,8 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
           projectId,
           date: targetDate,
           id: { not: dailySheet.id },
+          status: 'draft',
+          isLocked: false,
         },
       },
     });
@@ -984,22 +1204,9 @@ export const unassignOperator = async (req: Request, res: Response): Promise<voi
     const supervisorId = (req.query.supervisorId as string) || (req.body?.supervisorId as string);
     const targetDate = dateStr ? parseDate(dateStr) : undefined;
 
-    const existingAsgn = await prisma.mF_OP_DailyEquipmentAssignment.findFirst({
+    const existingEqAsgn = await prisma.mF_OP_DailyEquipmentAssignment.findFirst({
       where: {
         OR: [{ id }, { operatorId: id }],
-      },
-      select: { id: true, operatorId: true },
-    });
-    const targetOpId = existingAsgn?.operatorId || id;
-
-    // 1. Delete from DailyEquipmentAssignment
-    await prisma.mF_OP_DailyEquipmentAssignment.deleteMany({
-      where: {
-        OR: [
-          { id },
-          { operatorId: id },
-          ...(targetOpId ? [{ operatorId: targetOpId }] : []),
-        ],
         ...(targetDate || supervisorId ? {
           dailySheet: {
             ...(targetDate ? { date: targetDate } : {}),
@@ -1007,9 +1214,105 @@ export const unassignOperator = async (req: Request, res: Response): Promise<voi
           },
         } : {}),
       },
+      select: {
+        id: true,
+        operatorId: true,
+        dailySheetId: true,
+        dailySheet: { select: { id: true, status: true, isLocked: true, date: true, supervisorId: true } },
+      },
+    });
+    const existingDailyAsgn = await prisma.mF_OP_DailyAssignment.findFirst({
+      where: {
+        OR: [{ id }, { employeeId: id }],
+        ...(targetDate || supervisorId ? {
+          dailySheet: {
+            ...(targetDate ? { date: targetDate } : {}),
+            ...(supervisorId ? { supervisorId } : {}),
+          },
+        } : {}),
+      },
+      select: {
+        id: true,
+        employeeId: true,
+        dailySheetId: true,
+        dailySheet: { select: { id: true, status: true, isLocked: true, date: true, supervisorId: true } },
+      },
     });
 
-    // 2. Also delete any non-approved operator time entries
+    if (isSheetLocked(existingEqAsgn?.dailySheet) || isSheetLocked(existingDailyAsgn?.dailySheet)) {
+      res.status(403).json({
+        error: 'Cannot unassign operator: This daily sheet is already submitted or approved.',
+      });
+      return;
+    }
+
+    const targetOpId = existingEqAsgn?.operatorId || existingDailyAsgn?.employeeId || id;
+    const lockedOpEntry = await prisma.mF_OP_TimeEntry.findFirst({
+      where: {
+        ...(targetDate ? { date: targetDate } : {}),
+        ...(supervisorId ? { dailySheet: { supervisorId } } : {}),
+        AND: [
+          {
+            OR: [
+              { employeeId: id },
+              { id },
+              ...(targetOpId ? [{ employeeId: targetOpId }] : []),
+            ],
+          },
+          {
+            OR: [
+              { status: { in: ['submitted', 'approved'] } },
+              { dailySheet: { isLocked: true } },
+              { dailySheet: { status: { in: ['submitted', 'approved'] } } },
+            ],
+          },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (lockedOpEntry) {
+      res.status(403).json({
+        error: 'Cannot unassign operator: Time entries for this daily sheet are already submitted or approved.',
+      });
+      return;
+    }
+
+    // 1. Delete from DailyEquipmentAssignment (only unlocked draft sheets)
+    await prisma.mF_OP_DailyEquipmentAssignment.deleteMany({
+      where: {
+        OR: [
+          { id },
+          { operatorId: id },
+          ...(targetOpId ? [{ operatorId: targetOpId }] : []),
+        ],
+        dailySheet: {
+          status: 'draft',
+          isLocked: false,
+          ...(targetDate ? { date: targetDate } : {}),
+          ...(supervisorId ? { supervisorId } : {}),
+        },
+      },
+    });
+
+    // 2. Delete from DailyAssignment for this operator on unlocked draft sheets
+    await prisma.mF_OP_DailyAssignment.deleteMany({
+      where: {
+        OR: [
+          { id },
+          { employeeId: id },
+          ...(targetOpId ? [{ employeeId: targetOpId }] : []),
+        ],
+        dailySheet: {
+          status: 'draft',
+          isLocked: false,
+          ...(targetDate ? { date: targetDate } : {}),
+          ...(supervisorId ? { supervisorId } : {}),
+        },
+      },
+    });
+
+    // 3. Also delete any draft operator time entries
     await prisma.mF_OP_TimeEntry.deleteMany({
       where: {
         OR: [
@@ -1017,7 +1320,7 @@ export const unassignOperator = async (req: Request, res: Response): Promise<voi
           { id },
           ...(targetOpId ? [{ employeeId: targetOpId }] : []),
         ],
-        status: { not: 'approved' },
+        status: 'draft',
         ...(targetDate ? { date: targetDate } : {}),
         ...(supervisorId ? { dailySheet: { supervisorId } } : {}),
       },
@@ -1063,11 +1366,16 @@ export const copyOperatorGangsFromDate = async (req: Request, res: Response): Pr
     });
 
     let copiedCount = 0;
+    let skippedLockedCount = 0;
 
     for (const srcSheet of sourceSheets) {
       if (srcSheet.equipmentAssignments.length === 0) continue;
 
       const targetSheet = await getOrCreateDailySheet(projectId, srcSheet.supervisorId, tgtDateParsed);
+      if (isSheetLocked(targetSheet)) {
+        skippedLockedCount++;
+        continue;
+      }
 
       if (overwrite) {
         await prisma.mF_OP_DailyEquipmentAssignment.deleteMany({
@@ -1096,10 +1404,20 @@ export const copyOperatorGangsFromDate = async (req: Request, res: Response): Pr
       }
     }
 
+    if (copiedCount === 0 && skippedLockedCount > 0) {
+      res.status(403).json({
+        error: 'Cannot copy assignments: Target supervisor daily sheet(s) are already submitted or approved.',
+      });
+      return;
+    }
+
     res.json({
       success: true,
       copiedCount,
-      message: `Successfully copied ${copiedCount} operator assignment(s) from ${sourceDate} to ${targetDate}.`,
+      skippedLockedCount,
+      message: skippedLockedCount > 0
+        ? `Copied ${copiedCount} assignment(s). Skipped ${skippedLockedCount} locked/submitted supervisor sheet(s).`
+        : `Successfully copied ${copiedCount} operator assignment(s) from ${sourceDate} to ${targetDate}.`,
     });
   } catch (error) {
     console.error('Error copying operator gangs:', error);
@@ -1255,6 +1573,12 @@ export const assignEquipment = async (req: Request, res: Response): Promise<void
 
     const targetDate = parseDate(date);
     const dailySheet = await getOrCreateDailySheet(projectId, supervisorId, targetDate);
+    if (isSheetLocked(dailySheet)) {
+      res.status(403).json({
+        error: 'Cannot assign equipment: This supervisor\'s daily sheet for this date is already submitted or approved.',
+      });
+      return;
+    }
 
     // Resolve an operator: either provided or fallback to first operator or employee
     const targetOperatorId = operatorId || null;
@@ -1325,10 +1649,33 @@ export const unassignEquipment = async (req: Request, res: Response): Promise<vo
 
     const assignmentsToDelete = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
       where: whereClause,
-      include: { dailyLog: true },
+      include: {
+        dailyLog: true,
+        dailySheet: { select: { status: true, isLocked: true } },
+      },
     });
 
+    const hasLockedEquipmentSheet = assignmentsToDelete.some(
+      (asgn) => isSheetLocked(asgn.dailySheet) || asgn.dailyLog?.status === 'submitted' || asgn.dailyLog?.status === 'approved'
+    );
+    if (hasLockedEquipmentSheet) {
+      res.status(403).json({
+        error: 'Cannot unassign equipment: This daily sheet is already submitted or approved.',
+      });
+      return;
+    }
+
     if (assignmentsToDelete.length === 0) {
+      const byId = await prisma.mF_OP_DailyEquipmentAssignment.findUnique({
+        where: { id },
+        include: { dailyLog: true, dailySheet: { select: { status: true, isLocked: true } } },
+      });
+      if (byId && (isSheetLocked(byId.dailySheet) || byId.dailyLog?.status === 'submitted' || byId.dailyLog?.status === 'approved')) {
+        res.status(403).json({
+          error: 'Cannot unassign equipment: This daily sheet is already submitted or approved.',
+        });
+        return;
+      }
       try {
         await prisma.mF_OP_DailyEquipmentAssignment.delete({ where: { id } });
       } catch (err: any) {

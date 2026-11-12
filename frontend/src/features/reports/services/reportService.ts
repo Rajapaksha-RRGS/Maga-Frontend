@@ -23,12 +23,41 @@ function buildParams(f: ReportFilters): string {
   if (f.businessPartner) p.set('businessPartner', f.businessPartner);
   if (f.activityCode) p.set('activityCode', f.activityCode);
   if (f.workerType) p.set('workerType', f.workerType);
+  if (f.employeeType) p.set('employeeType', f.employeeType);
   return p.toString();
 }
-let _fOpts: {businessPartners: string[]; activityCodes: {code: string; description: string}[]} | null = null;
-async function loadFOpts() {
-  if (_fOpts) return _fOpts;
-  try { const r = await apiFetch(API_URL + '/reports/filter-options'); if (r.ok) { _fOpts = await r.json(); return _fOpts; } } catch (_) {}
+
+export interface FilterOptionsParams {
+  dateFrom?: string;
+  dateTo?: string;
+  workerType?: 'all' | 'labor' | 'operator';
+  employeeType?: '' | 'internal' | 'external';
+  employeeQuery?: string;
+  businessPartner?: string;
+  reportType?: ReportType;
+}
+
+async function fetchFilterOptions(params?: FilterOptionsParams): Promise<{
+  businessPartners: string[];
+  activityCodes: { code: string; description: string }[];
+} | null> {
+  try {
+    const p = new URLSearchParams();
+    const currentTenant = getCurrentTenantId();
+    if (currentTenant) p.set('tenantId', currentTenant);
+    if (params?.dateFrom) p.set('dateFrom', params.dateFrom);
+    if (params?.dateTo) p.set('dateTo', params.dateTo);
+    if (params?.workerType) p.set('workerType', params.workerType);
+    if (params?.employeeType) p.set('employeeType', params.employeeType);
+    if (params?.employeeQuery) p.set('employeeQuery', params.employeeQuery);
+    if (params?.businessPartner) p.set('businessPartner', params.businessPartner);
+    if (params?.reportType) p.set('reportType', params.reportType);
+    const qs = p.toString();
+    const r = await apiFetch(`${API_URL}/reports/filter-options${qs ? `?${qs}` : ''}`);
+    if (r.ok) {
+      return await r.json();
+    }
+  } catch (_) {}
   return null;
 }
 
@@ -54,6 +83,7 @@ export interface ReportFilters {
   activityCode?: string;
   month?: string;
   workerType?: 'all' | 'labor' | 'operator';
+  employeeType?: '' | 'internal' | 'external';
   equipmentQuery?: string;
   condition?: string;
 }
@@ -159,6 +189,7 @@ export interface ErpUploadRow {
   id: string;
   employeeId: string;
   employeeName: string;
+  employeeType?: 'internal' | 'external' | string;
   date: string;
   activityCode: string;
   activityDescription: string;
@@ -215,16 +246,21 @@ export interface RunningChartResponse {
 }
 
 export async function getBusinessPartnerOptions(): Promise<string[]> {
-  return cacheManager.fetchWithCache('reports:filter-opts:bp', async () => {
-    const o = await loadFOpts();
+  const tId = getCurrentTenantId() || 'default';
+  return cacheManager.fetchWithCache(`reports:${tId}:filter-opts:bp`, async () => {
+    const o = await fetchFilterOptions();
     if (o?.businessPartners?.length) return o.businessPartners;
     return [];
   });
 }
 
-export async function getActivityCodeOptions(): Promise<{ code: string; description: string }[]> {
-  return cacheManager.fetchWithCache('reports:filter-opts:act', async () => {
-    const o = await loadFOpts();
+export async function getActivityCodeOptions(
+  params?: FilterOptionsParams
+): Promise<{ code: string; description: string }[]> {
+  const tId = getCurrentTenantId() || 'default';
+  const cacheKey = `reports:${tId}:filter-opts:act:${JSON.stringify(params || {})}`;
+  return cacheManager.fetchWithCache(cacheKey, async () => {
+    const o = await fetchFilterOptions(params);
     if (o?.activityCodes?.length) return o.activityCodes;
     return [];
   });
@@ -465,6 +501,7 @@ export async function getTimeCardReport(filters: ReportFilters): Promise<TimeCar
   else if (filters.dateFrom) p.set('month', filters.dateFrom.slice(0, 7));
   if (filters.employeeQuery) p.set('employeeId', filters.employeeQuery);
   if (filters.workerType) p.set('workerType', filters.workerType);
+  if (filters.employeeType) p.set('employeeType', filters.employeeType);
   if (filters.businessPartner) p.set('businessPartnerId', filters.businessPartner);
 
   try {
@@ -809,6 +846,7 @@ export async function getOperatorErpUploadReport(
   if (filters.month) p.set('month', filters.month);
   if (filters.employeeQuery) p.set('employeeQuery', filters.employeeQuery);
   if (filters.businessPartner) p.set('businessPartner', filters.businessPartner);
+  if (filters.employeeType) p.set('employeeType', filters.employeeType);
   if (filters.equipmentQuery) p.set('equipmentQuery', filters.equipmentQuery);
   if (filters.condition) p.set('condition', filters.condition);
 

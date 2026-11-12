@@ -21,6 +21,7 @@ import {
   Building2,
   CheckCircle2,
   Clock,
+  Lock,
 } from 'lucide-react';
 import Breadcrumb from '../components/Breadcrumb';
 import { useOperatorAssignments } from '../features/assignments/hooks/useOperatorAssignments';
@@ -73,6 +74,7 @@ export default function OperatorAssignmentsPage({
     isSaving,
     unassignedOperators,
     supervisorAssignments,
+    sheetStatuses,
     totalOperators,
     assignedCount,
     unassignedCount,
@@ -123,7 +125,7 @@ export default function OperatorAssignmentsPage({
             <button
               type="button"
               disabled={isSaving || isLoading}
-              onClick={refresh}
+              onClick={() => refresh()}
               className="p-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
               title="Refresh assignments"
             >
@@ -270,6 +272,19 @@ export default function OperatorAssignmentsPage({
               </option>
             ))}
           </select>
+        )}
+
+        {hideHeader && (
+          <button
+            type="button"
+            disabled={isSaving || isLoading}
+            onClick={() => refresh()}
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 hover:text-blue-600 transition-colors shadow-xs min-h-[44px] disabled:opacity-50 cursor-pointer"
+            title="Refresh operator assignments"
+          >
+            <RotateCw size={14} className={isLoading ? 'animate-spin text-blue-600' : ''} />
+            <span>Refresh</span>
+          </button>
         )}
       </div>
 
@@ -421,11 +436,18 @@ export default function OperatorAssignmentsPage({
                 supervisorAssignments.map(({ supervisor, operators: assignedOps }, idx) => {
                   const avatarColor = AVATAR_COLORS[idx % AVATAR_COLORS.length];
                   const hasSelection = selectedOperatorIds.size > 0;
+                  const lockInfo = sheetStatuses[supervisor.id];
+                  const isLocked = Boolean(lockInfo?.isLocked);
+                  const lockLabel = lockInfo?.status === 'approved' ? 'Approved' : 'Submitted';
 
                   return (
                     <div
                       key={supervisor.id}
-                      className="border border-slate-200 rounded-xl p-3 bg-white hover:border-slate-300 transition-colors shadow-2xs"
+                      className={`border rounded-xl p-3 transition-colors shadow-2xs ${
+                        isLocked
+                          ? 'border-amber-200 bg-amber-50/20'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
                     >
                       {/* Supervisor Header */}
                       <div className="flex items-center justify-between gap-3 mb-2.5">
@@ -441,9 +463,21 @@ export default function OperatorAssignmentsPage({
                             {supervisor.fullName.charAt(0).toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <h3 className="text-xs font-semibold text-slate-900 truncate">
-                              {supervisor.fullName}
-                            </h3>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <h3 className="text-xs font-semibold text-slate-900 truncate">
+                                {supervisor.fullName}
+                              </h3>
+                              {isLocked && (
+                                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
+                                  lockInfo?.status === 'approved'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                                }`}>
+                                  <Lock size={10} />
+                                  {lockLabel}
+                                </span>
+                              )}
+                            </div>
                             <span className="text-[11px] text-slate-500 font-medium">
                               {assignedOps.length} operator{assignedOps.length !== 1 ? 's' : ''} assigned
                             </span>
@@ -453,18 +487,19 @@ export default function OperatorAssignmentsPage({
                         {/* Assign Button */}
                         <button
                           type="button"
-                          disabled={!hasSelection || isSaving}
+                          disabled={!hasSelection || isSaving || isLocked}
                           onClick={() => assignToSupervisor(supervisor.id)}
+                          title={isLocked ? `Sheet is ${lockLabel.toLowerCase()} and locked` : undefined}
                           className={[
-                            'px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow-xs cursor-pointer',
-                            hasSelection
-                              ? 'bg-blue-600 hover:bg-blue-700 text-white active:scale-98'
-                              : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed',
+                            'px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow-xs',
+                            isLocked || !hasSelection
+                              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                              : 'bg-blue-600 hover:bg-blue-700 text-white active:scale-98 cursor-pointer',
                           ].join(' ')}
                         >
-                          <UserPlus size={13} />
+                          {isLocked ? <Lock size={12} /> : <UserPlus size={13} />}
                           <span>
-                            {hasSelection ? `Assign (${selectedOperatorIds.size})` : 'Assign'}
+                            {isLocked ? 'Locked' : hasSelection ? `Assign (${selectedOperatorIds.size})` : 'Assign'}
                           </span>
                         </button>
                       </div>
@@ -501,10 +536,14 @@ export default function OperatorAssignmentsPage({
                               </div>
                               <button
                                 type="button"
-                                disabled={isSaving}
+                                disabled={isSaving || isLocked}
                                 onClick={() => unassignOperator(assignment.id)}
-                                className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer"
-                                title={`Unassign ${op.callingName || 'operator'}`}
+                                className={
+                                  isLocked
+                                    ? 'text-slate-300 p-1 rounded cursor-not-allowed'
+                                    : 'text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer'
+                                }
+                                title={isLocked ? `Sheet is ${lockLabel.toLowerCase()} and locked` : `Unassign ${op.callingName || 'operator'}`}
                               >
                                 <X size={13} />
                               </button>

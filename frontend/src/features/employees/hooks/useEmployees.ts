@@ -46,8 +46,8 @@ export function useEmployees(): UseEmployeesReturn {
   const [tradeGroupFilter, setTradeGroupFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  const load = useCallback(async (forceRefresh = false) => {
-    if (forceRefresh || !cacheManager.get('employees:list:{}')) {
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent && (forceRefresh || !cacheManager.get('employees:list:{}'))) {
       setIsLoading(true);
     }
     setError(null);
@@ -56,15 +56,19 @@ export function useEmployees(): UseEmployeesReturn {
       setEmployees(data);
     } catch (err: any) {
       console.error('Failed to load employees from backend:', err);
-      setError(err?.message || 'Failed to load employees from backend');
-      setEmployees([]);
+      if (!silent) {
+        setError(err?.message || 'Failed to load employees from backend');
+        setEmployees([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    load();
+    load(true, Boolean(cacheManager.get('employees:list:{}')));
   }, [load]);
 
   // Derived unique filter lists directly from backend employees

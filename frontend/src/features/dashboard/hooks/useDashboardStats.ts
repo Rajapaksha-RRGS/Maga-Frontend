@@ -59,12 +59,13 @@ const INITIAL: DashboardStats = {
   isLoading: true,
 };
 
-export function useDashboardStats(): DashboardStats {
+export function useDashboardStats(): DashboardStats & { isRefreshing: boolean; refresh: () => Promise<void> } {
   const cached = cacheManager.get<DashboardStats>('dashboard:stats');
   const [stats, setStats] = useState<DashboardStats>(() => cached ?? INITIAL);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const load = useCallback(async (forceRefresh = false) => {
-    if (forceRefresh || !cacheManager.get('dashboard:stats')) {
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent && (forceRefresh || !cacheManager.get('dashboard:stats'))) {
       setStats((prev) => ({ ...prev, isLoading: true }));
     }
     try {
@@ -163,7 +164,19 @@ export function useDashboardStats(): DashboardStats {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // Load on mount (manual Refresh button handles subsequent updates)
+    load(!cacheManager.get('dashboard:stats'), Boolean(cached));
+  }, [load]);
 
-  return stats;
+  const refresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await load(true, true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [load]);
+
+  return { ...stats, isRefreshing, refresh };
 }

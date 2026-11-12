@@ -11,19 +11,23 @@ export function useEquipment() {
   const [isLoading, setIsLoading] = useState<boolean>(() => !cacheManager.get<Equipment[]>('equipment:list'));
   const [search, setSearch] = useState('');
 
-  const load = useCallback(async (forceRefresh = false) => {
-    if (forceRefresh || !cacheManager.get('equipment:list')) {
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent && (forceRefresh || !cacheManager.get('equipment:list'))) {
       setIsLoading(true);
     }
     try {
       const data = await svc.getAll(forceRefresh);
       setItems(data);
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load(true, Boolean(cacheManager.get('equipment:list')));
+  }, [load]);
 
   const filtered = items.filter((e) => {
     const q = search.toLowerCase();

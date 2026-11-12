@@ -21,12 +21,22 @@ export interface ActivityCodeItem {
   projectCode?: string;
 }
 
+export class DayLockedError extends Error {
+  constructor(message: string = 'Daily sheet is already submitted or approved.') {
+    super(message);
+    this.name = 'DayLockedError';
+  }
+}
+
 export interface SupervisorDayStatus {
   status: 'draft' | 'pending_submit' | 'submitted' | 'approved';
   isLocked: boolean;
   submittedAt?: string | null;
   approvedAt?: string | null;
   remarks?: string | null;
+  updatedAt?: string | null;
+  syncVersion?: string | null;
+  isFallback?: boolean;
 }
 
 export interface ActivitySplit {
@@ -788,7 +798,7 @@ export const supervisorStorage = {
       if (res.ok) {
         const data = await res.json();
         const serverStatus = data.status || 'draft';
-        const isLocked = serverStatus === 'submitted' || serverStatus === 'approved';
+        const isLocked = serverStatus === 'submitted' || serverStatus === 'approved' || Boolean(data.isLocked);
 
         return {
           status: serverStatus,
@@ -796,6 +806,9 @@ export const supervisorStorage = {
           submittedAt: data.submittedAt || null,
           approvedAt: data.approvedAt || null,
           remarks: data.remarks || null,
+          updatedAt: data.updatedAt || null,
+          syncVersion: data.syncVersion || null,
+          isFallback: false,
         };
       }
     } catch (err) {
@@ -808,6 +821,9 @@ export const supervisorStorage = {
       submittedAt: null,
       approvedAt: null,
       remarks: null,
+      updatedAt: null,
+      syncVersion: null,
+      isFallback: true,
     };
   },
 
@@ -893,8 +909,14 @@ export const supervisorStorage = {
         body: JSON.stringify({ supervisorId, date, entries, activeEmployeeIds }),
       });
 
+      if (res.status === 403) {
+        const errData = await res.json().catch(() => null);
+        throw new DayLockedError(errData?.error || 'Daily sheet is already submitted or approved.');
+      }
+
       return res.ok;
     } catch (err) {
+      if (err instanceof DayLockedError) throw err;
       console.warn('Backend sync failed for laborers:', err);
       return false;
     }
@@ -947,8 +969,14 @@ export const supervisorStorage = {
         body: JSON.stringify({ supervisorId, date, entries, activeEmployeeIds }),
       });
 
+      if (res.status === 403) {
+        const errData = await res.json().catch(() => null);
+        throw new DayLockedError(errData?.error || 'Daily sheet is already submitted or approved.');
+      }
+
       return res.ok;
     } catch (err) {
+      if (err instanceof DayLockedError) throw err;
       console.warn('Backend sync failed for operators:', err);
       return false;
     }
@@ -999,8 +1027,14 @@ export const supervisorStorage = {
         body: JSON.stringify({ supervisorId, date, entries }),
       });
 
+      if (res.status === 403) {
+        const errData = await res.json().catch(() => null);
+        throw new DayLockedError(errData?.error || 'Daily sheet is already submitted or approved.');
+      }
+
       return res.ok;
     } catch (err) {
+      if (err instanceof DayLockedError) throw err;
       console.warn('Backend sync failed for equipment:', err);
       return false;
     }

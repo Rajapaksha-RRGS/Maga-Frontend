@@ -999,6 +999,8 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
         dailySheet: {
           select: {
             supervisorId: true,
+            status: true,
+            isLocked: true,
             supervisor: { select: { id: true, fullName: true, username: true } },
           },
         },
@@ -1013,6 +1015,7 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
     const claimsMap = new Map<string, Array<{
       supervisorId: string;
       supervisorName: string;
+      isSheetLocked: boolean;
       inTime?: string | null;
       outTime?: string | null;
       hours: number;
@@ -1023,11 +1026,17 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       if (!te.employeeId) continue;
       const sId = te.dailySheet?.supervisorId || '';
       const sName = te.dailySheet?.supervisor?.fullName || te.dailySheet?.supervisor?.username || 'Another Supervisor';
+      const locked = Boolean(
+        te.dailySheet?.isLocked ||
+        te.dailySheet?.status === 'submitted' ||
+        te.dailySheet?.status === 'approved'
+      );
       const mCode = te.equipment?.corporateEquipment?.standardEquipmentNumber;
       const list = claimsMap.get(te.employeeId) || [];
       list.push({
         supervisorId: sId,
         supervisorName: sName,
+        isSheetLocked: locked,
         inTime: te.inTime,
         outTime: te.outTime,
         hours: Number(te.shiftHours || te.hours || 0),
@@ -1048,6 +1057,8 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
         dailySheet: {
           select: {
             supervisorId: true,
+            status: true,
+            isLocked: true,
             supervisor: { select: { id: true, fullName: true, username: true } },
           },
         },
@@ -1058,11 +1069,20 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       if (!da.employeeId) continue;
       const sId = da.dailySheet?.supervisorId || '';
       const sName = da.dailySheet?.supervisor?.fullName || da.dailySheet?.supervisor?.username || 'Supervisor';
+      const locked = Boolean(
+        da.dailySheet?.isLocked ||
+        da.dailySheet?.status === 'submitted' ||
+        da.dailySheet?.status === 'approved'
+      );
       const list = claimsMap.get(da.employeeId) || [];
-      if (!list.some(c => c.supervisorId === sId)) {
+      const existing = list.find(c => c.supervisorId === sId);
+      if (existing) {
+        if (locked) existing.isSheetLocked = true;
+      } else {
         list.push({
           supervisorId: sId,
           supervisorName: sName,
+          isSheetLocked: locked,
           inTime: null,
           outTime: null,
           hours: 0,
@@ -1084,6 +1104,8 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
         dailySheet: {
           select: {
             supervisorId: true,
+            status: true,
+            isLocked: true,
             supervisor: { select: { id: true, fullName: true, username: true } },
           },
         },
@@ -1099,12 +1121,21 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       if (!oa.operatorId) continue;
       const sId = oa.dailySheet?.supervisorId || '';
       const sName = oa.dailySheet?.supervisor?.fullName || oa.dailySheet?.supervisor?.username || 'Supervisor';
+      const locked = Boolean(
+        oa.dailySheet?.isLocked ||
+        oa.dailySheet?.status === 'submitted' ||
+        oa.dailySheet?.status === 'approved'
+      );
       const mCode = oa.equipment?.corporateEquipment?.standardEquipmentNumber;
       const list = claimsMap.get(oa.operatorId) || [];
-      if (!list.some(c => c.supervisorId === sId)) {
+      const existing = list.find(c => c.supervisorId === sId);
+      if (existing) {
+        if (locked) existing.isSheetLocked = true;
+      } else {
         list.push({
           supervisorId: sId,
           supervisorName: sName,
+          isSheetLocked: locked,
           inTime: null,
           outTime: null,
           hours: 0,
@@ -1116,7 +1147,8 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
 
     const formatted = employees.map((emp) => {
       const claims = claimsMap.get(emp.id) || [];
-      const otherClaim = claims.find((c) => c.supervisorId !== supervisorId);
+      const lockedOtherClaim = claims.find((c) => c.supervisorId !== supervisorId && c.isSheetLocked);
+      const otherClaim = lockedOtherClaim || claims.find((c) => c.supervisorId !== supervisorId);
       const myClaim = claims.find((c) => c.supervisorId === supervisorId);
 
       const isInternal = emp.corporateEmployee.employeeType === 'internal';
@@ -1135,6 +1167,7 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
         businessPartnerCode: isInternal ? null : (emp.businessPartner?.code || null),
         isOperator: Boolean(emp.isOperator || emp.corporateEmployee.isOperator),
         isClaimed: Boolean(otherClaim),
+        claimedSheetLocked: Boolean(otherClaim?.isSheetLocked),
         claimedBySupervisor: otherClaim?.supervisorName,
         claimedSupervisorId: otherClaim?.supervisorId,
         claimedInTime: otherClaim?.inTime || undefined,

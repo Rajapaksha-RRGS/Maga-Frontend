@@ -4,7 +4,7 @@
  * State management for daily equipment-to-supervisor assignments.
  * Handles selected date, equipment context data, multi-select, assign/unassign/copy.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { EquipmentAssignment } from '../services/assignmentService';
 import type { Equipment } from '../../equipment/services/equipmentService';
 import type { Supervisor } from '../../supervisors/services/supervisorService';
@@ -33,29 +33,40 @@ export function useEquipmentAssignments(controlledDate?: string, onDateChange?: 
   const [supervisors, setSupervisors] = useState<Supervisor[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const isSavingRef = useRef<boolean>(false);
+  isSavingRef.current = isSaving;
+  const [sheetStatuses, setSheetStatuses] = useState<Record<string, svc.DailySheetLockStatus>>({});
 
   const [selectedEquipmentIds, setSelectedEquipmentIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
 
-  const load = useCallback(async (forceRefresh = false) => {
-    setIsLoading(true);
+  const load = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent) {
+      setIsLoading(true);
+    }
     try {
-      const [asgn, ctx] = await Promise.all([
+      const [asgn, ctx, statuses] = await Promise.all([
         svc.getEquipmentAssignments(selectedDate, forceRefresh),
         svc.getEquipmentAssignmentContext(forceRefresh),
+        svc.getDailySheetStatuses(selectedDate),
       ]);
       setAssignments(asgn);
       setEquipmentList(ctx.equipmentList);
       setSupervisors(ctx.supervisors);
-      setSelectedEquipmentIds(new Set());
+      setSheetStatuses(statuses);
+      if (!silent) {
+        setSelectedEquipmentIds(new Set());
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, [selectedDate]);
 
   useEffect(() => {
-    load();
+    load(true, false);
   }, [load]);
 
   // Derived: unassigned equipment
@@ -130,6 +141,9 @@ export function useEquipmentAssignments(controlledDate?: string, onDateChange?: 
     try {
       await svc.assignEquipment(selectedDate, supervisorId, [...selectedEquipmentIds]);
       await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot assign equipment to this supervisor.');
+      await load(true);
     } finally {
       setIsSaving(false);
     }
@@ -140,6 +154,9 @@ export function useEquipmentAssignments(controlledDate?: string, onDateChange?: 
     setIsSaving(true);
     try {
       await svc.unassignEquipment(assignmentId);
+      await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot remove equipment assignment.');
       await load(true);
     } finally {
       setIsSaving(false);
@@ -153,6 +170,9 @@ export function useEquipmentAssignments(controlledDate?: string, onDateChange?: 
       const prev = prevDateStr(selectedDate);
       await svc.copyEquipmentGangsFromDate(prev, selectedDate);
       await load(true);
+    } catch (err: any) {
+      alert(err?.message || 'Cannot copy previous day equipment.');
+      await load(true);
     } finally {
       setIsSaving(false);
     }
@@ -164,6 +184,7 @@ export function useEquipmentAssignments(controlledDate?: string, onDateChange?: 
     assignments,
     equipmentList,
     supervisors,
+    sheetStatuses,
     isLoading,
     isSaving,
     unassignedEquipment,

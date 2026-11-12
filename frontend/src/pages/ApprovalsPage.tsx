@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Calendar,
   ChevronLeft,
@@ -95,27 +95,33 @@ export default function ApprovalsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchScope, setSearchScope] = useState<'all' | 'labor' | 'operators' | 'equipment'>('all');
 
-  // Fetch data on date change
-  const loadData = async (date: string) => {
-    setLoading(true);
-    setError(null);
+  const processingIdRef = useRef<string | null>(null);
+  processingIdRef.current = processingId;
+
+  // Fetch data on date change (supports silent background revalidation)
+  const loadData = useCallback(async (date: string, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await getApprovalOverview(date);
       setData(res);
-      // Auto-switch to tab with items if current tab is empty
-      if (res.submitted.length === 0 && res.notSubmitted.length > 0) {
-        // keep activeTab unless user wants
-      }
+      setError(null);
     } catch (err: any) {
-      setError(err?.message || 'Failed to load approval data for selected date');
+      if (!silent) {
+        setError(err?.message || 'Failed to load approval data for selected date');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadData(selectedDate);
-  }, [selectedDate]);
+    loadData(selectedDate, false);
+  }, [selectedDate, loadData]);
 
   // Date step helpers
   const handlePrevDay = () => {
