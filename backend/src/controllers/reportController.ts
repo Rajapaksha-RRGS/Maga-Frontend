@@ -1000,6 +1000,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
     type GroupKey = string;
     const groups = new Map<GroupKey, typeof entries>();
 
+
     for (const entry of entries) {
       const dateKey = entry.date.toISOString().split('T')[0];
       const key: GroupKey = `${entry.employeeId}___${dateKey}`;
@@ -1014,7 +1015,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
 
     for (const [, groupEntries] of groups) {
       const first = groupEntries[0];
-      const empType = first.employee.corporateEmployee.employeeType || 'internal';
+      const empType = first.employee.corporateEmployee.employeeType || 'undefine';
       const { dateKey, dayRule, idleHours, otHours } = computeErpDayMetrics(groupEntries);
       const { standardCap, isAllOvertime, label } = dayRule;
 

@@ -336,13 +336,9 @@ export function SiteLaborPoolModal({
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                       Copy Past Team 
                     </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                      {mostRecentGang.workerCount} workers on {mostRecentGang.date} ({mostRecentGang.dayName})
-                    </span>
+                    
                   </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                    1-click select your regular crew instead of picking one by one.
-                  </p>
+                  
                 </div>
               </div>
 
@@ -356,18 +352,7 @@ export function SiteLaborPoolModal({
                 >
                   <Copy size={13} />
                   <span>Select {mostRecentGang.dayName}'s Gang ({recentAvailableCount})</span>
-                </button>
-
-                {/* Direct 1-Click Add Button */}
-                <button
-                  type="button"
-                  onClick={() => handleDirectAddPastGang(mostRecentGang)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-2xs transition-colors cursor-pointer"
-                  title="Directly add all available workers from this past gang to today without having to check and tap add"
-                >
-                  <Zap size={13} className="fill-current" />
-                  <span className="hidden sm:inline">1-Click Add</span>
-                </button>
+                </button> m     
 
                 {/* Other Past Days Dropdown */}
                 {pastGangs.length > 1 && (
