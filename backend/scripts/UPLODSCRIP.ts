@@ -288,7 +288,7 @@ async function main() {
 
   // 1. Parse CLI Arguments (Supports: [filePath] [projectCode] OR --file=... --project=... --dry-run)
   const args = process.argv.slice(2);
-  const isDryRun = args.includes('--dry-run') || args.includes('-d');
+  const isDryRun = process.argv.some((a) => a.includes('--dry-run') || a === '-d');
   if (isDryRun) {
     console.log(`${YELLOW}${BOLD}🧪 RUNNING IN DRY RUN MODE (No database writes will occur)${RESET}\n`);
   }

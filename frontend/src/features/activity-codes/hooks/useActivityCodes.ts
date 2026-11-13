@@ -33,8 +33,10 @@ export function useActivityCodes() {
 
   const add = async (data: ActivityCodeFormData) => {
     setError(null);
-    try { await svc.create(data); await load(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Save failed'); throw e; }
+    try { await svc.create(data);
+         await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Save failed');
+       throw e; }
   };
 
   const edit = async (id: string, data: Partial<ActivityCodeFormData>) => {

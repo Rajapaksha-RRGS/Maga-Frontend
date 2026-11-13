@@ -165,12 +165,11 @@ function buildEmployeeFilter(
   if (businessPartner) {
     filter.businessPartner = { name: { contains: businessPartner, mode: 'insensitive' } };
   }
-  if (employeeQuery) {
+    if (employeeQuery) {
     filter.OR = [
       { callingName: { contains: employeeQuery, mode: 'insensitive' } },
       { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
       { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
-      { corporateEmployee: { callingName: { contains: employeeQuery, mode: 'insensitive' } } },
     ];
   }
   return Object.keys(filter).length > 0 ? filter : undefined;
