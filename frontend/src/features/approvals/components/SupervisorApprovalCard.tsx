@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -102,8 +102,9 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
             id: c.id,
             code: c.code,
             name: c.description || c.code,
-            description: c.description,
-            unit: c.unit || undefined,
+            trade: 'General',
+            category: 'Labor',
+            projectCode: c.projectCode,
           }))
         );
       })
@@ -226,7 +227,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               activityCodeId: matchedAct.id,
               id: matchedAct.id,
               code: matchedAct.code,
-              description: matchedAct.description || matchedAct.name || '',
+              description: matchedAct.name || matchedAct.code || '',
               hours: res.shiftHours ?? effectiveHours,
             },
           ];

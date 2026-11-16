@@ -350,14 +350,14 @@ export default function ApprovalsPage() {
       </div>
 
       {/* Special Day Notice ONLY if Sunday or Holiday (0.0h standard cap) */}
-      {data?.dayType && (data.dayType.isAllOvertime || data.dayType.standardHoursCap === 0) && (
+      {/* {data?.dayType && (data.dayType.isAllOvertime || data.dayType.standardHoursCap === 0) && (
         <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
           <AlertCircle size={16} className="text-amber-600 flex-shrink-0" />
           <span>
             <strong>Special Calendar Day Notice ({data.dayType.name}):</strong> All hours worked today are automatically calculated as Overtime (0.0h standard daily cap).
           </span>
         </div>
-      )}
+      )} */}
 
       {/* ── Error Banner ─────────────────────────────────────────────────────── */}
       {error && (
