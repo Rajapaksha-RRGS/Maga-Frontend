@@ -15,7 +15,6 @@ import {
   Copy,
   Calendar,
   ChevronDown,
-  Zap,
 } from 'lucide-react';
 import {
   supervisorStorage,
@@ -167,41 +166,6 @@ export function SiteLaborPoolModal({
     setTimeout(() => setPastGangNotice(null), 4000);
   };
 
-  const handleDirectAddPastGang = (pg: { date: string; dayName: string; workerIds: string[]; workerCount: number }) => {
-    const idSet = new Set(pg.workerIds);
-    const toAddWorkers = poolWorkers.filter((w) => idSet.has(w.id) && !currentIds.has(w.id) && !isLockedByOther(w));
-
-    if (toAddWorkers.length === 0) {
-      setPastGangNotice(`No unlocked available workers from ${pg.date} to add.`);
-      setTimeout(() => setPastGangNotice(null), 3000);
-      return;
-    }
-
-    const newEntries: LaborerEntry[] = toAddWorkers.map((w) => ({
-      id: w.id,
-      employeeCode: w.employeeCode || '',
-      callingName: w.callingName || w.fullName || 'Worker',
-      fullName: w.fullName || '',
-      tradeGroup: w.tradeGroup || 'General labour',
-      businessPartner: w.businessPartner || 'Direct',
-      nic: w.nicNo || '',
-      inTime: '',
-      outTime: '',
-      shiftHours: 0,
-      otHours: 0,
-      activities: [],
-      status: 'pending',
-      claimedBySupervisor: w.claimedBySupervisor,
-      claimedSupervisorId: w.claimedSupervisorId,
-      claimedInTime: w.claimedInTime,
-      claimedOutTime: w.claimedOutTime,
-      claimedHours: w.claimedHours,
-      claimedByMe: w.claimedByMe,
-    }));
-
-    onAddLaborers(newEntries);
-    onClose();
-  };
 
   const handleSelectAllAvailable = () => {
     const available = filtered.filter((w) => !currentIds.has(w.id) && !isLockedByOther(w));

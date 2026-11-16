@@ -298,6 +298,7 @@ async function main() {
   const masterSheetPath = path.join(__dirname, 'Company labour Master Upload Sheet.csv');
   let explicitFilePath: string | null = null;
   let explicitProject: string | null = null;
+  let explicitSupervisor: string | null = null;
 
   // Match any file argument (even if split by spaces by the shell)
   for (let i = 0; i < args.length; i++) {
@@ -317,12 +318,18 @@ async function main() {
     if (explicitFilePath) break;
   }
 
-  // Look for project argument in remaining args
+  // Look for project and supervisor argument in remaining args
   for (const a of args) {
     if (a.startsWith('--project=')) {
       explicitProject = a.split('=')[1].trim();
+    } else if (a.startsWith('--supervisor=')) {
+      explicitSupervisor = a.split('=')[1].trim();
+    } else if (a.startsWith('-s=')) {
+      explicitSupervisor = a.split('=')[1].trim();
     } else if (!a.startsWith('-')) {
-      explicitProject = a.trim();
+      if (!explicitProject) {
+        explicitProject = a.trim();
+      }
     }
   }
 
@@ -397,14 +404,38 @@ async function main() {
   console.log(`📌 Target Project: ${BOLD}${project.projectName} (${project.projectCode})${RESET}`);
 
   // 4. Resolve Supervisor or Admin for DailySheet
-  let supervisor = await prisma.mF_P_User.findFirst({
-    where: {
-      projectId: project.id,
-      role: 'supervisor',
-      status: 'active',
-    },
-    select: { id: true, username: true, fullName: true },
-  });
+  let supervisor: { id: string; username: string; fullName: string } | null = null;
+
+  if (explicitSupervisor) {
+    const cleanSup = explicitSupervisor.toLowerCase();
+    supervisor = await prisma.mF_P_User.findFirst({
+      where: {
+        projectId: project.id,
+        status: 'active',
+        OR: [
+          { username: { equals: cleanSup, mode: 'insensitive' } },
+          { fullName: { contains: cleanSup, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, username: true, fullName: true },
+    });
+    if (supervisor) {
+      console.log(`👷 Selected Supervisor by parameter: ${BOLD}${supervisor.fullName} (@${supervisor.username})${RESET}`);
+    } else {
+      console.log(`${YELLOW}⚠️ Specified supervisor '${explicitSupervisor}' not found in project ${project.projectCode}. Falling back to default supervisor.${RESET}`);
+    }
+  }
+
+  if (!supervisor) {
+    supervisor = await prisma.mF_P_User.findFirst({
+      where: {
+        projectId: project.id,
+        role: 'supervisor',
+        status: 'active',
+      },
+      select: { id: true, username: true, fullName: true },
+    });
+  }
 
   if (!supervisor) {
     supervisor = await prisma.mF_P_User.findFirst({
@@ -782,7 +813,9 @@ async function main() {
               date: group.date,
             },
           },
-          update: {},
+          update: {
+            status: 'submitted',
+          },
           create: {
             projectId: project.id,
             supervisorId: supervisor.id,

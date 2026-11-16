@@ -30,6 +30,9 @@ import {
   exportConsolidatedOperatorsToExcel,
   exportConsolidatedEquipmentToExcel,
 } from '../utils/exportConsolidatedExcel';
+import { getAll as getAllActivityCodes } from '../../activity-codes/services/activityCodeService';
+import { SearchableActivitySelect } from '../../supervisor/components/SearchableActivitySelect';
+import type { ActivityCodeItem } from '../../supervisor/services/supervisorStorageService';
 
 export interface ConsolidatedWorkerItem extends ApprovalWorkerItem {
   supervisorId: string;
@@ -94,7 +97,25 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
   const [editInTime, setEditInTime] = useState<string>('07:30');
   const [editOutTime, setEditOutTime] = useState<string>('17:00');
   const [editAdditionalHours, setEditAdditionalHours] = useState<string>('0.0');
+  const [editActivityCode, setEditActivityCode] = useState<string>('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
+
+  useEffect(() => {
+    getAllActivityCodes()
+      .then((codes) => {
+        setActivityOptions(
+          codes.map((c) => ({
+            id: c.id,
+            code: c.code,
+            name: c.description || c.code,
+            description: c.description,
+            unit: c.unit || undefined,
+          }))
+        );
+      })
+      .catch((err) => console.error('Failed to load activity codes for approvals:', err));
+  }, []);
 
   // Local state for workers to allow immediate optimistic feedback on edit
   const [localGroups, setLocalGroups] = useState<SupervisorApprovalGroup[]>(groups);
@@ -264,10 +285,16 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
     setEditInTime(w.inTime || '07:30');
     setEditOutTime(w.outTime || '17:00');
     setEditAdditionalHours(w.additionalHours !== undefined ? String(w.additionalHours) : '0.0');
+    const nonIdle = (w.activities || []).find(
+      (a) => a.code !== 'ZIDLE' && !a.code.toLowerCase().includes('idle')
+    );
+    const initialCode = nonIdle ? nonIdle.code : (w.activities?.[0]?.code || '');
+    setEditActivityCode(initialCode === 'ZIDLE' ? '' : initialCode);
   };
 
   const cancelEditing = () => {
     setEditingKey(null);
+    setEditActivityCode('');
   };
 
   const handleSaveEdit = async (w: ConsolidatedWorkerItem) => {
@@ -275,6 +302,10 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
     try {
       const addVal = parseFloat(editAdditionalHours) || 0;
       const { hours, otHours, effectiveHours, totalHours } = computePreviewHours(editInTime, editOutTime, addVal, w);
+
+      const matchedAct = activityOptions.find(
+        (a) => a.code.toUpperCase() === editActivityCode.trim().toUpperCase()
+      );
 
       const res = await adminAdjustWorker({
         supervisorId: w.supervisorId,
@@ -285,7 +316,35 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
         hours,
         overtimeHours: otHours,
         additionalHours: addVal,
+        activityCodeId: matchedAct?.id,
+        activityCode: editActivityCode.trim(),
       });
+
+      // Prepare updated activities list
+      let nextActivities = res.activities;
+      if (!nextActivities || nextActivities.length === 0) {
+        if (matchedAct) {
+          nextActivities = [
+            {
+              activityCodeId: matchedAct.id,
+              id: matchedAct.id,
+              code: matchedAct.code,
+              description: matchedAct.description || matchedAct.name || '',
+              hours: res.shiftHours ?? effectiveHours,
+            },
+          ];
+        } else if (editActivityCode.trim()) {
+          nextActivities = [
+            {
+              code: editActivityCode.trim(),
+              description: '',
+              hours: res.shiftHours ?? effectiveHours,
+            },
+          ];
+        } else {
+          nextActivities = w.activities;
+        }
+      }
 
       // Update optimistic local state
       setLocalGroups((prev) =>
@@ -305,6 +364,8 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                     additionalHours: addVal,
                     shiftHours: res.shiftHours ?? effectiveHours,
                     effectiveHours: res.effectiveHours ?? res.shiftHours ?? effectiveHours,
+                    activities: nextActivities,
+                    idleHours: (nextActivities || []).some((a) => a.code === 'ZIDLE') ? worker.idleHours : 0,
                     status: 'submitted',
                   }
                 : worker
@@ -314,6 +375,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
       );
 
       setEditingKey(null);
+      setEditActivityCode('');
       if (onRefresh) onRefresh();
     } catch (err: any) {
       alert(err?.message || 'Failed to save admin adjustments');
@@ -588,7 +650,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                   <th className="py-3 px-3 text-center min-w-[90px]">Total Hours</th>
                   <th className="py-3 px-3">Effective Hours</th>
                   <th className="py-3 px-3">OT Hrs</th>
-                  <th className="py-3 px-3 min-w-[170px]">Activities Worked</th>
+                  <th className="py-3 px-3 min-w-[220px]">Activities Worked</th>
                   <th className="py-3 px-3 text-right">Status</th>
                   {!isApprovedView && <th className="py-3 px-3 text-center min-w-[80px]">Admin Edit</th>}
                 </tr>
@@ -618,7 +680,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                     return (
                       <tr
                         key={rowKey}
-                        className={isEditingThis ? 'bg-blue-50/50' : 'hover:bg-slate-50/70 transition-colors'}
+                        className={isEditingThis ? 'bg-blue-50/50 relative z-20' : 'hover:bg-slate-50/70 transition-colors'}
                       >
                         {/* SUPERVISOR BADGE */}
                         <td className="py-2.5 px-3.5">
@@ -812,9 +874,20 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                         </td>
 
                         {/* ACTIVITIES WORKED */}
-                        <td className="py-2.5 px-3">
-                          {(() => {
-                            const acts = w.activities || [];
+                        <td className={`py-2.5 px-3 ${isEditingThis ? 'relative z-30' : ''}`}>
+                          {isEditingThis ? (
+                            <div className="w-56 min-w-[200px]">
+                              <SearchableActivitySelect
+                                value={editActivityCode}
+                                onChange={(code) => setEditActivityCode(code)}
+                                options={activityOptions}
+                                placeholder="Select Activity..."
+                                className="w-full text-xs shadow-2xs"
+                              />
+                            </div>
+                          ) : (
+                            (() => {
+                              const acts = w.activities || [];
                             const hasZidleInActs = acts.some(
                               (a) => a.code === 'ZIDLE' || a.code.toLowerCase().includes('idle')
                             );
@@ -876,8 +949,9 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                                 )}
                               </div>
                             );
-                          })()}
-                        </td>
+                          })()
+                        )}
+                      </td>
 
                         {/* STATUS */}
                         <td className="py-2.5 px-3 text-right">
@@ -894,7 +968,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                               ? 'Approved'
                               : hasAttendance
                               ? 'Done'
-                              : 'Missing'}
+                              : 'Absent'}
                           </span>
                         </td>
 
@@ -1140,7 +1214,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                               ? 'Approved'
                               : hasAttendance
                               ? 'Done'
-                              : 'Missing'}
+                              : 'Absent'}
                           </span>
                         </td>
                       </tr>
@@ -1166,7 +1240,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                   <th className="py-3 px-3">Logged Usage</th>
                   <th className="py-3 px-3">Meters</th>
                   <th className="py-3 px-3">Fuel (L)</th>
-                  <th className="py-3 px-3 min-w-[170px]">Activities Worked</th>
+                  <th className="py-3 px-3 min-w-[220px]">Activities Worked</th>
                   <th className="py-3 px-3 text-right">Status</th>
                 </tr>
               </thead>

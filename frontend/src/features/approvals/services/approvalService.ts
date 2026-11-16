@@ -25,6 +25,8 @@ export interface ApprovalDayTypeInfo {
 }
 
 export interface ApprovalWorkerActivity {
+  activityCodeId?: string;
+  id?: string;
   code: string;
   description: string;
   hours: number;
@@ -255,6 +257,8 @@ export async function adminAdjustWorker(payload: {
   hours?: number;
   overtimeHours?: number;
   additionalHours?: number;
+  activityCodeId?: string;
+  activityCode?: string;
 }): Promise<{
   success: boolean;
   employeeId: string;
@@ -266,6 +270,7 @@ export async function adminAdjustWorker(payload: {
   additionalHours?: number;
   shiftHours?: number;
   effectiveHours?: number;
+  activities?: ApprovalWorkerActivity[];
 }> {
   const res = await apiFetch(`${API_URL}/time-entries/admin-adjust`, {
     method: 'POST',

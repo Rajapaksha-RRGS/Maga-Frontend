@@ -1259,13 +1259,35 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
     // Update equipment logs
     const eqAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
       where: { dailySheetId: dailySheet.id },
-      select: { id: true },
+      select: { id: true, operatorId: true },
     });
 
     if (eqAssignments.length > 0) {
       await prisma.mF_OP_EquipmentDailyLog.updateMany({
         where: { assignmentId: { in: eqAssignments.map((a) => a.id) } },
         data: { status: 'submitted' },
+      });
+    }
+
+    // Auto-unassign unworked employees on submission:
+    // If an assigned employee has no time entry recorded for this sheet,
+    // remove them from DailyAssignment so unworked workers do not linger as missing/phantom assignments.
+    const workedEmpIds = new Set(
+      sheetEntries
+        .filter((te) => te.employeeId && (te.inTime || Number(te.hours || 0) > 0 || Number(te.shiftHours || 0) > 0))
+        .map((te) => te.employeeId)
+    );
+    const eqAssignedOpIds = new Set(eqAssignments.map((ea) => ea.operatorId).filter(Boolean));
+    const validEmployeeIds = Array.from(new Set([...workedEmpIds, ...eqAssignedOpIds])) as string[];
+
+    if (validEmployeeIds.length > 0) {
+      await prisma.mF_OP_DailyAssignment.deleteMany({
+        where: {
+          dailySheetId: dailySheet.id,
+          employeeId: {
+            notIn: validEmployeeIds,
+          },
+        },
       });
     }
 
@@ -1424,7 +1446,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
             },
             activitySplits: {
               include: {
-                activityCode: { select: { code: true, description: true } },
+                activityCode: { select: { id: true, code: true, description: true } },
               },
             },
           },
@@ -1570,7 +1592,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         }
 
         // Collect all activities worked across all entries
-        const seenActivities = new Map<string, { code: string; description: string; hours: number }>();
+        const seenActivities = new Map<string, { activityCodeId?: string; id?: string; code: string; description: string; hours: number }>();
         let totalAllocatedHours = 0;
         for (const te of entries) {
           if (te.activitySplits && te.activitySplits.length > 0) {
@@ -1582,7 +1604,13 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
               if (seenActivities.has(code)) {
                 seenActivities.get(code)!.hours += h;
               } else {
-                seenActivities.set(code, { code, description, hours: h });
+                seenActivities.set(code, {
+                  activityCodeId: s.activityCodeId || s.activityCode?.id,
+                  id: s.activityCodeId || s.activityCode?.id,
+                  code,
+                  description,
+                  hours: h,
+                });
               }
             }
           }
@@ -1844,11 +1872,20 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         0
       );
 
-      const laborAssignedCount = Math.max(
-        sheet.assignments.filter((a) => a.employee && !operatorEmpIds.has(a.employee.id)).length,
-        workerDetails.length
-      );
-      const laborWorkedCount = workerDetails.filter((w) => w.inTime || w.hours > 0).length;
+      // For submitted or approved sheets, only show workers who actually attended/worked
+      // (any unworked roster assignments are considered absent/unassigned)
+      const isSheetFinished = sheet.status === 'submitted' || sheet.status === 'approved';
+      const displayWorkers = isSheetFinished
+        ? workerDetails.filter((w) => w.inTime || Number(w.hours || 0) > 0 || Number(w.shiftHours || 0) > 0)
+        : workerDetails;
+
+      const laborAssignedCount = isSheetFinished
+        ? displayWorkers.length
+        : Math.max(
+            sheet.assignments.filter((a) => a.employee && !operatorEmpIds.has(a.employee.id)).length,
+            workerDetails.length
+          );
+      const laborWorkedCount = displayWorkers.filter((w) => w.inTime || w.hours > 0).length;
       const operatorsWorkedCount = operatorDetails.filter((o) => o.inTime || o.hours > 0).length;
       const equipmentRunningCount = equipmentDetails.filter((e) => e.netHours > 0 || e.loggedQuantity > 0).length;
 
@@ -1877,21 +1914,21 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           equipmentFuel,
           equipmentDays,
         },
-        workers: workerDetails,
+        workers: displayWorkers,
         operators: operatorDetails,
         equipment: equipmentDetails,
       };
 
-      // Skip completely empty draft sheets (e.g. admin test view or supervisor with 0 gang/logs)
-      const hasAnyActivity =
-        sheet.assignments.length > 0 ||
+      // Skip completely empty sheets or sheets without any operational activity
+      // (e.g. admin test view, supervisor with 0 logs, or sheets with 0 time entries and 0 equipment logs)
+      const hasActualOperationalActivity =
         sheet.timeEntries.length > 0 ||
         sheet.equipmentAssignments.length > 0 ||
-        workerDetails.length > 0 ||
-        operatorDetails.length > 0 ||
-        allEquipmentDetails.length > 0;
+        displayWorkers.some((w) => w.inTime || Number(w.hours || 0) > 0) ||
+        operatorDetails.some((o) => o.inTime || Number(o.hours || 0) > 0) ||
+        equipmentDetails.length > 0;
 
-      if (!hasAnyActivity && sheet.status === 'draft') {
+      if (!hasActualOperationalActivity) {
         continue;
       }
 
@@ -2126,7 +2163,7 @@ export const rejectTimeEntries = async (req: Request, res: Response): Promise<vo
 // 7.3 POST /api/time-entries/admin-adjust — Admin inline adjustment
 export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { employeeId, date, inTime, outTime, hours, overtimeHours, additionalHours } = req.body || {};
+    const { employeeId, date, inTime, outTime, hours, overtimeHours, additionalHours, activityCodeId, activityCode } = req.body || {};
     if (!employeeId || !date) {
       res.status(400).json({ error: 'employeeId and date are required' });
       return;
@@ -2140,7 +2177,7 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
       (await getDefaultTenantId());
 
     const targetDate = parseDate(date);
-    const { standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, targetDate);
+    const { effectiveDayTypeId, standardHoursCap, isAllOvertime, isSaturday } = await getDayTypeRulesAndId(projectId, targetDate);
     const mealPolicy = await getSiteMealPolicy(projectId);
     const addHoursVal = additionalHours !== undefined ? parseFloat(additionalHours) : 0;
 
@@ -2171,15 +2208,25 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
       isDinnerDeducted = calc.isDinnerDeducted;
     }
 
+    // Resolve activity code if provided
+    let targetActivityId: string | null = null;
+    const rawActivityInput = (activityCodeId || activityCode || '').toString().trim();
+    if (rawActivityInput) {
+      targetActivityId = await resolveProjectActivityId(rawActivityInput, projectId);
+    }
+
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: { projectId, employeeId, date: targetDate },
       orderBy: { createdAt: 'asc' },
       include: { activitySplits: true },
     });
 
+    let primaryEntryId: string | null = null;
+
     if (entries.length > 0) {
       const primary = entries.find((e) => e.activitySplits.length > 0) || entries[0];
       const redundant = entries.filter((e) => e.id !== primary.id);
+      primaryEntryId = primary.id;
 
       // Consolidate redundant entries into primary if any exist
       if (redundant.length > 0) {
@@ -2217,34 +2264,49 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
         },
       });
 
-      // Update splits proportionally
-      const existingSplits = await prisma.mF_OP_LaborActivitySplit.findMany({
-        where: { timeEntryId: primary.id },
-      });
+      // Update splits: if targetActivityId was explicitly provided, reassign to it
+      if (targetActivityId) {
+        await prisma.mF_OP_LaborActivitySplit.deleteMany({
+          where: { timeEntryId: primary.id },
+        });
+        await prisma.mF_OP_LaborActivitySplit.create({
+          data: {
+            id: crypto.randomUUID(),
+            timeEntryId: primary.id,
+            activityCodeId: targetActivityId,
+            hours: calculatedHours,
+          },
+        });
+      } else {
+        // Update splits proportionally if no explicit activity code
+        const existingSplits = await prisma.mF_OP_LaborActivitySplit.findMany({
+          where: { timeEntryId: primary.id },
+        });
 
-      if (existingSplits.length > 1) {
-        const oldSplitSum = existingSplits.reduce((s, x) => s + Number(x.hours || 0), 0);
-        let allocated = 0;
-        for (let i = 0; i < existingSplits.length; i++) {
-          const split = existingSplits[i];
-          let newHours = oldSplitSum > 0
-            ? Math.round((Number(split.hours || 0) / oldSplitSum) * calculatedHours * 100) / 100
-            : Math.round((calculatedHours / existingSplits.length) * 100) / 100;
-          if (i === existingSplits.length - 1) {
-            newHours = Math.max(0, Math.round((calculatedHours - allocated) * 100) / 100);
-          } else {
-            allocated += newHours;
+        if (existingSplits.length > 1) {
+          const oldSplitSum = existingSplits.reduce((s, x) => s + Number(x.hours || 0), 0);
+          let allocated = 0;
+          for (let i = 0; i < existingSplits.length; i++) {
+            const split = existingSplits[i];
+            let newHours = oldSplitSum > 0
+              ? Math.round((Number(split.hours || 0) / oldSplitSum) * calculatedHours * 100) / 100
+              : Math.round((calculatedHours / existingSplits.length) * 100) / 100;
+            if (i === existingSplits.length - 1) {
+              newHours = Math.max(0, Math.round((calculatedHours - allocated) * 100) / 100);
+            } else {
+              allocated += newHours;
+            }
+            await prisma.mF_OP_LaborActivitySplit.update({
+              where: { id: split.id },
+              data: { hours: newHours },
+            });
           }
+        } else if (existingSplits.length === 1) {
           await prisma.mF_OP_LaborActivitySplit.update({
-            where: { id: split.id },
-            data: { hours: newHours },
+            where: { id: existingSplits[0].id },
+            data: { hours: calculatedHours },
           });
         }
-      } else if (existingSplits.length === 1) {
-        await prisma.mF_OP_LaborActivitySplit.update({
-          where: { id: existingSplits[0].id },
-          data: { hours: calculatedHours },
-        });
       }
 
       if (primary.dailySheetId) {
@@ -2253,6 +2315,55 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
           data: { updatedAt: new Date() },
         });
       }
+    } else {
+      // Create new time entry if none existed yet
+      const created = await prisma.mF_OP_TimeEntry.create({
+        data: {
+          projectId,
+          employeeId,
+          date: targetDate,
+          effectiveDayTypeId,
+          inTime,
+          outTime,
+          hours: grossHours || calculatedHours,
+          shiftHours: calculatedHours,
+          overtimeHours: calculatedOt,
+          breakHours,
+          isLunchDeducted,
+          isDinnerDeducted,
+          additionalHours: addHoursVal,
+          status: 'submitted',
+          remarks: 'Adjusted by Admin',
+        },
+      });
+      primaryEntryId = created.id;
+
+      if (targetActivityId) {
+        await prisma.mF_OP_LaborActivitySplit.create({
+          data: {
+            id: crypto.randomUUID(),
+            timeEntryId: created.id,
+            activityCodeId: targetActivityId,
+            hours: calculatedHours,
+          },
+        });
+      }
+    }
+
+    // Retrieve fresh activities list
+    let resultActivities: any[] = [];
+    if (primaryEntryId) {
+      const splits = await prisma.mF_OP_LaborActivitySplit.findMany({
+        where: { timeEntryId: primaryEntryId },
+        include: { activityCode: { select: { id: true, code: true, description: true } } },
+      });
+      resultActivities = splits.map((s) => ({
+        activityCodeId: s.activityCodeId,
+        id: s.activityCode?.id || s.activityCodeId,
+        code: s.activityCode?.code || 'N/A',
+        description: s.activityCode?.description || '',
+        hours: Number(s.hours || 0),
+      }));
     }
 
     res.json({
@@ -2270,6 +2381,7 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
       isLunchDeducted,
       isDinnerDeducted,
       daysWorked,
+      activities: resultActivities,
       message: 'Worker entry adjusted successfully by Admin.',
     });
   } catch (error) {

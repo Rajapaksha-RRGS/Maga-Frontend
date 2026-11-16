@@ -455,14 +455,16 @@ async function main() {
   const targetProjectQuery = explicitProject || '539';
   const cleanReq = targetProjectQuery.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-  let project = allProjects.find((p) => {
-    const sCode = (p.subdomain || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const pCode = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    return sCode === cleanReq || sCode === '539' || pCode.includes(cleanReq);
-  }) || allProjects.find((p) => p.subdomain === '539') || allProjects[0];
+  let project = explicitProject
+    ? allProjects.find((p) => {
+        const sCode = (p.subdomain || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const pCode = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        return sCode === cleanReq || pCode === cleanReq || pCode.includes(cleanReq);
+      }) || null
+    : allProjects.find((p) => p.subdomain === '539') || allProjects[0];
 
   if (!project) {
-    console.error(`${RED}❌ Error: Project 539 not found in database!${RESET}`);
+    console.error(`${RED}❌ Error: Project ${targetProjectQuery} not found in database!${RESET}`);
     process.exit(1);
   }
   console.log(`📌 Target Project: ${BOLD}${project.projectName} (${project.projectCode}) [Subdomain: ${project.subdomain}]${RESET}`);
@@ -716,7 +718,34 @@ async function main() {
 
       // Auto-link from corporate employee master if not yet linked to Project 539
       if (!localEmp) {
-        const corpEmp = corpEmpMap.get(cleanOpKey);
+        let corpEmp = corpEmpMap.get(cleanOpKey);
+
+        // Auto-register casual / hired operator (e.g. ZHLOL) if not found in corporate master
+        if (!corpEmp && (cleanOpKey.startsWith('zhl') || cleanOpKey.includes('zhl'))) {
+          const opCode = group.operatorIdentifier.trim().toUpperCase();
+          if (!isDryRun) {
+            corpEmp = await prisma.mF_G_Employee.create({
+              data: {
+                employeeCode: opCode,
+                fullName: `Hired Operator (${opCode})`,
+                callingName: opCode,
+                designation: 'Machine Operator',
+                employmentType: 'casual',
+                dailyRate: 1400.0,
+                status: 'active',
+              },
+            });
+            corpEmpMap.set(cleanOpKey, corpEmp);
+          } else {
+            corpEmp = {
+              id: 'dry-run-corp-zhlol-id',
+              employeeCode: opCode,
+              fullName: `Hired Operator (${opCode})`,
+              dailyRate: 1400.0,
+            } as any;
+          }
+        }
+
         if (corpEmp) {
           if (!isDryRun) {
             const created = await prisma.mF_P_Employee.create({
