@@ -460,8 +460,9 @@ export async function exportDayOtSummaryToExcel(
   // Data rows start at Row 11
   let currentRow = 11;
   data.items.forEach((item) => {
+    const empDisplay = item.employeeCode ? `${item.employeeCode} - ${item.employeeName}` : item.employeeName;
     const rowValues: (string | number)[] = [
-      item.employeeName,
+      empDisplay,
       item.tradeGroup,
       item.businessPartner,
     ];

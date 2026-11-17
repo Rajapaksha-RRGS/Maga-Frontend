@@ -22,6 +22,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 import fs from 'fs';
 import prisma from '../src/config/prisma';
+import { DateResolutionEngine, DateAnalysisResult, DateResolveResult } from '../src/utils/dateResolutionEngine';
 
 // ANSI Colors for clear terminal output
 const GREEN = '\x1b[32m';
@@ -101,47 +102,39 @@ function normalizeTime(val?: string | null): string | null {
   return null;
 }
 
-// Helper: Parse date string into UTC Date object with strict calendar validation
-function parseDateInput(val: string): Date | null {
+// Shared Global Date Resolution Engine instance for Labor
+let activeLaborDateEngine = new DateResolutionEngine();
+let activeLaborDateAnalysis: DateAnalysisResult = {
+  dmyVotes: 0,
+  mdyVotes: 0,
+  isoVotes: 0,
+  ambiguousCount: 0,
+  dominantMonth: null,
+  dominantYear: null,
+  isMixed: false,
+  detectedFormat: 'AMBIGUOUS',
+};
+
+export function initLaborDateResolution(
+  rawDates: string[],
+  options?: { targetMonth?: number | null; targetYear?: number | null; strictPeriod?: boolean }
+) {
+  activeLaborDateEngine = new DateResolutionEngine(options);
+  activeLaborDateAnalysis = activeLaborDateEngine.analyzeDataset(rawDates);
+  return { engine: activeLaborDateEngine, analysis: activeLaborDateAnalysis };
+}
+
+// Helper: Parse date string into UTC Date object using active engine
+export function parseDateInput(val?: string | null): Date | null {
   if (!val) return null;
-  const clean = val.trim();
-  if (!clean) return null;
+  const res = activeLaborDateEngine.resolveDate(val, activeLaborDateAnalysis);
+  return res.date;
+}
 
-  // YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-    const [y, m, d] = clean.split('-').map(Number);
-    if (isNaN(y) || isNaN(m) || isNaN(d) || y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
-    const date = new Date(Date.UTC(y, m - 1, d));
-    if (isNaN(date.getTime()) || date.getUTCDate() !== d || date.getUTCMonth() !== m - 1) return null;
-    return date;
-  }
-
-  // D/M/YYYY or DD/MM/YYYY or D-M-YYYY or DD-M-YYYY (Standard Sri Lanka / Maga format: Day/Month/Year)
-  const delimiter = clean.includes('/') ? '/' : clean.includes('-') ? '-' : null;
-  if (delimiter) {
-    const slashParts = clean.split(delimiter);
-    if (slashParts.length === 3) {
-      let [day, month, year] = slashParts.map((p) => parseInt(p, 10));
-      if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
-      if (year < 100) year += 2000;
-      if (year < 2000 || year > 2100) return null;
-
-      // Swap if day was mistakenly put in month position (month > 12)
-      if (month > 12 && day <= 12) {
-        const temp = day;
-        day = month;
-        month = temp;
-      }
-      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-
-      const d = new Date(Date.UTC(year, month - 1, day));
-      if (isNaN(d.getTime()) || d.getUTCDate() !== day || d.getUTCMonth() !== month - 1) return null;
-      return d;
-    }
-  }
-
-  const d = new Date(clean);
-  return isNaN(d.getTime()) ? null : d;
+// Helper: Resolve date with full error diagnostics
+export function resolveLaborDateStrict(val?: string | null): DateResolveResult {
+  if (!val) return { date: null, error: 'Missing Date' };
+  return activeLaborDateEngine.resolveDate(val, activeLaborDateAnalysis);
 }
 
 // Helper: Compute lunch break hours
@@ -208,9 +201,19 @@ function calculateShiftAndOvertime(
 }
 
 // Helper: Parse raw text file (supports tab-delimited, comma-delimited, semicolon)
-function parseRawFile(content: string): ParseResult {
+function parseRawFile(
+  content: string,
+  options?: { targetMonth?: number | null; targetYear?: number | null; strictPeriod?: boolean }
+): ParseResult & { dateAnalysis: DateAnalysisResult } {
   const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return { rows: [], parseErrors: [], totalLines: 0 };
+  if (lines.length === 0) {
+    return {
+      rows: [],
+      parseErrors: [],
+      totalLines: 0,
+      dateAnalysis: activeLaborDateAnalysis,
+    };
+  }
 
   const firstLine = lines[0];
   const isTab = firstLine.includes('\t');
@@ -273,6 +276,19 @@ function parseRawFile(content: string): ParseResult {
 
   const rows: RawRowInput[] = [];
   const parseErrors: ProcessError[] = [];
+
+  // Pre-scan all date tokens across the dataset to initialize the Labor Date Resolution Engine
+  const rawDates: string[] = [];
+  if (colMap.date >= 0) {
+    for (let i = startIndex; i < lines.length; i++) {
+      const tokens = lines[i].split(delimiter).map((t) => t.trim().replace(/^["']+|["']+$/g, ''));
+      if (tokens.length > colMap.date && tokens[colMap.date]) {
+        rawDates.push(tokens[colMap.date]);
+      }
+    }
+  }
+
+  const { analysis: dateAnalysis } = initLaborDateResolution(rawDates, options);
 
   for (let i = startIndex; i < lines.length; i++) {
     const rawTokens = lines[i].split(delimiter).map((t) => t.trim());
@@ -425,8 +441,8 @@ function parseRawFile(content: string): ParseResult {
 
     // Validate Date
     if (dt) {
-      const parsedDate = parseDateInput(dt);
-      if (!parsedDate) {
+      const dateRes = resolveLaborDateStrict(dt);
+      if (dateRes.error || !dateRes.date) {
         parseErrors.push({
           line: lineNum,
           employee: emp || 'UNKNOWN',
@@ -435,7 +451,7 @@ function parseRawFile(content: string): ParseResult {
           outTime: outT,
           activityCode: act,
           hours: hoursVal,
-          reason: `Invalid Date format or invalid calendar day: '${dt}'`,
+          reason: dateRes.error || `Invalid Date format or invalid calendar day: '${dt}'`,
         });
         hasLineError = true;
       }
@@ -455,7 +471,7 @@ function parseRawFile(content: string): ParseResult {
     });
   }
 
-  return { rows, parseErrors, totalLines: lines.length - startIndex };
+  return { rows, parseErrors, totalLines: lines.length - startIndex, dateAnalysis };
 }
 
 async function main() {
@@ -463,68 +479,81 @@ async function main() {
   console.log(`${CYAN}${BOLD}     MAGA LABOR BULK TIME ENTRY UPLOADER             ${RESET}`);
   console.log(`${CYAN}${BOLD}=====================================================${RESET}\n`);
 
-  // 1. Parse CLI Arguments (Supports: [filePath] [projectCode] OR --file=... --project=... --dry-run)
-  const args = process.argv.slice(2);
-  const isDryRun = process.argv.some((a) => a.includes('--dry-run') || a === '-d');
+  // 1. Parse CLI Arguments (Supports: [subdomain] [supervisor] [filePath] OR --subdomain=... --supervisor=... --file=... --dry-run)
+  const rawArgs = process.argv.slice(2);
+  const isDryRun = rawArgs.some((a) => a.includes('--dry-run') || a === '-d');
   if (isDryRun) {
     console.log(`${YELLOW}${BOLD}🧪 RUNNING IN DRY RUN MODE (No database writes will occur)${RESET}\n`);
   }
 
-  // 2. Resolve Input File (Smart detection handling spaces, quotes, and defaults)
+  // 2. Resolve Input File & Explicit Options
   const defaultFilePath = path.join(__dirname, 'labor_data.csv');
   const masterSheetPath = path.join(__dirname, 'Company labour Master Upload Sheet.csv');
   let explicitFilePath: string | null = null;
-  let explicitProject: string | null = null;
+  let explicitSubdomain: string | null = null;
   let explicitSupervisor: string | null = null;
+  let explicitDate: string | null = null;
+  let explicitMonth: number | null = null;
+  let explicitYear: number | null = null;
+  const positionalArgs: string[] = [];
 
-  // Match any file argument (even if split by spaces by the shell)
-  for (let i = 0; i < args.length; i++) {
-    for (let j = args.length; j > i; j--) {
-      const candidate = args.slice(i, j).join(' ').replace(/^[\"'\`]+|[\"'\`]+$/g, '').trim();
-      if (!candidate || candidate.startsWith('-')) continue;
-      if (fs.existsSync(candidate)) {
-        explicitFilePath = path.resolve(candidate);
-        args.splice(i, j - i);
-        break;
-      } else if (fs.existsSync(path.join(__dirname, candidate))) {
-        explicitFilePath = path.join(__dirname, candidate);
-        args.splice(i, j - i);
-        break;
+  for (const a of rawArgs) {
+    if (a.startsWith('--subdomain=') || a.startsWith('--project=') || a.startsWith('-p=')) {
+      explicitSubdomain = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+    } else if (a.startsWith('--supervisor=') || a.startsWith('--user=') || a.startsWith('-s=')) {
+      explicitSupervisor = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+    } else if (a.startsWith('--date=')) {
+      explicitDate = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+    } else if (a.startsWith('--period=') || a.startsWith('--month=') || a.startsWith('-m=')) {
+      const val = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+      if (val.includes('-')) {
+        const [y, m] = val.split('-').map(Number);
+        if (!isNaN(y)) explicitYear = y;
+        if (!isNaN(m)) explicitMonth = m;
+      } else {
+        const m = parseInt(val, 10);
+        if (!isNaN(m)) explicitMonth = m;
       }
+    } else if (a.startsWith('--year=') || a.startsWith('-y=')) {
+      const y = parseInt(a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim(), 10);
+      if (!isNaN(y)) explicitYear = y;
+    } else if (a.startsWith('--file=') || a.startsWith('-f=')) {
+      const p = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+      explicitFilePath = fs.existsSync(p) ? path.resolve(p) : path.join(__dirname, p);
+    } else if (a === '--dry-run' || a === '-d') {
+      // already captured
+    } else if (!a.startsWith('-')) {
+      positionalArgs.push(a.replace(/^["']|["']$/g, '').trim());
     }
-    if (explicitFilePath) break;
   }
 
-  let explicitDate: string | null = null;
-
-  // Look for file, project and supervisor argument in remaining args
-  for (const a of args) {
-    if (a.startsWith('--file=')) {
-      const p = a.split('=')[1].replace(/^[\"'\`]+|[\"'\`]+$/g, '').trim();
-      if (fs.existsSync(p)) explicitFilePath = path.resolve(p);
-      else if (fs.existsSync(path.join(__dirname, p))) explicitFilePath = path.join(__dirname, p);
-    } else if (a.startsWith('-f=')) {
-      const p = a.split('=')[1].replace(/^[\"'\`]+|[\"'\`]+$/g, '').trim();
-      if (fs.existsSync(p)) explicitFilePath = path.resolve(p);
-      else if (fs.existsSync(path.join(__dirname, p))) explicitFilePath = path.join(__dirname, p);
-    } else if (a.startsWith('--project=')) {
-      explicitProject = a.split('=')[1].trim();
-    } else if (a.startsWith('--supervisor=')) {
-      explicitSupervisor = a.split('=')[1].trim();
-    } else if (a.startsWith('-s=')) {
-      explicitSupervisor = a.split('=')[1].trim();
-    } else if (a.startsWith('--date=')) {
-      explicitDate = a.split('=')[1].trim();
-    } else if (!a.startsWith('-')) {
-      if (!explicitProject) {
-        explicitProject = a.trim();
-      }
+  // Check positional args:
+  // First, check if any positional arg is a valid file path on disk
+  for (let i = 0; i < positionalArgs.length; i++) {
+    const candidate = positionalArgs[i];
+    if (fs.existsSync(candidate)) {
+      explicitFilePath = path.resolve(candidate);
+      positionalArgs.splice(i, 1);
+      break;
+    } else if (fs.existsSync(path.join(__dirname, candidate))) {
+      explicitFilePath = path.join(__dirname, candidate);
+      positionalArgs.splice(i, 1);
+      break;
     }
+  }
+
+  // Next positional arg is subdomain (if not already set via flag)
+  if (!explicitSubdomain && positionalArgs.length > 0) {
+    explicitSubdomain = positionalArgs.shift()!;
+  }
+
+  // Next positional arg is supervisor username (if not already set via flag)
+  if (!explicitSupervisor && positionalArgs.length > 0) {
+    explicitSupervisor = positionalArgs.shift()!;
   }
 
   let targetFilePath = explicitFilePath;
   if (!targetFilePath) {
-    // If Company labour Master Upload Sheet exists, prioritize it for upload
     if (fs.existsSync(masterSheetPath)) {
       targetFilePath = masterSheetPath;
     } else {
@@ -539,22 +568,25 @@ async function main() {
 
   let project: typeof allProjects[0] | null = null;
 
-  if (explicitProject) {
-    const cleanReq = explicitProject.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (explicitSubdomain) {
+    const cleanReq = explicitSubdomain.toUpperCase().replace(/[^A-Z0-9]/g, '');
     project = allProjects.find((p) => {
       const pCode = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
       const sCode = (p.subdomain || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
       const pName = p.projectName.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      return (
-        p.id.toLowerCase() === explicitProject!.toLowerCase() ||
-        pCode === cleanReq ||
-        sCode === cleanReq ||
-        pCode.includes(cleanReq) ||
-        cleanReq.includes(pCode) ||
-        sCode.includes(cleanReq) ||
-        pName.includes(cleanReq)
-      );
+      const pId = p.id.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      return sCode === cleanReq || pCode === cleanReq || pCode.includes(cleanReq) || cleanReq.includes(pCode) || pId === cleanReq || pName.includes(cleanReq);
     }) || null;
+
+    if (!project) {
+      console.error(`\n${RED}${BOLD}❌ ERROR: Project with subdomain / code '${explicitSubdomain}' not found in database!${RESET}`);
+      console.log(`\n${CYAN}${BOLD}📋 Available Projects in System:${RESET}`);
+      allProjects.forEach((p) => {
+        console.log(`  • ${BOLD}${p.projectName}${RESET} | Subdomain: ${GREEN}${BOLD}${p.subdomain || '-'}${RESET} | Code: ${p.projectCode}`);
+      });
+      console.log(`\n👉 Example: npm run upload:labor -- 521 gayan [--dry-run]\n`);
+      process.exit(1);
+    }
   }
 
   // Auto-detect project from CSV employees if project not explicitly supplied!
@@ -575,7 +607,7 @@ async function main() {
       if (match) {
         project = allProjects.find((p) => p.id === match.projectId) || null;
         if (project) {
-          console.log(`🔍 ${GREEN}Auto-detected Project from CSV employees:${RESET} ${BOLD}${project.projectName} (${project.projectCode})${RESET}`);
+          console.log(`🔍 ${GREEN}Auto-detected Project from CSV employees:${RESET} ${BOLD}${project.projectName} (${project.projectCode}) [Subdomain: ${project.subdomain}]${RESET}`);
         }
       }
     }
@@ -583,58 +615,53 @@ async function main() {
 
   if (!project) {
     // Default fallback to first active project
-    project = allProjects[0] || null;
+    project = allProjects.find((p) => p.subdomain === '521') || allProjects[0] || null;
   }
 
   if (!project) {
     console.error(`${RED}❌ Error: No active project found in database!${RESET}`);
     process.exit(1);
   }
-  console.log(`📌 Target Project: ${BOLD}${project.projectName} (${project.projectCode})${RESET}`);
+  console.log(`📌 Target Project: ${BOLD}${project.projectName} (${project.projectCode}) [Subdomain: ${project.subdomain}]${RESET}`);
 
-  // 4. Resolve Supervisor or Admin for DailySheet
-  let supervisor: { id: string; username: string; fullName: string } | null = null;
+  // 4. Resolve Active Supervisor or Admin for DailySheet
+  const projectUsers = await prisma.mF_P_User.findMany({
+    where: {
+      projectId: project.id,
+      status: 'active',
+    },
+    select: { id: true, username: true, fullName: true, role: true },
+  });
+
+  let supervisor: typeof projectUsers[0] | null = null;
 
   if (explicitSupervisor) {
-    const cleanSup = explicitSupervisor.toLowerCase();
-    supervisor = await prisma.mF_P_User.findFirst({
-      where: {
-        projectId: project.id,
-        status: 'active',
-        OR: [
-          { username: { equals: cleanSup, mode: 'insensitive' } },
-          { fullName: { contains: cleanSup, mode: 'insensitive' } },
-        ],
-      },
-      select: { id: true, username: true, fullName: true },
-    });
-    if (supervisor) {
-      console.log(`👷 Selected Supervisor by parameter: ${BOLD}${supervisor.fullName} (@${supervisor.username})${RESET}`);
-    } else {
-      console.log(`${YELLOW}⚠️ Specified supervisor '${explicitSupervisor}' not found in project ${project.projectCode}. Falling back to default supervisor.${RESET}`);
+    const cleanSup = explicitSupervisor.toLowerCase().trim();
+    supervisor = projectUsers.find((u) => {
+      return (
+        u.username.toLowerCase() === cleanSup ||
+        u.fullName.toLowerCase().includes(cleanSup)
+      );
+    }) || null;
+
+    if (!supervisor) {
+      console.error(`\n${RED}${BOLD}❌ ERROR: Supervisor / User '${explicitSupervisor}' not found in Project ${project.projectName} (${project.projectCode})!${RESET}`);
+      console.log(`\n${CYAN}${BOLD}📋 Active Supervisors / Admins in Project ${project.subdomain || project.projectCode}:${RESET}`);
+      if (projectUsers.length === 0) {
+        console.log(`  (No active users found for this project in database)`);
+      } else {
+        projectUsers.forEach((u) => {
+          console.log(`  • @${GREEN}${BOLD}${u.username}${RESET} (${u.fullName}) - Role: ${u.role}`);
+        });
+      }
+      console.log(`\n👉 Example: npm run upload:labor -- ${project.subdomain || project.projectCode} ${projectUsers[0]?.username || 'username'} [--dry-run]\n`);
+      process.exit(1);
     }
+    console.log(`👷 Selected Supervisor by parameter: ${BOLD}${supervisor.fullName} (@${supervisor.username})${RESET}`);
   }
 
   if (!supervisor) {
-    supervisor = await prisma.mF_P_User.findFirst({
-      where: {
-        projectId: project.id,
-        role: 'supervisor',
-        status: 'active',
-      },
-      select: { id: true, username: true, fullName: true },
-    });
-  }
-
-  if (!supervisor) {
-    supervisor = await prisma.mF_P_User.findFirst({
-      where: {
-        projectId: project.id,
-        role: 'admin',
-        status: 'active',
-      },
-      select: { id: true, username: true, fullName: true },
-    });
+    supervisor = projectUsers.find((u) => u.role === 'supervisor') || projectUsers.find((u) => u.role === 'admin') || projectUsers[0] || null;
   }
 
   if (!supervisor) {
@@ -672,7 +699,24 @@ async function main() {
 
   console.log(`📂 Reading data from: ${BOLD}${targetFilePath}${RESET}`);
   const rawFileContent = fs.readFileSync(targetFilePath, 'utf-8');
-  const { rows: parsedRows, parseErrors, totalLines } = parseRawFile(rawFileContent);
+  const { rows: parsedRows, parseErrors, totalLines, dateAnalysis } = parseRawFile(rawFileContent, {
+    targetMonth: explicitMonth,
+    targetYear: explicitYear,
+  });
+
+  console.log(`\n${CYAN}${BOLD}📅 DATE FORMAT AUDIT & HEALTH CHECK:${RESET}`);
+  console.log(`   - Detected Date Format  : ${BOLD}${dateAnalysis.detectedFormat}${RESET}`);
+  console.log(`   - Target Billing Period : ${BOLD}${dateAnalysis.dominantYear ? dateAnalysis.dominantYear + '-' + String(dateAnalysis.dominantMonth).padStart(2, '0') : 'Auto-detected'}${RESET}`);
+  console.log(`   - DMY Rows (DD/MM/YYYY) : ${dateAnalysis.dmyVotes} rows`);
+  console.log(`   - MDY Rows (MM/DD/YYYY) : ${dateAnalysis.mdyVotes} rows`);
+  console.log(`   - Ambiguous (Day <= 12) : ${dateAnalysis.ambiguousCount} rows`);
+  if (dateAnalysis.isMixed) {
+    console.log(`   ${YELLOW}⚠️ Note: Excel mixed-locale export detected. Auto-correcting ambiguous days 1-12 to match billing month.${RESET}`);
+  }
+  if (parseErrors.length > 0) {
+    console.log(`   ${RED}⚠️ Date Format / Row Validation Errors Detected: ${parseErrors.length} rows failed validation.${RESET}`);
+  }
+  console.log('');
 
   if (parsedRows.length === 0 && parseErrors.length === 0) {
     console.log(`${YELLOW}⚠️ No data rows found in file.${RESET}`);
@@ -876,8 +920,8 @@ async function main() {
       continue;
     }
 
-    const parsedDate = parseDateInput(dtStr);
-    if (!parsedDate) {
+    const dateRes = resolveLaborDateStrict(dtStr);
+    if (!dateRes.date) {
       errors.push({
         line: r.rawLineIndex,
         employee: empKey,
@@ -887,10 +931,11 @@ async function main() {
         activityCode: r.activityCode,
         hours: r.hours,
         additionalHours: r.additionalHours,
-        reason: `Invalid Date format or invalid calendar day: '${dtStr}'`,
+        reason: dateRes.error || `Invalid Date format or invalid calendar day: '${dtStr}'`,
       });
       continue;
     }
+    const parsedDate = dateRes.date;
 
     if (explicitDate) {
       const parsedExplicit = parseDateInput(explicitDate);

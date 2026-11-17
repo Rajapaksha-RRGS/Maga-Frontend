@@ -117,9 +117,21 @@ export default function DayOtSummaryTable({ data }: Props) {
                  
                   {/* Sticky Employee Name */}
                   <td className="sticky left-0 z-10 bg-white hover:bg-slate-50 px-4 py-2.5 border-r border-slate-200 shadow-[1px_0_0_0_#e2e8f0]">
-                    
-                    <div className="font-medium font-mono text-slate-900 truncate max-w-[160px]">
-                      {row.employeeCode }
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium font-mono text-slate-900 truncate max-w-[130px]">
+                        {row.employeeCode || row.employeeName}
+                      </span>
+                      {row.employeeType && (
+                        <span
+                          className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-semibold uppercase tracking-wide border ${
+                            row.employeeType === 'internal'
+                              ? 'bg-sky-50 text-sky-700 border-sky-200'
+                              : 'bg-violet-50 text-violet-700 border-violet-200'
+                          }`}
+                        >
+                          {row.employeeType}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[10px] text-slate-400 truncate max-w-[160px]">
                       {row.employeeName}

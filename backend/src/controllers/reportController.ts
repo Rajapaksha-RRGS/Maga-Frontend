@@ -41,31 +41,59 @@ async function resolveProjectId(req: Request): Promise<string> {
   return await getDefaultProjectId();
 }
 
+// ─── Helper: resolve status filter (defaults to submitted + approved) ────────
+function resolveStatusFilter(statusParam?: string) {
+  if (!statusParam || statusParam === 'all') {
+    return { in: ['submitted', 'approved'] };
+  }
+  return statusParam;
+}
+
 // ─── Helper: build date filter for Prisma ─────────────────────────────────────
 function buildDateFilter(dateFrom?: string, dateTo?: string) {
   const filter: Record<string, Date> = {};
-  if (dateFrom) filter.gte = new Date(dateFrom);
+  if (dateFrom) {
+    const [y, m, d] = dateFrom.split('-').map(Number);
+    filter.gte = (!isNaN(y) && !isNaN(m) && !isNaN(d))
+      ? new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0))
+      : new Date(dateFrom);
+  }
   if (dateTo) {
-    const d = new Date(dateTo);
-    d.setUTCHours(23, 59, 59, 999);
-    filter.lte = d;
+    const [y, m, d] = dateTo.split('-').map(Number);
+    filter.lte = (!isNaN(y) && !isNaN(m) && !isNaN(d))
+      ? new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999))
+      : new Date(dateTo);
   }
   return Object.keys(filter).length > 0 ? filter : undefined;
 }
 
 // ─── Helper: get all unique dates in a range ─────────────────────────────────
 function dateRange(from?: string, to?: string): string[] {
-  const start = from ? new Date(from) : new Date();
-  const end = to ? new Date(to) : new Date();
-  if (!from && !to) {
-    // Default: current month
-    start.setDate(1);
+  let start: Date;
+  let end: Date;
+  if (from) {
+    const [y, m, d] = from.split('-').map(Number);
+    start = (!isNaN(y) && !isNaN(m) && !isNaN(d))
+      ? new Date(Date.UTC(y, m - 1, d))
+      : new Date(from);
+  } else {
+    const now = new Date();
+    start = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
   }
+  if (to) {
+    const [y, m, d] = to.split('-').map(Number);
+    end = (!isNaN(y) && !isNaN(m) && !isNaN(d))
+      ? new Date(Date.UTC(y, m - 1, d))
+      : new Date(to);
+  } else {
+    end = new Date();
+  }
+
   const dates: string[] = [];
   const curr = new Date(start);
-  while (curr <= end && dates.length < 31) {
+  while (curr <= end && dates.length < 90) {
     dates.push(curr.toISOString().split('T')[0]);
-    curr.setDate(curr.getDate() + 1);
+    curr.setUTCDate(curr.getUTCDate() + 1);
   }
   return dates.length > 0 ? dates : [new Date().toISOString().split('T')[0]];
 }
@@ -295,26 +323,42 @@ function buildEmployeeFilter(
   employeeQuery?: string,
   employeeType?: string
 ) {
-  const filter: any = {};
+  const conditions: any[] = [];
+
   if (workerType === 'operator') {
-    filter.isOperator = true;
+    conditions.push({ isOperator: true });
   } else if (workerType === 'labor') {
-    filter.isOperator = false;
+    conditions.push({ isOperator: false });
   }
+
   if (employeeType === 'internal' || employeeType === 'external') {
-    filter.corporateEmployee = { employeeType };
+    conditions.push({
+      corporateEmployee: { employeeType },
+    });
   }
+
   if (businessPartner) {
-    filter.businessPartner = { name: { contains: businessPartner, mode: 'insensitive' } };
+    conditions.push({
+      OR: [
+        { businessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } },
+        { corporateEmployee: { corporateBusinessPartner: { name: { contains: businessPartner, mode: 'insensitive' } } } },
+      ],
+    });
   }
-    if (employeeQuery) {
-    filter.OR = [
-      { callingName: { contains: employeeQuery, mode: 'insensitive' } },
-      { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
-      { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
-    ];
+
+  if (employeeQuery) {
+    conditions.push({
+      OR: [
+        { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+        { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
+        { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
+      ],
+    });
   }
-  return Object.keys(filter).length > 0 ? filter : undefined;
+
+  if (conditions.length === 0) return undefined;
+  if (conditions.length === 1) return conditions[0];
+  return { AND: conditions };
 }
 
 // ─── Helper: build activity code filter matching child labor splits ────────────
@@ -339,6 +383,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
     const businessPartner = qStr(req.query.businessPartner);
     const workerType = qStr(req.query.workerType) || 'labor';
     const employeeType = qStr(req.query.employeeType);
+    const statusFilter = resolveStatusFilter(qStr(req.query.status));
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
@@ -347,14 +392,19 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
-        status: 'approved',
+        status: statusFilter,
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(empFilter ? { employee: empFilter } : {}),
       },
       include: {
         employee: {
           include: {
-            corporateEmployee: true,
+            corporateEmployee: {
+              include: {
+                tradeGroup: true,
+                corporateBusinessPartner: true,
+              },
+            },
             businessPartner: true,
             tradeGroup: true,
           },
@@ -383,7 +433,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
       const dateKey = entry.date.toISOString().split('T')[0];
       const emp = entry.employee;
       const corp = emp.corporateEmployee;
-      const effectiveBp = entry.appliedBusinessPartner || emp.businessPartner;
+      const effectiveBp = entry.appliedBusinessPartner || emp.businessPartner || corp.corporateBusinessPartner;
 
       const isEmployeeActive = emp.status === 'active' && corp.status === 'active';
       const isPartnerActive = !effectiveBp || effectiveBp.status === 'active';
@@ -403,8 +453,9 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
           employeeCode: corp.employeeCode || '',
           callingName: emp.callingName || corp.fullName || '',
           employeeName: corp.fullName || emp.callingName || '',
-          tradeGroup: emp.tradeGroup?.name || (emp.isOperator ? 'Operator' : 'Labor'),
-          businessPartner: effectiveBp?.name || 'Direct / Maga',
+          tradeGroup: emp.tradeGroup?.name || corp.tradeGroup?.name || (emp.isOperator ? 'Operator' : 'Labor'),
+          businessPartner: effectiveBp?.name || corp.corporateBusinessPartner?.name || 'Direct / Maga',
+          employeeType: corp.employeeType || '',
           isEmployeeApproved: isEmployeeActive,
           isPartnerApproved: isPartnerActive,
           isPayable,
@@ -598,6 +649,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
     const businessPartner = qStr(req.query.businessPartner);
     const workerType = qStr(req.query.workerType) || 'labor';
     const employeeType = qStr(req.query.employeeType);
+    const statusFilter = resolveStatusFilter(qStr(req.query.status));
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
@@ -605,14 +657,19 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
-        status: 'approved',
+        status: statusFilter,
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(empFilter ? { employee: empFilter } : {}),
       },
       include: {
         employee: {
           include: {
-            corporateEmployee: true,
+            corporateEmployee: {
+              include: {
+                tradeGroup: true,
+                corporateBusinessPartner: true,
+              },
+            },
             businessPartner: true,
             tradeGroup: true,
           },
@@ -625,10 +682,11 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
 
     const calendarMap = await getProjectCalendarDayMap(projectId, dateFrom, dateTo);
 
-    // Collect all unique dates in the range
-    const allDatesSet = new Set<string>();
+    // Collect all unique dates in the range, unioned with the requested date range
+    const rangeDates = dateFrom && dateTo ? dateRange(dateFrom, dateTo) : [];
+    const allDatesSet = new Set<string>(rangeDates);
     entries.forEach((e) => allDatesSet.add(e.date.toISOString().split('T')[0]));
-    const finalDates = entries.length === 0 ? dateRange(dateFrom, dateTo) : Array.from(allDatesSet).sort();
+    const finalDates = allDatesSet.size > 0 ? Array.from(allDatesSet).sort() : dateRange(dateFrom, dateTo);
 
     // Group by employee AND date to compute daily shift and OT from In/Out times
     const empDailyMap = new Map<string, Map<string, typeof entries>>();
@@ -639,7 +697,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
       const dateKey = entry.date.toISOString().split('T')[0];
       const emp = entry.employee;
       const corp = emp.corporateEmployee;
-      const effectiveBp = entry.appliedBusinessPartner || emp.businessPartner;
+      const effectiveBp = entry.appliedBusinessPartner || emp.businessPartner || corp?.corporateBusinessPartner;
 
       if (!empInfoMap.has(empId)) {
         empInfoMap.set(empId, {
@@ -647,8 +705,9 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
           employeeCode: corp?.employeeCode || '',
           callingName: emp.callingName || corp?.fullName || '',
           employeeName: corp?.fullName || emp.callingName || '',
-          tradeGroup: emp.tradeGroup?.name || '',
-          businessPartner: effectiveBp?.name || '',
+          tradeGroup: emp.tradeGroup?.name || corp?.tradeGroup?.name || '',
+          businessPartner: effectiveBp?.name || corp?.corporateBusinessPartner?.name || '',
+          employeeType: corp?.employeeType || '',
         });
       }
 
@@ -673,6 +732,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
 
     const items = Array.from(empDailyMap.entries()).map(([empId, dayMap], idx) => {
       const empInfo = empInfoMap.get(empId);
+      const isExternal = empInfo?.employeeType === 'external' || Boolean(empInfo?.businessPartner);
       const dailyEntries: Record<string, { days: number; otHours: number; workHours: number }> = {};
       let totalEmpDays = 0;
       let totalEmpWork = 0;
@@ -695,7 +755,8 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
           standardCap,
           isAllOvertime,
           precomputedShift !== undefined && precomputedShift !== null ? Number(precomputedShift) : null,
-          precomputedOt !== undefined && precomputedOt !== null ? Number(precomputedOt) : null
+          precomputedOt !== undefined && precomputedOt !== null ? Number(precomputedOt) : null,
+          isExternal
         );
 
         dailyEntries[dateKey] = {
@@ -712,8 +773,8 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
           dateTotals[dateKey] = { days: 0, otHours: 0, workHours: 0 };
         }
         dateTotals[dateKey].days += 1;
-        dateTotals[dateKey].workHours += workHours;
-        dateTotals[dateKey].otHours += otHours;
+        dateTotals[dateKey].workHours = Math.round((dateTotals[dateKey].workHours + workHours) * 100) / 100;
+        dateTotals[dateKey].otHours = Math.round((dateTotals[dateKey].otHours + otHours) * 100) / 100;
       }
 
       grandTotalDays += totalEmpDays;
@@ -728,6 +789,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
         employeeName: empInfo?.employeeName || '',
         tradeGroup: empInfo?.tradeGroup || '',
         businessPartner: empInfo?.businessPartner || '',
+        employeeType: empInfo?.employeeType || '',
         dailyEntries,
         totalDays: totalEmpDays,
         totalWorkHours: Math.round(totalEmpWork * 100) / 100,
@@ -764,6 +826,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     const businessPartner = qStr(req.query.businessPartner);
     const workerType = qStr(req.query.workerType) || 'labor';
     const employeeType = qStr(req.query.employeeType);
+    const statusFilter = resolveStatusFilter(qStr(req.query.status));
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
@@ -771,14 +834,19 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
-        status: 'approved',
+        status: statusFilter,
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(empFilter ? { employee: empFilter } : {}),
       },
       include: {
         employee: {
           include: {
-            corporateEmployee: true,
+            corporateEmployee: {
+              include: {
+                tradeGroup: true,
+                corporateBusinessPartner: true,
+              },
+            },
             businessPartner: true,
             tradeGroup: true,
           },
@@ -1396,6 +1464,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
     const activityCode = qStr(req.query.activityCode);
     const workerType = qStr(req.query.workerType) || 'operator';
     const employeeType = qStr(req.query.employeeType);
+    const statusFilter = resolveStatusFilter(qStr(req.query.status));
 
     const dateFilter = buildDateFilter(dateFrom, dateTo);
     const empFilter = buildEmployeeFilter(workerType, businessPartner, employeeQuery, employeeType);
@@ -1404,7 +1473,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
-        status: 'approved',
+        status: statusFilter,
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(empFilter ? { employee: empFilter } : {}),
         ...(activityFilter ?? {}),
@@ -2015,7 +2084,7 @@ export const getReportsHubStats = async (req: Request, res: Response): Promise<v
       prisma.mF_OP_TimeEntry.aggregate({
         where: {
           projectId,
-          status: 'approved',
+          status: { in: ['submitted', 'approved'] },
           date: { gte: startOfMonth, lte: endOfMonth },
           employee: { isOperator: false },
         },
@@ -2024,7 +2093,7 @@ export const getReportsHubStats = async (req: Request, res: Response): Promise<v
       prisma.mF_OP_TimeEntry.aggregate({
         where: {
           projectId,
-          status: 'approved',
+          status: { in: ['submitted', 'approved'] },
           date: { gte: startOfMonth, lte: endOfMonth },
           employee: { isOperator: true },
         },
@@ -2712,12 +2781,13 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
 
     const dateFilter = buildDateFilter(from, to);
     const opEmpFilter = buildEmployeeFilter('operator', businessPartner, employeeQuery, employeeType)!;
+    const statusFilter = resolveStatusFilter(qStr(req.query.status));
 
     // 1. Fetch all Operator Time Entries (which contain granular machine splits)
     const operatorTimeEntries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
-        status: 'approved',
+        status: statusFilter,
         employee: opEmpFilter,
         ...(dateFilter ? { date: dateFilter } : {}),
       },
@@ -2733,6 +2803,15 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
             corporateEquipment: true,
           },
         },
+        equipmentSplits: {
+          include: {
+            equipment: {
+              include: {
+                corporateEquipment: true,
+              },
+            },
+          },
+        },
       },
       orderBy: [{ date: 'asc' }, { employee: { callingName: 'asc' } }],
     });
@@ -2742,7 +2821,7 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
       where: {
         dailySheet: {
           projectId,
-          status: 'approved',
+          status: statusFilter,
           ...(dateFilter ? { date: dateFilter } : {}),
         },
         operator: opEmpFilter,
@@ -2848,44 +2927,67 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
         dayData.overtimeHours = otH;
       }
 
-      // Check if this entry contains multi-machine splits in remarks
-      const parsedSplits = parseSplitsFromRemarks(te.remarks);
-      if (parsedSplits.length > 0) {
-        for (const split of parsedSplits) {
-          const eq = eqMap.get(split.equipmentRef) || (te.equipmentId === split.equipmentRef ? te.equipment : undefined);
-          const eqCode = eq?.corporateEquipment?.standardEquipmentNumber || eq?.corporateEquipment?.vehicleNo || split.equipmentRef;
+      // Check if real equipment splits exist in the database
+      if (te.equipmentSplits && te.equipmentSplits.length > 0) {
+        for (const split of te.equipmentSplits) {
+          const eq = split.equipment || eqMap.get(split.equipmentId) || (te.equipmentId === split.equipmentId ? te.equipment : undefined);
+          const eqCode = eq?.corporateEquipment?.standardEquipmentNumber || eq?.corporateEquipment?.vehicleNo || "EQUIP";
           const cond = (eq?.condition || te.equipment?.condition || "DRY").toUpperCase();
           const unit = (eq?.meterUnitCode || eq?.corporateEquipment?.unit || te.equipment?.meterUnitCode || "hrs").toLowerCase();
-          const h = split.hours;
+          const h = Number(split.hours) || 0;
 
           if (dayData.machines.has(eqCode)) {
-            dayData.machines.get(eqCode)!.hours = Math.max(dayData.machines.get(eqCode)!.hours, h);
+            dayData.machines.get(eqCode)!.hours += h;
           } else {
             dayData.machines.set(eqCode, {
               equipmentCode: eqCode,
               condition: cond,
               unit,
               hours: h,
-              remarks: "",
+              remarks: te.remarks || "",
             });
           }
         }
-      } else if (te.equipment) {
-        const eqCode = te.equipment.corporateEquipment?.standardEquipmentNumber || te.equipment.corporateEquipment?.vehicleNo || "EQUIP";
-        const cond = (te.equipment.condition || "DRY").toUpperCase();
-        const unit = (te.equipment.meterUnitCode || te.equipment.corporateEquipment?.unit || "hrs").toLowerCase();
-        const h = Number(te.shiftHours || te.hours) || 0;
+      } else {
+        // Fallback: Check if this entry contains multi-machine splits in remarks
+        const parsedSplits = parseSplitsFromRemarks(te.remarks);
+        if (parsedSplits.length > 0) {
+          for (const split of parsedSplits) {
+            const eq = eqMap.get(split.equipmentRef) || (te.equipmentId === split.equipmentRef ? te.equipment : undefined);
+            const eqCode = eq?.corporateEquipment?.standardEquipmentNumber || eq?.corporateEquipment?.vehicleNo || split.equipmentRef;
+            const cond = (eq?.condition || te.equipment?.condition || "DRY").toUpperCase();
+            const unit = (eq?.meterUnitCode || eq?.corporateEquipment?.unit || te.equipment?.meterUnitCode || "hrs").toLowerCase();
+            const h = split.hours;
 
-        if (dayData.machines.has(eqCode)) {
-          dayData.machines.get(eqCode)!.hours += h;
-        } else {
-          dayData.machines.set(eqCode, {
-            equipmentCode: eqCode,
-            condition: cond,
-            unit,
-            hours: h,
-            remarks: te.remarks || "",
-          });
+            if (dayData.machines.has(eqCode)) {
+              dayData.machines.get(eqCode)!.hours += h;
+            } else {
+              dayData.machines.set(eqCode, {
+                equipmentCode: eqCode,
+                condition: cond,
+                unit,
+                hours: h,
+                remarks: "",
+              });
+            }
+          }
+        } else if (te.equipment) {
+          const eqCode = te.equipment.corporateEquipment?.standardEquipmentNumber || te.equipment.corporateEquipment?.vehicleNo || "EQUIP";
+          const cond = (te.equipment.condition || "DRY").toUpperCase();
+          const unit = (te.equipment.meterUnitCode || te.equipment.corporateEquipment?.unit || "hrs").toLowerCase();
+          const h = Number(te.shiftHours || te.hours) || 0;
+
+          if (dayData.machines.has(eqCode)) {
+            dayData.machines.get(eqCode)!.hours += h;
+          } else {
+            dayData.machines.set(eqCode, {
+              equipmentCode: eqCode,
+              condition: cond,
+              unit,
+              hours: h,
+              remarks: te.remarks || "",
+            });
+          }
         }
       }
     }

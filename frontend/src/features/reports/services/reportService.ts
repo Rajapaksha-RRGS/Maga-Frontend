@@ -24,6 +24,7 @@ function buildParams(f: ReportFilters): string {
   if (f.activityCode) p.set('activityCode', f.activityCode);
   if (f.workerType) p.set('workerType', f.workerType);
   if (f.employeeType) p.set('employeeType', f.employeeType);
+  if (f.status) p.set('status', f.status);
   return p.toString();
 }
 
@@ -133,6 +134,7 @@ export interface DayOtSummaryItem {
   employeeName: string;
   tradeGroup: string;
   businessPartner: string;
+  employeeType?: string;
   dailyEntries: Record<string, DayOtDailyEntry>; // keyed by date 'YYYY-MM-DD'
   totalDays: number;
   totalOtHours: number;

@@ -27,6 +27,7 @@ import {
   type SitePoolEquipmentItem,
 } from '../services/supervisorStorageService';
 import { SiteEquipmentPoolModal } from '../components/SiteEquipmentPoolModal';
+import { SearchableActivitySelect } from '../components/SearchableActivitySelect';
 import { useAuth } from '../../../context/AuthContext';
 import * as assignmentService from '../../assignments/services/assignmentService';
 
@@ -214,8 +215,8 @@ export function EquipmentLogsView({
 
   // ── Days Rate Handler ──
   const handleDaysChange = (id: string, days: number) => {
-    // Strictly max 1.0 Day for daily equipment entry (never 1.5, 2, etc.)
-    const safeDays = Math.min(1.0, Math.max(0, parseFloat(days.toFixed(2))));
+    // Allow any amount of days (no upper limit)
+    const safeDays = Math.max(0, parseFloat(days.toFixed(2)));
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
 
@@ -409,7 +410,7 @@ export function EquipmentLogsView({
     const unit = normalizeRatingUnit(rawUnit);
     const isDayUnit = unit === 'Days' || unit === 'mth';
     const totalTarget = isDayUnit
-      ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? Math.min(1.0, eq.daysValue) : 1.0)
+      ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? eq.daysValue : 1.0)
       : getUnitValueInfo(eq, unit).value;
 
     const existingSplits = (eq.activitySplits || []).filter((s) => normalizeRatingUnit(s.unit) === unit);
@@ -512,7 +513,7 @@ export function EquipmentLogsView({
 
       const isDayUnit = targetSplit.unit === 'Days' || targetSplit.unit === 'mth';
       const totalTarget = isDayUnit
-        ? ((e.daysValue !== undefined && e.daysValue > 0) ? Math.min(1.0, e.daysValue) : 1.0)
+        ? ((e.daysValue !== undefined && e.daysValue > 0) ? e.daysValue : 1.0)
         : getUnitValueInfo(e, targetSplit.unit).value;
 
       const sameUnitSplits = splits.filter((s) => s.unit === targetSplit.unit);
@@ -612,14 +613,14 @@ export function EquipmentLogsView({
         {unit === 'Days' && (
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-500 font-medium">Logged Days (Max 1 Day):</span>
+              <span className="text-slate-500 font-medium">Logged Days:</span>
               <span className="font-bold text-emerald-700 dark:text-emerald-400 font-mono text-sm">
                 {eq.daysValue ?? 0} Day{(eq.daysValue ?? 0) === 1 ? '' : 's'}
               </span>
             </div>
 
             <div>
-              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Days (Max 1 Day):</span>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Days:</span>
               <div className="grid grid-cols-4 gap-1.5">
                 {[
                   { d: 1, label: '1 Day' },
@@ -646,14 +647,13 @@ export function EquipmentLogsView({
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                Or custom days (max 1.0):
+                Or custom days:
               </span>
               <div className="w-24">
                 <input
                   type="number"
                   step="0.05"
                   min="0"
-                  max="1"
                   value={eq.daysValue ?? 0}
                   onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
                   className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 font-mono"
@@ -678,7 +678,7 @@ export function EquipmentLogsView({
 
             {/* Quick Days Select */}
             <div>
-              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Days (Max 1 Day):</span>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Days:</span>
               <div className="grid grid-cols-4 gap-1.5">
                 {[
                   { d: 1, label: '1 Day' },
@@ -705,14 +705,13 @@ export function EquipmentLogsView({
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                Or custom days (max 1.0):
+                Or custom days:
               </span>
               <div className="w-24">
                 <input
                   type="number"
                   step="0.05"
                   min="0"
-                  max="1"
                   value={eq.daysValue ?? 0}
                   onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
                   className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 font-mono"
@@ -1003,7 +1002,7 @@ export function EquipmentLogsView({
         {(() => {
           const isDayUnit = unit === 'Days' || unit === 'mth';
           const targetValue = isDayUnit
-            ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? Math.min(1.0, eq.daysValue) : 1.0)
+            ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? eq.daysValue : 1.0)
             : unitInfo.value;
           const unassigned = Math.max(0, parseFloat((targetValue - allocatedSum).toFixed(2)));
           const isFullySplit = Math.abs(allocatedSum - targetValue) < 0.02;
@@ -1051,30 +1050,24 @@ export function EquipmentLogsView({
                       <span className="text-[10px] font-mono font-bold text-slate-400 w-4 text-center">
                         {sIdx + 1}
                       </span>
-                      <select
+                      <SearchableActivitySelect
+                        disabled={isDayLocked}
                         value={split.activityCode}
-                        onChange={(e) => handleUpdateActivitySplit(eq.id, split.id, { activityCode: e.target.value })}
-                        className="flex-1 min-w-0 px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 text-white-800 dark:text-slate-100 truncate focus:ring-1 focus:ring-blue-500"
-                      >
-                        <option value="">-- Select Activity Code --</option>
-                        {activityOptions.map((act) => (
-                          <option key={act.code} value={act.code}>
-                            {act.code} - {act.name || act.code}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(code) => handleUpdateActivitySplit(eq.id, split.id, { activityCode: code })}
+                        options={activityOptions}
+                        placeholder="Search activity code..."
+                      />
 
                       <div className="w-28 flex-shrink-0 flex items-center gap-1 bg-white dark:bg-slate-850 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
                         <input
                           type="number"
                           step={isDayUnit ? "0.05" : "0.1"}
                           min="0"
-                          max={isDayUnit ? "1" : undefined}
                           placeholder={isDayUnit ? 'Days' : 'Qty'}
                           value={split.utilization}
                           onChange={(e) => {
                             let val = parseFloat(e.target.value) || 0;
-                            if (isDayUnit) val = Math.min(1.0, Math.max(0, parseFloat(val.toFixed(2))));
+                            if (isDayUnit) val = Math.max(0, parseFloat(val.toFixed(2)));
                             handleUpdateActivitySplit(eq.id, split.id, { utilization: val });
                           }}
                           className="w-full text-xs font-bold text-center bg-transparent text-slate-800 dark:text-slate-100 outline-none font-mono"
@@ -1299,7 +1292,7 @@ export function EquipmentLogsView({
             // Unit-specific capacity validations (ONLY active if another supervisor actually logged on this vehicle!)
             const currentDays = eq.daysValue ?? 0;
             const totalDays = currentDays + existingDays;
-            const isDaysExceeded = isShared && existingDays > 0 && totalDays > 1.001;
+            const isDaysExceeded = false; // No upper limit on equipment days
 
             const currentHours = (eq.hoursValue ?? 0) + (eq.extraHoursValue ?? 0);
             const totalHours = currentHours + existingHours;
@@ -1320,7 +1313,8 @@ export function EquipmentLogsView({
               <div
                 key={eq.id}
                 className={[
-                  'rounded-2xl border transition-all duration-200 overflow-hidden shadow-2xs',
+                  'rounded-2xl border transition-all duration-200 shadow-2xs',
+                  isExpanded ? 'overflow-visible' : 'overflow-hidden',
                   hasAnyConflict
                     ? 'border-red-400 dark:border-red-600 bg-white dark:bg-slate-850'
                     : isExpanded

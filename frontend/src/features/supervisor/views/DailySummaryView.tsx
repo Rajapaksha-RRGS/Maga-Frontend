@@ -59,6 +59,7 @@ export function DailySummaryView({
   // An operator is "complete" when inTime & outTime are set.
   // Machine assignment is optional — unassigned operators auto-balance to ZXQOPRIDLE.
   const completedOperators = (operators || []).filter((o) => o.inTime && o.outTime).length;
+  const totalOperatorHours = sumHhmm((operators || []).map((o) => o.shiftHours));
   const operatorsMissingTime = (operators || []).filter((o) => !o.inTime || !o.outTime).length;
   // Operators that have times but no machine assignment → will be ZXQOPRIDLE (valid)
   const zxqopridleOperators = (operators || []).filter((o) => o.inTime && o.outTime && !o.assignedEquipmentId && (!o.equipmentSplits || o.equipmentSplits.length === 0)).length;
@@ -453,7 +454,7 @@ export function DailySummaryView({
                 • <strong>{completedLaborers}</strong> Laborers checked in ({totalLaborHours}h)
               </p>
               <p className="text-slate-600 dark:text-slate-300">
-                • <strong>{completedOperators}</strong> Equipment Operators verified
+                • <strong>{completedOperators}</strong> Equipment Operators verified ({totalOperatorHours}h)
               </p>
             </div>
 

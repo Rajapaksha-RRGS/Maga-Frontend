@@ -613,10 +613,8 @@ export const supervisorStorage = {
       }
     }
 
-    const hasOtherDays = otherClaimTotalDays > 0;
-    const remainingDayCapacity = Math.max(0, 1.0 - otherClaimTotalDays);
     const defaultDaysVal = primaryUnit === 'Days'
-      ? (initialTotal > 0 ? initialTotal : (hasOtherDays ? Math.min(1.0, remainingDayCapacity) : 1.0))
+      ? (initialTotal > 0 ? initialTotal : 1.0)
       : undefined;
 
     return {

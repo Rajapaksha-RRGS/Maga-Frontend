@@ -28,6 +28,7 @@
 import fs from 'fs';
 import path from 'path';
 import prisma from '../src/config/prisma';
+import { DateResolutionEngine, DateAnalysisResult, DateResolveResult } from '../src/utils/dateResolutionEngine';
 
 // ANSI Colors for clear terminal output
 const GREEN = '\x1b[32m';
@@ -110,47 +111,39 @@ export function normalizeTime(val?: string | null): string | null {
   return null;
 }
 
-// Helper: Parse date string into UTC Date object with strict calendar day validation
-export function parseDateInput(val: string): Date | null {
+// Shared Global Date Resolution Engine instance
+let activeDateEngine = new DateResolutionEngine();
+let activeDateAnalysis: DateAnalysisResult = {
+  dmyVotes: 0,
+  mdyVotes: 0,
+  isoVotes: 0,
+  ambiguousCount: 0,
+  dominantMonth: null,
+  dominantYear: null,
+  isMixed: false,
+  detectedFormat: 'AMBIGUOUS',
+};
+
+export function initDateResolution(
+  rawDates: string[],
+  options?: { targetMonth?: number | null; targetYear?: number | null; strictPeriod?: boolean }
+) {
+  activeDateEngine = new DateResolutionEngine(options);
+  activeDateAnalysis = activeDateEngine.analyzeDataset(rawDates);
+  return { engine: activeDateEngine, analysis: activeDateAnalysis };
+}
+
+// Helper: Parse date string into UTC Date object using active engine
+export function parseDateInput(val?: string | null): Date | null {
   if (!val) return null;
-  const clean = val.trim();
-  if (!clean) return null;
+  const res = activeDateEngine.resolveDate(val, activeDateAnalysis);
+  return res.date;
+}
 
-  // YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-    const [y, m, d] = clean.split('-').map(Number);
-    if (isNaN(y) || isNaN(m) || isNaN(d) || y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
-    const date = new Date(Date.UTC(y, m - 1, d));
-    if (isNaN(date.getTime()) || date.getUTCDate() !== d || date.getUTCMonth() !== m - 1) return null;
-    return date;
-  }
-
-  // D/M/YYYY or DD/MM/YYYY or D-M-YYYY or DD-M-YYYY
-  const delimiter = clean.includes('/') ? '/' : clean.includes('-') ? '-' : null;
-  if (delimiter) {
-    const slashParts = clean.split(delimiter);
-    if (slashParts.length === 3) {
-      let [day, month, year] = slashParts.map((p) => parseInt(p, 10));
-      if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
-      if (year < 100) year += 2000;
-      if (year < 2000 || year > 2100) return null;
-
-      // Swap if day was mistakenly put in month position (month > 12)
-      if (month > 12 && day <= 12) {
-        const temp = day;
-        day = month;
-        month = temp;
-      }
-      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-
-      const d = new Date(Date.UTC(year, month - 1, day));
-      if (isNaN(d.getTime()) || d.getUTCDate() !== day || d.getUTCMonth() !== month - 1) return null;
-      return d;
-    }
-  }
-
-  const d = new Date(clean);
-  return isNaN(d.getTime()) ? null : d;
+// Helper: Resolve date with full error diagnostics
+export function resolveDateStrict(val?: string | null): DateResolveResult {
+  if (!val) return { date: null, error: 'Missing Date' };
+  return activeDateEngine.resolveDate(val, activeDateAnalysis);
 }
 
 // Helper: Check if equipment code indicates idle or unassigned machine
@@ -161,7 +154,12 @@ export function isIdleEquipment(eq?: string | null): boolean {
   const clean = trimmed.toUpperCase().replace(/[^A-Z0-9]/g, '');
   return (
     clean === 'ZXQOPRIDLE' ||
+    clean === 'ZXQROTHER' ||
+    clean === 'ZQROTHER' ||
+    clean === 'ZQROTHERE' ||
+    clean === 'OTHER' ||
     clean === 'IDLE' ||
+    clean === 'IDLEOPR' ||
     clean === 'NONE' ||
     clean === 'NOEQ' ||
     clean === 'NA' ||
@@ -293,10 +291,26 @@ function calculateShiftAndOvertime(
   };
 }
 
+interface ParseRawFileOptions {
+  targetMonth?: number | null;
+  targetYear?: number | null;
+  strictPeriod?: boolean;
+}
+
 // Helper: Parse CSV / TSV file with robust delimiters and header detection
-function parseRawFile(content: string): OperatorParseResult {
+function parseRawFile(
+  content: string,
+  options?: ParseRawFileOptions
+): OperatorParseResult & { dateAnalysis: DateAnalysisResult } {
   const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return { rows: [], parseErrors: [], totalLines: 0 };
+  if (lines.length === 0) {
+    return {
+      rows: [],
+      parseErrors: [],
+      totalLines: 0,
+      dateAnalysis: activeDateAnalysis,
+    };
+  }
 
   const firstLine = lines[0];
   let delimiter = ',';
@@ -344,6 +358,33 @@ function parseRawFile(content: string): OperatorParseResult {
     });
   }
 
+  // Intelligent self-healing: Validate column mappings against sample data row content
+  if (lines.length > 1) {
+    const sample = lines[1].split(delimiter).map((t) => t.trim().replace(/^[\"']+|[\"']+$/g, ''));
+    const isDatePattern = (s: string) => /\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}/.test(s) || /\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}/.test(s);
+
+    if (colMap.date >= 0 && sample[colMap.date] !== undefined && !isDatePattern(sample[colMap.date])) {
+      const realDateIdx = sample.findIndex((val) => isDatePattern(val));
+      if (realDateIdx !== -1) {
+        if (realDateIdx === 4 && sample.length >= 8) {
+          colMap = {
+            operator: 0,
+            in: 1,
+            out: 2,
+            additionalHours: 3,
+            date: 4,
+            equipment: 5,
+            condition: 6,
+            unit: 7,
+            hours: 8,
+          };
+        } else {
+          colMap.date = realDateIdx;
+        }
+      }
+    }
+  }
+
   // Fallback defaults if header was missing or incomplete
   if (colMap.operator === -1) {
     if (headerTokens.length >= 8) {
@@ -378,6 +419,19 @@ function parseRawFile(content: string): OperatorParseResult {
   const startIndex = hasHeader ? 1 : 0;
   const rows: RawOperatorRow[] = [];
   const parseErrors: ProcessError[] = [];
+
+  // Pre-scan all date tokens across the dataset to initialize the Date Resolution Engine
+  const rawDates: string[] = [];
+  if (colMap.date >= 0) {
+    for (let i = startIndex; i < lines.length; i++) {
+      const tokens = lines[i].split(delimiter).map((t) => t.trim().replace(/^["']+|["']+$/g, ''));
+      if (tokens.length > colMap.date && tokens[colMap.date]) {
+        rawDates.push(tokens[colMap.date]);
+      }
+    }
+  }
+
+  const { analysis: dateAnalysis } = initDateResolution(rawDates, options);
 
   for (let i = startIndex; i < lines.length; i++) {
     const rawTokens = lines[i].split(delimiter).map((t) => t.trim().replace(/^[\"']+|[\"']+$/g, ''));
@@ -539,7 +593,7 @@ function parseRawFile(content: string): OperatorParseResult {
           reason: `Invalid Additional Hours format: '${addHrsStr}'`,
         });
         hasLineError = true;
-      } else if (parsedAdd < 0 || parsedAdd > 24) {
+      } else if (parsedAdd < -24 || parsedAdd > 24) {
         parseErrors.push({
           line: lineNum,
           operator: op || 'UNKNOWN',
@@ -550,7 +604,7 @@ function parseRawFile(content: string): OperatorParseResult {
           inTime: inT,
           outTime: outT,
           additionalHours: parsedAdd,
-          reason: `Additional Hours cannot be negative and must be at most 24 (got: '${addHrsStr}')`,
+          reason: `Additional Hours must be between -24 and 24 (got: '${addHrsStr}')`,
         });
         hasLineError = true;
       } else {
@@ -574,8 +628,8 @@ function parseRawFile(content: string): OperatorParseResult {
       });
       hasLineError = true;
     } else {
-      const parsedDate = parseDateInput(dt);
-      if (!parsedDate) {
+      const dateRes = resolveDateStrict(dt);
+      if (dateRes.error || !dateRes.date) {
         parseErrors.push({
           line: lineNum,
           operator: op || 'UNKNOWN',
@@ -586,7 +640,7 @@ function parseRawFile(content: string): OperatorParseResult {
           inTime: inT,
           outTime: outT,
           hours: hoursVal,
-          reason: `Invalid Date format or invalid calendar day: '${dt}'`,
+          reason: dateRes.error || `Invalid Date format or invalid calendar day: '${dt}'`,
         });
         hasLineError = true;
       }
@@ -669,7 +723,7 @@ function parseRawFile(content: string): OperatorParseResult {
     });
   }
 
-  return { rows, parseErrors, totalLines: lines.length - startIndex };
+  return { rows, parseErrors, totalLines: lines.length - startIndex, dateAnalysis };
 }
 
 async function main() {
@@ -678,121 +732,150 @@ async function main() {
   console.log(`${CYAN}${BOLD}    MAGA OPERATOR & MACHINE TIME ENTRY UPLOADER      ${RESET}`);
   console.log(`${CYAN}${BOLD}=====================================================${RESET}\n`);
 
-  const args = process.argv.slice(2);
-  const isDryRun = args.includes('--dry-run') || args.includes('-d');
+  const rawArgs = process.argv.slice(2);
+  const isDryRun = rawArgs.includes('--dry-run') || rawArgs.includes('-d');
   if (isDryRun) {
     console.log(`${YELLOW}${BOLD}🧪 RUNNING IN DRY RUN MODE (No database writes will occur)${RESET}\n`);
   }
 
   const defaultFilePath = path.join(__dirname, 'Company operator Master Upload Sheet.csv');
   let explicitFilePath: string | null = null;
-  let explicitProject: string | null = null;
+  let explicitSubdomain: string | null = null;
   let explicitSupervisor: string | null = null;
+  let explicitMonth: number | null = null;
+  let explicitYear: number | null = null;
+  const positionalArgs: string[] = [];
 
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith('--file=') || a.startsWith('-f=')) {
-      const p = a.includes('=') ? a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim() : '';
-      if (p) {
-        explicitFilePath = fs.existsSync(p) ? path.resolve(p) : path.join(__dirname, p);
-        args.splice(i, 1);
-        i--;
-        continue;
+  for (const a of rawArgs) {
+    if (a.startsWith('--subdomain=') || a.startsWith('--project=') || a.startsWith('-p=')) {
+      explicitSubdomain = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+    } else if (a.startsWith('--supervisor=') || a.startsWith('--user=') || a.startsWith('-s=')) {
+      explicitSupervisor = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+    } else if (a.startsWith('--period=') || a.startsWith('--month=') || a.startsWith('-m=')) {
+      const val = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+      if (val.includes('-')) {
+        const [y, m] = val.split('-').map(Number);
+        if (!isNaN(y)) explicitYear = y;
+        if (!isNaN(m)) explicitMonth = m;
+      } else {
+        const m = parseInt(val, 10);
+        if (!isNaN(m)) explicitMonth = m;
       }
-    }
-  }
-
-  for (let i = 0; i < args.length; i++) {
-    for (let j = args.length; j > i; j--) {
-      const candidate = args.slice(i, j).join(' ').replace(/^[\"'\`]+|[\"'\`]+$/g, '').trim();
-      if (!candidate || candidate.startsWith('-')) continue;
-      if (fs.existsSync(candidate)) {
-        explicitFilePath = path.resolve(candidate);
-        args.splice(i, j - i);
-        break;
-      } else if (fs.existsSync(path.join(__dirname, candidate))) {
-        explicitFilePath = path.join(__dirname, candidate);
-        args.splice(i, j - i);
-        break;
-      }
-    }
-    if (explicitFilePath) break;
-  }
-
-  for (const a of args) {
-    if (a.startsWith('--project=')) {
-      explicitProject = a.split('=')[1].trim();
-    } else if (a.startsWith('--supervisor=')) {
-      explicitSupervisor = a.split('=')[1].trim();
+    } else if (a.startsWith('--year=') || a.startsWith('-y=')) {
+      const y = parseInt(a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim(), 10);
+      if (!isNaN(y)) explicitYear = y;
+    } else if (a.startsWith('--file=') || a.startsWith('-f=')) {
+      const p = a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim();
+      explicitFilePath = fs.existsSync(p) ? path.resolve(p) : path.join(__dirname, p);
+    } else if (a === '--dry-run' || a === '-d') {
+      // already captured
     } else if (!a.startsWith('-')) {
-      if (!explicitProject) {
-        explicitProject = a.trim();
-      }
+      positionalArgs.push(a.replace(/^["']|["']$/g, '').trim());
     }
+  }
+
+  // Check positional args:
+  // First, check if any positional arg is a valid file path on disk
+  for (let i = 0; i < positionalArgs.length; i++) {
+    const candidate = positionalArgs[i];
+    if (fs.existsSync(candidate)) {
+      explicitFilePath = path.resolve(candidate);
+      positionalArgs.splice(i, 1);
+      break;
+    } else if (fs.existsSync(path.join(__dirname, candidate))) {
+      explicitFilePath = path.join(__dirname, candidate);
+      positionalArgs.splice(i, 1);
+      break;
+    }
+  }
+
+  // Next positional arg is subdomain (if not already set via flag)
+  if (!explicitSubdomain && positionalArgs.length > 0) {
+    explicitSubdomain = positionalArgs.shift()!;
+  }
+
+  // Next positional arg is supervisor username (if not already set via flag)
+  if (!explicitSupervisor && positionalArgs.length > 0) {
+    explicitSupervisor = positionalArgs.shift()!;
   }
 
   let targetFilePath = explicitFilePath || defaultFilePath;
 
-  // 1. Resolve Target Project: Dedicated Project 539 Lock
+  // 1. Resolve Target Project
   const allProjects = await prisma.mF_P_Project.findMany({
     select: { id: true, projectCode: true, projectName: true, subdomain: true },
   });
 
-  const targetProjectQuery = explicitProject || '539';
-  const cleanReq = targetProjectQuery.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  let project: typeof allProjects[0] | null = null;
 
-  let project = explicitProject
-    ? allProjects.find((p) => {
-        const sCode = (p.subdomain || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-        const pCode = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        return sCode === cleanReq || pCode === cleanReq || pCode.includes(cleanReq);
-      }) || null
-    : allProjects.find((p) => p.subdomain === '539') || allProjects[0];
+  if (explicitSubdomain) {
+    const cleanReq = explicitSubdomain.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    project = allProjects.find((p) => {
+      const sCode = (p.subdomain || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const pCode = p.projectCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const pId = p.id.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      return sCode === cleanReq || pCode === cleanReq || pCode.includes(cleanReq) || cleanReq.includes(pCode) || pId === cleanReq;
+    }) || null;
+
+    if (!project) {
+      console.error(`\n${RED}${BOLD}❌ ERROR: Project with subdomain / code '${explicitSubdomain}' not found in database!${RESET}`);
+      console.log(`\n${CYAN}${BOLD}📋 Available Projects in System:${RESET}`);
+      allProjects.forEach((p) => {
+        console.log(`  • ${BOLD}${p.projectName}${RESET} | Subdomain: ${GREEN}${BOLD}${p.subdomain || '-'}${RESET} | Code: ${p.projectCode}`);
+      });
+      console.log(`\n👉 Example: npm run upload:operator -- 539 admin539 [--dry-run]\n`);
+      process.exit(1);
+    }
+  }
 
   if (!project) {
-    console.error(`${RED}❌ Error: Project ${targetProjectQuery} not found in database!${RESET}`);
+    project = allProjects.find((p) => p.subdomain === '539') || allProjects[0] || null;
+  }
+
+  if (!project) {
+    console.error(`${RED}❌ Error: No project found in database!${RESET}`);
     process.exit(1);
   }
   console.log(`📌 Target Project: ${BOLD}${project.projectName} (${project.projectCode}) [Subdomain: ${project.subdomain}]${RESET}`);
 
-  // 2. Resolve Active Supervisor / Admin for Project 539
-  let supervisor: { id: string; username: string; fullName: string } | null = null;
+  // 2. Resolve Active Supervisor / Admin for Project
+  const projectUsers = await prisma.mF_P_User.findMany({
+    where: {
+      projectId: project.id,
+      status: 'active',
+    },
+    select: { id: true, username: true, fullName: true, role: true },
+  });
+
+  let supervisor: typeof projectUsers[0] | null = null;
 
   if (explicitSupervisor) {
-    const cleanSup = explicitSupervisor.toLowerCase();
-    supervisor = await prisma.mF_P_User.findFirst({
-      where: {
-        projectId: project.id,
-        status: 'active',
-        OR: [
-          { username: { equals: cleanSup, mode: 'insensitive' } },
-          { fullName: { contains: cleanSup, mode: 'insensitive' } },
-        ],
-      },
-      select: { id: true, username: true, fullName: true },
-    });
+    const cleanSup = explicitSupervisor.toLowerCase().trim();
+    supervisor = projectUsers.find((u) => {
+      return (
+        u.username.toLowerCase() === cleanSup ||
+        u.fullName.toLowerCase().includes(cleanSup)
+      );
+    }) || null;
+
+    if (!supervisor) {
+      console.error(`\n${RED}${BOLD}❌ ERROR: Supervisor / User '${explicitSupervisor}' not found in Project ${project.projectName} (${project.projectCode})!${RESET}`);
+      console.log(`\n${CYAN}${BOLD}📋 Active Supervisors / Admins in Project ${project.subdomain || project.projectCode}:${RESET}`);
+      if (projectUsers.length === 0) {
+        console.log(`  (No active users found for this project in database)`);
+      } else {
+        projectUsers.forEach((u) => {
+          console.log(`  • @${GREEN}${BOLD}${u.username}${RESET} (${u.fullName}) - Role: ${u.role}`);
+        });
+      }
+      console.log(`\n👉 Example: npm run upload:operator -- ${project.subdomain || project.projectCode} ${projectUsers[0]?.username || 'username'} [--dry-run]\n`);
+      process.exit(1);
+    }
+    console.log(`👷 Selected Supervisor by parameter: ${BOLD}${supervisor.fullName} (@${supervisor.username})${RESET}`);
   }
 
   if (!supervisor) {
-    supervisor = await prisma.mF_P_User.findFirst({
-      where: {
-        projectId: project.id,
-        role: 'supervisor',
-        status: 'active',
-      },
-      select: { id: true, username: true, fullName: true },
-    });
-  }
-
-  if (!supervisor) {
-    supervisor = await prisma.mF_P_User.findFirst({
-      where: {
-        projectId: project.id,
-        role: 'admin',
-        status: 'active',
-      },
-      select: { id: true, username: true, fullName: true },
-    });
+    supervisor = projectUsers.find((u) => u.role === 'supervisor') || projectUsers.find((u) => u.role === 'admin') || projectUsers[0] || null;
   }
 
   if (!supervisor) {
@@ -808,8 +891,25 @@ async function main() {
 
   console.log(`📂 Reading data from: ${BOLD}${targetFilePath}${RESET}`);
   const rawFileContent = fs.readFileSync(targetFilePath, 'utf-8');
-  const { rows: parsedRows, parseErrors, totalLines } = parseRawFile(rawFileContent);
+  const { rows: parsedRows, parseErrors, totalLines, dateAnalysis } = parseRawFile(rawFileContent, {
+    targetMonth: explicitMonth,
+    targetYear: explicitYear,
+  });
   const errors: ProcessError[] = [...parseErrors];
+
+  console.log(`\n${CYAN}${BOLD}📅 DATE FORMAT AUDIT & HEALTH CHECK:${RESET}`);
+  console.log(`   - Detected Date Format  : ${BOLD}${dateAnalysis.detectedFormat}${RESET}`);
+  console.log(`   - Target Billing Period : ${BOLD}${dateAnalysis.dominantYear ? dateAnalysis.dominantYear + '-' + String(dateAnalysis.dominantMonth).padStart(2, '0') : 'Auto-detected'}${RESET}`);
+  console.log(`   - DMY Rows (DD/MM/YYYY) : ${dateAnalysis.dmyVotes} rows`);
+  console.log(`   - MDY Rows (MM/DD/YYYY) : ${dateAnalysis.mdyVotes} rows`);
+  console.log(`   - Ambiguous (Day <= 12) : ${dateAnalysis.ambiguousCount} rows`);
+  if (dateAnalysis.isMixed) {
+    console.log(`   ${YELLOW}⚠️ Note: Excel mixed-locale export detected. Auto-correcting ambiguous days 1-12 to match billing month.${RESET}`);
+  }
+  if (errors.length > 0) {
+    console.log(`   ${RED}⚠️ Date Format / Row Validation Errors Detected: ${errors.length} rows failed validation.${RESET}`);
+  }
+  console.log('');
 
   if (parsedRows.length === 0 && errors.length === 0) {
     console.log(`${YELLOW}⚠️ No data rows found in file.${RESET}`);
@@ -978,6 +1078,14 @@ async function main() {
 
   // Group Rows by (Operator, Date) to enforce 1 TimeEntry per Operator per Date
   console.log(`🔗 Validating and grouping operator shifts...`);
+  interface EquipmentSplitRecord {
+    equipmentIdentifier: string;
+    condition?: string;
+    unit?: string;
+    hours: number;
+    rawLineIndex: number;
+  }
+
   interface OperatorShiftGroup {
     operatorIdentifier: string;
     dateStr: string;
@@ -990,6 +1098,7 @@ async function main() {
     unit?: string;
     hours: number;
     rawLineIndex: number;
+    equipmentSplits: Map<string, EquipmentSplitRecord>;
   }
 
   const groupedEntries = new Map<string, OperatorShiftGroup>();
@@ -1036,9 +1145,9 @@ async function main() {
       continue;
     }
 
-    // Validation 3: Date Parsing
-    const parsedDate = parseDateInput(dtStr);
-    if (!parsedDate) {
+    // Validation 3: Date Parsing with Engine Diagnostics
+    const dateRes = resolveDateStrict(dtStr);
+    if (!dateRes.date) {
       errors.push({
         line: r.rawLineIndex,
         operator: opKey,
@@ -1050,15 +1159,27 @@ async function main() {
         outTime: r.outTime,
         additionalHours: r.additionalHours,
         hours: r.hours,
-        reason: `Invalid Date format: "${dtStr}". Expected DD/MM/YYYY or YYYY-MM-DD.`,
+        reason: dateRes.error || `Invalid Date format: "${dtStr}". Expected DD/MM/YYYY or YYYY-MM-DD.`,
       });
       continue;
     }
+    const parsedDate = dateRes.date;
 
     lastOperator = opKey;
     lastDateStr = dtStr;
 
     const groupKey = `${opKey.trim().toUpperCase()}___${parsedDate.toISOString().slice(0, 10)}`;
+
+    const splitsMap = new Map<string, EquipmentSplitRecord>();
+    if (r.equipmentIdentifier && !isIdleEquipment(r.equipmentIdentifier)) {
+      splitsMap.set(r.equipmentIdentifier.trim().toUpperCase(), {
+        equipmentIdentifier: r.equipmentIdentifier.trim(),
+        condition: r.condition?.trim(),
+        unit: r.unit?.trim(),
+        hours: r.hours,
+        rawLineIndex: r.rawLineIndex,
+      });
+    }
 
     if (!groupedEntries.has(groupKey)) {
       groupedEntries.set(groupKey, {
@@ -1073,6 +1194,7 @@ async function main() {
         unit: r.unit?.trim(),
         hours: r.hours,
         rawLineIndex: r.rawLineIndex,
+        equipmentSplits: splitsMap,
       });
     } else {
       const existing = groupedEntries.get(groupKey)!;
@@ -1087,6 +1209,21 @@ async function main() {
       if (r.condition && !existing.condition) existing.condition = r.condition.trim();
       if (r.unit && !existing.unit) existing.unit = r.unit.trim();
       existing.hours += r.hours;
+
+      if (r.equipmentIdentifier && !isIdleEquipment(r.equipmentIdentifier)) {
+        const eqCode = r.equipmentIdentifier.trim().toUpperCase();
+        if (existing.equipmentSplits.has(eqCode)) {
+          existing.equipmentSplits.get(eqCode)!.hours += r.hours;
+        } else {
+          existing.equipmentSplits.set(eqCode, {
+            equipmentIdentifier: r.equipmentIdentifier.trim(),
+            condition: r.condition?.trim(),
+            unit: r.unit?.trim(),
+            hours: r.hours,
+            rawLineIndex: r.rawLineIndex,
+          });
+        }
+      }
     }
   }
 
@@ -1099,9 +1236,55 @@ async function main() {
   for (const [, group] of groupedEntries) {
     try {
       const cleanOpKey = group.operatorIdentifier.toLowerCase();
-      const localEmp = empMap.get(cleanOpKey);
+      let localEmp = empMap.get(cleanOpKey);
 
-      // Do NOT auto-link or auto-create employees in project. Report error if not assigned to project (Strict Policy).
+      // Auto-link standard global placeholder operators (e.g. ZHLOL - Back Log clearance Operator)
+      if (!localEmp) {
+        const corpEmp = corpEmpMap.get(cleanOpKey);
+        const isStandardPlaceholder =
+          corpEmp &&
+          (corpEmp.employeeCode?.trim().toUpperCase() === 'ZHLOL' ||
+           corpEmp.employeeCode?.trim().toUpperCase().startsWith('Z'));
+
+        if (isStandardPlaceholder && corpEmp) {
+          if (!isDryRun) {
+            const linked = await prisma.mF_P_Employee.create({
+              data: {
+                projectId: project.id,
+                corporateEmployeeId: corpEmp.id,
+                callingName: corpEmp.fullName,
+                isOperator: true,
+                dailyRate: 1400,
+                tradeGroupId: defaultTradeGroup?.id || null,
+                status: 'active',
+              },
+              include: {
+                corporateEmployee: true,
+                tradeGroup: true,
+              },
+            });
+            localEmp = linked as any;
+            empMap.set(cleanOpKey, linked as any);
+            if (corpEmp.employeeCode) empMap.set(corpEmp.employeeCode.trim().toLowerCase(), linked as any);
+          } else {
+            localEmp = {
+              id: 'dry-run-zhlol-id',
+              projectId: project.id,
+              corporateEmployeeId: corpEmp.id,
+              callingName: corpEmp.fullName,
+              isOperator: true,
+              dailyRate: 1400 as any,
+              tradeGroupId: defaultTradeGroup?.id || null,
+              status: 'active',
+              corporateEmployee: corpEmp,
+              tradeGroup: defaultTradeGroup,
+            } as any;
+            empMap.set(cleanOpKey, localEmp as any);
+          }
+        }
+      }
+
+      // Do NOT auto-link or auto-create normal employees in project. Report error if not assigned to project (Strict Policy).
       if (!localEmp) {
         const corpEmp = corpEmpMap.get(cleanOpKey);
         const reason = corpEmp
@@ -1301,8 +1484,12 @@ async function main() {
         const addHrs = group.additionalHours || 0;
         const maxAllowed = Math.round((rawShift + addHrs) * 100) / 100;
 
-        // Validation (Strict Option A): If Operator hours exceed shift duration and Additional Hours was not entered, reject as Error!
-        if (group.hours > maxAllowed + 0.05) {
+        const isPlaceholder =
+          localEmp.corporateEmployee?.employeeCode?.trim().toUpperCase() === 'ZHLOL' ||
+          localEmp.corporateEmployee?.employeeCode?.trim().toUpperCase().startsWith('Z');
+
+        // Validation (Strict Option A): For regular human operators, if hours exceed shift duration and Additional Hours was not entered, reject as Error!
+        if (!isPlaceholder && group.hours > maxAllowed + 0.05) {
           const excess = Math.round((group.hours - rawShift) * 100) / 100;
           const reasonMsg = addHrs > 0
             ? `Hours Exceeded: Operator hours (${group.hours}h) exceed shift duration with Additional Hours (${maxAllowed}h) by +${Math.round((group.hours - maxAllowed) * 100) / 100}h.`
@@ -1325,21 +1512,35 @@ async function main() {
           continue;
         }
 
-        const calc = calculateShiftAndOvertime(
-          group.inTime,
-          group.outTime,
-          dayRule,
-          isExt,
-          group.additionalHours
-        );
-        shiftHours = calc.shiftHours;
-        otHours = calc.otHours;
-        breakHours = calc.breakHours;
-        regularHours = calc.regularHours;
-        isLunchDeducted = calc.isLunchDeducted;
-        isDinnerDeducted = calc.isDinnerDeducted;
-        finalInTime = group.inTime;
-        finalOutTime = group.outTime;
+        if (isPlaceholder && group.hours > maxAllowed + 0.05) {
+          // Placeholder pool operator (e.g. ZHLOL Back Log clearance) representing multiple concurrent machines on this date
+          shiftHours = Math.round((group.hours + (group.additionalHours || 0)) * 100) / 100;
+          if (dayRule.isAllOvertime) {
+            otHours = shiftHours;
+            regularHours = 0;
+          } else {
+            regularHours = Math.min(dayRule.standardCap, shiftHours);
+            otHours = Math.max(0, Math.round((shiftHours - regularHours) * 100) / 100);
+          }
+          finalInTime = group.inTime;
+          finalOutTime = group.outTime;
+        } else {
+          const calc = calculateShiftAndOvertime(
+            group.inTime,
+            group.outTime,
+            dayRule,
+            isExt,
+            group.additionalHours
+          );
+          shiftHours = calc.shiftHours;
+          otHours = calc.otHours;
+          breakHours = calc.breakHours;
+          regularHours = calc.regularHours;
+          isLunchDeducted = calc.isLunchDeducted;
+          isDinnerDeducted = calc.isDinnerDeducted;
+          finalInTime = group.inTime;
+          finalOutTime = group.outTime;
+        }
       } else {
         // Fallback when flat hours provided
         shiftHours = Math.max(0, shiftHours + group.additionalHours);
@@ -1365,9 +1566,19 @@ async function main() {
         }
       }
 
-      const eqDisplay = localEq
-        ? localEq.corporateEquipment?.standardEquipmentNumber || group.equipmentIdentifier
-        : 'ZXQOPRIDLE (Idle)';
+      // Build remarks for multi-machine splits if multiple machines were operated
+      const splitsArray = Array.from(group.equipmentSplits.values());
+      const splitsRemarksList: string[] = [];
+      for (const sp of splitsArray) {
+        splitsRemarksList.push(`${sp.equipmentIdentifier}: ${sp.hours}h`);
+      }
+      const finalRemarks = splitsRemarksList.length > 1 ? `Splits: ${splitsRemarksList.join(', ')}` : undefined;
+
+      const eqDisplay = splitsArray.length > 1
+        ? splitsRemarksList.join(', ')
+        : (localEq
+            ? localEq.corporateEquipment?.standardEquipmentNumber || group.equipmentIdentifier
+            : 'ZXQOPRIDLE (Idle)');
 
       if (isDryRun) {
         console.log(
@@ -1392,8 +1603,29 @@ async function main() {
         },
       });
 
-      // Step 2: Ensure DailyEquipmentAssignment exists linking operator to machine (if not idle)
-      if (localEq) {
+      // Step 2: Ensure DailyEquipmentAssignment exists linking operator to machine(s)
+      if (splitsArray.length > 0) {
+        for (const sp of splitsArray) {
+          const spKey = sp.equipmentIdentifier.toLowerCase();
+          const spEq = eqMap.get(spKey) || eqMap.get(spKey.replace(/[^a-z0-9]/g, ''));
+          if (spEq) {
+            await prisma.mF_OP_DailyEquipmentAssignment.upsert({
+              where: {
+                dailySheetId_equipmentId: {
+                  dailySheetId: dailySheetId!,
+                  equipmentId: spEq.id,
+                },
+              },
+              update: { operatorId: localEmp.id },
+              create: {
+                dailySheetId: dailySheetId!,
+                equipmentId: spEq.id,
+                operatorId: localEmp.id,
+              },
+            });
+          }
+        }
+      } else if (localEq) {
         await prisma.mF_OP_DailyEquipmentAssignment.upsert({
           where: {
             dailySheetId_equipmentId: {
@@ -1401,9 +1633,7 @@ async function main() {
               equipmentId: localEq.id,
             },
           },
-          update: {
-            operatorId: localEmp.id,
-          },
+          update: { operatorId: localEmp.id },
           create: {
             dailySheetId: dailySheetId!,
             equipmentId: localEq.id,
@@ -1437,6 +1667,7 @@ async function main() {
           status: 'submitted',
           submittedAt: new Date(),
           appliedDailyRate: localEmp.dailyRate ? Number(localEmp.dailyRate) : 1400.0,
+          remarks: finalRemarks,
         },
         create: {
           projectId: project.id,
@@ -1457,10 +1688,33 @@ async function main() {
           status: 'submitted',
           submittedAt: new Date(),
           appliedDailyRate: localEmp.dailyRate ? Number(localEmp.dailyRate) : 1400.0,
+          remarks: finalRemarks,
         },
       });
 
-      if (localEq) {
+      // Step 4: Upsert granular OperatorEquipmentSplit rows for each machine operated
+      if (splitsArray.length > 0) {
+        for (const sp of splitsArray) {
+          const spKey = sp.equipmentIdentifier.toLowerCase();
+          const spEq = eqMap.get(spKey) || eqMap.get(spKey.replace(/[^a-z0-9]/g, ''));
+          if (spEq) {
+            await prisma.mF_OP_OperatorEquipmentSplit.upsert({
+              where: {
+                timeEntryId_equipmentId: {
+                  timeEntryId: upsertedTe.id,
+                  equipmentId: spEq.id,
+                },
+              },
+              update: { hours: sp.hours },
+              create: {
+                timeEntryId: upsertedTe.id,
+                equipmentId: spEq.id,
+                hours: sp.hours,
+              },
+            });
+          }
+        }
+      } else if (localEq) {
         await prisma.mF_OP_OperatorEquipmentSplit.upsert({
           where: {
             timeEntryId_equipmentId: {
