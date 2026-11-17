@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { SearchableActivitySelect } from '../components/SearchableActivitySelect';
 import { SiteLaborPoolModal } from '../components/SiteLaborPoolModal';
+import { TimeInput24 } from '../../../components/TimeInput24';
 import { 
   supervisorStorage,
   type ActivityCodeItem,
@@ -1131,11 +1132,10 @@ export function LaborEntryView({
                 <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-300 uppercase flex items-center gap-1">
                   <LogIn size={12} /> In:
                 </span>
-                <input
-                  type="time"
+                <TimeInput24
                   value={batchInTime}
-                  onChange={(e) => updateBatchTimes(e.target.value, batchOutTime)}
-                  className="text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
+                  onChange={(val) => updateBatchTimes(val, batchOutTime)}
+                  className="w-16 text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
                 />
               </div>
 
@@ -1143,11 +1143,10 @@ export function LaborEntryView({
                 <span className="text-[10px] font-bold text-blue-800 dark:text-blue-300 uppercase flex items-center gap-1">
                   <LogOut size={12} /> Out:
                 </span>
-                <input
-                  type="time"
+                <TimeInput24
                   value={batchOutTime}
-                  onChange={(e) => updateBatchTimes(batchInTime, e.target.value)}
-                  className="text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
+                  onChange={(val) => updateBatchTimes(batchInTime, val)}
+                  className="w-16 text-xs font-bold font-mono text-slate-800 dark:text-slate-100 bg-transparent focus:outline-none cursor-pointer"
                 />
               </div>
 
@@ -1487,18 +1486,17 @@ export function LaborEntryView({
                         <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase flex items-center gap-0.5">
                           <LogIn size={11} /> In:
                         </span>
-                        <input
-                          type="time"
+                        <TimeInput24
                           disabled={isDayLocked}
                           value={worker.inTime || ''}
-                          onChange={(e) => handleIndividualTimeChange(worker.id, e.target.value, worker.outTime)}
+                          onChange={(val) => handleIndividualTimeChange(worker.id, val, worker.outTime)}
                           className={[
-                            'w-[88px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
+                            'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
                             worker.inTime
                               ? 'text-slate-800 dark:text-slate-100 font-mono'
                               : 'text-slate-400 dark:text-slate-500'
                           ].join(' ')}
-                          title={worker.inTime ? 'In-Time (click to edit)' : 'Click to choose In-Time'}
+                          title={worker.inTime ? 'In-Time (24H: click to edit)' : 'Click to enter In-Time (24H)'}
                         />
                         {!worker.inTime && !isDayLocked && (
                           <button
@@ -1517,18 +1515,17 @@ export function LaborEntryView({
                         <span className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase flex items-center gap-0.5">
                           <LogOut size={11} /> Out:
                         </span>
-                        <input
-                          type="time"
+                        <TimeInput24
                           disabled={isDayLocked}
                           value={worker.outTime || ''}
-                          onChange={(e) => handleIndividualTimeChange(worker.id, worker.inTime, e.target.value)}
+                          onChange={(val) => handleIndividualTimeChange(worker.id, worker.inTime, val)}
                           className={[
-                            'w-[88px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
+                            'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
                             worker.outTime
                               ? 'text-slate-800 dark:text-slate-100 font-mono'
                               : 'text-slate-400 dark:text-slate-500'
                           ].join(' ')}
-                          title={worker.outTime ? 'Out-Time (click to edit)' : 'Click to choose Out-Time'}
+                          title={worker.outTime ? 'Out-Time (24H: click to edit)' : 'Click to enter Out-Time (24H)'}
                         />
                         {!worker.outTime && !isDayLocked && (
                           <button

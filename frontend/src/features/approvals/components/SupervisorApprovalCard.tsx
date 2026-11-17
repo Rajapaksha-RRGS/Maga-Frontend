@@ -19,13 +19,16 @@ import {
 } from 'lucide-react';
 import { 
   adminAdjustWorker, 
+  adminAdjustEquipment,
   type SupervisorApprovalGroup, 
   type ApprovalWorkerItem,
+  type ApprovalOperatorItem,
   type ApprovalEquipmentItem
 } from '../services/approvalService';
 import { getAll as getAllActivityCodes } from '../../activity-codes/services/activityCodeService';
 import { SearchableActivitySelect } from '../../supervisor/components/SearchableActivitySelect';
 import type { ActivityCodeItem } from '../../supervisor/services/supervisorStorageService';
+import { TimeInput24 } from '../../../components/TimeInput24';
 import type { EditActivitySplit } from './ConsolidatedApprovalView';
 import { computeBreakMinutes } from '../../supervisor/utils/timeUtils';
 
@@ -95,6 +98,26 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
   const [editActivitySplits, setEditActivitySplits] = useState<EditActivitySplit[]>([]);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [localWorkers, setLocalWorkers] = useState<ApprovalWorkerItem[]>(group.workers || []);
+  const [localOperators, setLocalOperators] = useState<ApprovalOperatorItem[]>(group.operators || []);
+  const [localEquipment, setLocalEquipment] = useState<ApprovalEquipmentItem[]>(group.equipment || []);
+
+  // Inline editing state for operator
+  const [editingOperatorId, setEditingOperatorId] = useState<string | null>(null);
+  const [editOpInTime, setEditOpInTime] = useState<string>('07:30');
+  const [editOpOutTime, setEditOpOutTime] = useState<string>('17:00');
+  const [editOpAdditionalHours, setEditOpAdditionalHours] = useState<string>('0.0');
+  const [isSavingOpEdit, setIsSavingOpEdit] = useState(false);
+
+  // Inline editing state for equipment
+  const [editingEquipmentId, setEditingEquipmentId] = useState<string | null>(null);
+  const [editEqCondition, setEditEqCondition] = useState<string>('WORKING');
+  const [editEqNetHours, setEditEqNetHours] = useState<string>('0');
+  const [editEqInitialMeter, setEditEqInitialMeter] = useState<string>('0');
+  const [editEqFinalMeter, setEditEqFinalMeter] = useState<string>('0');
+  const [editEqFuelLiters, setEditEqFuelLiters] = useState<string>('0');
+  const [editEqSplits, setEditEqSplits] = useState<EditActivitySplit[]>([]);
+  const [isSavingEqEdit, setIsSavingEqEdit] = useState(false);
+
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
 
   useEffect(() => {
@@ -116,9 +139,11 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 
   const q = searchQuery.toLowerCase().trim();
 
-  // Sync local workers when group prop changes and smart-select active tab
+  // Sync local items when group prop changes and smart-select active tab
   React.useEffect(() => {
     setLocalWorkers(group.workers || []);
+    setLocalOperators(group.operators || []);
+    setLocalEquipment(group.equipment || []);
     const hasLabor = Boolean(group.workers && group.workers.length > 0);
     const hasOperators = Boolean(group.operators && group.operators.length > 0);
     const hasEquipment = Boolean(group.equipment && group.equipment.some(isEquipmentLogged));
@@ -351,10 +376,240 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
     }
   };
 
+  // --- Operator Editing Handlers ---
+  const startEditingOperator = (op: ApprovalOperatorItem) => {
+    setEditingOperatorId(op.operatorId);
+    setEditOpInTime(op.inTime || '07:30');
+    setEditOpOutTime(op.outTime || '17:00');
+    const addStr = op.additionalHours !== undefined ? String(op.additionalHours) : '0.0';
+    setEditOpAdditionalHours(addStr);
+  };
+
+  const cancelEditingOperator = () => {
+    setEditingOperatorId(null);
+  };
+
+  const handleSaveOperatorEdit = async (op: ApprovalOperatorItem) => {
+    setIsSavingOpEdit(true);
+    try {
+      const addVal = parseFloat(editOpAdditionalHours) || 0;
+      const { hours, otHours, effectiveHours, totalHours } = computePreviewHours(editOpInTime, editOpOutTime, addVal);
+
+      const res = await adminAdjustWorker({
+        supervisorId: group.supervisorId,
+        employeeId: op.operatorId,
+        date: selectedDate,
+        inTime: editOpInTime,
+        outTime: editOpOutTime,
+        hours,
+        overtimeHours: otHours,
+        additionalHours: addVal,
+      });
+
+      setLocalOperators((prev) =>
+        prev.map((o) =>
+          o.operatorId === op.operatorId
+            ? {
+                ...o,
+                inTime: editOpInTime,
+                outTime: editOpOutTime,
+                totalHours: res.totalHours ?? totalHours ?? o.totalHours,
+                hours: res.hours ?? hours,
+                otHours: res.overtimeHours ?? otHours,
+                additionalHours: addVal,
+                shiftHours: res.shiftHours ?? effectiveHours,
+                effectiveHours: res.effectiveHours ?? res.shiftHours ?? effectiveHours,
+                status: 'submitted',
+              }
+            : o
+        )
+      );
+
+      setEditingOperatorId(null);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      console.error('Failed to save operator edit:', err);
+      alert(err?.message || 'Failed to update operator entry');
+    } finally {
+      setIsSavingOpEdit(false);
+    }
+  };
+
+  // --- Equipment Editing Handlers ---
+  const startEditingEquipment = (eq: ApprovalEquipmentItem) => {
+    setEditingEquipmentId(eq.equipmentId);
+    setEditEqCondition(eq.condition || 'WORKING');
+    const netH = eq.netHours || eq.workingHours || eq.loggedQuantity || 0;
+    setEditEqNetHours(String(netH));
+    setEditEqInitialMeter(String(eq.initialMeter || 0));
+    setEditEqFinalMeter(String(eq.finalMeter || 0));
+    setEditEqFuelLiters(String(eq.fuelLiters || 0));
+
+    if (eq.splits && eq.splits.length > 0) {
+      setEditEqSplits(
+        eq.splits.map((s: any, idx: number) => ({
+          id: `eq-split-${idx}-${Date.now()}`,
+          activityCodeId: s.activityCodeId || '',
+          activityCode: s.activityCode || '',
+          hours: s.utilization !== undefined ? String(s.utilization) : '0',
+        }))
+      );
+    } else {
+      setEditEqSplits([
+        {
+          id: `eq-split-0-${Date.now()}`,
+          activityCodeId: '',
+          activityCode: '',
+          hours: String(netH),
+        },
+      ]);
+    }
+  };
+
+  const cancelEditingEquipment = () => {
+    setEditingEquipmentId(null);
+    setEditEqSplits([]);
+  };
+
+  const handleAddEqSplitRow = (suggestedHours?: number) => {
+    setEditEqSplits((prev) => {
+      const sum = prev.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0);
+      const netVal = parseFloat(editEqNetHours) || 0;
+      const rem =
+        suggestedHours !== undefined
+          ? suggestedHours
+          : Math.max(0, parseFloat((netVal - sum).toFixed(2)));
+      return [
+        ...prev,
+        {
+          id: `eq-split-${Date.now()}-${Math.random()}`,
+          activityCodeId: '',
+          activityCode: '',
+          hours: rem > 0 ? String(rem) : '0',
+        },
+      ];
+    });
+  };
+
+  const handleRemoveEqSplitRow = (rowId: string) => {
+    setEditEqSplits((prev) => {
+      if (prev.length <= 1) {
+        return [{ id: `eq-split-${Date.now()}`, activityCodeId: '', activityCode: '', hours: '0' }];
+      }
+      return prev.filter((s) => s.id !== rowId);
+    });
+  };
+
+  const handleUpdateEqSplitRow = (rowId: string, field: 'activityCode' | 'hours', val: any) => {
+    setEditEqSplits((prev) =>
+      prev.map((s) => {
+        if (s.id !== rowId) return s;
+        if (field === 'activityCode') {
+          const matched = activityOptions.find(
+            (o) => o.code.toUpperCase() === String(val).trim().toUpperCase()
+          );
+          return {
+            ...s,
+            activityCode: val,
+            activityCodeId: matched?.id || s.activityCodeId,
+          };
+        }
+        return { ...s, hours: val };
+      })
+    );
+  };
+
+  const handleSaveEquipmentEdit = async (eq: ApprovalEquipmentItem) => {
+    setIsSavingEqEdit(true);
+    try {
+      const netVal = parseFloat(editEqNetHours) || 0;
+      const initMeter = parseFloat(editEqInitialMeter) || 0;
+      const finMeter = parseFloat(editEqFinalMeter) || 0;
+      const fuelVal = parseFloat(editEqFuelLiters) || 0;
+
+      const validSplits = editEqSplits
+        .filter((s) => s.activityCode && s.activityCode.trim() !== '')
+        .map((s) => {
+          const matched = activityOptions.find(
+            (a) => a.code.toUpperCase() === s.activityCode.trim().toUpperCase()
+          );
+          return {
+            activityCodeId: matched?.id || s.activityCodeId,
+            activityCode: s.activityCode.trim(),
+            utilization: parseFloat(s.hours) || 0,
+            hours: parseFloat(s.hours) || 0,
+          };
+        });
+
+      const res = await adminAdjustEquipment({
+        supervisorId: group.supervisorId,
+        equipmentId: eq.equipmentId,
+        date: selectedDate,
+        initialMeter: initMeter,
+        finalMeter: finMeter,
+        netHours: netVal,
+        workingHours: netVal,
+        fuelLiters: fuelVal,
+        condition: editEqCondition,
+        splits: validSplits,
+      });
+
+      let nextSplits: Array<{ activityCode: string; activityDesc: string; unit: string; utilization: number }> = [];
+      if (res.splits && res.splits.length > 0) {
+        nextSplits = res.splits.map((s) => ({
+          activityCode: s.activityCode,
+          activityDesc: s.activityDesc,
+          unit: s.unit || 'hrs',
+          utilization: s.utilization,
+        }));
+      } else if (validSplits.length > 0) {
+        nextSplits = validSplits.map((sp) => {
+          const opt = activityOptions.find((o) => o.code.toUpperCase() === sp.activityCode.toUpperCase());
+          return {
+            activityCode: sp.activityCode,
+            activityDesc: opt?.name || sp.activityCode,
+            unit: 'hrs',
+            utilization: sp.utilization,
+          };
+        });
+      } else {
+        nextSplits = eq.splits || [];
+      }
+
+      setLocalEquipment((prev) =>
+        prev.map((e) =>
+          e.equipmentId === eq.equipmentId
+            ? {
+                ...e,
+                condition: editEqCondition,
+                netHours: res.netHours ?? netVal,
+                workingHours: res.workingHours ?? netVal,
+                loggedQuantity: res.netHours ?? netVal,
+                initialMeter: res.initialMeter ?? initMeter,
+                finalMeter: res.finalMeter ?? finMeter,
+                fuelLiters: res.fuelLiters ?? fuelVal,
+                splits: nextSplits,
+                status: 'submitted',
+              }
+            : e
+        )
+      );
+
+      setEditingEquipmentId(null);
+      setEditEqSplits([]);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      console.error('Failed to save equipment edit:', err);
+      alert(err?.message || 'Failed to update equipment log');
+    } finally {
+      setIsSavingEqEdit(false);
+    }
+  };
+
   const workersCount = group.counts?.laborWorked ?? group.workedCount ?? 0;
   const workersTotal = group.counts?.laborAssigned ?? group.assignedCount ?? 0;
-  const operatorsCount = group.counts?.operatorsWorked ?? (group.operators?.length || 0);
-  const operatorsTotal = group.counts?.operatorsAssigned ?? (group.operators?.length || 0);
+  const operatorsCount = group.counts?.operatorsWorked ?? (localOperators.length);
+  const operatorsTotal = group.counts?.operatorsAssigned ?? (localOperators.length);
 
   const workerHours = formatHoursDisplay(group.totals?.laborHours ?? group.totalHours ?? 0);
   const rawLaborOt = group.totals?.laborOvertime ?? group.totalOvertime ?? 0;
@@ -363,8 +618,8 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 
   // Method 2: Only show logged equipment (machines with actual hours/usage logged)
   const loggedEquipment = useMemo(() => {
-    return (group.equipment || []).filter(isEquipmentLogged);
-  }, [group.equipment]);
+    return localEquipment.filter(isEquipmentLogged);
+  }, [localEquipment]);
 
   // ── Targeted scope & query filtering with useMemo ───────────────────────────
   // 1. Laborers Filter
@@ -384,18 +639,17 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
 
   // 2. Operators Filter
   const displayedOperators = useMemo(() => {
-    const list = group.operators || [];
     if (!q || (searchScope !== 'all' && searchScope !== 'operators')) {
-      return list;
+      return localOperators;
     }
-    return list.filter(
+    return localOperators.filter(
       (o) =>
         (o.callingName && o.callingName.toLowerCase().includes(q)) ||
         (o.fullName && o.fullName.toLowerCase().includes(q)) ||
         (o.operatorCode && o.operatorCode.toLowerCase().includes(q)) ||
         (o.assignedEquipmentDisplay && o.assignedEquipmentDisplay.toLowerCase().includes(q))
     );
-  }, [group.operators, q, searchScope]);
+  }, [localOperators, q, searchScope]);
 
   // 3. Equipment Filter
   const displayedEquipment = useMemo(() => {
@@ -428,7 +682,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
             (w.fullName && w.fullName.toLowerCase().includes(q)) ||
             (w.employeeCode && w.employeeCode.toLowerCase().includes(q))
         );
-        const hasOpMatch = (group.operators || []).some(
+        const hasOpMatch = localOperators.some(
           (o) =>
             (o.callingName && o.callingName.toLowerCase().includes(q)) ||
             (o.fullName && o.fullName.toLowerCase().includes(q)) ||
@@ -450,7 +704,7 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
         }
       }
     }
-  }, [q, searchScope, localWorkers, group.operators, loggedEquipment]);
+  }, [q, searchScope, localWorkers, localOperators, loggedEquipment]);
 
   console.log("Current op data:", group.operators);
   console.log(group.counts);
@@ -710,18 +964,16 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               {isEditingThis ? (
                                 <div className="flex flex-col gap-1">
                                   <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-blue-300 shadow-2xs">
-                                    <input
-                                      type="time"
+                                    <TimeInput24
                                       value={editInTime}
-                                      onChange={(e) => setEditInTime(e.target.value)}
-                                      className="w-18 px-1 py-0.5 rounded text-xs font-bold text-slate-900 font-mono border border-slate-200 focus:outline-none focus:border-blue-500"
+                                      onChange={(val) => setEditInTime(val)}
+                                      className="w-16 px-1 py-0.5 rounded text-xs font-bold text-slate-900 font-mono border border-slate-200 focus:outline-none focus:border-blue-500"
                                     />
                                     <span className="text-slate-400 font-bold">–</span>
-                                    <input
-                                      type="time"
+                                    <TimeInput24
                                       value={editOutTime}
-                                      onChange={(e) => setEditOutTime(e.target.value)}
-                                      className="w-18 px-1 py-0.5 rounded text-xs font-bold text-slate-900 font-mono border border-slate-200 focus:outline-none focus:border-blue-500"
+                                      onChange={(val) => setEditOutTime(val)}
+                                      className="w-16 px-1 py-0.5 rounded text-xs font-bold text-slate-900 font-mono border border-slate-200 focus:outline-none focus:border-blue-500"
                                     />
                                   </div>
                                   <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-600">
@@ -1084,21 +1336,31 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                       <th className="py-2.5 px-3">Effective Hours</th>
                       <th className="py-2.5 px-3">OT Hrs</th>
                       <th className="py-2.5 px-3 text-right">Status</th>
+                      {!isApproved && (
+                        <th className="py-2.5 px-3 text-center min-w-[80px]">Admin Edit</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {!displayedOperators || displayedOperators.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-6 text-center text-slate-400">
+                        <td colSpan={!isApproved ? 8 : 7} className="py-6 text-center text-slate-400">
                           {q ? `No machine operators match "${searchQuery}" for this supervisor.` : 'No machine operators assigned for this supervisor.'}
                         </td>
                       </tr>
                     ) : (
                       displayedOperators.map((op) => {
+                        const isEditingThisOp = editingOperatorId === op.operatorId;
+                        const preview = isEditingThisOp
+                          ? computePreviewHours(editOpInTime, editOpOutTime, parseFloat(editOpAdditionalHours) || 0)
+                          : null;
                         const hasAttendance = Boolean(op.inTime && op.outTime);
                         const effectiveVal = op.effectiveHours ?? op.shiftHours ?? ((op.hours ?? 0) + (op.otHours ?? 0));
                         return (
-                          <tr key={op.operatorId} className="hover:bg-slate-50/50 transition-colors">
+                          <tr
+                            key={op.operatorId}
+                            className={isEditingThisOp ? 'bg-blue-50/40 transition-colors' : 'hover:bg-slate-50/50 transition-colors'}
+                          >
                             <td className="py-2.5 px-3.5">
                               <div className="font-semibold text-slate-900 flex items-center gap-1.5">
                                 <span>{op.callingName || op.fullName}</span>
@@ -1139,7 +1401,38 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               )}
                             </td>
                             <td className="py-2.5 px-3 font-mono">
-                              {hasAttendance ? (
+                              {isEditingThisOp ? (
+                                <div className="flex flex-col gap-1.5 p-1 bg-blue-50/50 rounded-lg border border-blue-200/60">
+                                  <div className="flex items-center gap-1">
+                                    <TimeInput24
+                                      value={editOpInTime}
+                                      onChange={(val) => setEditOpInTime(val)}
+                                      className="px-1.5 py-0.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 w-[64px]"
+                                      title="In Time (24H)"
+                                    />
+                                    <span className="text-slate-400 font-bold">–</span>
+                                    <TimeInput24
+                                      value={editOpOutTime}
+                                      onChange={(val) => setEditOpOutTime(val)}
+                                      className="px-1.5 py-0.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 w-[64px]"
+                                      title="Out Time (24H)"
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-1.5 pt-1 border-t border-blue-100">
+                                    <span className="text-[10px] text-slate-500 font-semibold whitespace-nowrap">Add Hrs:</span>
+                                    <input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      max="24"
+                                      value={editOpAdditionalHours}
+                                      onChange={(e) => setEditOpAdditionalHours(e.target.value)}
+                                      className="w-16 px-1.5 py-0.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 text-center"
+                                      title="Additional Shift Hours"
+                                    />
+                                  </div>
+                                </div>
+                              ) : hasAttendance ? (
                                 <div>
                                   <span className="text-slate-900 font-medium">
                                     {op.inTime} – {op.outTime}
@@ -1161,7 +1454,14 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                             </td>
                             {/* TOTAL HOURS (GROSS) */}
                             <td className="py-2.5 px-3 text-center">
-                              {(() => {
+                              {isEditingThisOp && preview ? (
+                                <span
+                                  className="inline-flex items-center px-2 py-0.5 rounded-md font-mono font-bold text-xs bg-blue-100 text-blue-900 border border-blue-300 shadow-2xs"
+                                  title={`Total Presence (Gross Out - In): ${formatHoursDisplay(preview.totalHours)}`}
+                                >
+                                  {formatHoursDisplay(preview.totalHours)}
+                                </span>
+                              ) : (() => {
                                 let grossVal = op.totalHours || 0;
                                 if (!grossVal && op.inTime && op.outTime) {
                                   const [inH, inM] = op.inTime.split(':').map(Number);
@@ -1185,14 +1485,26 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               })()}
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
-                              {effectiveVal > 0 ? (
+                              {isEditingThisOp && preview ? (
+                                <span className="font-bold text-blue-700 font-mono">
+                                  {formatHoursDisplay(preview.effectiveHours)}
+                                </span>
+                              ) : effectiveVal > 0 ? (
                                 <span title={toHhMmTooltip(effectiveVal)}>
                                   {formatHoursDisplay(effectiveVal)}
                                 </span>
                               ) : '-'}
                             </td>
                             <td className="py-2.5 px-3">
-                              {(op.otHours ?? 0) > 0 ? (
+                              {isEditingThisOp && preview ? (
+                                preview.otHours > 0 ? (
+                                  <span className="font-bold text-amber-600 font-mono">
+                                    +{formatHoursDisplay(preview.otHours)}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 font-mono">0.0h</span>
+                                )
+                              ) : (op.otHours ?? 0) > 0 ? (
                                 <span className="font-bold text-amber-600" title={toHhMmTooltip(op.otHours)}>
                                   +{formatHoursDisplay(op.otHours)}
                                 </span>
@@ -1217,6 +1529,43 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                 {op.status === 'approved' ? 'Approved' : hasAttendance ? 'Done' : 'Absent'}
                               </span>
                             </td>
+                            {!isApproved && (
+                              <td className="py-2.5 px-3 text-center">
+                                {isEditingThisOp ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      disabled={isSavingOpEdit}
+                                      onClick={() => handleSaveOperatorEdit(op)}
+                                      className="p-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors cursor-pointer disabled:opacity-50"
+                                      title="Save Changes"
+                                    >
+                                      {isSavingOpEdit ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isSavingOpEdit}
+                                      onClick={cancelEditingOperator}
+                                      className="p-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors cursor-pointer"
+                                      title="Cancel"
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={op.status === 'approved'}
+                                    onClick={() => startEditingOperator(op)}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title="Edit In/Out times for this operator"
+                                  >
+                                    <Pencil size={11} />
+                                    <span>Edit</span>
+                                  </button>
+                                )}
+                              </td>
+                            )}
                           </tr>
                         );
                       })
@@ -1253,22 +1602,29 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                       <th className="py-2.5 px-3">Fuel (L)</th>
                       <th className="py-2.5 px-3 min-w-[290px]">Activities Worked</th>
                       <th className="py-2.5 px-3 text-right">Status</th>
+                      {!isApproved && (
+                        <th className="py-2.5 px-3 text-center min-w-[80px]">Admin Edit</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {displayedEquipment.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-6 text-center text-slate-400">
+                        <td colSpan={!isApproved ? 8 : 7} className="py-6 text-center text-slate-400">
                           {q ? `No plant & equipment match "${searchQuery}" for this supervisor.` : 'No plant & equipment logged for this supervisor.'}
                         </td>
                       </tr>
                     ) : (
                       displayedEquipment.map((eq) => {
+                        const isEditingThisEq = editingEquipmentId === eq.equipmentId;
                         const isWorking = eq.condition === 'WORKING';
                         const isBreakdown = eq.condition === 'BREAKDOWN';
                         const isLogged = eq.netHours > 0 || eq.loggedQuantity > 0;
                         return (
-                          <tr key={eq.equipmentId} className="hover:bg-slate-50/50 transition-colors">
+                          <tr
+                            key={eq.equipmentId}
+                            className={isEditingThisEq ? 'bg-amber-50/40 transition-colors' : 'hover:bg-slate-50/50 transition-colors'}
+                          >
                             <td className="py-2.5 px-3.5">
                               <div className="font-semibold text-slate-900">
                                 {eq.equipmentName}
@@ -1279,20 +1635,47 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               </div>
                             </td>
                             <td className="py-2.5 px-3">
-                              <span
-                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                                  isWorking
-                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                    : isBreakdown
-                                    ? 'bg-red-50 text-red-700 border-red-200'
-                                    : 'bg-amber-50 text-amber-700 border-amber-200'
-                                }`}
-                              >
-                                {eq.condition || 'DRY'}
-                              </span>
+                              {isEditingThisEq ? (
+                                <select
+                                  value={editEqCondition}
+                                  onChange={(e) => setEditEqCondition(e.target.value)}
+                                  className="px-2 py-1 text-[11px] font-bold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 shadow-2xs"
+                                >
+                                  <option value="WORKING">WORKING</option>
+                                  <option value="BREAKDOWN">BREAKDOWN</option>
+                                  <option value="STANDBY">STANDBY</option>
+                                  <option value="IDLE">IDLE</option>
+                                  <option value="DRY">DRY</option>
+                                </select>
+                              ) : (
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                    isWorking
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : isBreakdown
+                                      ? 'bg-red-50 text-red-700 border-red-200'
+                                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                                  }`}
+                                >
+                                  {eq.condition || 'DRY'}
+                                </span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3">
-                              {(() => {
+                              {isEditingThisEq ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    min="0"
+                                    value={editEqNetHours}
+                                    onChange={(e) => setEditEqNetHours(e.target.value)}
+                                    className="w-16 px-1.5 py-0.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
+                                    title="Net Hours / Quantity"
+                                  />
+                                  <span className="text-[11px] font-semibold text-slate-600">Hrs</span>
+                                </div>
+                              ) : (() => {
                                 const unitUpper = (eq.primaryUnit || 'hrs').toUpperCase();
                                 if (unitUpper === 'HRS') {
                                   const hrs = Number(eq.netHours || eq.workingHours || eq.loggedQuantity || 0);
@@ -1330,7 +1713,45 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               })()}
                             </td>
                             <td className="py-2.5 px-3 font-mono text-[11px]">
-                              {eq.initialMeter > 0 || eq.finalMeter > 0 ? (
+                              {isEditingThisEq ? (
+                                <div className="flex items-center gap-1 font-mono text-[11px]">
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    value={editEqInitialMeter}
+                                    onChange={(e) => {
+                                      setEditEqInitialMeter(e.target.value);
+                                      const init = parseFloat(e.target.value) || 0;
+                                      const fin = parseFloat(editEqFinalMeter) || 0;
+                                      if (fin > init) {
+                                        setEditEqNetHours(String(parseFloat((fin - init).toFixed(2))));
+                                      }
+                                    }}
+                                    placeholder="Init"
+                                    className="w-14 px-1 py-0.5 text-xs font-mono bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
+                                    title="Initial Meter"
+                                  />
+                                  <span className="text-slate-400">–</span>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    value={editEqFinalMeter}
+                                    onChange={(e) => {
+                                      setEditEqFinalMeter(e.target.value);
+                                      const fin = parseFloat(e.target.value) || 0;
+                                      const init = parseFloat(editEqInitialMeter) || 0;
+                                      if (fin > init) {
+                                        setEditEqNetHours(String(parseFloat((fin - init).toFixed(2))));
+                                      }
+                                    }}
+                                    placeholder="Final"
+                                    className="w-14 px-1 py-0.5 text-xs font-mono bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
+                                    title="Final Meter"
+                                  />
+                                </div>
+                              ) : eq.initialMeter > 0 || eq.finalMeter > 0 ? (
                                 <div className="flex items-center gap-1 text-slate-700">
                                   <Gauge size={12} className="text-slate-400" />
                                   <span>{eq.initialMeter} – {eq.finalMeter}</span>
@@ -1340,7 +1761,20 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               )}
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
-                              {eq.fuelLiters > 0 ? (
+                              {isEditingThisEq ? (
+                                <div className="flex items-center gap-1 font-mono text-[11px]">
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    value={editEqFuelLiters}
+                                    onChange={(e) => setEditEqFuelLiters(e.target.value)}
+                                    className="w-14 px-1 py-0.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
+                                    title="Fuel Liters"
+                                  />
+                                  <span className="text-[11px] font-semibold text-amber-700">L</span>
+                                </div>
+                              ) : eq.fuelLiters > 0 ? (
                                 <span className="inline-flex items-center gap-1 text-amber-700">
                                   <Fuel size={12} />
                                   <span>{eq.fuelLiters} L</span>
@@ -1350,7 +1784,66 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               )}
                             </td>
                             <td className="py-2.5 px-3">
-                              {eq.splits && eq.splits.length > 0 ? (
+                              {isEditingThisEq ? (
+                                <div className="space-y-1.5 py-1">
+                                  {editEqSplits.map((sp) => (
+                                    <div key={sp.id} className="flex items-center gap-1.5">
+                                      <div className="w-[180px]">
+                                        <SearchableActivitySelect
+                                          value={sp.activityCode}
+                                          options={activityOptions}
+                                          onChange={(newCode) => handleUpdateEqSplitRow(sp.id, 'activityCode', newCode)}
+                                          placeholder="Activity..."
+                                          className="w-full text-xs shadow-2xs"
+                                        />
+                                      </div>
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        min="0"
+                                        value={sp.hours}
+                                        onChange={(e) => handleUpdateEqSplitRow(sp.id, 'hours', e.target.value)}
+                                        className="w-14 px-1 py-1 text-xs font-mono font-semibold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
+                                        placeholder="Hrs"
+                                        title="Hours / Utilization"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveEqSplitRow(sp.id)}
+                                        className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                                        title="Remove activity row"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  ))}
+                                  <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddEqSplitRow()}
+                                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 hover:text-amber-900 transition-colors"
+                                    >
+                                      <Plus size={12} />
+                                      <span>Add Split</span>
+                                    </button>
+                                    {(() => {
+                                      const sum = editEqSplits.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0);
+                                      const netVal = parseFloat(editEqNetHours) || 0;
+                                      const isMismatch = Math.abs(sum - netVal) > 0.05 && netVal > 0;
+                                      return (
+                                        <span
+                                          className={`text-[10px] font-mono font-bold ${
+                                            isMismatch ? 'text-amber-600' : 'text-emerald-600'
+                                          }`}
+                                          title={isMismatch ? `Split total (${sum}h) differs from logged hours (${netVal}h)` : 'Split sum matches logged hours'}
+                                        >
+                                          Σ {sum.toFixed(1)} / {netVal.toFixed(1)}h
+                                        </span>
+                                      );
+                                    })()}
+                                  </div>
+                                </div>
+                              ) : eq.splits && eq.splits.length > 0 ? (
                                 <div className="flex flex-wrap gap-1 max-w-xs">
                                   {eq.splits.map((act, i) => (
                                     <span
@@ -1380,6 +1873,43 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                                 {eq.status === 'approved' ? 'Approved' : 'Logged'}
                               </span>
                             </td>
+                            {!isApproved && (
+                              <td className="py-2.5 px-3 text-center">
+                                {isEditingThisEq ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      disabled={isSavingEqEdit}
+                                      onClick={() => handleSaveEquipmentEdit(eq)}
+                                      className="p-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors cursor-pointer disabled:opacity-50"
+                                      title="Save Changes"
+                                    >
+                                      {isSavingEqEdit ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isSavingEqEdit}
+                                      onClick={cancelEditingEquipment}
+                                      className="p-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors cursor-pointer"
+                                      title="Cancel"
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={eq.status === 'approved'}
+                                    onClick={() => startEditingEquipment(eq)}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title="Edit equipment daily log"
+                                  >
+                                    <Pencil size={11} />
+                                    <span>Edit</span>
+                                  </button>
+                                )}
+                              </td>
+                            )}
                           </tr>
                         );
                       })

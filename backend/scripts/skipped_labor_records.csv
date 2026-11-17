@@ -1,9 +1,2 @@
-Line,Employee,Date,In,Out,Activity,Hours,Additional_Hours,Reason
-5,"X52070",18/07/2026,-07:00,17:00,"03-38-21-42",,,"Invalid In Time format: '-07:00'"
-6,"X52070",19/07/2026,07:00,-17:00,"03-38-21-42",,,"Invalid Out Time format: '-17:00'"
-7,"X52070",20/07/2026,07:00,07:00,"03-38-21-42",,,"In Time and Out Time cannot be identical ('07:00'). Shift duration cannot be 0."
-8,"X52070",31/02/2026,07:00,17:00,"03-38-21-42",8,,"Calendar day 31 is invalid for 2026-02 (max days: 28) in '31/02/2026'"
-9,"X52070",22/07/2026,07:00,17:00,"03-38-21-42",-8,,"Hours must be greater than 0 and at most 48 (got: -8)"
-10,"X52070",23/07/2026,07:00,19:00,"03-38-21-42",,-5,"Additional Hours cannot be negative and must be at most 24 (got: '-5')"
-4,"X52070",17/07/2026,07:00,17:00,"03-38-21-42",11,,"Hours Exceeded: Activity hours (11h) exceed shift duration (9h) by +2h, but Additional Hours was not entered."
-11,"NON_EXISTENT_EMP_9999",24/07/2026,07:00,17:00,"03-38-21-42",8,,"Employee 'NON_EXISTENT_EMP_9999' not found in project or corporate master."
+Line,Employee,Date,Reason
+8,UNKNOWN,"31/02/2026","Month mismatch in '31/02/2026': Date has month 02, but required billing month is 07. Please ensure date is strictly formatted as DD/MM/YYYY (e.g. 05/07/2026)."

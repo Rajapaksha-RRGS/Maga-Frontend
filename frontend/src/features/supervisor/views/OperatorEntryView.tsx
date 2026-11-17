@@ -40,6 +40,7 @@ import {
   hhmmToMinutes,
   minutesToHhmm
 } from '../utils/timeUtils';
+import { TimeInput24 } from '../../../components/TimeInput24';
 
 interface OperatorEntryViewProps {
   operators: OperatorEntry[];
@@ -935,11 +936,10 @@ export function OperatorEntryView({
                 <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-300 uppercase flex items-center gap-1">
                   <LogIn size={12} /> In:
                 </span>
-                <input
-                  type="time"
+                <TimeInput24
                   value={batchInTime}
-                  onChange={(e) => setBatchInTime(e.target.value)}
-                  className="text-xs font-bold text-emerald-950 dark:text-emerald-100 bg-transparent focus:outline-none"
+                  onChange={(val) => setBatchInTime(val)}
+                  className="w-16 text-xs font-bold font-mono text-emerald-950 dark:text-emerald-100 bg-transparent focus:outline-none"
                 />
               </div>
 
@@ -947,11 +947,10 @@ export function OperatorEntryView({
                 <span className="text-[10px] font-bold text-blue-800 dark:text-blue-300 uppercase flex items-center gap-1">
                   <LogOut size={12} /> Out:
                 </span>
-                <input
-                  type="time"
+                <TimeInput24
                   value={batchOutTime}
-                  onChange={(e) => setBatchOutTime(e.target.value)}
-                  className="text-xs font-bold text-blue-950 dark:text-blue-100 bg-transparent focus:outline-none"
+                  onChange={(val) => setBatchOutTime(val)}
+                  className="w-16 text-xs font-bold font-mono text-blue-950 dark:text-blue-100 bg-transparent focus:outline-none"
                 />
               </div>
 
@@ -1199,18 +1198,17 @@ export function OperatorEntryView({
                       <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase flex items-center gap-0.5">
                         <LogIn size={11} /> In:
                       </span>
-                      <input
-                        type="time"
+                      <TimeInput24
                         disabled={isDayLocked}
                         value={operator.inTime || ''}
-                        onChange={(e) => handleIndividualTimeChange(operator.id, e.target.value, operator.outTime)}
+                        onChange={(val) => handleIndividualTimeChange(operator.id, val, operator.outTime)}
                         className={[
-                          'w-[88px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
+                          'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-transparent cursor-pointer',
                           operator.inTime
                             ? 'text-emerald-800 dark:text-emerald-200 font-mono'
                             : 'text-slate-400 dark:text-slate-500'
                         ].join(' ')}
-                        title={operator.inTime ? 'In-Time (click to edit)' : 'Click to choose In-Time'}
+                        title={operator.inTime ? 'In-Time (24H: click to edit)' : 'Click to enter In-Time (24H)'}
                       />
                       {!operator.inTime && !isDayLocked && (
                         <button
@@ -1229,18 +1227,17 @@ export function OperatorEntryView({
                       <span className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase flex items-center gap-0.5">
                         <LogOut size={11} /> Out:
                       </span>
-                      <input
-                        type="time"
+                      <TimeInput24
                         disabled={isDayLocked}
                         value={operator.outTime || ''}
-                        onChange={(e) => handleIndividualTimeChange(operator.id, operator.inTime, e.target.value)}
+                        onChange={(val) => handleIndividualTimeChange(operator.id, operator.inTime, val)}
                         className={[
-                          'w-[88px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
+                          'w-[64px] text-xs font-bold rounded-lg px-0.5 py-0.5 border-0 transition-all text-center focus:outline-none focus:ring-1 focus:ring-blue-500 bg-transparent cursor-pointer',
                           operator.outTime
                             ? 'text-blue-800 dark:text-blue-200 font-mono'
                             : 'text-slate-400 dark:text-slate-500'
                         ].join(' ')}
-                        title={operator.outTime ? 'Out-Time (click to edit)' : 'Click to choose Out-Time'}
+                        title={operator.outTime ? 'Out-Time (24H: click to edit)' : 'Click to enter Out-Time (24H)'}
                       />
                       {!operator.outTime && !isDayLocked && (
                         <button

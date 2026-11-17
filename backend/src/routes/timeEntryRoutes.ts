@@ -11,6 +11,7 @@ import {
   approveTimeEntries,
   rejectTimeEntries,
   adminAdjustWorkerTimeEntry,
+  adminAdjustEquipmentLog,
   getOperatorEntries,
   saveOperatorEntry,
   saveBulkOperatorEntries,
@@ -36,6 +37,7 @@ router.get('/approval-overview', requireAdmin, getApprovalOverview);
 router.post('/approve', requireAdmin, approveTimeEntries);
 router.post('/reject', requireAdmin, rejectTimeEntries);
 router.post('/admin-adjust', requireAdmin, adminAdjustWorkerTimeEntry);
+router.post('/admin-adjust-equipment', requireAdmin, adminAdjustEquipmentLog);
 
 // Operator routes
 router.get('/operators', getOperatorEntries);
