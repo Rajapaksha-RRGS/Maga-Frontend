@@ -1159,7 +1159,24 @@ async function main() {
   let failedGroups = 0;
   const processedDailySheets = new Map<string, string>(); // dateKey -> dailySheetId
 
+  const totalGroups = groupedEntries.size;
+  let processedIndex = 0;
+  console.log(`🚀 ${BOLD}Writing ${totalGroups} equipment groups to database...${RESET}\n`);
+
   for (const [, group] of groupedEntries) {
+    processedIndex++;
+    const pct = Math.floor((processedIndex / totalGroups) * 100);
+    const barLen = 25;
+    const filled = Math.floor((barLen * processedIndex) / totalGroups);
+    const bar = '█'.repeat(filled) + '-'.repeat(barLen - filled);
+
+    if (process.stdout.isTTY) {
+      process.stdout.write(
+        `\r${CYAN}⏳ [${bar}] ${pct}% (${processedIndex}/${totalGroups})${RESET} | Eq: ${BOLD}${group.equipmentIdentifier}${RESET} (${group.dateStr})   `
+      );
+    } else if (processedIndex % 25 === 0 || processedIndex === totalGroups) {
+      console.log(`⏳ [${bar}] ${pct}% (${processedIndex}/${totalGroups}) | Eq: ${group.equipmentIdentifier} (${group.dateStr})`);
+    }
     try {
       const cleanEqKey = group.equipmentIdentifier.toLowerCase();
       let localEq = eqMap.get(cleanEqKey);
@@ -1384,6 +1401,12 @@ async function main() {
         });
       }
     }
+  }
+
+  if (process.stdout.isTTY) {
+    process.stdout.write('\n\n');
+  } else {
+    console.log('\n');
   }
 
   const durationSec = ((Date.now() - startTime) / 1000).toFixed(2);
