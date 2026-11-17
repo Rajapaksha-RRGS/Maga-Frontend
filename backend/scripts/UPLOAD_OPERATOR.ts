@@ -220,7 +220,10 @@ function computeBreakHoursAndSnapshots(inTime?: string | null, outTime?: string 
     isDinnerDeducted = true;
   }
 
-  return { breakHours: totalBreaks, isLunchDeducted, isDinnerDeducted };
+  let grossMins = outMins - inMins;
+  if (grossMins <= 0) grossMins += 24 * 60;
+
+  return { breakHours: Math.min(totalBreaks, grossMins / 60), isLunchDeducted, isDinnerDeducted };
 }
 
 // Helper: Calculate Shift Hours, Overtime, and Break based on Day of Week and Maga rules
@@ -467,6 +470,22 @@ function parseRawFile(content: string): OperatorParseResult {
       }
     }
 
+    // Validate In vs Out are not identical raw values
+    if (inT && outT && inT.trim() === outT.trim()) {
+      parseErrors.push({
+        line: lineNum,
+        operator: op || 'UNKNOWN',
+        equipment: eq,
+        condition: cond,
+        unit: unt,
+        dateStr: dt,
+        inTime: inT,
+        outTime: outT,
+        reason: `In Time and Out Time cannot be identical ('${inT.trim()}'). Shift duration cannot be 0.`,
+      });
+      hasLineError = true;
+    }
+
     // Validate Hours
     let hoursVal = 8.0;
     if (hrsStr) {
@@ -520,7 +539,7 @@ function parseRawFile(content: string): OperatorParseResult {
           reason: `Invalid Additional Hours format: '${addHrsStr}'`,
         });
         hasLineError = true;
-      } else if (parsedAdd < -12 || parsedAdd > 24) {
+      } else if (parsedAdd < 0 || parsedAdd > 24) {
         parseErrors.push({
           line: lineNum,
           operator: op || 'UNKNOWN',
@@ -531,7 +550,7 @@ function parseRawFile(content: string): OperatorParseResult {
           inTime: inT,
           outTime: outT,
           additionalHours: parsedAdd,
-          reason: `Additional Hours out of range (-12 to 24): '${addHrsStr}'`,
+          reason: `Additional Hours cannot be negative and must be at most 24 (got: '${addHrsStr}')`,
         });
         hasLineError = true;
       } else {

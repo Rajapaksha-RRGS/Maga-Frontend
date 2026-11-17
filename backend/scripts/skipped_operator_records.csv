@@ -3,7 +3,7 @@ Line,Operator,Date,In,Out,AdditionalHours,Hours,Equipment,Condition,Unit,Reason
 6,"R7447",05/07/2026,88:99,19,,,"MLBH0028","DRY","hrs","Invalid In Time format: '88:99'"
 7,"R7447",06/07/2026,7,99:99,,,"MLBH0028","DRY","hrs","Invalid Out Time format: '99:99'"
 8,"R7447",07/07/2026,7,19,,,"MLBH0028","DRY","hrs","Invalid Additional Hours format: 'EXTRA_HRS'"
-9,"R7447",08/07/2026,7,19,50,,"MLBH0028","DRY","hrs","Additional Hours out of range (-12 to 24): '50'"
+9,"R7447",08/07/2026,7,19,50,,"MLBH0028","DRY","hrs","Additional Hours cannot be negative and must be at most 24 (got: '50')"
 10,"R7447",,7,19,,11,"MLBH0028","DRY","hrs","Missing Date"
 11,"R7447",31/02/2026,7,19,,11,"MLBH0028","DRY","hrs","Invalid Date format or invalid calendar day: '31/02/2026'"
 12,"R7447",15/15/2026,7,19,,11,"MLBH0028","DRY","hrs","Invalid Date format or invalid calendar day: '15/15/2026'"

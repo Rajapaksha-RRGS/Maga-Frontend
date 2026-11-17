@@ -343,6 +343,20 @@ function parseRawFile(content: string): ParseResult {
       }
     }
 
+    // Validate In vs Out are not identical raw values
+    if (inT && outT && inT.trim() === outT.trim()) {
+      parseErrors.push({
+        line: lineNum,
+        employee: emp || 'UNKNOWN',
+        dateStr: dt,
+        inTime: inT,
+        outTime: outT,
+        activityCode: act,
+        reason: `In Time and Out Time cannot be identical ('${inT.trim()}'). Shift duration cannot be 0.`,
+      });
+      hasLineError = true;
+    }
+
     // Validate Hours
     let hoursVal = 0;
     if (hrsStr) {
@@ -392,7 +406,7 @@ function parseRawFile(content: string): ParseResult {
           reason: `Invalid Additional Hours format: '${addHrsStr}'`,
         });
         hasLineError = true;
-      } else if (parsedAdd < -12 || parsedAdd > 24) {
+      } else if (parsedAdd < 0 || parsedAdd > 24) {
         parseErrors.push({
           line: lineNum,
           employee: emp || 'UNKNOWN',
@@ -401,7 +415,7 @@ function parseRawFile(content: string): ParseResult {
           outTime: outT,
           activityCode: act,
           additionalHours: parsedAdd,
-          reason: `Additional Hours out of range (-12 to 24): '${addHrsStr}'`,
+          reason: `Additional Hours cannot be negative and must be at most 24 (got: '${addHrsStr}')`,
         });
         hasLineError = true;
       } else {
