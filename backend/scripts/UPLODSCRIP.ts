@@ -1082,14 +1082,14 @@ async function main() {
               data: {
                 projectId: project.id,
                 corporateEmployeeId: corpEmp.id,
-                callingName: corpEmp.callingName || corpEmp.fullName.split(' ')[0],
+                callingName: corpEmp.fullName.split(' ')[0],
                 dailyRate: corpEmp.dailyRate || corpEmp.tradeGroup?.standardDailyRate || 1400.0,
                 tradeGroupId: corpEmp.tradeGroupId || null,
                 status: 'active',
               },
               include: {
                 corporateEmployee: {
-                  select: { id: true, employeeCode: true, fullName: true, epfNo: true },
+                  select: { id: true, employeeCode: true, fullName: true, epfNo: true, employeeType: true },
                 },
                 tradeGroup: {
                   select: { standardDailyRate: true },
@@ -1104,7 +1104,7 @@ async function main() {
               id: 'dry-run-emp-id',
               projectId: project.id,
               corporateEmployeeId: corpEmp.id,
-              callingName: corpEmp.callingName || corpEmp.fullName.split(' ')[0],
+              callingName: corpEmp.fullName.split(' ')[0],
               dailyRate: corpEmp.dailyRate || 1400.0,
               tradeGroupId: corpEmp.tradeGroupId || null,
               businessPartnerId: null,
@@ -1196,38 +1196,101 @@ async function main() {
         continue;
       }
 
-      if (isDryRun) {
-        // Validate activities in dry-run mode
-        for (const actItem of group.activities) {
-          if (!actItem.activityCode || !actItem.activityCode.trim()) continue;
-          let actId = actMap.get(actItem.activityCode.trim().toLowerCase());
-          if (!actId) {
-            const corpAct = await prisma.mF_G_ActivityCode.findFirst({
-              where: { code: { equals: actItem.activityCode.trim(), mode: 'insensitive' } },
-            });
-            if (corpAct) {
-              actId = corpAct.id;
-            } else {
-              errors.push({
-                line: actItem.rawLineIndex,
-                employee: group.employeeIdentifier,
-                dateStr: group.dateStr,
-                inTime: finalInTime,
-                outTime: finalOutTime,
-                activityCode: actItem.activityCode,
-                hours: actItem.hours,
-                additionalHours: group.additionalHours,
-                reason: `Activity code '${actItem.activityCode}' could not be resolved in project or corporate master.`,
-              });
-              continue;
-            }
-          }
-          successCount++;
+      // Step C: Validate and Resolve Activity Codes Strictly (Atomic Shift Validation)
+      let shiftHasInvalidActivity = false;
+      const resolvedActivities: Array<{ actId: string; code: string; hours: number; rawLineIndex: number }> = [];
+
+      for (const actItem of group.activities) {
+        if (!actItem.activityCode || !actItem.activityCode.trim() || actItem.hours <= 0) {
+          continue;
         }
+
+        const cleanActCode = actItem.activityCode.trim();
+        let actId = actMap.get(cleanActCode.toLowerCase());
+
+        // Handle auto-balance ZIDLE code
+        if (!actId && cleanActCode.toUpperCase() === 'ZIDLE') {
+          if (!isDryRun) {
+            const zidleCorp = await prisma.mF_G_ActivityCode.findFirst({
+              where: { code: 'ZIDLE' },
+            });
+            const newZidle = await prisma.mF_P_ActivityCode.upsert({
+              where: { projectId_code: { projectId: project.id, code: 'ZIDLE' } },
+              update: {},
+              create: {
+                projectId: project.id,
+                code: 'ZIDLE',
+                description: 'Idle Time / Hours Deficit',
+                unit: 'hrs',
+                corporateActivityCodeId: zidleCorp?.id || null,
+              },
+            });
+            actId = newZidle.id;
+          } else {
+            actId = 'dry-run-zidle-id';
+          }
+          actMap.set('zidle', actId);
+        }
+
+        if (!actId) {
+          const corpAct = await prisma.mF_G_ActivityCode.findFirst({
+            where: { code: { equals: cleanActCode, mode: 'insensitive' } },
+          });
+
+          if (corpAct) {
+            if (!isDryRun) {
+              const newAct = await prisma.mF_P_ActivityCode.create({
+                data: {
+                  projectId: project.id,
+                  code: corpAct.code,
+                  description: corpAct.description,
+                  unit: corpAct.unit,
+                  corporateActivityCodeId: corpAct.id,
+                },
+              });
+              actId = newAct.id;
+              actMap.set(cleanActCode.toLowerCase(), actId);
+            } else {
+              actId = corpAct.id;
+            }
+          } else {
+            // STRICT MODE: If code is not found in Project or Corporate Master, reject it!
+            errors.push({
+              line: actItem.rawLineIndex,
+              employee: group.employeeIdentifier,
+              dateStr: group.dateStr,
+              inTime: finalInTime,
+              outTime: finalOutTime,
+              activityCode: actItem.activityCode,
+              hours: actItem.hours,
+              additionalHours: group.additionalHours,
+              reason: `Strict Mode: Activity code '${actItem.activityCode}' not found in project or corporate master.`,
+            });
+            shiftHasInvalidActivity = true;
+          }
+        }
+
+        if (actId) {
+          resolvedActivities.push({
+            actId,
+            code: actItem.activityCode,
+            hours: actItem.hours,
+            rawLineIndex: actItem.rawLineIndex,
+          });
+        }
+      }
+
+      // If any activity in this shift is invalid, reject entire shift to ensure data integrity
+      if (shiftHasInvalidActivity || resolvedActivities.length === 0) {
         continue;
       }
 
-      // Step C: Get or Create DailySheet for Supervisor & Date
+      if (isDryRun) {
+        successCount += resolvedActivities.length;
+        continue;
+      }
+
+      // Step D: Get or Create DailySheet for Supervisor & Date
       const dateKey = group.date.toISOString().slice(0, 10);
       let dailySheet = dailySheetCache.get(dateKey);
       if (!dailySheet) {
@@ -1252,7 +1315,7 @@ async function main() {
         dailySheetCache.set(dateKey, dailySheet);
       }
 
-      // Step D: Ensure DailyAssignment exists
+      // Step E: Ensure DailyAssignment exists
       await prisma.mF_OP_DailyAssignment.upsert({
         where: {
           dailySheetId_employeeId: {
@@ -1270,57 +1333,6 @@ async function main() {
       const dayRule = getDayTypeRuleForDate(group.date);
       const isExternalWorker = localEmp.corporateEmployee?.employeeType === 'external' || Boolean(localEmp.businessPartnerId);
       const finalOt = computeOtHours(finalShiftHours, dayRule, isExternalWorker);
-
-      // Step E: Save Time Entry & Activity Splits
-      // Resolve all activity codes for this shift
-      const resolvedActivities: Array<{ actId: string; code: string; hours: number; rawLineIndex: number }> = [];
-      for (const actItem of group.activities) {
-        if (!actItem.activityCode || !actItem.activityCode.trim() || actItem.hours <= 0) {
-          continue;
-        }
-
-        let actId = actMap.get(actItem.activityCode.trim().toLowerCase());
-        if (!actId) {
-          const corpAct = await prisma.mF_G_ActivityCode.findFirst({
-            where: { code: { equals: actItem.activityCode.trim(), mode: 'insensitive' } },
-          });
-
-          if (corpAct) {
-            const newAct = await prisma.mF_P_ActivityCode.create({
-              data: {
-                projectId: project.id,
-                code: corpAct.code,
-                description: corpAct.description,
-                unit: corpAct.unit,
-                corporateActivityCodeId: corpAct.id,
-              },
-            });
-            actId = newAct.id;
-            actMap.set(actItem.activityCode.trim().toLowerCase(), actId);
-          } else {
-            errors.push({
-              line: actItem.rawLineIndex,
-              employee: group.employeeIdentifier,
-              dateStr: group.dateStr,
-              inTime: finalInTime,
-              outTime: finalOutTime,
-              activityCode: actItem.activityCode,
-              hours: actItem.hours,
-              additionalHours: group.additionalHours,
-              reason: `Activity code '${actItem.activityCode}' could not be resolved in project or corporate master.`,
-            });
-            continue;
-          }
-        }
-        resolvedActivities.push({
-          actId,
-          code: actItem.activityCode,
-          hours: actItem.hours,
-          rawLineIndex: actItem.rawLineIndex,
-        });
-      }
-
-      if (resolvedActivities.length === 0) continue;
 
       // Check existing entries for this employee shift
       const existingEntries = await prisma.mF_OP_TimeEntry.findMany({
