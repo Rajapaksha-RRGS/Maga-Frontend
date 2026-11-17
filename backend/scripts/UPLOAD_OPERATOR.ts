@@ -54,6 +54,8 @@ interface ProcessError {
   line: number;
   operator: string;
   equipment?: string;
+  condition?: string;
+  unit?: string;
   dateStr?: string;
   inTime?: string;
   outTime?: string;
@@ -62,7 +64,13 @@ interface ProcessError {
   reason: string;
 }
 
-// Helper: Normalize time to standard "HH:mm"
+interface OperatorParseResult {
+  rows: RawOperatorRow[];
+  parseErrors: ProcessError[];
+  totalLines: number;
+}
+
+// Helper: Normalize time to standard "HH:mm" (returns null if invalid/corrupt)
 export function normalizeTime(val?: string | null): string | null {
   if (!val) return null;
   const clean = val.trim();
@@ -71,6 +79,7 @@ export function normalizeTime(val?: string | null): string | null {
   // 1. Integer hours: e.g. "7" -> "07:00", "22" -> "22:00", "28" -> "04:00"
   if (/^\d{1,2}$/.test(clean)) {
     let h = parseInt(clean, 10);
+    if (h < 0 || h > 48) return null;
     if (h >= 24) h = h % 24;
     return `${String(h).padStart(2, '0')}:00`;
   }
@@ -78,68 +87,66 @@ export function normalizeTime(val?: string | null): string | null {
   // 2. Standard colon: e.g. "7:30" -> "07:30", "17:00" -> "17:00"
   if (/^\d{1,2}:\d{1,2}$/.test(clean)) {
     let [h, m] = clean.split(':').map(Number);
+    if (isNaN(h) || isNaN(m) || h < 0 || h > 48 || m < 0 || m >= 60) return null;
     if (h >= 24) h = h % 24;
-    if (m >= 0 && m < 60) {
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    }
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
   // 3. Decimal hours e.g. "12.5" -> "12:30", "22.25" -> "22:15", "6.5" -> "06:30"
   if (/^\d{1,2}\.\d+$/.test(clean)) {
     const num = parseFloat(clean);
-    if (!isNaN(num)) {
-      let h = Math.floor(num);
-      const frac = num - h;
-      let m = Math.round(frac * 60);
-      if (m >= 60) {
-        h += 1;
-        m = 0;
-      }
-      if (h >= 24) h = h % 24;
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    if (isNaN(num) || num < 0 || num > 48) return null;
+    let h = Math.floor(num);
+    const frac = num - h;
+    let m = Math.round(frac * 60);
+    if (m >= 60) {
+      h += 1;
+      m = 0;
     }
+    if (h >= 24) h = h % 24;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
-  return clean;
+  return null;
 }
 
-// Helper: Parse date string into UTC Date object
+// Helper: Parse date string into UTC Date object with strict calendar day validation
 export function parseDateInput(val: string): Date | null {
   if (!val) return null;
   const clean = val.trim();
+  if (!clean) return null;
 
   // YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-    const d = new Date(clean + 'T00:00:00.000Z');
-    return isNaN(d.getTime()) ? null : d;
+    const [y, m, d] = clean.split('-').map(Number);
+    if (isNaN(y) || isNaN(m) || isNaN(d) || y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (isNaN(date.getTime()) || date.getUTCDate() !== d || date.getUTCMonth() !== m - 1) return null;
+    return date;
   }
 
-  // D/M/YYYY or DD/MM/YYYY
-  const slashParts = clean.split('/');
-  if (slashParts.length === 3) {
-    let [day, month, year] = slashParts.map((p) => parseInt(p, 10));
-    if (year < 100) year += 2000;
-    if (month > 12 && day <= 12) {
-      const temp = day;
-      day = month;
-      month = temp;
-    }
-    const d = new Date(Date.UTC(year, month - 1, day));
-    return isNaN(d.getTime()) ? null : d;
-  }
+  // D/M/YYYY or DD/MM/YYYY or D-M-YYYY or DD-M-YYYY
+  const delimiter = clean.includes('/') ? '/' : clean.includes('-') ? '-' : null;
+  if (delimiter) {
+    const slashParts = clean.split(delimiter);
+    if (slashParts.length === 3) {
+      let [day, month, year] = slashParts.map((p) => parseInt(p, 10));
+      if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+      if (year < 100) year += 2000;
+      if (year < 2000 || year > 2100) return null;
 
-  // D-M-YYYY or DD-M-YYYY
-  const dashParts = clean.split('-');
-  if (dashParts.length === 3 && dashParts[0].length <= 2) {
-    let [day, month, year] = dashParts.map((p) => parseInt(p, 10));
-    if (year < 100) year += 2000;
-    if (month > 12 && day <= 12) {
-      const temp = day;
-      day = month;
-      month = temp;
+      // Swap if day was mistakenly put in month position (month > 12)
+      if (month > 12 && day <= 12) {
+        const temp = day;
+        day = month;
+        month = temp;
+      }
+      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+      const d = new Date(Date.UTC(year, month - 1, day));
+      if (isNaN(d.getTime()) || d.getUTCDate() !== day || d.getUTCMonth() !== month - 1) return null;
+      return d;
     }
-    const d = new Date(Date.UTC(year, month - 1, day));
-    return isNaN(d.getTime()) ? null : d;
   }
 
   const d = new Date(clean);
@@ -149,9 +156,10 @@ export function parseDateInput(val: string): Date | null {
 // Helper: Check if equipment code indicates idle or unassigned machine
 export function isIdleEquipment(eq?: string | null): boolean {
   if (!eq) return true;
-  const clean = eq.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const trimmed = eq.trim();
+  if (trimmed === '' || trimmed === '-') return true;
+  const clean = trimmed.toUpperCase().replace(/[^A-Z0-9]/g, '');
   return (
-    clean === '' ||
     clean === 'ZXQOPRIDLE' ||
     clean === 'IDLE' ||
     clean === 'NONE' ||
@@ -166,7 +174,7 @@ export function isIdleEquipment(eq?: string | null): boolean {
 export function normalizeEquipmentCode(eq?: string | null): string {
   if (!eq) return '';
   const clean = eq.trim().toUpperCase();
-  if (clean === 'MCH12' || clean === 'MCH0012') return 'MCHM0012';
+ 
   return clean;
 }
 
@@ -219,7 +227,7 @@ function computeBreakHoursAndSnapshots(inTime?: string | null, outTime?: string 
 function calculateShiftAndOvertime(
   inTime: string,
   outTime: string,
-  targetDate: Date,
+  dayRule: { isAllOvertime: boolean; isSaturday: boolean; standardCap: number },
   isExternal: boolean = false,
   additionalHours: number = 0
 ): {
@@ -241,31 +249,34 @@ function calculateShiftAndOvertime(
   const rawShiftHours = Math.max(0, Math.round((grossHours - breakHours) * 100) / 100);
   const shiftHours = Math.max(0, Math.round((rawShiftHours + (additionalHours || 0)) * 100) / 100);
 
-  const dow = targetDate.getUTCDay(); // 0 = Sun, 6 = Sat
-  let otHours = 0;
-  let regularHours = shiftHours;
+  if (shiftHours <= 0) {
+    return { shiftHours: 0, otHours: 0, breakHours, regularHours: 0, isLunchDeducted, isDinnerDeducted };
+  }
 
-  if (dow === 0) {
-    // Sunday: 100% Overtime
+  let otHours = 0;
+  let regularHours = 0;
+
+  if (dayRule.isAllOvertime) {
+    // Sunday, Poya, Public Holiday: 100% Overtime
     otHours = shiftHours;
     regularHours = 0;
   } else if (isExternal) {
-    // External Subcontractor Operator
-    const cap = dow === 6 ? 5.5 : 8.0;
+    // External Subcontractor Operator: No negative OT, capped at standardCap
+    const cap = dayRule.isSaturday ? 5.5 : 8.0;
     regularHours = Math.min(shiftHours, cap);
     otHours = shiftHours > cap ? Math.round((shiftHours - cap) * 100) / 100 : 0;
-  } else if (dow === 6) {
-    // Saturday: Standard base is 5.5h
+  } else if (dayRule.isSaturday) {
+    // Saturday: Standard base is 5.5h (> 5.5 => +OT, < 5.5 => -OT)
     regularHours = Math.min(shiftHours, 5.5);
-    otHours = Math.max(0, Math.round((shiftHours - 5.5) * 100) / 100);
+    otHours = Math.round((shiftHours - 5.5) * 100) / 100;
   } else {
     // Weekday: > 6h => Full Day (8.0h base); <= 6h => Half Day (4.0h base)
     if (shiftHours > 6.0) {
       regularHours = Math.min(shiftHours, 8.0);
-      otHours = Math.max(0, Math.round((shiftHours - 8.0) * 100) / 100);
+      otHours = Math.round((shiftHours - 8.0) * 100) / 100;
     } else {
       regularHours = Math.min(shiftHours, 4.0);
-      otHours = Math.max(0, Math.round((shiftHours - 4.0) * 100) / 100);
+      otHours = Math.round((shiftHours - 4.0) * 100) / 100;
     }
   }
 
@@ -280,9 +291,9 @@ function calculateShiftAndOvertime(
 }
 
 // Helper: Parse CSV / TSV file with robust delimiters and header detection
-function parseRawFile(content: string): RawOperatorRow[] {
+function parseRawFile(content: string): OperatorParseResult {
   const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return [];
+  if (lines.length === 0) return { rows: [], parseErrors: [], totalLines: 0 };
 
   const firstLine = lines[0];
   let delimiter = ',';
@@ -363,44 +374,287 @@ function parseRawFile(content: string): RawOperatorRow[] {
 
   const startIndex = hasHeader ? 1 : 0;
   const rows: RawOperatorRow[] = [];
+  const parseErrors: ProcessError[] = [];
 
   for (let i = startIndex; i < lines.length; i++) {
     const rawTokens = lines[i].split(delimiter).map((t) => t.trim().replace(/^[\"']+|[\"']+$/g, ''));
-    if (rawTokens.length < 3) continue;
+    const lineNum = i + 1;
 
-    const op = colMap.operator >= 0 ? rawTokens[colMap.operator] : '';
-    const inT = colMap.in >= 0 ? rawTokens[colMap.in] : '';
-    const outT = colMap.out >= 0 ? rawTokens[colMap.out] : '';
-    const addHrsStr = colMap.additionalHours >= 0 ? rawTokens[colMap.additionalHours] : '';
-    const dt = colMap.date >= 0 ? rawTokens[colMap.date] : '';
-    const eq = colMap.equipment >= 0 ? rawTokens[colMap.equipment] : '';
-    const cond = colMap.condition >= 0 ? rawTokens[colMap.condition] : '';
-    const unt = colMap.unit >= 0 ? rawTokens[colMap.unit] : '';
-    const hrsStr = colMap.hours >= 0 ? rawTokens[colMap.hours] : '8';
+    // Skip empty lines
+    if (rawTokens.length === 0 || (rawTokens.length === 1 && !rawTokens[0])) continue;
 
-    if (!op && !eq) continue;
+    if (rawTokens.length < 2) {
+      parseErrors.push({
+        line: lineNum,
+        operator: 'UNKNOWN',
+        reason: 'Malformed row: insufficient columns or corrupted row data',
+      });
+      continue;
+    }
 
-    const parsedHours = parseFloat(hrsStr);
-    const parsedAddHours = addHrsStr !== '' && !isNaN(parseFloat(addHrsStr)) ? parseFloat(addHrsStr) : undefined;
+    const op = colMap.operator >= 0 && colMap.operator < rawTokens.length ? rawTokens[colMap.operator] : '';
+    const inT = colMap.in >= 0 && colMap.in < rawTokens.length ? rawTokens[colMap.in] : '';
+    const outT = colMap.out >= 0 && colMap.out < rawTokens.length ? rawTokens[colMap.out] : '';
+    const addHrsStr = colMap.additionalHours >= 0 && colMap.additionalHours < rawTokens.length ? rawTokens[colMap.additionalHours] : '';
+    const dt = colMap.date >= 0 && colMap.date < rawTokens.length ? rawTokens[colMap.date] : '';
+    const eq = colMap.equipment >= 0 && colMap.equipment < rawTokens.length ? rawTokens[colMap.equipment] : '';
+    const cond = colMap.condition >= 0 && colMap.condition < rawTokens.length ? rawTokens[colMap.condition] : '';
+    const unt = colMap.unit >= 0 && colMap.unit < rawTokens.length ? rawTokens[colMap.unit] : '';
+    const hrsStr = colMap.hours >= 0 && colMap.hours < rawTokens.length ? rawTokens[colMap.hours] : '';
+
+    // Skip completely blank rows with no meaningful fields
+    if (!op && !eq && !hrsStr && !inT && !outT && !dt) continue;
+
+    let hasLineError = false;
+
+    // Validate Operator
+    if (!op) {
+      parseErrors.push({
+        line: lineNum,
+        operator: 'UNKNOWN',
+        equipment: eq,
+        condition: cond,
+        unit: unt,
+        dateStr: dt,
+        inTime: inT,
+        outTime: outT,
+        reason: 'Missing Operator / Employee Code',
+      });
+      hasLineError = true;
+    }
+
+    // Validate In Time
+    let normIn: string | undefined = undefined;
+    if (inT) {
+      const normalized = normalizeTime(inT);
+      if (!normalized) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          reason: `Invalid In Time format: '${inT}'`,
+        });
+        hasLineError = true;
+      } else {
+        normIn = normalized;
+      }
+    }
+
+    // Validate Out Time
+    let normOut: string | undefined = undefined;
+    if (outT) {
+      const normalized = normalizeTime(outT);
+      if (!normalized) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          reason: `Invalid Out Time format: '${outT}'`,
+        });
+        hasLineError = true;
+      } else {
+        normOut = normalized;
+      }
+    }
+
+    // Validate Hours
+    let hoursVal = 8.0;
+    if (hrsStr) {
+      const parsed = parseFloat(hrsStr);
+      if (isNaN(parsed)) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          reason: `Invalid Hours format (not a valid number): '${hrsStr}'`,
+        });
+        hasLineError = true;
+      } else if (parsed < 0 || parsed > 48) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          hours: parsed,
+          reason: `Hours must be between 0 and 48 (got: ${hrsStr})`,
+        });
+        hasLineError = true;
+      } else {
+        hoursVal = parsed;
+      }
+    }
+
+    // Validate Additional Hours
+    let addHoursVal: number | undefined = undefined;
+    if (addHrsStr) {
+      const parsedAdd = parseFloat(addHrsStr);
+      if (isNaN(parsedAdd)) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          reason: `Invalid Additional Hours format: '${addHrsStr}'`,
+        });
+        hasLineError = true;
+      } else if (parsedAdd < -12 || parsedAdd > 24) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          additionalHours: parsedAdd,
+          reason: `Additional Hours out of range (-12 to 24): '${addHrsStr}'`,
+        });
+        hasLineError = true;
+      } else {
+        addHoursVal = parsedAdd;
+      }
+    }
+
+    // Validate Date
+    if (!dt) {
+      parseErrors.push({
+        line: lineNum,
+        operator: op || 'UNKNOWN',
+        equipment: eq,
+        condition: cond,
+        unit: unt,
+        dateStr: '',
+        inTime: inT,
+        outTime: outT,
+        hours: hoursVal,
+        reason: 'Missing Date',
+      });
+      hasLineError = true;
+    } else {
+      const parsedDate = parseDateInput(dt);
+      if (!parsedDate) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          hours: hoursVal,
+          reason: `Invalid Date format or invalid calendar day: '${dt}'`,
+        });
+        hasLineError = true;
+      }
+    }
+
+    // Validate Equipment format (if provided and not idle)
+    if (eq && !isIdleEquipment(eq)) {
+      const cleanEq = eq.trim();
+      if (!/^[a-zA-Z0-9_\-\/]+$/.test(cleanEq)) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          hours: hoursVal,
+          reason: `Invalid Equipment Code format: '${eq}'. Contains invalid special characters.`,
+        });
+        hasLineError = true;
+      }
+    }
+
+    // Validate Condition (if provided)
+    if (cond) {
+      const cleanCond = cond.trim().toUpperCase();
+      if (!['DRY', 'WET'].includes(cleanCond)) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          hours: hoursVal,
+          reason: `Invalid Condition: '${cond}'. Expected 'DRY' or 'WET'.`,
+        });
+        hasLineError = true;
+      }
+    }
+
+    // Validate Unit (if provided)
+    if (unt) {
+      const cleanUnt = unt.trim().toUpperCase();
+      const validUnits = ['HRS', 'HOURS', 'DAY', 'DAYS', 'MTH', 'MONTH', 'EX.HRS', 'KM', 'M2'];
+      if (!validUnits.includes(cleanUnt)) {
+        parseErrors.push({
+          line: lineNum,
+          operator: op || 'UNKNOWN',
+          equipment: eq,
+          condition: cond,
+          unit: unt,
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          hours: hoursVal,
+          reason: `Invalid Unit: '${unt}'. Expected 'hrs', 'day', 'mth', etc.`,
+        });
+        hasLineError = true;
+      }
+    }
+
+    if (hasLineError) continue;
 
     rows.push({
       operatorIdentifier: op,
-      inTime: normalizeTime(inT) || undefined,
-      outTime: normalizeTime(outT) || undefined,
-      additionalHours: parsedAddHours,
+      inTime: normIn,
+      outTime: normOut,
+      additionalHours: addHoursVal,
       dateStr: dt,
       equipmentIdentifier: eq || undefined,
       condition: cond || undefined,
       unit: unt || undefined,
-      hours: !isNaN(parsedHours) ? parsedHours : 8.0,
-      rawLineIndex: i + 1,
+      hours: hoursVal,
+      rawLineIndex: lineNum,
     });
   }
 
-  return rows;
+  return { rows, parseErrors, totalLines: lines.length - startIndex };
 }
 
 async function main() {
+  const startTime = Date.now();
   console.log(`\n${CYAN}${BOLD}=====================================================${RESET}`);
   console.log(`${CYAN}${BOLD}    MAGA OPERATOR & MACHINE TIME ENTRY UPLOADER      ${RESET}`);
   console.log(`${CYAN}${BOLD}=====================================================${RESET}\n`);
@@ -415,6 +669,19 @@ async function main() {
   let explicitFilePath: string | null = null;
   let explicitProject: string | null = null;
   let explicitSupervisor: string | null = null;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--file=') || a.startsWith('-f=')) {
+      const p = a.includes('=') ? a.slice(a.indexOf('=') + 1).replace(/^["']|["']$/g, '').trim() : '';
+      if (p) {
+        explicitFilePath = fs.existsSync(p) ? path.resolve(p) : path.join(__dirname, p);
+        args.splice(i, 1);
+        i--;
+        continue;
+      }
+    }
+  }
 
   for (let i = 0; i < args.length; i++) {
     for (let j = args.length; j > i; j--) {
@@ -522,13 +789,14 @@ async function main() {
 
   console.log(`📂 Reading data from: ${BOLD}${targetFilePath}${RESET}`);
   const rawFileContent = fs.readFileSync(targetFilePath, 'utf-8');
-  const parsedRows = parseRawFile(rawFileContent);
+  const { rows: parsedRows, parseErrors, totalLines } = parseRawFile(rawFileContent);
+  const errors: ProcessError[] = [...parseErrors];
 
-  if (parsedRows.length === 0) {
+  if (parsedRows.length === 0 && errors.length === 0) {
     console.log(`${YELLOW}⚠️ No data rows found in file.${RESET}`);
     return;
   }
-  console.log(`📋 Total rows identified: ${BOLD}${parsedRows.length}${RESET}\n`);
+  console.log(`📋 Total lines identified: ${BOLD}${totalLines}${RESET} (Parsed Valid Rows: ${GREEN}${parsedRows.length}${RESET}, Initial Parse Warnings: ${errors.length > 0 ? RED : GREEN}${errors.length}${RESET})\n`);
 
   // Pre-load local employees, corporate employees, and equipment
   console.log(`🔄 Pre-loading Project Operators & Equipment Master...`);
@@ -591,10 +859,103 @@ async function main() {
     }
   }
 
-  const defaultDayType =
-    (await prisma.mF_G_DayType.findFirst({ where: { code: 'NORMAL' } })) ||
-    (await prisma.mF_G_DayType.findFirst());
-  const effectiveDayTypeId = defaultDayType?.id || '';
+  console.log(`🔄 Pre-loading Day Types and Project Calendar...`);
+  const allDayTypes = await prisma.mF_G_DayType.findMany();
+  const dayTypeByCode = new Map<string, typeof allDayTypes[0]>();
+  for (const dt of allDayTypes) {
+    dayTypeByCode.set(dt.code.toUpperCase(), dt);
+  }
+
+  const normalDayType = dayTypeByCode.get('NORMAL') || allDayTypes[0];
+  const sundayDayType = dayTypeByCode.get('SUNDAY') || normalDayType;
+  const saturdayDayType = dayTypeByCode.get('SATURDAY') || normalDayType;
+
+  // Pre-load project calendar overrides (Poya, Public Holiday, Shutdown, etc.)
+  const projectCalendar = await prisma.mF_P_CalendarDay.findMany({
+    where: { projectId: project.id },
+    include: { dayType: true },
+  });
+  const projectCalendarMap = new Map<string, typeof projectCalendar[0]>();
+  for (const cd of projectCalendar) {
+    const dateKey = cd.date.toISOString().slice(0, 10);
+    projectCalendarMap.set(dateKey, cd);
+  }
+
+  // Helper: Dynamic Day Type & OT Rule Resolver for any Date
+  function getDayTypeRuleForDate(dateObj: Date) {
+    const dateKey = dateObj.toISOString().slice(0, 10);
+
+    // 1. Project Calendar overrides ALWAYS TAKE TOP PRIORITY!
+    if (projectCalendarMap.has(dateKey)) {
+      const cd = projectCalendarMap.get(dateKey)!;
+      const code = (cd.dayType?.code || 'NORMAL').toUpperCase();
+      const isSaturday = code === 'SATURDAY';
+      const isSunday = code === 'SUNDAY';
+      const isAllOvertime = isSunday || code === 'POYA' || code === 'PUBLIC_HOLIDAY' || code === 'HOLIDAY';
+      return {
+        dayTypeId: cd.dayTypeId,
+        code,
+        name: cd.dayType?.name || code,
+        isAllOvertime,
+        isSaturday,
+        standardCap: isAllOvertime ? 0.0 : isSaturday ? 5.5 : 8.0,
+      };
+    }
+
+    // 2. Fallback to Day of Week
+    const dow = dateObj.getUTCDay(); // 0 = Sun, 6 = Sat
+    if (dow === 0) {
+      return {
+        dayTypeId: sundayDayType.id,
+        code: 'SUNDAY',
+        name: sundayDayType.name,
+        isAllOvertime: true,
+        isSaturday: false,
+        standardCap: 0.0,
+      };
+    }
+    if (dow === 6) {
+      return {
+        dayTypeId: saturdayDayType.id,
+        code: 'SATURDAY',
+        name: saturdayDayType.name,
+        isAllOvertime: false,
+        isSaturday: true,
+        standardCap: 5.5,
+      };
+    }
+    return {
+      dayTypeId: normalDayType.id,
+      code: 'NORMAL',
+      name: normalDayType.name,
+      isAllOvertime: false,
+      isSaturday: false,
+      standardCap: 8.0,
+    };
+  }
+
+  const defaultTradeGroup =
+    (await prisma.mF_G_TradeGroup.findFirst({ where: { status: 'active' } })) ||
+    (await prisma.mF_G_TradeGroup.findFirst());
+
+  console.log(`🔄 Pre-loading Approved Time Entries for fast O(1) duplicate checks...`);
+  const approvedEntries = await prisma.mF_OP_TimeEntry.findMany({
+    where: {
+      projectId: project.id,
+      status: 'approved',
+    },
+    select: {
+      employeeId: true,
+      date: true,
+    },
+  });
+
+  const approvedSet = new Set<string>();
+  for (const ae of approvedEntries) {
+    const dStr = ae.date.toISOString().slice(0, 10);
+    approvedSet.add(`${ae.employeeId}__${dStr}`);
+  }
+  console.log(`   Found ${BOLD}${approvedEntries.length}${RESET} approved entries locked for project ${project.projectCode}.\n`);
 
   // Group Rows by (Operator, Date) to enforce 1 TimeEntry per Operator per Date
   console.log(`🔗 Validating and grouping operator shifts...`);
@@ -613,7 +974,6 @@ async function main() {
   }
 
   const groupedEntries = new Map<string, OperatorShiftGroup>();
-  const errors: ProcessError[] = [];
   let lastOperator = '';
   let lastDateStr = '';
 
@@ -627,12 +987,14 @@ async function main() {
         line: r.rawLineIndex,
         operator: 'UNKNOWN',
         equipment: r.equipmentIdentifier,
+        condition: r.condition,
+        unit: r.unit,
         dateStr: r.dateStr,
         inTime: r.inTime,
         outTime: r.outTime,
         additionalHours: r.additionalHours,
         hours: r.hours,
-        reason: 'Missing Operator Code or EPF Number',
+        reason: 'Missing Operator / Employee Code',
       });
       continue;
     }
@@ -643,6 +1005,8 @@ async function main() {
         line: r.rawLineIndex,
         operator: opKey,
         equipment: r.equipmentIdentifier,
+        condition: r.condition,
+        unit: r.unit,
         dateStr: '',
         inTime: r.inTime,
         outTime: r.outTime,
@@ -660,6 +1024,8 @@ async function main() {
         line: r.rawLineIndex,
         operator: opKey,
         equipment: r.equipmentIdentifier,
+        condition: r.condition,
+        unit: r.unit,
         dateStr: dtStr,
         inTime: r.inTime,
         outTime: r.outTime,
@@ -714,88 +1080,27 @@ async function main() {
   for (const [, group] of groupedEntries) {
     try {
       const cleanOpKey = group.operatorIdentifier.toLowerCase();
-      let localEmp = empMap.get(cleanOpKey);
+      const localEmp = empMap.get(cleanOpKey);
 
-      // Auto-link from corporate employee master if not yet linked to Project 539
+      // Do NOT auto-link or auto-create employees in project. Report error if not assigned to project (Strict Policy).
       if (!localEmp) {
-        let corpEmp = corpEmpMap.get(cleanOpKey);
+        const corpEmp = corpEmpMap.get(cleanOpKey);
+        const reason = corpEmp
+          ? `Operator '${group.operatorIdentifier}' exists in Corporate Master but is not assigned to Project ${project.projectCode}. Transfer or assign the operator to this project first.`
+          : `Operator '${group.operatorIdentifier}' not found in site employee table (MF_L_EMPLOYEE).`;
 
-        // Auto-register casual / hired operator (e.g. ZHLOL) if not found in corporate master
-        if (!corpEmp && (cleanOpKey.startsWith('zhl') || cleanOpKey.includes('zhl'))) {
-          const opCode = group.operatorIdentifier.trim().toUpperCase();
-          if (!isDryRun) {
-            corpEmp = await prisma.mF_G_Employee.create({
-              data: {
-                employeeCode: opCode,
-                fullName: `Hired Operator (${opCode})`,
-                callingName: opCode,
-                designation: 'Machine Operator',
-                employmentType: 'casual',
-                dailyRate: 1400.0,
-                status: 'active',
-              },
-            });
-            corpEmpMap.set(cleanOpKey, corpEmp);
-          } else {
-            corpEmp = {
-              id: 'dry-run-corp-zhlol-id',
-              employeeCode: opCode,
-              fullName: `Hired Operator (${opCode})`,
-              dailyRate: 1400.0,
-            } as any;
-          }
-        }
-
-        if (corpEmp) {
-          if (!isDryRun) {
-            const created = await prisma.mF_P_Employee.create({
-              data: {
-                projectId: project.id,
-                corporateEmployeeId: corpEmp.id,
-                callingName: corpEmp.fullName.split(' ')[0],
-                dailyRate: corpEmp.dailyRate || 1400.0,
-                isOperator: true,
-                status: 'active',
-              },
-              include: {
-                corporateEmployee: true,
-                tradeGroup: true,
-              },
-            });
-            localEmp = created;
-            empMap.set(cleanOpKey, created);
-            if (corpEmp.employeeCode) empMap.set(corpEmp.employeeCode.toLowerCase(), created);
-            if (corpEmp.epfNo) empMap.set(corpEmp.epfNo.toLowerCase(), created);
-          } else {
-            localEmp = {
-              id: 'dry-run-op-id',
-              projectId: project.id,
-              corporateEmployeeId: corpEmp.id,
-              callingName: corpEmp.fullName.split(' ')[0],
-              dailyRate: corpEmp.dailyRate || 1400.0,
-              isOperator: true,
-              status: 'active',
-              tradeGroupId: null,
-              businessPartnerId: null,
-              createdAt: new Date(),
-              corporateEmployee: corpEmp,
-              tradeGroup: null,
-            } as any;
-          }
-        }
-      }
-
-      if (!localEmp) {
         errors.push({
           line: group.rawLineIndex,
           operator: group.operatorIdentifier,
           equipment: group.equipmentIdentifier,
+          condition: group.condition,
+          unit: group.unit,
           dateStr: group.dateStr,
           inTime: group.inTime,
           outTime: group.outTime,
           additionalHours: group.additionalHours,
           hours: group.hours,
-          reason: `Operator '${group.operatorIdentifier}' not found in project or corporate master`,
+          reason,
         });
         skippedCount++;
         continue;
@@ -907,24 +1212,18 @@ async function main() {
         localEmp.isOperator = true;
       }
 
-      // Safety check: Prevent overwriting APPROVED time entries
+      // Safety check: Prevent overwriting APPROVED time entries using fast O(1) in-memory check
       const dateKey = group.date.toISOString().slice(0, 10);
       const targetUtcDate = new Date(dateKey + 'T00:00:00.000Z');
+      const shiftDateKey = `${localEmp.id}__${dateKey}`;
 
-      const approvedEntry = await prisma.mF_OP_TimeEntry.findFirst({
-        where: {
-          projectId: project.id,
-          employeeId: localEmp.id,
-          date: targetUtcDate,
-          status: 'approved',
-        },
-      });
-
-      if (approvedEntry) {
+      if (approvedSet.has(shiftDateKey)) {
         errors.push({
           line: group.rawLineIndex,
           operator: group.operatorIdentifier,
           equipment: group.equipmentIdentifier,
+          condition: group.condition,
+          unit: group.unit,
           dateStr: group.dateStr,
           inTime: group.inTime,
           outTime: group.outTime,
@@ -969,13 +1268,48 @@ async function main() {
       let isLunchDeducted = false;
       let isDinnerDeducted = false;
 
-      const isExt = Boolean(localEmp.businessPartnerId);
+      const isExt = Boolean(localEmp.businessPartnerId || localEmp.corporateEmployee?.employeeType === 'external');
+      const dayRule = getDayTypeRuleForDate(targetUtcDate);
 
       if (group.inTime && group.outTime) {
+        const { breakHours: bHrs } = computeBreakHoursAndSnapshots(group.inTime, group.outTime);
+        const [inH, inM] = group.inTime.split(':').map(Number);
+        const [outH, outM] = group.outTime.split(':').map(Number);
+        let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
+        if (diff <= 0) diff += 24 * 60;
+        const grossHrs = Math.round((diff / 60) * 100) / 100;
+        const rawShift = Math.max(0, Math.round((grossHrs - bHrs) * 100) / 100);
+        const addHrs = group.additionalHours || 0;
+        const maxAllowed = Math.round((rawShift + addHrs) * 100) / 100;
+
+        // Validation (Strict Option A): If Operator hours exceed shift duration and Additional Hours was not entered, reject as Error!
+        if (group.hours > maxAllowed + 0.05) {
+          const excess = Math.round((group.hours - rawShift) * 100) / 100;
+          const reasonMsg = addHrs > 0
+            ? `Hours Exceeded: Operator hours (${group.hours}h) exceed shift duration with Additional Hours (${maxAllowed}h) by +${Math.round((group.hours - maxAllowed) * 100) / 100}h.`
+            : `Hours Exceeded: Operator hours (${group.hours}h) exceed shift duration (${rawShift}h) by +${excess}h, but Additional Hours was not entered.`;
+
+          errors.push({
+            line: group.rawLineIndex,
+            operator: group.operatorIdentifier,
+            equipment: group.equipmentIdentifier,
+            condition: group.condition,
+            unit: group.unit,
+            dateStr: group.dateStr,
+            inTime: group.inTime,
+            outTime: group.outTime,
+            additionalHours: group.additionalHours,
+            hours: group.hours,
+            reason: reasonMsg,
+          });
+          skippedCount++;
+          continue;
+        }
+
         const calc = calculateShiftAndOvertime(
           group.inTime,
           group.outTime,
-          targetUtcDate,
+          dayRule,
           isExt,
           group.additionalHours
         );
@@ -990,13 +1324,25 @@ async function main() {
       } else {
         // Fallback when flat hours provided
         shiftHours = Math.max(0, shiftHours + group.additionalHours);
-        const dow = targetUtcDate.getUTCDay();
-        if (dow === 0) {
+        if (shiftHours <= 0) {
+          otHours = 0;
+          regularHours = 0;
+        } else if (dayRule.isAllOvertime) {
           otHours = shiftHours;
           regularHours = 0;
-        } else if (shiftHours > 8.0) {
+        } else if (isExt) {
+          const cap = dayRule.isSaturday ? 5.5 : 8.0;
+          regularHours = Math.min(shiftHours, cap);
+          otHours = shiftHours > cap ? Math.round((shiftHours - cap) * 100) / 100 : 0;
+        } else if (dayRule.isSaturday) {
+          regularHours = Math.min(shiftHours, 5.5);
+          otHours = Math.round((shiftHours - 5.5) * 100) / 100;
+        } else if (shiftHours > 6.0) {
+          regularHours = Math.min(shiftHours, 8.0);
           otHours = Math.round((shiftHours - 8.0) * 100) / 100;
-          regularHours = 8.0;
+        } else {
+          regularHours = Math.min(shiftHours, 4.0);
+          otHours = Math.round((shiftHours - 4.0) * 100) / 100;
         }
       }
 
@@ -1006,7 +1352,7 @@ async function main() {
 
       if (isDryRun) {
         console.log(
-          `  ${GREEN}✓ [DRY RUN]${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
+          `  ${GREEN}✓ [DRY RUN]${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | Day: ${dayRule.code} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
         );
         successCount++;
         continue;
@@ -1048,7 +1394,7 @@ async function main() {
       }
 
       // Step 3: Upsert into MF_OP_TimeEntry with unique composite key (projectId, employeeId, date)
-      await prisma.mF_OP_TimeEntry.upsert({
+      const upsertedTe = await prisma.mF_OP_TimeEntry.upsert({
         where: {
           projectId_employeeId_date: {
             projectId: project.id,
@@ -1059,7 +1405,7 @@ async function main() {
         update: {
           dailySheetId: dailySheetId!,
           equipmentId: localEq ? localEq.id : null,
-          effectiveDayTypeId,
+          effectiveDayTypeId: dayRule.dayTypeId,
           inTime: finalInTime,
           outTime: finalOutTime,
           shiftHours,
@@ -1079,7 +1425,7 @@ async function main() {
           employeeId: localEmp.id,
           date: targetUtcDate,
           equipmentId: localEq ? localEq.id : null,
-          effectiveDayTypeId,
+          effectiveDayTypeId: dayRule.dayTypeId,
           inTime: finalInTime,
           outTime: finalOutTime,
           shiftHours,
@@ -1095,6 +1441,23 @@ async function main() {
         },
       });
 
+      if (localEq) {
+        await prisma.mF_OP_OperatorEquipmentSplit.upsert({
+          where: {
+            timeEntryId_equipmentId: {
+              timeEntryId: upsertedTe.id,
+              equipmentId: localEq.id,
+            },
+          },
+          update: { hours: regularHours || shiftHours },
+          create: {
+            timeEntryId: upsertedTe.id,
+            equipmentId: localEq.id,
+            hours: regularHours || shiftHours,
+          },
+        });
+      }
+
       console.log(
         `  ${GREEN}✓${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
       );
@@ -1104,6 +1467,8 @@ async function main() {
         line: group.rawLineIndex,
         operator: group.operatorIdentifier,
         equipment: group.equipmentIdentifier,
+        condition: group.condition,
+        unit: group.unit,
         dateStr: group.dateStr,
         inTime: group.inTime,
         outTime: group.outTime,
@@ -1115,28 +1480,67 @@ async function main() {
     }
   }
 
+  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
   // Summary Report
   console.log(`\n${CYAN}${BOLD}=====================================================${RESET}`);
-  console.log(`${CYAN}${BOLD}                 UPLOAD SUMMARY                      ${RESET}`);
+  console.log(`${CYAN}${BOLD}             OPERATOR UPLOAD SUMMARY REPORT          ${RESET}`);
   console.log(`${CYAN}${BOLD}=====================================================${RESET}`);
-  console.log(`✅ Successfully Processed: ${GREEN}${BOLD}${successCount}${RESET} operator shifts`);
-  if (skippedCount > 0) {
-    console.log(`⚠️ Skipped/Failed:         ${YELLOW}${BOLD}${skippedCount}${RESET}`);
-  }
-  if (errors.length > 0) {
-    console.log(`❌ Errors Encountered:     ${RED}${BOLD}${errors.length}${RESET}`);
+  console.log(`🔹 Total File Rows         : ${BOLD}${totalLines}${RESET}`);
+  console.log(`✅ Successfully Processed  : ${GREEN}${BOLD}${successCount}${RESET} operator shifts`);
+  console.log(`⚠️ Skipped / Errors        : ${errors.length > 0 ? RED : GREEN}${BOLD}${errors.length}${RESET}`);
+  console.log(`⏱️ Duration                : ${duration} seconds`);
+  console.log(`${CYAN}=====================================================${RESET}`);
 
-    const skippedCsvPath = path.join(__dirname, 'skipped_operator_records.csv');
-    const csvHeader = 'Line,Operator,Equipment,Date,In,Out,AdditionalHours,Hours,Reason\n';
+  const skippedCsvPath = path.join(__dirname, 'skipped_operator_records.csv');
+
+  if (errors.length > 0) {
+    console.log(`\n${RED}${BOLD}❌ SKIPPED / REJECTED OPERATOR RECORDS TABLE:${RESET}`);
+    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
+    console.log(
+      `${BOLD}${'Line'.padEnd(6)} | ${'Operator'.padEnd(12)} | ${'Date'.padEnd(12)} | ${'Equipment'.padEnd(14)} | ${'In/Out'.padEnd(13)} | ${'Hours'.padEnd(6)} | Reason${RESET}`
+    );
+    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
+
+    const previewLimit = 25;
+    const previewList = errors.slice(0, previewLimit);
+
+    previewList.forEach((e) => {
+      const lineStr = String(e.line).padEnd(6);
+      const opStr = String(e.operator).padEnd(12);
+      const dtStr = String(e.dateStr || '-').padEnd(12);
+      const eqStr = String(e.equipment || '-').padEnd(14);
+      const timeStr = `${e.inTime || '-'}/${e.outTime || '-'}`.padEnd(13);
+      const hrsStr = String(e.hours !== undefined ? e.hours : '-').padEnd(6);
+      console.log(`${lineStr} | ${opStr} | ${dtStr} | ${eqStr} | ${timeStr} | ${hrsStr} | ${RED}${e.reason}${RESET}`);
+    });
+
+    if (errors.length > previewLimit) {
+      console.log(`${YELLOW}... and ${errors.length - previewLimit} more skipped records.${RESET}`);
+    }
+    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
+
+    const csvHeader = 'Line,Operator,Date,In,Out,AdditionalHours,Hours,Equipment,Condition,Unit,Reason\n';
     const csvRows = errors
-      .map(
-        (e) =>
-          `${e.line},"${e.operator}","${e.equipment || ''}","${e.dateStr || ''}","${e.inTime || ''}","${e.outTime || ''}",${e.additionalHours || 0},${e.hours || 0},"${e.reason.replace(/\"/g, '""')}"`
-      )
+      .map((e) => {
+        const cleanReason = `"${(e.reason || '').replace(/"/g, '""')}"`;
+        const cleanOp = `"${(e.operator || '').replace(/"/g, '""')}"`;
+        const cleanEq = `"${(e.equipment || '').replace(/"/g, '""')}"`;
+        const cleanCond = `"${(e.condition || '').replace(/"/g, '""')}"`;
+        const cleanUnt = `"${(e.unit || '').replace(/"/g, '""')}"`;
+        return `${e.line},${cleanOp},${e.dateStr || ''},${e.inTime || ''},${e.outTime || ''},${e.additionalHours !== undefined ? e.additionalHours : ''},${e.hours !== undefined ? e.hours : ''},${cleanEq},${cleanCond},${cleanUnt},${cleanReason}`;
+      })
       .join('\n');
 
     fs.writeFileSync(skippedCsvPath, csvHeader + csvRows, 'utf-8');
-    console.log(`\n📄 Detailed error log written to: ${BOLD}${skippedCsvPath}${RESET}`);
+    console.log(`\n${YELLOW}${BOLD}📁 Skipped Records Exported to File:${RESET}`);
+    console.log(`   ${BOLD}${skippedCsvPath}${RESET}`);
+    console.log(`${YELLOW}👉 You can open 'skipped_operator_records.csv' in Excel to inspect and correct all skipped rows.${RESET}\n`);
+  } else {
+    if (fs.existsSync(skippedCsvPath)) {
+      fs.unlinkSync(skippedCsvPath);
+    }
+    console.log(`\n${GREEN}${BOLD}🎉 ALL OPERATOR SHIFTS SUBMITTED SUCCESSFULLY! (0 ERRORS)${RESET}\n`);
   }
   console.log(`${CYAN}${BOLD}=====================================================${RESET}\n`);
 }

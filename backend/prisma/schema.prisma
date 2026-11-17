@@ -326,6 +326,7 @@ model MF_P_Equipment {
   ownerPartner       MF_G_BusinessPartner?          @relation(fields: [ownerPartnerId], references: [id])
   dailyAssignments   MF_OP_DailyEquipmentAssignment[]
   timeEntries        MF_OP_TimeEntry[]
+  operatorSplits     MF_OP_OperatorEquipmentSplit[]
 
   @@unique([projectId, corporateEquipmentId])
   @@index([projectId])
@@ -528,6 +529,7 @@ model MF_OP_TimeEntry {
   recordedBy             MF_P_User?                   @relation("TimeEntryRecordedBy", fields: [recordedById], references: [id])
   appliedBusinessPartner MF_G_BusinessPartner?        @relation("TimeEntryAppliedBP", fields: [appliedBusinessPartnerId], references: [id])
   activitySplits         MF_OP_LaborActivitySplit[]
+  equipmentSplits        MF_OP_OperatorEquipmentSplit[]
 
   @@unique([projectId, employeeId, date], name: "projectId_employeeId_date")
   @@index([projectId, date])
@@ -554,4 +556,20 @@ model MF_OP_LaborActivitySplit {
   @@index([timeEntryId])
   @@index([activityCodeId])
   @@map("MF_L_LABOR_ACTIVITY_SPLIT")
+}
+
+model MF_OP_OperatorEquipmentSplit {
+  id             String   @id @default(uuid()) @map("operator_equipment_split_id")
+  timeEntryId    String   @map("time_entry_id")
+  equipmentId    String   @map("equipment_id")
+  hours          Decimal  @default(0.00) @db.Decimal(5, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  timeEntry    MF_OP_TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  equipment    MF_P_Equipment  @relation(fields: [equipmentId], references: [id])
+
+  @@unique([timeEntryId, equipmentId], name: "timeEntryId_equipmentId")
+  @@index([timeEntryId])
+  @@index([equipmentId])
+  @@map("MF_L_OPERATOR_EQUIPMENT_SPLIT")
 }

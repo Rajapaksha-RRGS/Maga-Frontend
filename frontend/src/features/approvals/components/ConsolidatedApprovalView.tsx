@@ -13,7 +13,9 @@ import {
   Fuel,
   Gauge,
   Filter,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import {
   adminAdjustWorker,
@@ -33,6 +35,13 @@ import {
 import { getAll as getAllActivityCodes } from '../../activity-codes/services/activityCodeService';
 import { SearchableActivitySelect } from '../../supervisor/components/SearchableActivitySelect';
 import type { ActivityCodeItem } from '../../supervisor/services/supervisorStorageService';
+
+export interface EditActivitySplit {
+  id: string;
+  activityCodeId?: string;
+  activityCode: string;
+  hours: string;
+}
 
 export interface ConsolidatedWorkerItem extends ApprovalWorkerItem {
   supervisorId: string;
@@ -97,7 +106,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
   const [editInTime, setEditInTime] = useState<string>('07:30');
   const [editOutTime, setEditOutTime] = useState<string>('17:00');
   const [editAdditionalHours, setEditAdditionalHours] = useState<string>('0.0');
-  const [editActivityCode, setEditActivityCode] = useState<string>('');
+  const [editActivitySplits, setEditActivitySplits] = useState<EditActivitySplit[]>([]);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
 
@@ -285,17 +294,86 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
     setEditingKey(`${w.supervisorId}_${w.employeeId}`);
     setEditInTime(w.inTime || '07:30');
     setEditOutTime(w.outTime || '17:00');
-    setEditAdditionalHours(w.additionalHours !== undefined ? String(w.additionalHours) : '0.0');
-    const nonIdle = (w.activities || []).find(
+    const addStr = w.additionalHours !== undefined ? String(w.additionalHours) : '0.0';
+    setEditAdditionalHours(addStr);
+
+    const preview = computePreviewHours(w.inTime || '07:30', w.outTime || '17:00', parseFloat(addStr) || 0, w);
+    const existingNonIdle = (w.activities || []).filter(
       (a) => a.code !== 'ZIDLE' && !a.code.toLowerCase().includes('idle')
     );
-    const initialCode = nonIdle ? nonIdle.code : (w.activities?.[0]?.code || '');
-    setEditActivityCode(initialCode === 'ZIDLE' ? '' : initialCode);
+
+    if (existingNonIdle.length > 0) {
+      setEditActivitySplits(
+        existingNonIdle.map((a, idx) => ({
+          id: `split-${idx}-${Date.now()}`,
+          activityCodeId: a.activityCodeId || a.id,
+          activityCode: a.code,
+          hours: a.hours !== undefined ? String(a.hours) : '0',
+        }))
+      );
+    } else {
+      setEditActivitySplits([
+        {
+          id: `split-0-${Date.now()}`,
+          activityCodeId: '',
+          activityCode: '',
+          hours: String(preview.effectiveHours > 0 ? preview.effectiveHours : 8),
+        },
+      ]);
+    }
   };
 
   const cancelEditing = () => {
     setEditingKey(null);
-    setEditActivityCode('');
+    setEditActivitySplits([]);
+  };
+
+  const handleAddSplitRow = (suggestedHours?: number) => {
+    setEditActivitySplits((prev) => {
+      const sum = prev.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0);
+      const preview = computePreviewHours(editInTime, editOutTime, parseFloat(editAdditionalHours) || 0);
+      const rem =
+        suggestedHours !== undefined
+          ? suggestedHours
+          : Math.max(0, parseFloat((preview.effectiveHours - sum).toFixed(2)));
+      return [
+        ...prev,
+        {
+          id: `split-${Date.now()}-${Math.random()}`,
+          activityCodeId: '',
+          activityCode: '',
+          hours: rem > 0 ? String(rem) : '0',
+        },
+      ];
+    });
+  };
+
+  const handleRemoveSplitRow = (rowId: string) => {
+    setEditActivitySplits((prev) => {
+      if (prev.length <= 1) {
+        return [{ id: `split-${Date.now()}`, activityCodeId: '', activityCode: '', hours: '0' }];
+      }
+      return prev.filter((s) => s.id !== rowId);
+    });
+  };
+
+  const handleUpdateSplitRow = (rowId: string, field: 'activityCode' | 'hours', val: any) => {
+    setEditActivitySplits((prev) =>
+      prev.map((s) => {
+        if (s.id !== rowId) return s;
+        if (field === 'activityCode') {
+          const matched = activityOptions.find(
+            (o) => o.code.toUpperCase() === String(val).trim().toUpperCase()
+          );
+          return {
+            ...s,
+            activityCode: val,
+            activityCodeId: matched?.id || s.activityCodeId,
+          };
+        }
+        return { ...s, hours: val };
+      })
+    );
   };
 
   const handleSaveEdit = async (w: ConsolidatedWorkerItem) => {
@@ -304,9 +382,18 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
       const addVal = parseFloat(editAdditionalHours) || 0;
       const { hours, otHours, effectiveHours, totalHours } = computePreviewHours(editInTime, editOutTime, addVal, w);
 
-      const matchedAct = activityOptions.find(
-        (a) => a.code.toUpperCase() === editActivityCode.trim().toUpperCase()
-      );
+      const validSplits = editActivitySplits
+        .filter((s) => s.activityCode && s.activityCode.trim() !== '')
+        .map((s) => {
+          const matched = activityOptions.find(
+            (a) => a.code.toUpperCase() === s.activityCode.trim().toUpperCase()
+          );
+          return {
+            activityCodeId: matched?.id || s.activityCodeId,
+            activityCode: s.activityCode.trim(),
+            hours: parseFloat(s.hours) || 0,
+          };
+        });
 
       const res = await adminAdjustWorker({
         supervisorId: w.supervisorId,
@@ -317,31 +404,25 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
         hours,
         overtimeHours: otHours,
         additionalHours: addVal,
-        activityCodeId: matchedAct?.id,
-        activityCode: editActivityCode.trim(),
+        activitySplits: validSplits,
+        activityCodeId: validSplits[0]?.activityCodeId,
+        activityCode: validSplits[0]?.activityCode,
       });
 
       // Prepare updated activities list
       let nextActivities = res.activities;
       if (!nextActivities || nextActivities.length === 0) {
-        if (matchedAct) {
-          nextActivities = [
-            {
-              activityCodeId: matchedAct.id,
-              id: matchedAct.id,
-              code: matchedAct.code,
-              description: matchedAct.name || matchedAct.code || '',
-              hours: res.shiftHours ?? effectiveHours,
-            },
-          ];
-        } else if (editActivityCode.trim()) {
-          nextActivities = [
-            {
-              code: editActivityCode.trim(),
-              description: '',
-              hours: res.shiftHours ?? effectiveHours,
-            },
-          ];
+        if (validSplits.length > 0) {
+          nextActivities = validSplits.map((sp) => {
+            const opt = activityOptions.find((o) => o.code.toUpperCase() === sp.activityCode.toUpperCase());
+            return {
+              activityCodeId: sp.activityCodeId,
+              id: sp.activityCodeId,
+              code: sp.activityCode,
+              description: opt?.name || sp.activityCode,
+              hours: sp.hours,
+            };
+          });
         } else {
           nextActivities = w.activities;
         }
@@ -376,7 +457,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
       );
 
       setEditingKey(null);
-      setEditActivityCode('');
+      setEditActivitySplits([]);
       if (onRefresh) onRefresh();
     } catch (err: any) {
       alert(err?.message || 'Failed to save admin adjustments');
@@ -651,7 +732,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                   <th className="py-3 px-3 text-center min-w-[90px]">Total Hours</th>
                   <th className="py-3 px-3">Effective Hours</th>
                   <th className="py-3 px-3">OT Hrs</th>
-                  <th className="py-3 px-3 min-w-[220px]">Activities Worked</th>
+                  <th className="py-3 px-3 min-w-[290px]">Activities Worked</th>
                   <th className="py-3 px-3 text-right">Status</th>
                   {!isApprovedView && <th className="py-3 px-3 text-center min-w-[80px]">Admin Edit</th>}
                 </tr>
@@ -877,15 +958,107 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                         {/* ACTIVITIES WORKED */}
                         <td className={`py-2.5 px-3 ${isEditingThis ? 'relative z-30' : ''}`}>
                           {isEditingThis ? (
-                            <div className="w-56 min-w-[200px]">
-                              <SearchableActivitySelect
-                                value={editActivityCode}
-                                onChange={(code) => setEditActivityCode(code)}
-                                options={activityOptions}
-                                placeholder="Select Activity..."
-                                className="w-full text-xs shadow-2xs"
-                              />
-                            </div>
+                            (() => {
+                              const totalAllocated = editActivitySplits.reduce(
+                                (acc, s) => acc + (parseFloat(s.hours) || 0),
+                                0
+                              );
+                              const targetShift = preview?.effectiveHours ?? 0;
+                              const diff = parseFloat((targetShift - totalAllocated).toFixed(2));
+                              const isBalanced = Math.abs(diff) < 0.05;
+
+                              return (
+                                <div className="flex flex-col gap-1.5 min-w-[280px] max-w-sm bg-white/95 p-2 rounded-xl border border-blue-200 shadow-sm">
+                                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 pb-1 border-b border-slate-100">
+                                    <span>Activity Allocation</span>
+                                    <span
+                                      className={`font-mono text-[10px] px-1.5 py-0.5 rounded font-bold border ${
+                                        isBalanced
+                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                          : diff > 0
+                                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                          : 'bg-rose-50 text-rose-700 border-rose-200'
+                                      }`}
+                                      title={
+                                        isBalanced
+                                          ? 'Shift hours fully allocated'
+                                          : diff > 0
+                                          ? `${diff}h unallocated`
+                                          : `${Math.abs(diff)}h over-allocated`
+                                      }
+                                    >
+                                      {totalAllocated.toFixed(1)}h / {targetShift.toFixed(1)}h
+                                    </span>
+                                  </div>
+
+                                  <div className="space-y-1.5 max-h-44 overflow-y-auto pr-0.5 scrollbar-thin">
+                                    {editActivitySplits.map((split, sIdx) => (
+                                      <div key={split.id} className="flex items-center gap-1.5">
+                                        <div className="flex-1 min-w-0">
+                                          <SearchableActivitySelect
+                                            value={split.activityCode}
+                                            onChange={(code) =>
+                                              handleUpdateSplitRow(split.id, 'activityCode', code)
+                                            }
+                                            options={activityOptions}
+                                            placeholder={`Activity #${sIdx + 1}...`}
+                                            className="w-full text-xs shadow-2xs"
+                                          />
+                                        </div>
+                                        <div className="flex items-center gap-0.5 flex-shrink-0">
+                                          <input
+                                            type="number"
+                                            step="0.5"
+                                            min="0"
+                                            max="24"
+                                            value={split.hours}
+                                            onChange={(e) =>
+                                              handleUpdateSplitRow(split.id, 'hours', e.target.value)
+                                            }
+                                            className="w-14 px-1 py-1 rounded text-xs font-bold font-mono text-center border border-slate-200 bg-white focus:outline-none focus:border-blue-500 shadow-2xs"
+                                            placeholder="0.0"
+                                            title="Hours on this activity"
+                                          />
+                                          <span className="text-[10px] text-slate-400 font-bold">h</span>
+                                        </div>
+                                        {editActivitySplits.length > 1 && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRemoveSplitRow(split.id)}
+                                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer flex-shrink-0"
+                                            title="Remove this activity split"
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddSplitRow()}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors cursor-pointer"
+                                    >
+                                      <Plus size={11} />
+                                      <span>Add Activity</span>
+                                    </button>
+
+                                    {diff > 0.05 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleAddSplitRow(diff)}
+                                        className="text-[10px] text-amber-600 hover:text-amber-700 font-semibold underline cursor-pointer"
+                                        title="Click to add split with remaining unallocated hours"
+                                      >
+                                        +{diff.toFixed(1)}h unallocated
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })()
                           ) : (
                             (() => {
                               const acts = w.activities || [];
@@ -1241,7 +1414,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                   <th className="py-3 px-3">Logged Usage</th>
                   <th className="py-3 px-3">Meters</th>
                   <th className="py-3 px-3">Fuel (L)</th>
-                  <th className="py-3 px-3 min-w-[220px]">Activities Worked</th>
+                  <th className="py-3 px-3 min-w-[290px]">Activities Worked</th>
                   <th className="py-3 px-3 text-right">Status</th>
                 </tr>
               </thead>

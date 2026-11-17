@@ -70,13 +70,141 @@ function dateRange(from?: string, to?: string): string[] {
   return dates.length > 0 ? dates : [new Date().toISOString().split('T')[0]];
 }
 
-// ─── Helper: Day type OT rules (mirrors frontend overtimeCalculator.ts) ────────
-function getDayTypeRule(dateStr: string): { standardCap: number; isAllOvertime: boolean; isSaturday: boolean; label: string } {
-  const d = new Date(dateStr);
-  const dow = d.getDay(); // 0 = Sunday, 6 = Saturday
-  if (dow === 0) return { standardCap: 0, isAllOvertime: true, isSaturday: false, label: 'Sunday' };
-  if (dow === 6) return { standardCap: 5.5, isAllOvertime: false, isSaturday: true, label: 'Saturday' };
-  return { standardCap: 8.0, isAllOvertime: false, isSaturday: false, label: 'Normal Day' };
+// ─── Day Type Interface ────────────────────────────────────────────────────────
+interface DayTypeRuleInfo {
+  code: string;
+  name: string;
+  rateMultiplier: number;
+  isAllOvertime: boolean;
+  isSaturday: boolean;
+  isSunday: boolean;
+  standardCap: number;
+  label: string;
+}
+
+// ─── Helper: Build Map from Calendar Days in batch ───────────────────────────
+function buildCalendarMapFromDays(
+  calendarDays: Array<{ date: Date; dayType?: { code?: string; name?: string; rateMultiplier?: any } | null }>
+): Map<string, DayTypeRuleInfo> {
+  const map = new Map<string, DayTypeRuleInfo>();
+  for (const cd of calendarDays) {
+    const dateKey = cd.date.toISOString().split('T')[0];
+    const code = (cd.dayType?.code || 'NORMAL').toUpperCase();
+    const name = cd.dayType?.name || 'Special Day';
+    const isSaturday = code === 'SATURDAY';
+    const isSunday = code === 'SUNDAY';
+    const isAllOvertime = isSunday || code === 'POYA' || code === 'PUBLIC_HOLIDAY' || code === 'HOLIDAY';
+    map.set(dateKey, {
+      code,
+      name,
+      rateMultiplier: Number(cd.dayType?.rateMultiplier ?? 1.0),
+      isAllOvertime,
+      isSaturday,
+      isSunday,
+      standardCap: isAllOvertime ? 0.0 : isSaturday ? 5.5 : 8.0,
+      label: name,
+    });
+  }
+  return map;
+}
+
+// ─── Helper: Fetch project calendar days for date range in one query ─────────
+async function getProjectCalendarDayMap(
+  projectId: string,
+  dateFrom?: string,
+  dateTo?: string
+): Promise<Map<string, DayTypeRuleInfo>> {
+  try {
+    const dateFilter = buildDateFilter(dateFrom, dateTo);
+    const calendarDays = await prisma.mF_P_CalendarDay.findMany({
+      where: {
+        projectId,
+        ...(dateFilter ? { date: dateFilter } : {}),
+      },
+      include: { dayType: true },
+    });
+    return buildCalendarMapFromDays(calendarDays);
+  } catch (err) {
+    console.error('Failed to load project calendar days:', err);
+    return new Map();
+  }
+}
+
+// ─── Helper: Day type OT rules (checks Calendar first, then DB entry, then Day-of-Week) ─
+function resolveDayTypeRule(
+  dateStr: string,
+  calendarMap?: Map<string, DayTypeRuleInfo>,
+  entryDayType?: { code?: string | null; name?: string | null; rateMultiplier?: any } | null
+): DayTypeRuleInfo {
+  // 1. Project Calendar overrides ALWAYS TAKE TOP PRIORITY!
+  // (The Site Calendar Planner explicitly defines Poya, Public Holiday, Shutdown for that project & date)
+  if (calendarMap?.has(dateStr)) {
+    return calendarMap.get(dateStr)!;
+  }
+
+  // 2. If entry has explicit special effectiveDayType from DB (e.g. POYA, SUNDAY, PUBLIC_HOLIDAY)
+  if (entryDayType?.code && entryDayType.code !== 'NORMAL') {
+    const code = entryDayType.code.toUpperCase();
+    const name = entryDayType.name || code;
+    const isSaturday = code === 'SATURDAY';
+    const isSunday = code === 'SUNDAY';
+    const isAllOvertime = isSunday || code === 'POYA' || code === 'PUBLIC_HOLIDAY' || code === 'HOLIDAY';
+    return {
+      code,
+      name,
+      rateMultiplier: Number(entryDayType.rateMultiplier ?? 1.0),
+      isAllOvertime,
+      isSaturday,
+      isSunday,
+      standardCap: isAllOvertime ? 0.0 : isSaturday ? 5.5 : 8.0,
+      label: name,
+    };
+  }
+
+  // 3. Fallback: Parse date safely (UTC) to avoid timezone shifts
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = (!isNaN(y) && !isNaN(m) && !isNaN(d)) ? new Date(Date.UTC(y, m - 1, d)) : new Date(dateStr);
+  const dow = dt.getUTCDay(); // 0 = Sunday, 6 = Saturday
+
+  if (dow === 0) {
+    return {
+      code: 'SUNDAY',
+      name: 'Sunday',
+      rateMultiplier: 1.5,
+      isAllOvertime: true,
+      isSaturday: false,
+      isSunday: true,
+      standardCap: 0.0,
+      label: 'Sunday',
+    };
+  }
+  if (dow === 6) {
+    return {
+      code: 'SATURDAY',
+      name: 'Saturday',
+      rateMultiplier: 1.0,
+      isAllOvertime: false,
+      isSaturday: true,
+      isSunday: false,
+      standardCap: 5.5,
+      label: 'Saturday',
+    };
+  }
+  return {
+    code: 'NORMAL',
+    name: 'Normal Day',
+    rateMultiplier: 1.0,
+    isAllOvertime: false,
+    isSaturday: false,
+    isSunday: false,
+    standardCap: 8.0,
+    label: 'Normal Day',
+  };
+}
+
+// Backwards compatibility helper
+function getDayTypeRule(dateStr: string, calendarMap?: Map<string, DayTypeRuleInfo>): DayTypeRuleInfo {
+  return resolveDayTypeRule(dateStr, calendarMap);
 }
 
 // ─── Helper: Compute shift work hours and OT with Database Fast-Path ─────────
@@ -87,64 +215,78 @@ function computeAttendanceHoursAndOt(
   standardCap = 8.0,
   isAllOvertime = false,
   precomputedShiftHours?: number | null,
-  precomputedOtHours?: number | null
+  precomputedOtHours?: number | null,
+  isExternal = false
 ): { workHours: number; otHours: number } {
-  // FAST-PATH: If already pre-computed & stored in database, use directly (0ms latency, bypasses string parsing)
-  if (
-    precomputedShiftHours !== null &&
-    precomputedShiftHours !== undefined &&
-    precomputedOtHours !== null &&
-    precomputedOtHours !== undefined
-  ) {
+  const hasPrecomputedShift = precomputedShiftHours !== null && precomputedShiftHours !== undefined;
+  const hasPrecomputedOt = precomputedOtHours !== null && precomputedOtHours !== undefined;
+
+  // FAST-PATH: If already pre-computed & stored in database (and not an overridden All-Overtime day)
+  if (hasPrecomputedShift && hasPrecomputedOt && !isAllOvertime) {
     return {
       workHours: Number(precomputedShiftHours),
       otHours: Number(precomputedOtHours),
     };
   }
 
-  // FALLBACK: Parse in/out times only for legacy entries
-  if (inTime && outTime) {
-    const [inH, inM] = inTime.split(':').map(Number);
-    const [outH, outM] = outTime.split(':').map(Number);
-    const inMins = inH * 60 + (inM || 0);
-    const outMins = outH * 60 + (outM || 0);
-    let diffMins = outMins - inMins;
-    if (diffMins <= 0) diffMins += 24 * 60; // Crosses midnight or full 24h
+  // Parse shift hours if not precomputed
+  let shiftHours = hasPrecomputedShift ? Number(precomputedShiftHours) : 0;
+  if (!hasPrecomputedShift) {
+    if (inTime && outTime) {
+      const [inH, inM] = inTime.split(':').map(Number);
+      const [outH, outM] = outTime.split(':').map(Number);
+      const inMins = inH * 60 + (inM || 0);
+      const outMins = outH * 60 + (outM || 0);
+      let diffMins = outMins - inMins;
+      if (diffMins <= 0) diffMins += 24 * 60; // Crosses midnight or full 24h
 
-    let breakMins = 0;
-    if (diffMins >= 300) breakMins += 60; // 1-hour lunch break deduction
-    const isPast11PM = diffMins >= 720 || (
-      (outMins >= inMins)
-        ? (outMins >= 23 * 60)
-        : (inMins <= 23 * 60 || outMins >= 23 * 60)
-    );
-    if (isPast11PM) breakMins += 60; // 1-hour late night break deduction
+      let breakMins = 0;
+      if (diffMins >= 300) breakMins += 60; // 1-hour lunch break deduction
+      const isPast11PM = diffMins >= 720 || (
+        (outMins >= inMins)
+          ? (outMins >= 23 * 60)
+          : (inMins <= 23 * 60 || outMins >= 23 * 60)
+      );
+      if (isPast11PM) breakMins += 60; // 1-hour late night break deduction
 
-    diffMins = Math.max(0, diffMins - breakMins);
-    const shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 100) / 100 : 0;
-    if (shiftHours > 0) {
-      let ot = 0;
-      if (isAllOvertime) {
-        ot = shiftHours;
-      } else if (standardCap === 5.5) {
-        ot = Math.round((shiftHours - 5.5) * 100) / 100;
-      } else if (shiftHours > 6.0) {
-        ot = Math.round((shiftHours - 8.0) * 100) / 100;
-      } else {
-        ot = Math.round((shiftHours - 4.0) * 100) / 100;
-      }
-      return { workHours: shiftHours, otHours: ot };
+      diffMins = Math.max(0, diffMins - breakMins);
+      shiftHours = diffMins > 0 ? Math.round((diffMins / 60) * 100) / 100 : 0;
+    } else {
+      shiftHours = fallbackHours;
     }
   }
 
-  // Fallback if no in/out times were recorded
-  let ot = 0;
+  // If this is an All-Overtime day (Poya, Sunday, Public Holiday), 100% of shift is OT
   if (isAllOvertime) {
-    ot = fallbackHours;
-  } else if (fallbackHours > standardCap) {
-    ot = Math.round((fallbackHours - standardCap) * 10) / 10;
+    return {
+      workHours: shiftHours,
+      otHours: shiftHours,
+    };
   }
-  return { workHours: fallbackHours, otHours: ot };
+
+  // If approved OT is already in the database, use it directly (Single Source of Truth)
+  if (hasPrecomputedOt) {
+    return {
+      workHours: shiftHours,
+      otHours: Number(precomputedOtHours),
+    };
+  }
+
+  // Fallback calculation per business logic document
+  let ot = 0;
+  if (shiftHours <= 0) {
+    ot = 0;
+  } else if (isExternal) {
+    const cap = standardCap === 5.5 ? 5.5 : 8.0;
+    ot = shiftHours > cap ? Math.round((shiftHours - cap) * 100) / 100 : 0;
+  } else if (standardCap === 5.5) {
+    ot = Math.round((shiftHours - 5.5) * 100) / 100;
+  } else if (shiftHours > 6.0) {
+    ot = Math.round((shiftHours - 8.0) * 100) / 100;
+  } else {
+    ot = Math.round((shiftHours - 4.0) * 100) / 100;
+  }
+  return { workHours: shiftHours, otHours: ot };
 }
 
 function buildEmployeeFilter(
@@ -218,9 +360,12 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
           },
         },
         appliedBusinessPartner: true,
+        effectiveDayType: true,
       },
       orderBy: { date: 'asc' },
     });
+
+    const calendarMap = await getProjectCalendarDayMap(projectId, dateFrom, dateTo);
 
     // Group entries by employee AND date to compute daily shift and OT from In/Out times
     const empDailyMap = new Map<string, Map<string, Array<{
@@ -229,6 +374,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
       shiftHours?: any;
       overtimeHours?: any;
       hours?: any;
+      effectiveDayType?: any;
     }>>>();
     const empInfoMap = new Map<string, any>();
 
@@ -280,6 +426,7 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
         shiftHours: entry.shiftHours,
         overtimeHours: entry.overtimeHours,
         hours: entry.hours,
+        effectiveDayType: entry.effectiveDayType,
       });
     }
 
@@ -369,7 +516,9 @@ export const getSummaryReport = async (req: Request, res: Response): Promise<voi
 
       for (const [dateKey, dayEntries] of dayMap.entries()) {
         totalDays += 1;
-        const { standardCap, isAllOvertime } = getDayTypeRule(dateKey);
+        const firstEntry = dayEntries[0];
+        const dayRule = resolveDayTypeRule(dateKey, calendarMap, firstEntry?.effectiveDayType);
+        const { standardCap, isAllOvertime } = dayRule;
 
         const inTime = dayEntries.find((e) => e.inTime)?.inTime;
         const outTime = dayEntries.find((e) => e.outTime)?.outTime;
@@ -469,9 +618,12 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
           },
         },
         appliedBusinessPartner: true,
+        effectiveDayType: true,
       },
       orderBy: { date: 'asc' },
     });
+
+    const calendarMap = await getProjectCalendarDayMap(projectId, dateFrom, dateTo);
 
     // Collect all unique dates in the range
     const allDatesSet = new Set<string>();
@@ -527,7 +679,9 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
       let totalEmpOt = 0;
 
       for (const [dateKey, dayEntries] of dayMap.entries()) {
-        const { standardCap, isAllOvertime } = getDayTypeRule(dateKey);
+        const firstEntry = dayEntries[0];
+        const dayRule = resolveDayTypeRule(dateKey, calendarMap, firstEntry?.effectiveDayType);
+        const { standardCap, isAllOvertime } = dayRule;
         const inTime = dayEntries.find((e) => e.inTime)?.inTime;
         const outTime = dayEntries.find((e) => e.outTime)?.outTime;
         const activitySum = dayEntries.reduce((s, e) => s + (Number(e.shiftHours ?? e.hours) || 0), 0);
@@ -630,9 +784,12 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
           },
         },
         appliedBusinessPartner: true,
+        effectiveDayType: true,
       },
       orderBy: { date: 'asc' },
     });
+
+    const calendarMap = await getProjectCalendarDayMap(projectId, dateFrom, dateTo);
 
     // Group by businessPartner -> employee
     type EmpData = {
@@ -893,10 +1050,10 @@ function parseTimeToHours(t: string | null | undefined): number | null {
 }
 
 // ─── Helper: compute shift effective hours, activity sum, ZIDLE & OT for a day group ─
-function computeErpDayMetrics(groupEntries: any[]) {
+function computeErpDayMetrics(groupEntries: any[], calendarMap?: Map<string, DayTypeRuleInfo>) {
   const first = groupEntries[0];
   const dateKey = first.date.toISOString().split('T')[0];
-  const dayRule = getDayTypeRule(dateKey);
+  const dayRule = resolveDayTypeRule(dateKey, calendarMap, first?.effectiveDayType);
 
   const inTime = groupEntries.find((e) => e.inTime)?.inTime;
   const outTime = groupEntries.find((e) => e.outTime)?.outTime;
@@ -935,16 +1092,40 @@ function computeErpDayMetrics(groupEntries: any[]) {
       : 0;
 
   const effectiveForOt = shiftEffectiveHours > 0 ? shiftEffectiveHours : totalDayHours;
+  const isExternal = Boolean(
+    first.employee?.businessPartnerId ||
+    first.employee?.corporateEmployee?.employeeType === 'external'
+  );
+
   let otHours = 0;
+
+  // 1. ALL OVERTIME DAYS (Poya, Sunday, Public Holiday):
+  // 100% of hours worked are Overtime without any baseline deduction!
   if (dayRule.isAllOvertime) {
     otHours = effectiveForOt;
-  } else if (effectiveForOt > dayRule.standardCap) {
-    otHours = parseFloat((effectiveForOt - dayRule.standardCap).toFixed(2));
-  }
+  } else {
+    // 2. NORMAL DAY OR SATURDAY:
+    const storedOt = groupEntries.find(
+      (e) => e.overtimeHours !== null && e.overtimeHours !== undefined
+    )?.overtimeHours;
 
-  if (shiftEffectiveHours === 0) {
-    const explicitOt = groupEntries.reduce((s, e) => s + Number(e.overtimeHours), 0);
-    if (explicitOt > otHours) otHours = explicitOt;
+    // Use stored approved OT if valid for standard day, otherwise fallback to calculation
+    if (storedOt !== null && storedOt !== undefined && !dayRule.isSaturday && !isExternal) {
+      otHours = Number(storedOt);
+    } else {
+      if (effectiveForOt <= 0) {
+        otHours = 0;
+      } else if (isExternal) {
+        const cap = dayRule.isSaturday ? 5.5 : 8.0;
+        otHours = effectiveForOt > cap ? Math.round((effectiveForOt - cap) * 100) / 100 : 0;
+      } else if (dayRule.isSaturday) {
+        otHours = Math.round((effectiveForOt - 5.5) * 100) / 100;
+      } else if (effectiveForOt > 6.0) {
+        otHours = Math.round((effectiveForOt - 8.0) * 100) / 100;
+      } else {
+        otHours = Math.round((effectiveForOt - 4.0) * 100) / 100;
+      }
+    }
   }
 
   return { dateKey, dayRule, shiftEffectiveHours, totalDayHours, idleHours, otHours };
@@ -987,6 +1168,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
             corporateEmployee: true,
           },
         },
+        effectiveDayType: true,
         activitySplits: {
           include: {
             activityCode: true,
@@ -995,6 +1177,8 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
       },
       orderBy: [{ date: 'asc' }, { employeeId: 'asc' }],
     });
+
+    const calendarMap = await getProjectCalendarDayMap(projectId, dateFrom, dateTo);
 
     // Group by employee + date to apply OT rules
     type GroupKey = string;
@@ -1016,7 +1200,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
     for (const [, groupEntries] of groups) {
       const first = groupEntries[0];
       const empType = first.employee.corporateEmployee.employeeType || 'undefine';
-      const { dateKey, dayRule, idleHours, otHours } = computeErpDayMetrics(groupEntries);
+      const { dateKey, dayRule, idleHours, otHours } = computeErpDayMetrics(groupEntries, calendarMap);
       const { standardCap, isAllOvertime, label } = dayRule;
 
       // Regular activity rows
@@ -1233,6 +1417,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
           },
         },
         appliedBusinessPartner: true,
+        effectiveDayType: true,
         recordedBy: { select: { id: true, fullName: true, username: true } },
         dailySheet: {
           include: {
@@ -1247,6 +1432,8 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
       },
       orderBy: [{ date: 'desc' }, { employee: { callingName: 'asc' } }],
     });
+
+    const calendarMap = await getProjectCalendarDayMap(projectId, dateFrom, dateTo);
 
     // Group by EmployeeId + Date
     const grouped = new Map<string, typeof entries>();
@@ -1329,7 +1516,8 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
         }
       }
 
-      const { standardCap, isAllOvertime } = getDayTypeRule(dateKey);
+      const dayRule = resolveDayTypeRule(dateKey, calendarMap, first.effectiveDayType);
+      const { standardCap, isAllOvertime } = dayRule;
       let workHours = 0;
       let otHours = 0;
 
@@ -1338,7 +1526,7 @@ export const getRunningChartReport = async (req: Request, res: Response): Promis
         otHours = totalDayHours;
       } else {
         const explicitOt = groupEntries.reduce((s, e) => s + (Number(e.overtimeHours) || 0), 0);
-        if (explicitOt > 0) {
+        if (first.overtimeHours !== null && first.overtimeHours !== undefined) {
           otHours = Math.min(totalDayHours, explicitOt);
           workHours = Math.max(0, totalDayHours - otHours);
         } else {
@@ -1504,6 +1692,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
       },
       include: { dayType: true },
     });
+    const calendarMap = buildCalendarMapFromDays(calendarDays);
     const holidayDateMap = new Map<string, string>();
     for (const cd of calendarDays) {
       const dStr = cd.date.toISOString().slice(0, 10);
@@ -1559,6 +1748,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
           },
         },
         appliedBusinessPartner: true,
+        effectiveDayType: true,
       },
     });
 
@@ -1690,7 +1880,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
           // External workers: 0 Days (subcontractor labor is billed by hours, not payroll days).
           // Internal Saturday: Any attendance = 1.0 Day; Weekday > 6h = 1.0 Day; Weekday <= 6h = 0.5 Day; Sunday/Holiday = 0.0 Days
           const isExternalWorker = Boolean(emp.businessPartnerId || emp.corporateEmployee?.corporateBusinessPartnerId);
-          const dayRule = getDayTypeRule(dateStr);
+          const dayRule = resolveDayTypeRule(dateStr, calendarMap, first?.effectiveDayType);
           if (isExternalWorker) {
             dayWorked = 0;
           } else if (sumShiftHours <= 0 && sumOtHours === 0) {

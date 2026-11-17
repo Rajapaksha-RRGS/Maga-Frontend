@@ -245,6 +245,12 @@ export async function rejectSupervisor(supervisorId: string, date: string, reaso
   return res.json();
 }
 
+export interface AdminAdjustSplitPayload {
+  activityCodeId?: string;
+  activityCode?: string;
+  hours: number;
+}
+
 /**
  * Admin adjust a worker's In/Out time and hours directly during approval
  */
@@ -259,6 +265,7 @@ export async function adminAdjustWorker(payload: {
   additionalHours?: number;
   activityCodeId?: string;
   activityCode?: string;
+  activitySplits?: AdminAdjustSplitPayload[];
 }): Promise<{
   success: boolean;
   employeeId: string;

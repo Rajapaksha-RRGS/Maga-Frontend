@@ -862,6 +862,9 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
         equipment: {
           include: { corporateEquipment: true },
         },
+        equipmentSplits: {
+          include: { equipment: { include: { corporateEquipment: true } } },
+        },
       },
       orderBy: { createdAt: 'asc' },
     }) : [];
@@ -894,11 +897,17 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
         shiftHours: Number(firstTe.shiftHours || 0) || empEntries!.reduce((sum, e) => sum + Number(e.hours || 0), 0),
         otHours: Math.max(...empEntries!.map((e) => Number(e.overtimeHours || 0))),
         assignedEquipmentId: firstTe.equipmentId || a.equipmentId || undefined,
-        equipmentSplits: empEntries!.filter((e) => e.equipmentId).map((e) => ({
-          id: e.id,
-          equipmentId: e.equipmentId!,
-          hours: Number(e.hours || e.shiftHours || 0),
-        })),
+        equipmentSplits: ((firstTe as any).equipmentSplits && (firstTe as any).equipmentSplits.length > 0)
+          ? (firstTe as any).equipmentSplits.map((s: any) => ({
+              id: s.id,
+              equipmentId: s.equipmentId,
+              hours: Number(s.hours || 0),
+            }))
+          : empEntries!.filter((e) => e.equipmentId).map((e) => ({
+              id: e.id,
+              equipmentId: e.equipmentId!,
+              hours: Number(e.hours || e.shiftHours || 0),
+            })),
         status: firstTe.status,
         notes: firstTe.remarks || '',
       } : undefined;
@@ -983,11 +992,17 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
         shiftHours: Number(firstTe.shiftHours || 0) || empEntries!.reduce((sum, e) => sum + Number(e.hours || 0), 0),
         otHours: Math.max(...empEntries!.map((e) => Number(e.overtimeHours || 0))),
         assignedEquipmentId: firstTe.equipmentId || undefined,
-        equipmentSplits: empEntries!.filter((e) => e.equipmentId).map((e) => ({
-          id: e.id,
-          equipmentId: e.equipmentId!,
-          hours: Number(e.hours || e.shiftHours || 0),
-        })),
+        equipmentSplits: ((firstTe as any).equipmentSplits && (firstTe as any).equipmentSplits.length > 0)
+          ? (firstTe as any).equipmentSplits.map((s: any) => ({
+              id: s.id,
+              equipmentId: s.equipmentId,
+              hours: Number(s.hours || 0),
+            }))
+          : empEntries!.filter((e) => e.equipmentId).map((e) => ({
+              id: e.id,
+              equipmentId: e.equipmentId!,
+              hours: Number(e.hours || e.shiftHours || 0),
+            })),
         status: firstTe.status,
         notes: firstTe.remarks || '',
       } : undefined;
@@ -1031,11 +1046,17 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
           shiftHours: Number(firstTe.shiftHours || 0) || empEntries.reduce((sum, e) => sum + Number(e.hours || 0), 0),
           otHours: Math.max(...empEntries.map((e) => Number(e.overtimeHours || 0))),
           assignedEquipmentId: firstTe.equipmentId || undefined,
-          equipmentSplits: empEntries.filter((e) => e.equipmentId).map((e) => ({
-            id: e.id,
-            equipmentId: e.equipmentId!,
-            hours: Number(e.hours || e.shiftHours || 0),
-          })),
+          equipmentSplits: ((firstTe as any).equipmentSplits && (firstTe as any).equipmentSplits.length > 0)
+            ? (firstTe as any).equipmentSplits.map((s: any) => ({
+                id: s.id,
+                equipmentId: s.equipmentId,
+                hours: Number(s.hours || 0),
+              }))
+            : empEntries.filter((e) => e.equipmentId).map((e) => ({
+                id: e.id,
+                equipmentId: e.equipmentId!,
+                hours: Number(e.hours || e.shiftHours || 0),
+              })),
           status: firstTe.status,
           notes: firstTe.remarks || '',
         };

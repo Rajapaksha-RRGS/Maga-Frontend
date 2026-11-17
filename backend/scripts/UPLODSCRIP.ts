@@ -50,10 +50,18 @@ interface ProcessError {
   outTime?: string;
   activityCode?: string;
   hours?: number;
+  additionalHours?: number;
   reason: string;
 }
 
+interface ParseResult {
+  rows: RawRowInput[];
+  parseErrors: ProcessError[];
+  totalLines: number;
+}
+
 // Helper: Normalize time to "HH:mm" (e.g., "7" -> "07:00", "28" -> "04:00", "7:30" -> "07:30", "12.5" -> "12:30", "22.25" -> "22:15")
+// Returns null if the value is corrupted or cannot be parsed as a valid time.
 function normalizeTime(val?: string | null): string | null {
   if (!val) return null;
   const clean = val.trim();
@@ -62,6 +70,7 @@ function normalizeTime(val?: string | null): string | null {
   // 1. e.g. "7" -> "07:00", "24" -> "00:00", "28" -> "04:00"
   if (/^\d{1,2}$/.test(clean)) {
     let h = parseInt(clean, 10);
+    if (h < 0 || h > 48) return null;
     if (h >= 24) h = h % 24;
     return `${String(h).padStart(2, '0')}:00`;
   }
@@ -69,55 +78,66 @@ function normalizeTime(val?: string | null): string | null {
   // 2. e.g. "7:30" or "07:30" or "28:30"
   if (/^\d{1,2}:\d{1,2}$/.test(clean)) {
     let [h, m] = clean.split(':').map(Number);
+    if (isNaN(h) || isNaN(m) || h < 0 || h > 48 || m < 0 || m >= 60) return null;
     if (h >= 24) h = h % 24;
-    if (m >= 0 && m < 60) {
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    }
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
   // 3. Decimal hours e.g. "12.5" -> "12:30", "22.25" -> "22:15", "6.5" -> "06:30"
   if (/^\d{1,2}\.\d+$/.test(clean)) {
     const num = parseFloat(clean);
-    if (!isNaN(num)) {
-      let h = Math.floor(num);
-      const frac = num - h;
-      let m = Math.round(frac * 60);
-      if (m >= 60) {
-        h += 1;
-        m = 0;
-      }
-      if (h >= 24) h = h % 24;
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    if (isNaN(num) || num < 0 || num > 48) return null;
+    let h = Math.floor(num);
+    const frac = num - h;
+    let m = Math.round(frac * 60);
+    if (m >= 60) {
+      h += 1;
+      m = 0;
     }
+    if (h >= 24) h = h % 24;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
-  return clean;
+  return null;
 }
 
-// Helper: Parse date string into UTC Date object
+// Helper: Parse date string into UTC Date object with strict calendar validation
 function parseDateInput(val: string): Date | null {
   if (!val) return null;
   const clean = val.trim();
+  if (!clean) return null;
 
   // YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-    const d = new Date(clean + 'T00:00:00.000Z');
-    return isNaN(d.getTime()) ? null : d;
+    const [y, m, d] = clean.split('-').map(Number);
+    if (isNaN(y) || isNaN(m) || isNaN(d) || y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (isNaN(date.getTime()) || date.getUTCDate() !== d || date.getUTCMonth() !== m - 1) return null;
+    return date;
   }
 
-  // D/M/YYYY or DD/MM/YYYY (Standard Sri Lanka / Maga format: Day/Month/Year)
-  const slashParts = clean.split('/');
-  if (slashParts.length === 3) {
-    let [day, month, year] = slashParts.map((p) => parseInt(p, 10));
-    if (year < 100) year += 2000;
-    // Swap if day was mistakenly put in month position (month > 12)
-    if (month > 12 && day <= 12) {
-      const temp = day;
-      day = month;
-      month = temp;
+  // D/M/YYYY or DD/MM/YYYY or D-M-YYYY or DD-M-YYYY (Standard Sri Lanka / Maga format: Day/Month/Year)
+  const delimiter = clean.includes('/') ? '/' : clean.includes('-') ? '-' : null;
+  if (delimiter) {
+    const slashParts = clean.split(delimiter);
+    if (slashParts.length === 3) {
+      let [day, month, year] = slashParts.map((p) => parseInt(p, 10));
+      if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+      if (year < 100) year += 2000;
+      if (year < 2000 || year > 2100) return null;
+
+      // Swap if day was mistakenly put in month position (month > 12)
+      if (month > 12 && day <= 12) {
+        const temp = day;
+        day = month;
+        month = temp;
+      }
+      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+      const d = new Date(Date.UTC(year, month - 1, day));
+      if (isNaN(d.getTime()) || d.getUTCDate() !== day || d.getUTCMonth() !== month - 1) return null;
+      return d;
     }
-    const d = new Date(Date.UTC(year, month - 1, day));
-    return isNaN(d.getTime()) ? null : d;
   }
 
   const d = new Date(clean);
@@ -188,9 +208,9 @@ function calculateShiftAndOvertime(
 }
 
 // Helper: Parse raw text file (supports tab-delimited, comma-delimited, semicolon)
-function parseRawFile(content: string): RawRowInput[] {
+function parseRawFile(content: string): ParseResult {
   const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return [];
+  if (lines.length === 0) return { rows: [], parseErrors: [], totalLines: 0 };
 
   const firstLine = lines[0];
   const isTab = firstLine.includes('\t');
@@ -252,33 +272,176 @@ function parseRawFile(content: string): RawRowInput[] {
   }
 
   const rows: RawRowInput[] = [];
+  const parseErrors: ProcessError[] = [];
+
   for (let i = startIndex; i < lines.length; i++) {
     const rawTokens = lines[i].split(delimiter).map((t) => t.trim());
-    if (rawTokens.length < 3) continue;
+    const lineNum = i + 1;
 
-    const emp = colMap.employee >= 0 ? rawTokens[colMap.employee] : '';
-    const act = colMap.activity >= 0 ? rawTokens[colMap.activity] : '';
-    const hrsStr = colMap.hours >= 0 ? rawTokens[colMap.hours] : '8';
-    const inT = colMap.in >= 0 ? rawTokens[colMap.in] : '';
-    const outT = colMap.out >= 0 ? rawTokens[colMap.out] : '';
-    const dt = colMap.date >= 0 ? rawTokens[colMap.date] : '';
-    const addHrsStr = colMap.additionalHours >= 0 ? rawTokens[colMap.additionalHours] : '';
+    // Skip empty lines
+    if (rawTokens.length === 0 || (rawTokens.length === 1 && !rawTokens[0])) continue;
 
-    if (!emp && !act) continue;
+    if (rawTokens.length < 2) {
+      parseErrors.push({
+        line: lineNum,
+        employee: 'UNKNOWN',
+        reason: 'Malformed row: insufficient columns or corrupted row data',
+      });
+      continue;
+    }
+
+    const emp = colMap.employee >= 0 && colMap.employee < rawTokens.length ? rawTokens[colMap.employee] : '';
+    const act = colMap.activity >= 0 && colMap.activity < rawTokens.length ? rawTokens[colMap.activity] : '';
+    const hrsStr = colMap.hours >= 0 && colMap.hours < rawTokens.length ? rawTokens[colMap.hours] : '';
+    const inT = colMap.in >= 0 && colMap.in < rawTokens.length ? rawTokens[colMap.in] : '';
+    const outT = colMap.out >= 0 && colMap.out < rawTokens.length ? rawTokens[colMap.out] : '';
+    const dt = colMap.date >= 0 && colMap.date < rawTokens.length ? rawTokens[colMap.date] : '';
+    const addHrsStr = colMap.additionalHours >= 0 && colMap.additionalHours < rawTokens.length ? rawTokens[colMap.additionalHours] : '';
+
+    // Skip completely blank rows with no meaningful fields
+    if (!emp && !act && !hrsStr && !inT && !outT && !dt) continue;
+
+    let hasLineError = false;
+
+    // Validate In Time
+    let normIn: string | undefined = undefined;
+    if (inT) {
+      const normalized = normalizeTime(inT);
+      if (!normalized) {
+        parseErrors.push({
+          line: lineNum,
+          employee: emp || 'UNKNOWN',
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          activityCode: act,
+          reason: `Invalid In Time format: '${inT}'`,
+        });
+        hasLineError = true;
+      } else {
+        normIn = normalized;
+      }
+    }
+
+    // Validate Out Time
+    let normOut: string | undefined = undefined;
+    if (outT) {
+      const normalized = normalizeTime(outT);
+      if (!normalized) {
+        parseErrors.push({
+          line: lineNum,
+          employee: emp || 'UNKNOWN',
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          activityCode: act,
+          reason: `Invalid Out Time format: '${outT}'`,
+        });
+        hasLineError = true;
+      } else {
+        normOut = normalized;
+      }
+    }
+
+    // Validate Hours
+    let hoursVal = 0;
+    if (hrsStr) {
+      const parsed = parseFloat(hrsStr);
+      if (isNaN(parsed)) {
+        parseErrors.push({
+          line: lineNum,
+          employee: emp || 'UNKNOWN',
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          activityCode: act,
+          reason: `Invalid Hours format (not a valid number): '${hrsStr}'`,
+        });
+        hasLineError = true;
+      } else if (parsed <= 0 || parsed > 48) {
+        parseErrors.push({
+          line: lineNum,
+          employee: emp || 'UNKNOWN',
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          activityCode: act,
+          hours: parsed,
+          reason: `Hours must be greater than 0 and at most 48 (got: ${hrsStr})`,
+        });
+        hasLineError = true;
+      } else {
+        hoursVal = parsed;
+      }
+    } else if (act) {
+      hoursVal = 8.0;
+    }
+
+    // Validate Additional Hours
+    let addHoursVal: number | undefined = undefined;
+    if (addHrsStr) {
+      const parsedAdd = parseFloat(addHrsStr);
+      if (isNaN(parsedAdd)) {
+        parseErrors.push({
+          line: lineNum,
+          employee: emp || 'UNKNOWN',
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          activityCode: act,
+          reason: `Invalid Additional Hours format: '${addHrsStr}'`,
+        });
+        hasLineError = true;
+      } else if (parsedAdd < -12 || parsedAdd > 24) {
+        parseErrors.push({
+          line: lineNum,
+          employee: emp || 'UNKNOWN',
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          activityCode: act,
+          additionalHours: parsedAdd,
+          reason: `Additional Hours out of range (-12 to 24): '${addHrsStr}'`,
+        });
+        hasLineError = true;
+      } else {
+        addHoursVal = parsedAdd;
+      }
+    }
+
+    // Validate Date
+    if (dt) {
+      const parsedDate = parseDateInput(dt);
+      if (!parsedDate) {
+        parseErrors.push({
+          line: lineNum,
+          employee: emp || 'UNKNOWN',
+          dateStr: dt,
+          inTime: inT,
+          outTime: outT,
+          activityCode: act,
+          hours: hoursVal,
+          reason: `Invalid Date format or invalid calendar day: '${dt}'`,
+        });
+        hasLineError = true;
+      }
+    }
+
+    if (hasLineError) continue;
 
     rows.push({
       employeeIdentifier: emp,
       activityCode: act,
-      hours: parseFloat(hrsStr) || 8.0,
-      additionalHours: addHrsStr && !isNaN(parseFloat(addHrsStr)) ? parseFloat(addHrsStr) : undefined,
-      inTime: normalizeTime(inT) || undefined,
-      outTime: normalizeTime(outT) || undefined,
+      hours: hoursVal,
+      additionalHours: addHoursVal,
+      inTime: normIn,
+      outTime: normOut,
       dateStr: dt,
-      rawLineIndex: i + 1,
+      rawLineIndex: lineNum,
     });
   }
 
-  return rows;
+  return { rows, parseErrors, totalLines: lines.length - startIndex };
 }
 
 async function main() {
@@ -318,14 +481,26 @@ async function main() {
     if (explicitFilePath) break;
   }
 
-  // Look for project and supervisor argument in remaining args
+  let explicitDate: string | null = null;
+
+  // Look for file, project and supervisor argument in remaining args
   for (const a of args) {
-    if (a.startsWith('--project=')) {
+    if (a.startsWith('--file=')) {
+      const p = a.split('=')[1].replace(/^[\"'\`]+|[\"'\`]+$/g, '').trim();
+      if (fs.existsSync(p)) explicitFilePath = path.resolve(p);
+      else if (fs.existsSync(path.join(__dirname, p))) explicitFilePath = path.join(__dirname, p);
+    } else if (a.startsWith('-f=')) {
+      const p = a.split('=')[1].replace(/^[\"'\`]+|[\"'\`]+$/g, '').trim();
+      if (fs.existsSync(p)) explicitFilePath = path.resolve(p);
+      else if (fs.existsSync(path.join(__dirname, p))) explicitFilePath = path.join(__dirname, p);
+    } else if (a.startsWith('--project=')) {
       explicitProject = a.split('=')[1].trim();
     } else if (a.startsWith('--supervisor=')) {
       explicitSupervisor = a.split('=')[1].trim();
     } else if (a.startsWith('-s=')) {
       explicitSupervisor = a.split('=')[1].trim();
+    } else if (a.startsWith('--date=')) {
+      explicitDate = a.split('=')[1].trim();
     } else if (!a.startsWith('-')) {
       if (!explicitProject) {
         explicitProject = a.trim();
@@ -371,7 +546,7 @@ async function main() {
   // Auto-detect project from CSV employees if project not explicitly supplied!
   if (!project && fs.existsSync(targetFilePath)) {
     const previewContent = fs.readFileSync(targetFilePath, 'utf-8');
-    const previewRows = parseRawFile(previewContent).slice(0, 15);
+    const previewRows = parseRawFile(previewContent).rows.slice(0, 15);
     const sampleEmpCodes = previewRows.map((r) => r.employeeIdentifier.trim()).filter(Boolean);
 
     if (sampleEmpCodes.length > 0) {
@@ -483,13 +658,13 @@ async function main() {
 
   console.log(`📂 Reading data from: ${BOLD}${targetFilePath}${RESET}`);
   const rawFileContent = fs.readFileSync(targetFilePath, 'utf-8');
-  const parsedRows = parseRawFile(rawFileContent);
+  const { rows: parsedRows, parseErrors, totalLines } = parseRawFile(rawFileContent);
 
-  if (parsedRows.length === 0) {
+  if (parsedRows.length === 0 && parseErrors.length === 0) {
     console.log(`${YELLOW}⚠️ No data rows found in file.${RESET}`);
     return;
   }
-  console.log(`📋 Total rows identified: ${BOLD}${parsedRows.length}${RESET}\n`);
+  console.log(`📋 Total rows identified: ${BOLD}${totalLines}${RESET} (${parsedRows.length} valid row candidates, ${parseErrors.length} rejected during parsing)\n`);
 
   // 4. Pre-load local employees and project activities for rapid lookups
   console.log(`🔄 Pre-loading Project Employees & Activity Codes...`);
@@ -497,7 +672,7 @@ async function main() {
     where: { projectId: project.id },
     include: {
       corporateEmployee: {
-        select: { id: true, employeeCode: true, fullName: true, epfNo: true },
+        select: { id: true, employeeCode: true, fullName: true, epfNo: true, employeeType: true },
       },
       tradeGroup: {
         select: { standardDailyRate: true },
@@ -525,10 +700,112 @@ async function main() {
   }
 
   // Pre-load day types
-  const defaultDayType =
-    (await prisma.mF_G_DayType.findFirst({ where: { code: 'NORMAL' } })) ||
-    (await prisma.mF_G_DayType.findFirst());
-  const effectiveDayTypeId = defaultDayType?.id || '';
+  const allDayTypes = await prisma.mF_G_DayType.findMany();
+  const dayTypeByCode = new Map<string, typeof allDayTypes[0]>();
+  for (const dt of allDayTypes) {
+    dayTypeByCode.set(dt.code.toUpperCase(), dt);
+  }
+  const normalDayType = dayTypeByCode.get('NORMAL') || allDayTypes[0];
+  const sundayDayType = dayTypeByCode.get('SUNDAY') || normalDayType;
+  const saturdayDayType = dayTypeByCode.get('SATURDAY') || normalDayType;
+
+  // Pre-load project calendar overrides (Poya, Public Holiday, Shutdown, etc.)
+  const projectCalendar = await prisma.mF_P_CalendarDay.findMany({
+    where: { projectId: project.id },
+    include: { dayType: true },
+  });
+  const projectCalendarMap = new Map<string, typeof projectCalendar[0]>();
+  for (const cd of projectCalendar) {
+    const dateKey = cd.date.toISOString().slice(0, 10);
+    projectCalendarMap.set(dateKey, cd);
+  }
+
+  // Helper: Dynamic Day Type & OT Rule Resolver for any Date
+  function getDayTypeRuleForDate(dateObj: Date) {
+    const dateKey = dateObj.toISOString().slice(0, 10);
+
+    // 1. Project Calendar overrides ALWAYS TAKE TOP PRIORITY!
+    if (projectCalendarMap.has(dateKey)) {
+      const cd = projectCalendarMap.get(dateKey)!;
+      const code = (cd.dayType?.code || 'NORMAL').toUpperCase();
+      const isSaturday = code === 'SATURDAY';
+      const isSunday = code === 'SUNDAY';
+      const isAllOvertime = isSunday || code === 'POYA' || code === 'PUBLIC_HOLIDAY' || code === 'HOLIDAY';
+      return {
+        dayTypeId: cd.dayTypeId,
+        code,
+        name: cd.dayType?.name || code,
+        isAllOvertime,
+        isSaturday,
+        standardCap: isAllOvertime ? 0.0 : isSaturday ? 5.5 : 8.0,
+      };
+    }
+
+    // 2. Fallback to Day of Week
+    const dow = dateObj.getUTCDay(); // 0 = Sun, 6 = Sat
+    if (dow === 0) {
+      return {
+        dayTypeId: sundayDayType.id,
+        code: 'SUNDAY',
+        name: sundayDayType.name,
+        isAllOvertime: true,
+        isSaturday: false,
+        standardCap: 0.0,
+      };
+    }
+    if (dow === 6) {
+      return {
+        dayTypeId: saturdayDayType.id,
+        code: 'SATURDAY',
+        name: saturdayDayType.name,
+        isAllOvertime: false,
+        isSaturday: true,
+        standardCap: 5.5,
+      };
+    }
+    return {
+      dayTypeId: normalDayType.id,
+      code: 'NORMAL',
+      name: normalDayType.name,
+      isAllOvertime: false,
+      isSaturday: false,
+      standardCap: 8.0,
+    };
+  }
+
+  // Helper: Maga Standard OT Calculation
+  function computeOtHours(shiftHours: number, dayRule: ReturnType<typeof getDayTypeRuleForDate>, isExternal: boolean = false): number {
+    if (shiftHours <= 0) return 0;
+    if (dayRule.isAllOvertime) {
+      return shiftHours;
+    }
+    if (isExternal) {
+      const cap = dayRule.isSaturday ? 5.5 : 8.0;
+      return shiftHours > cap ? Math.round((shiftHours - cap) * 100) / 100 : 0;
+    }
+    if (dayRule.isSaturday) {
+      return Math.round((shiftHours - 5.5) * 100) / 100;
+    }
+    if (shiftHours > 6.0) {
+      return Math.round((shiftHours - 8.0) * 100) / 100;
+    }
+    return Math.round((shiftHours - 4.0) * 100) / 100;
+  }
+
+  // Pre-load approved Time Entries for O(1) instant overwrite validation
+  const approvedEntries = await prisma.mF_OP_TimeEntry.findMany({
+    where: {
+      projectId: project.id,
+      status: 'approved',
+    },
+    select: {
+      employeeId: true,
+      date: true,
+    },
+  });
+  const approvedSet = new Set(
+    approvedEntries.map((e) => `${e.employeeId}__${e.date.toISOString().slice(0, 10)}`)
+  );
 
   // 5. Group Rows by (Employee, Date) to handle Multi-Activity Rows
   console.log(`🔗 Grouping entries by Employee and Date...`);
@@ -541,11 +818,12 @@ async function main() {
       inTime?: string;
       outTime?: string;
       additionalHours?: number;
+      rawLineIndex: number;
       activities: Array<{ activityCode: string; hours: number; rawLineIndex: number }>;
     }
   >();
 
-  const errors: ProcessError[] = [];
+  const errors: ProcessError[] = [...parseErrors];
   let lastEmployee = '';
   let lastDateStr = '';
 
@@ -563,6 +841,7 @@ async function main() {
         outTime: r.outTime,
         activityCode: r.activityCode,
         hours: r.hours,
+        additionalHours: r.additionalHours,
         reason: 'Missing Employee Code/Name',
       });
       continue;
@@ -577,6 +856,7 @@ async function main() {
         outTime: r.outTime,
         activityCode: r.activityCode,
         hours: r.hours,
+        additionalHours: r.additionalHours,
         reason: 'Missing Date',
       });
       continue;
@@ -592,9 +872,25 @@ async function main() {
         outTime: r.outTime,
         activityCode: r.activityCode,
         hours: r.hours,
-        reason: `Invalid Date format: '${dtStr}'`,
+        additionalHours: r.additionalHours,
+        reason: `Invalid Date format or invalid calendar day: '${dtStr}'`,
       });
       continue;
+    }
+
+    if (explicitDate) {
+      const parsedExplicit = parseDateInput(explicitDate);
+      if (parsedExplicit) {
+        if (parsedExplicit.toISOString().slice(0, 10) !== parsedDate.toISOString().slice(0, 10)) {
+          continue;
+        }
+      } else {
+        const cleanExp = explicitDate.replace(/[^0-9]/g, '');
+        const cleanDt = dtStr.replace(/[^0-9]/g, '');
+        if (!cleanDt.includes(cleanExp)) {
+          continue;
+        }
+      }
     }
 
     lastEmployee = empKey;
@@ -609,6 +905,7 @@ async function main() {
         inTime: r.inTime,
         outTime: r.outTime,
         additionalHours: r.additionalHours,
+        rawLineIndex: r.rawLineIndex,
         activities: [],
       });
     }
@@ -621,11 +918,13 @@ async function main() {
       group.additionalHours = Math.max(group.additionalHours || 0, r.additionalHours);
     }
 
-    group.activities.push({
-      activityCode: r.activityCode,
-      hours: r.hours,
-      rawLineIndex: r.rawLineIndex,
-    });
+    if (r.activityCode && r.activityCode.trim() && r.hours > 0) {
+      group.activities.push({
+        activityCode: r.activityCode.trim(),
+        hours: r.hours,
+        rawLineIndex: r.rawLineIndex,
+      });
+    }
   }
 
   // 5.5 Pre-Upload Hours Balance & Additional Hours Detection Scan
@@ -634,7 +933,8 @@ async function main() {
   console.log(`${CYAN}${BOLD}=====================================================${RESET}`);
 
   let balancedCount = 0;
-  let addHoursCount = 0;
+  let validAddHoursCount = 0;
+  let exceededErrorCount = 0;
   let deficitCount = 0;
   const balanceWarnings: Array<{
     emp: string;
@@ -644,7 +944,7 @@ async function main() {
     csvHrs: number;
     baseShift: number;
     diff: number;
-    type: 'ADDITIONAL' | 'DEFICIT';
+    type: 'EXCEEDED_ERROR' | 'ADDITIONAL_VALID' | 'DEFICIT';
   }> = [];
 
   for (const [groupKey, group] of groupedEntries.entries()) {
@@ -652,12 +952,11 @@ async function main() {
     const finalOut = group.outTime || '17:00';
     const calc = calculateShiftAndOvertime(finalIn, finalOut, 8.0);
     const csvSum = Math.round(group.activities.reduce((s, a) => s + a.hours, 0) * 100) / 100;
-    const diff = Math.round((csvSum - calc.shiftHours) * 100) / 100;
+    const addHrs = group.additionalHours !== undefined && group.additionalHours > 0 ? group.additionalHours : 0;
+    const maxAllowed = Math.round((calc.shiftHours + addHrs) * 100) / 100;
 
-    if (Math.abs(diff) < 0.05) {
-      balancedCount++;
-    } else if (diff > 0.05) {
-      addHoursCount++;
+    if (csvSum > maxAllowed + 0.05) {
+      exceededErrorCount++;
       balanceWarnings.push({
         emp: group.employeeIdentifier,
         date: group.dateStr,
@@ -665,10 +964,24 @@ async function main() {
         out: finalOut,
         csvHrs: csvSum,
         baseShift: calc.shiftHours,
-        diff,
-        type: 'ADDITIONAL',
+        diff: Math.round((csvSum - calc.shiftHours) * 100) / 100,
+        type: 'EXCEEDED_ERROR',
       });
-    } else {
+    } else if (addHrs > 0 && Math.abs(csvSum - maxAllowed) < 0.05) {
+      validAddHoursCount++;
+      balanceWarnings.push({
+        emp: group.employeeIdentifier,
+        date: group.dateStr,
+        in: finalIn,
+        out: finalOut,
+        csvHrs: csvSum,
+        baseShift: calc.shiftHours,
+        diff: addHrs,
+        type: 'ADDITIONAL_VALID',
+      });
+    } else if (Math.abs(csvSum - calc.shiftHours) < 0.05) {
+      balancedCount++;
+    } else if (csvSum < calc.shiftHours - 0.05) {
       deficitCount++;
       balanceWarnings.push({
         emp: group.employeeIdentifier,
@@ -677,7 +990,7 @@ async function main() {
         out: finalOut,
         csvHrs: csvSum,
         baseShift: calc.shiftHours,
-        diff,
+        diff: Math.round((calc.shiftHours - csvSum) * 100) / 100,
         type: 'DEFICIT',
       });
     }
@@ -685,15 +998,16 @@ async function main() {
 
   console.log(`  • Total Shifts to Process: ${BOLD}${groupedEntries.size}${RESET}`);
   console.log(`  • ${GREEN}✓ Perfectly Balanced Shifts:${RESET} ${BOLD}${balancedCount}${RESET}`);
-  console.log(`  • ${YELLOW}⭐ Shifts with Implied Additional Hours:${RESET} ${BOLD}${addHoursCount}${RESET}`);
+  console.log(`  • ${GREEN}⭐ Valid Shifts with Explicit Additional Hours:${RESET} ${BOLD}${validAddHoursCount}${RESET}`);
+  console.log(`  • ${RED}❌ Shifts Exceeding Duration (Missing Additional Hours - will be REJECTED):${RESET} ${BOLD}${exceededErrorCount}${RESET}`);
   console.log(`  • ${CYAN}⚠️  Shifts with Deficit / Potential Idle:${RESET} ${BOLD}${deficitCount}${RESET}\n`);
 
-  if (addHoursCount > 0) {
-    console.log(`${YELLOW}${BOLD}  [Sample Shifts with Additional Hours detected]:${RESET}`);
-    const sampleAdd = balanceWarnings.filter((w) => w.type === 'ADDITIONAL').slice(0, 5);
-    for (const w of sampleAdd) {
+  if (exceededErrorCount > 0) {
+    console.log(`${RED}${BOLD}  [Sample Shifts with Exceeded Hours without Additional Hours (Will be skipped)]:${RESET}`);
+    const sampleExceed = balanceWarnings.filter((w) => w.type === 'EXCEEDED_ERROR').slice(0, 5);
+    for (const w of sampleExceed) {
       console.log(
-        `    ${YELLOW}➔${RESET} [${w.emp}] ${w.date} (${w.in} - ${w.out}) | Base: ${w.baseShift}h -> CSV Total: ${w.csvHrs}h [ ${YELLOW}+${w.diff}h Additional Hours${RESET} ]`
+        `    ${RED}❌${RESET} [${w.emp}] ${w.date} (${w.in} - ${w.out}) | Base: ${w.baseShift}h -> CSV Total: ${w.csvHrs}h [ ${RED}+${w.diff}h Excess without Additional Hours${RESET} ]`
       );
     }
     console.log('');
@@ -720,21 +1034,86 @@ async function main() {
 
   for (const [groupKey, group] of groupedEntries.entries()) {
     try {
-      // Step A: Find Employee in Local Table
-      const localEmp = empMap.get(group.employeeIdentifier.trim().toLowerCase());
+      if (group.activities.length === 0) {
+        errors.push({
+          line: group.rawLineIndex,
+          employee: group.employeeIdentifier,
+          dateStr: group.dateStr,
+          inTime: group.inTime || '07:00',
+          outTime: group.outTime || '17:00',
+          additionalHours: group.additionalHours,
+          reason: 'No valid activities or hours specified for this shift',
+        });
+        continue;
+      }
+
+      // Step A: Find Employee in Local Project Table or Corporate Master
+      let localEmp = empMap.get(group.employeeIdentifier.trim().toLowerCase());
       if (!localEmp) {
-        for (const act of group.activities) {
-          errors.push({
-            line: act.rawLineIndex,
-            employee: group.employeeIdentifier,
-            dateStr: group.dateStr,
-            inTime: group.inTime || '07:00',
-            outTime: group.outTime || '17:00',
-            activityCode: act.activityCode,
-            hours: act.hours,
-            reason: `Employee '${group.employeeIdentifier}' not found in local site table (MF_L_EMPLOYEE).`,
-          });
+        const cleanEmpKey = group.employeeIdentifier.trim().toLowerCase();
+        const corpEmp = await prisma.mF_G_Employee.findFirst({
+          where: {
+            OR: [
+              { employeeCode: { equals: group.employeeIdentifier.trim(), mode: 'insensitive' } },
+              { epfNo: { equals: group.employeeIdentifier.trim(), mode: 'insensitive' } },
+              { fullName: { equals: group.employeeIdentifier.trim(), mode: 'insensitive' } },
+            ],
+          },
+          include: { tradeGroup: true },
+        });
+
+        if (corpEmp) {
+          if (!isDryRun) {
+            localEmp = await prisma.mF_P_Employee.create({
+              data: {
+                projectId: project.id,
+                corporateEmployeeId: corpEmp.id,
+                callingName: corpEmp.callingName || corpEmp.fullName.split(' ')[0],
+                dailyRate: corpEmp.dailyRate || corpEmp.tradeGroup?.standardDailyRate || 1400.0,
+                tradeGroupId: corpEmp.tradeGroupId || null,
+                status: 'active',
+              },
+              include: {
+                corporateEmployee: {
+                  select: { id: true, employeeCode: true, fullName: true, epfNo: true },
+                },
+                tradeGroup: {
+                  select: { standardDailyRate: true },
+                },
+              },
+            });
+            empMap.set(cleanEmpKey, localEmp);
+            if (corpEmp.employeeCode) empMap.set(corpEmp.employeeCode.toLowerCase(), localEmp);
+            if (corpEmp.epfNo) empMap.set(corpEmp.epfNo.toLowerCase(), localEmp);
+          } else {
+            localEmp = {
+              id: 'dry-run-emp-id',
+              projectId: project.id,
+              corporateEmployeeId: corpEmp.id,
+              callingName: corpEmp.callingName || corpEmp.fullName.split(' ')[0],
+              dailyRate: corpEmp.dailyRate || 1400.0,
+              tradeGroupId: corpEmp.tradeGroupId || null,
+              businessPartnerId: null,
+              corporateEmployee: corpEmp,
+              tradeGroup: corpEmp.tradeGroup,
+            } as any;
+          }
         }
+      }
+
+      if (!localEmp) {
+        const lineIdx = group.activities[0]?.rawLineIndex || group.rawLineIndex || 0;
+        errors.push({
+          line: lineIdx,
+          employee: group.employeeIdentifier,
+          dateStr: group.dateStr,
+          inTime: group.inTime || '07:00',
+          outTime: group.outTime || '17:00',
+          activityCode: group.activities.map((a) => a.activityCode).join(', ') || '-',
+          hours: Math.round(group.activities.reduce((s, a) => s + a.hours, 0) * 100) / 100,
+          additionalHours: group.additionalHours,
+          reason: `Employee '${group.employeeIdentifier}' not found in project or corporate master.`,
+        });
         continue;
       }
 
@@ -746,21 +1125,38 @@ async function main() {
       const totalGrossHours = calc.grossHours; // Total hours (In-Out Gross presence duration)
       const totalCsvHours = Math.round(group.activities.reduce((s, a) => s + a.hours, 0) * 100) / 100;
       const baseShift = calc.shiftHours; // gross - breaks
-      let additionalHours = group.additionalHours !== undefined && group.additionalHours > 0 ? group.additionalHours : 0;
-      let finalShiftHours = baseShift;
+      const additionalHours = group.additionalHours !== undefined && group.additionalHours > 0 ? group.additionalHours : 0;
+      const maxAllowedShift = Math.round((baseShift + additionalHours) * 100) / 100;
 
-      // Detect and assign Additional Hours (explicit from CSV column or implied by CSV activity sum)
-      if (additionalHours > 0) {
-        finalShiftHours = Math.round((baseShift + additionalHours) * 100) / 100;
-      } else if (totalCsvHours > baseShift) {
-        additionalHours = Math.round((totalCsvHours - baseShift) * 100) / 100;
-        finalShiftHours = Math.round((baseShift + additionalHours) * 100) / 100;
+      // Validation (Strict Option A): If CSV activity hours exceed shift duration, and Additional Hours was not entered, reject as Error!
+      if (totalCsvHours > maxAllowedShift + 0.05) {
+        const excess = Math.round((totalCsvHours - baseShift) * 100) / 100;
+        const reasonMsg = additionalHours > 0
+          ? `Hours Exceeded: Activity hours (${totalCsvHours}h) exceed shift duration with Additional Hours (${maxAllowedShift}h) by +${Math.round((totalCsvHours - maxAllowedShift) * 100) / 100}h.`
+          : `Hours Exceeded: Activity hours (${totalCsvHours}h) exceed shift duration (${baseShift}h) by +${excess}h, but Additional Hours was not entered.`;
+
+        for (const act of group.activities) {
+          errors.push({
+            line: act.rawLineIndex,
+            employee: group.employeeIdentifier,
+            dateStr: group.dateStr,
+            inTime: finalInTime,
+            outTime: finalOutTime,
+            activityCode: act.activityCode,
+            hours: act.hours,
+            additionalHours: group.additionalHours,
+            reason: reasonMsg,
+          });
+        }
+        continue;
       }
 
-      // Auto-balance Idle / Hours Deficit: If activities are less than shift hours, allocate the remaining shortage to ZIDLE
+      const finalShiftHours = maxAllowedShift;
+
+      // Auto-balance Idle / Hours Deficit: If activities exist but are less than shift hours, allocate the remaining shortage to ZIDLE
       const deficitHours = Math.round((baseShift - totalCsvHours) * 100) / 100;
       const hasZidle = group.activities.some((a) => a.activityCode.trim().toUpperCase() === 'ZIDLE');
-      if (deficitHours > 0.05 && !hasZidle) {
+      if (group.activities.length > 0 && deficitHours > 0.05 && !hasZidle) {
         group.activities.push({
           activityCode: 'ZIDLE',
           hours: deficitHours,
@@ -769,31 +1165,47 @@ async function main() {
       }
       const finalCsvHours = Math.round(group.activities.reduce((s, a) => s + a.hours, 0) * 100) / 100;
 
+      // Check existing entries for this employee shift using pre-loaded O(1) set
+      const shiftDateKey = `${localEmp.id}__${group.date.toISOString().slice(0, 10)}`;
+      if (approvedSet.has(shiftDateKey)) {
+        errors.push({
+          line: group.activities[0]?.rawLineIndex || group.rawLineIndex || 0,
+          employee: group.employeeIdentifier,
+          dateStr: group.dateStr,
+          inTime: finalInTime,
+          outTime: finalOutTime,
+          activityCode: group.activities.map((a) => a.activityCode).join(', '),
+          hours: finalCsvHours,
+          additionalHours: group.additionalHours,
+          reason: `Time Entry is already APPROVED by Admin/PM. Did not overwrite.`,
+        });
+        continue;
+      }
+
       if (isDryRun) {
         // Validate activities in dry-run mode
         for (const actItem of group.activities) {
+          if (!actItem.activityCode || !actItem.activityCode.trim()) continue;
           let actId = actMap.get(actItem.activityCode.trim().toLowerCase());
           if (!actId) {
             const corpAct = await prisma.mF_G_ActivityCode.findFirst({
-              where: { code: actItem.activityCode.trim() },
+              where: { code: { equals: actItem.activityCode.trim(), mode: 'insensitive' } },
             });
             if (corpAct) {
               actId = corpAct.id;
             } else {
-              actId = projectActivities[0]?.id;
-              if (!actId) {
-                errors.push({
-                  line: actItem.rawLineIndex,
-                  employee: group.employeeIdentifier,
-                  dateStr: group.dateStr,
-                  inTime: finalInTime,
-                  outTime: finalOutTime,
-                  activityCode: actItem.activityCode,
-                  hours: actItem.hours,
-                  reason: `Activity code '${actItem.activityCode}' could not be resolved in project or corporate master.`,
-                });
-                continue;
-              }
+              errors.push({
+                line: actItem.rawLineIndex,
+                employee: group.employeeIdentifier,
+                dateStr: group.dateStr,
+                inTime: finalInTime,
+                outTime: finalOutTime,
+                activityCode: actItem.activityCode,
+                hours: actItem.hours,
+                additionalHours: group.additionalHours,
+                reason: `Activity code '${actItem.activityCode}' could not be resolved in project or corporate master.`,
+              });
+              continue;
             }
           }
           successCount++;
@@ -841,16 +1253,22 @@ async function main() {
         },
       });
 
-      const finalOt = Math.max(0, Math.round((finalShiftHours - 8.0) * 100) / 100);
+      const dayRule = getDayTypeRuleForDate(group.date);
+      const isExternalWorker = localEmp.corporateEmployee?.employeeType === 'external' || Boolean(localEmp.businessPartnerId);
+      const finalOt = computeOtHours(finalShiftHours, dayRule, isExternalWorker);
 
       // Step E: Save Time Entry & Activity Splits
       // Resolve all activity codes for this shift
       const resolvedActivities: Array<{ actId: string; code: string; hours: number; rawLineIndex: number }> = [];
       for (const actItem of group.activities) {
+        if (!actItem.activityCode || !actItem.activityCode.trim() || actItem.hours <= 0) {
+          continue;
+        }
+
         let actId = actMap.get(actItem.activityCode.trim().toLowerCase());
         if (!actId) {
           const corpAct = await prisma.mF_G_ActivityCode.findFirst({
-            where: { code: actItem.activityCode.trim() },
+            where: { code: { equals: actItem.activityCode.trim(), mode: 'insensitive' } },
           });
 
           if (corpAct) {
@@ -866,20 +1284,18 @@ async function main() {
             actId = newAct.id;
             actMap.set(actItem.activityCode.trim().toLowerCase(), actId);
           } else {
-            actId = projectActivities[0]?.id;
-            if (!actId) {
-              errors.push({
-                line: actItem.rawLineIndex,
-                employee: group.employeeIdentifier,
-                dateStr: group.dateStr,
-                inTime: finalInTime,
-                outTime: finalOutTime,
-                activityCode: actItem.activityCode,
-                hours: actItem.hours,
-                reason: `Activity code '${actItem.activityCode}' could not be resolved in project or corporate master.`,
-              });
-              continue;
-            }
+            errors.push({
+              line: actItem.rawLineIndex,
+              employee: group.employeeIdentifier,
+              dateStr: group.dateStr,
+              inTime: finalInTime,
+              outTime: finalOutTime,
+              activityCode: actItem.activityCode,
+              hours: actItem.hours,
+              additionalHours: group.additionalHours,
+              reason: `Activity code '${actItem.activityCode}' could not be resolved in project or corporate master.`,
+            });
+            continue;
           }
         }
         resolvedActivities.push({
@@ -902,21 +1318,6 @@ async function main() {
         orderBy: { createdAt: 'asc' },
       });
 
-      const approvedEntry = existingEntries.find((e) => e.status === 'approved');
-      if (approvedEntry) {
-        errors.push({
-          line: group.activities[0].rawLineIndex,
-          employee: group.employeeIdentifier,
-          dateStr: group.dateStr,
-          inTime: finalInTime,
-          outTime: finalOutTime,
-          activityCode: group.activities.map((a) => a.activityCode).join(', '),
-          hours: finalCsvHours,
-          reason: `Time Entry is already APPROVED by Admin/PM. Did not overwrite.`,
-        });
-        continue;
-      }
-
       // Snapshot rate & business partner
       const snapRate = Number(localEmp.dailyRate) > 0
         ? Number(localEmp.dailyRate)
@@ -934,6 +1335,7 @@ async function main() {
           data: {
             dailySheetId: dailySheet.id,
             recordedById: supervisor.id,
+            effectiveDayTypeId: dayRule.dayTypeId,
             inTime: finalInTime,
             outTime: finalOutTime,
             hours: totalGrossHours,
@@ -959,7 +1361,7 @@ async function main() {
             employeeId: localEmp.id,
             recordedById: supervisor.id,
             date: group.date,
-            effectiveDayTypeId,
+            effectiveDayTypeId: dayRule.dayTypeId,
             inTime: finalInTime,
             outTime: finalOutTime,
             hours: totalGrossHours,
@@ -1023,8 +1425,12 @@ async function main() {
       );
     } catch (err: any) {
       errors.push({
-        line: group.activities[0]?.rawLineIndex || 0,
+        line: group.activities[0]?.rawLineIndex || group.rawLineIndex || 0,
         employee: group.employeeIdentifier,
+        dateStr: group.dateStr,
+        inTime: group.inTime,
+        outTime: group.outTime,
+        additionalHours: group.additionalHours,
         reason: `DB Error: ${err.message || String(err)}`,
       });
     }
@@ -1036,21 +1442,25 @@ async function main() {
   console.log(`\n${CYAN}${BOLD}=====================================================${RESET}`);
   console.log(`${CYAN}${BOLD}                IMPORT SUMMARY REPORT                ${RESET}`);
   console.log(`${CYAN}${BOLD}=====================================================${RESET}`);
-  console.log(`🔹 Total Rows In File     : ${BOLD}${parsedRows.length}${RESET}`);
+  console.log(`🔹 Total Rows In File     : ${BOLD}${totalLines}${RESET}`);
   console.log(`✅ Successfully Submitted  : ${GREEN}${BOLD}${successCount}${RESET}`);
   console.log(`⚠️ Skipped / Errors        : ${errors.length > 0 ? RED : GREEN}${BOLD}${errors.length}${RESET}`);
   console.log(`⏱️ Duration                : ${duration} seconds`);
   console.log(`${CYAN}=====================================================${RESET}`);
 
+  // Auto-export all skipped records to skipped_labor_records.csv and skipped_records.csv
+  const skippedCsvPath = path.join(__dirname, 'skipped_records.csv');
+  const skippedLaborCsvPath = path.join(__dirname, 'skipped_labor_records.csv');
+
   if (errors.length > 0) {
     console.log(`\n${RED}${BOLD}❌ SKIPPED / REJECTED RECORDS TABLE:${RESET}`);
-    console.log(`${CYAN}-------------------------------------------------------------------------------------------------------------${RESET}`);
+    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
     console.log(
       `${BOLD}${'Line'.padEnd(6)} | ${'Employee'.padEnd(12)} | ${'Date'.padEnd(12)} | ${'Activity'.padEnd(16)} | ${'In/Out'.padEnd(13)} | ${'Hours'.padEnd(6)} | Reason${RESET}`
     );
-    console.log(`${CYAN}-------------------------------------------------------------------------------------------------------------${RESET}`);
+    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
 
-    const previewLimit = 20;
+    const previewLimit = 25;
     const previewList = errors.slice(0, previewLimit);
 
     previewList.forEach((e) => {
@@ -1066,21 +1476,27 @@ async function main() {
     if (errors.length > previewLimit) {
       console.log(`${YELLOW}... and ${errors.length - previewLimit} more skipped records.${RESET}`);
     }
-    console.log(`${CYAN}-------------------------------------------------------------------------------------------------------------${RESET}`);
+    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
 
-    // Auto-export all skipped records to skipped_records.csv
-    const skippedCsvPath = path.join(__dirname, 'skipped_records.csv');
-    const csvHeader = 'Line,Employee,Date,In,Out,Activity,Hours,Reason';
+    const csvHeader = 'Line,Employee,Date,In,Out,Activity,Hours,Additional_Hours,Reason\n';
     const csvRows = errors.map((e) => {
       const cleanReason = `"${(e.reason || '').replace(/"/g, '""')}"`;
-      return `${e.line},${e.employee},${e.dateStr || ''},${e.inTime || ''},${e.outTime || ''},${e.activityCode || ''},${e.hours || ''},${cleanReason}`;
-    });
-    fs.writeFileSync(skippedCsvPath, [csvHeader, ...csvRows].join('\n'), 'utf-8');
+      const cleanEmp = `"${(e.employee || '').replace(/"/g, '""')}"`;
+      const cleanAct = `"${(e.activityCode || '').replace(/"/g, '""')}"`;
+      return `${e.line},${cleanEmp},${e.dateStr || ''},${e.inTime || ''},${e.outTime || ''},${cleanAct},${e.hours !== undefined ? e.hours : ''},${e.additionalHours !== undefined ? e.additionalHours : ''},${cleanReason}`;
+    }).join('\n');
 
-    console.log(`\n${YELLOW}${BOLD}📁 Skipped Records Exported to File:${RESET} ${BOLD}${skippedCsvPath}${RESET}`);
-    console.log(`${YELLOW}👉 You can open 'skipped_records.csv' in Excel to inspect and correct all skipped rows.${RESET}\n`);
+    fs.writeFileSync(skippedCsvPath, csvHeader + csvRows, 'utf-8');
+    fs.writeFileSync(skippedLaborCsvPath, csvHeader + csvRows, 'utf-8');
+
+    console.log(`\n${YELLOW}${BOLD}📁 Skipped Records Exported to File:${RESET}`);
+    console.log(`   ${BOLD}1. ${skippedLaborCsvPath}${RESET}`);
+    console.log(`   ${BOLD}2. ${skippedCsvPath}${RESET}`);
+    console.log(`${YELLOW}👉 You can open 'skipped_labor_records.csv' in Excel to inspect and correct all skipped rows.${RESET}\n`);
   } else {
-    console.log(`\n${GREEN}${BOLD}🎉 ALL RECORDS SUBMITTED SUCCESSFULLY DIRECTLY TO DATABASE!${RESET}\n`);
+    if (fs.existsSync(skippedCsvPath)) fs.unlinkSync(skippedCsvPath);
+    if (fs.existsSync(skippedLaborCsvPath)) fs.unlinkSync(skippedLaborCsvPath);
+    console.log(`\n${GREEN}${BOLD}🎉 ALL RECORDS SUBMITTED SUCCESSFULLY DIRECTLY TO DATABASE! (0 ERRORS)${RESET}\n`);
   }
 }
 

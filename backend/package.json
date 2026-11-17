@@ -18,7 +18,6 @@
     "clean:entries": "tsx scripts/clean_operational_entries.ts",
     "test:equipment-erp": "tsx scripts/test_equipment_erp_upload.ts",
     "upload:labor": "tsx scripts/UPLODSCRIP.ts",
-    "upload:labour": "tsx scripts/UPLODSCRIP.ts",
     "upload:operator": "tsx scripts/UPLOAD_OPERATOR.ts",
     "upload:operators": "tsx scripts/UPLOAD_OPERATOR.ts",
     "upload:equipment": "tsx scripts/UPLOAD_EQUIPMENT.ts"

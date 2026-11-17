@@ -90,34 +90,46 @@ export async function getDayTypeRulesAndId(projectId: string, date: Date) {
 }
 
 /**
- * Helper: Recalculate hours and overtime for open (draft/submitted) time entries
- * when the calendar Day Type for a date is altered by Admin.
+ * Helper: Recalculate hours, day type and overtime for time entries
+ * when the calendar Day Type for a date is altered by Admin in Calendar Planner.
  */
 async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date): Promise<number> {
   const rules = await getDayTypeRulesAndId(projectId, date);
 
-  const unapproved = await prisma.mF_OP_TimeEntry.findMany({
+  const entriesToUpdate = await prisma.mF_OP_TimeEntry.findMany({
     where: {
       projectId,
       date,
-      status: { in: ['draft', 'submitted'] },
     },
     select: {
       id: true,
       hours: true,
       shiftHours: true,
+      employee: {
+        select: {
+          businessPartnerId: true,
+          corporateEmployee: { select: { employeeType: true } },
+        },
+      },
     },
   });
 
-  if (unapproved.length > 0) {
-    for (const entry of unapproved) {
+  if (entriesToUpdate.length > 0) {
+    for (const entry of entriesToUpdate) {
       const netHours = Number(entry.shiftHours ?? entry.hours) || 0;
+      const isExternal = Boolean(
+        entry.employee?.businessPartnerId ||
+        entry.employee?.corporateEmployee?.employeeType === 'external'
+      );
       let otHours = 0;
 
       if (netHours <= 0) {
         otHours = 0;
       } else if (rules.isAllOvertime) {
         otHours = netHours;
+      } else if (isExternal) {
+        const cap = rules.isSaturday ? 5.5 : 8.0;
+        otHours = netHours > cap ? Math.round((netHours - cap) * 100) / 100 : 0;
       } else if (rules.isSaturday) {
         // Saturday: Base standard is 5.5 hours (> 5.5 => +OT, < 5.5 => -OT)
         otHours = Math.round((netHours - 5.5) * 100) / 100;
@@ -139,7 +151,7 @@ async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date
     }
   }
 
-  return unapproved.length;
+  return entriesToUpdate.length;
 }
 
 // 1. GET /api/calendar/day-types — List all day types
