@@ -196,16 +196,17 @@ function calculateShiftAndOvertime(
 // Helper: Parse raw text file (supports tab-delimited, comma-delimited, semicolon)
 function parseRawFile(
   content: string,
-  validator: StrictDateValidator,
+  validator?: StrictDateValidator | null,
   allowExcelRepair: boolean = false
 ): ParseResult & { dateAudit: DatasetDateAudit } {
+  const activeVal = validator || new StrictDateValidator({ targetYear: 2026, targetMonth: 1 });
   const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length === 0) {
     return {
       rows: [],
       parseErrors: [],
       totalLines: 0,
-      dateAudit: validator.auditDataset([]),
+      dateAudit: activeVal.auditDataset([]),
     };
   }
 
@@ -283,7 +284,7 @@ function parseRawFile(
           if (p.length === 3) {
             const p0 = parseInt(p[0], 10);
             const p1 = parseInt(p[1], 10);
-            if (p0 === (validator as any).targetMonth && p1 !== (validator as any).targetMonth && p1 <= 31) {
+            if (p0 === (activeVal as any).targetMonth && p1 !== (activeVal as any).targetMonth && p1 <= 31) {
               rawD = `${String(p1).padStart(2, '0')}/${String(p0).padStart(2, '0')}/${p[2]}`;
             }
           }
@@ -293,7 +294,7 @@ function parseRawFile(
     }
   }
 
-  const dateAudit = validator.auditDataset(rawDatesWithLines);
+  const dateAudit = activeVal.auditDataset(rawDatesWithLines);
 
   for (let i = startIndex; i < lines.length; i++) {
     const rawTokens = lines[i].split(delimiter).map((t) => t.trim());
@@ -458,7 +459,7 @@ function parseRawFile(
 
     // Validate Date
     if (finalDateStr) {
-      const dateRes = validator.validateDate(finalDateStr, lineNum);
+      const dateRes = activeVal.validateDate(finalDateStr, lineNum);
       if (!dateRes.isValid || !dateRes.date) {
         parseErrors.push({
           line: lineNum,
@@ -468,7 +469,7 @@ function parseRawFile(
           outTime: outT,
           activityCode: act,
           hours: hoursVal,
-          reason: dateRes.error || `Invalid Date format: '${dt}'. Expected strictly ${validator.expectedFormatName} for period ${validator.targetPeriodString}.`,
+          reason: dateRes.error || `Invalid Date format: '${dt}'. Expected strictly ${activeVal.expectedFormatName} for period ${activeVal.targetPeriodString}.`,
         });
         hasLineError = true;
       }
@@ -688,6 +689,21 @@ async function main() {
   }
   console.log(`👷 Active Supervisor/Admin: ${BOLD}${supervisor.fullName} (@${supervisor.username})${RESET}`);
 
+  // Validate required target billing period parameters
+  if (!explicitYear || !explicitMonth) {
+    console.error(`\n${RED}${BOLD}❌ ERROR: Target Year and Month parameters are REQUIRED!${RESET}`);
+    console.log(`\n${CYAN}${BOLD}Please specify target Year and Month for upload validation:${RESET}`);
+    console.log(`   ${BOLD}--year=2026 --month=7${RESET}   (or --period=2026-07)`);
+    console.log(`\n${YELLOW}Example:${RESET}`);
+    console.log(`   npx ts-node backend/scripts/UPLODSCRIP.ts --subdomain=527 --year=2026 --month=7\n`);
+    process.exit(1);
+  }
+
+  const strictValidator = initLaborStrictValidator({
+    targetYear: explicitYear,
+    targetMonth: explicitMonth,
+  });
+
   if (!fs.existsSync(targetFilePath)) {
     console.log(`${YELLOW}⚠️ Input file not found: ${targetFilePath}${RESET}`);
     console.log(`📝 Generating template file with sample rows at: ${defaultFilePath}`);
@@ -705,9 +721,9 @@ async function main() {
 
     const sampleContent = [
       'In,Out,Activity,Hours,Employee,Date',
-      `07:00,17:00,03-11-13-50,8,${code1},2026-11-03`,
-      `07:00,17:00,03-20-00-00,8,${code1},2026-11-03`,
-      `07:30,17:00,03-11-13-50,8.5,${code2},2026-11-03`,
+      `07:00,17:00,03-11-13-50,8,${code1},03/07/2026`,
+      `07:00,17:00,03-20-00-00,8,${code1},03/07/2026`,
+      `07:30,17:00,03-11-13-50,8.5,${code2},03/07/2026`,
     ].join('\n');
 
     fs.writeFileSync(defaultFilePath, sampleContent, 'utf-8');
@@ -717,24 +733,41 @@ async function main() {
 
   console.log(`📂 Reading data from: ${BOLD}${targetFilePath}${RESET}`);
   const rawFileContent = fs.readFileSync(targetFilePath, 'utf-8');
-  const { rows: parsedRows, parseErrors, totalLines, dateAnalysis } = parseRawFile(rawFileContent, {
-    targetMonth: explicitMonth,
-    targetYear: explicitYear,
-  });
+  const { rows: parsedRows, parseErrors, totalLines, dateAudit } = parseRawFile(
+    rawFileContent,
+    strictValidator,
+    allowExcelRepair
+  );
 
-  console.log(`\n${CYAN}${BOLD}📅 DATE FORMAT AUDIT & HEALTH CHECK:${RESET}`);
-  console.log(`   - Detected Date Format  : ${BOLD}${dateAnalysis.detectedFormat}${RESET}`);
-  console.log(`   - Target Billing Period : ${BOLD}${dateAnalysis.dominantYear ? dateAnalysis.dominantYear + '-' + String(dateAnalysis.dominantMonth).padStart(2, '0') : 'Auto-detected'}${RESET}`);
-  console.log(`   - DMY Rows (DD/MM/YYYY) : ${dateAnalysis.dmyVotes} rows`);
-  console.log(`   - MDY Rows (MM/DD/YYYY) : ${dateAnalysis.mdyVotes} rows`);
-  console.log(`   - Ambiguous (Day <= 12) : ${dateAnalysis.ambiguousCount} rows`);
-  if (dateAnalysis.isMixed) {
-    console.log(`   ${YELLOW}⚠️ Note: Excel mixed-locale export detected. Auto-correcting ambiguous days 1-12 to match billing month.${RESET}`);
+  console.log(`\n${CYAN}${BOLD}=====================================================${RESET}`);
+  console.log(`${CYAN}${BOLD}      STRICT DATE FORMAT & PERIOD AUDIT REPORT       ${RESET}`);
+  console.log(`${CYAN}${BOLD}=====================================================${RESET}`);
+  console.log(`📌 Enforced Standard Format: ${BOLD}DD/MM/YYYY${RESET} (Day/Month/Year)`);
+  console.log(`📌 Target Billing Period   : ${BOLD}${strictValidator.targetPeriodString}${RESET}`);
+  console.log(`📋 Total Dates Checked     : ${dateAudit.totalDatesChecked}`);
+  console.log(`✅ Valid In-Period Dates   : ${GREEN}${BOLD}${dateAudit.validDatesCount}${RESET}`);
+  console.log(`❌ Format / Period Errors  : ${dateAudit.invalidDatesCount > 0 ? RED : GREEN}${BOLD}${dateAudit.invalidDatesCount}${RESET}`);
+  console.log(`${CYAN}${BOLD}=====================================================${RESET}\n`);
+
+  if (dateAudit.invalidDatesCount > 0) {
+    console.error(`${RED}${BOLD}⛔ UPLOAD ABORTED: Found ${dateAudit.invalidDatesCount} rows with date format or month mismatches!${RESET}`);
+    console.log(`${YELLOW}Every date must strictly be in DD/MM/YYYY format and belong to ${strictValidator.targetPeriodString}.${RESET}\n`);
+
+    console.log(`${RED}Sample Format / Period Violations:${RESET}`);
+    dateAudit.formatErrors.slice(0, 10).forEach((err) => {
+      console.log(` - Line ${err.line}: Date '${err.rawDate}' -> ${err.reason}`);
+    });
+    if (dateAudit.formatErrors.length > 10) {
+      console.log(` ... and ${dateAudit.formatErrors.length - 10} more rows.`);
+    }
+
+    const skippedCsvPath = path.join(__dirname, 'skipped_labor_records.csv');
+    const header = 'Line,Employee,Date,Reason\n';
+    const rows = dateAudit.formatErrors.map((e) => `${e.line},UNKNOWN,"${e.rawDate}","${e.reason.replace(/"/g, '""')}"\n`).join('');
+    fs.writeFileSync(skippedCsvPath, header + rows, 'utf-8');
+    console.log(`\n${YELLOW}📁 All ${dateAudit.invalidDatesCount} date errors exported to:${RESET} ${BOLD}${skippedCsvPath}${RESET}\n`);
+    process.exit(1);
   }
-  if (parseErrors.length > 0) {
-    console.log(`   ${RED}⚠️ Date Format / Row Validation Errors Detected: ${parseErrors.length} rows failed validation.${RESET}`);
-  }
-  console.log('');
 
   if (parsedRows.length === 0 && parseErrors.length === 0) {
     console.log(`${YELLOW}⚠️ No data rows found in file.${RESET}`);
@@ -938,8 +971,8 @@ async function main() {
       continue;
     }
 
-    const dateRes = resolveLaborDateStrict(dtStr);
-    if (!dateRes.date) {
+    const dateRes = resolveLaborDateStrict(dtStr, r.rawLineIndex);
+    if (!dateRes.isValid || !dateRes.date) {
       errors.push({
         line: r.rawLineIndex,
         employee: empKey,
@@ -949,7 +982,7 @@ async function main() {
         activityCode: r.activityCode,
         hours: r.hours,
         additionalHours: r.additionalHours,
-        reason: dateRes.error || `Invalid Date format or invalid calendar day: '${dtStr}'`,
+        reason: dateRes.error || `Invalid Date format: '${dtStr}'. Expected strictly DD/MM/YYYY.`,
       });
       continue;
     }

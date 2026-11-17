@@ -1234,7 +1234,9 @@ export function EquipmentLogsView({
         ) : (
           filteredEquipment.map((eq) => {
             const isExpanded = expandedId === eq.id;
-            const mappedOp = operators.find((o) => o.id === eq.operatorId);
+            const linkedOps = operators.filter(
+              (o) => o.id === eq.operatorId || o.assignedEquipmentId === eq.id || (o.equipmentSplits || []).some((s) => s.equipmentId === eq.id)
+            );
             const primaryUnit: EquipmentRatingUnit = normalizeRatingUnit(eq.primaryUnit || eq.activeUnit);
             const additionalUnit = eq.additionalUnit ? normalizeRatingUnit(eq.additionalUnit) : null;
             const summary = getEquipmentSummary(eq);
@@ -1375,10 +1377,15 @@ export function EquipmentLogsView({
 
                       {/* Operator & Shared Shift Badges */}
                       <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                        {mappedOp ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                            <HardHat size={11} /> {mappedOp.employeeNumber ? `${mappedOp.employeeNumber} · ` : ''}{mappedOp.callingName}
-                          </span>
+                        {linkedOps.length > 0 ? (
+                          linkedOps.map((op) => (
+                            <span
+                              key={op.id}
+                              className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                            >
+                              <HardHat size={11} /> {op.employeeNumber ? `${op.employeeNumber} · ` : ''}{op.callingName}
+                            </span>
+                          ))
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
                             No Operator Linked

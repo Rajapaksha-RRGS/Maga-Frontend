@@ -1175,23 +1175,14 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
       },
     });
 
-    // 2. If equipmentId was provided (or equipment exists), also link to DailyEquipmentAssignment
-    let targetEquipmentId = equipmentId;
-    if (!targetEquipmentId) {
-      const firstEq = await prisma.mF_P_Equipment.findFirst({
-        where: { projectId, status: 'active' },
-        select: { id: true },
-      });
-      targetEquipmentId = firstEq?.id;
-    }
-
-    if (targetEquipmentId) {
+    // 2. Only link to DailyEquipmentAssignment if equipmentId was explicitly provided
+    if (equipmentId) {
       for (const opId of operatorIds) {
         await prisma.mF_OP_DailyEquipmentAssignment.upsert({
           where: {
             dailySheetId_equipmentId: {
               dailySheetId: dailySheet.id,
-              equipmentId: targetEquipmentId,
+              equipmentId,
             },
           },
           update: {
@@ -1200,7 +1191,7 @@ export const assignOperators = async (req: Request, res: Response): Promise<void
           create: {
             dailySheetId: dailySheet.id,
             operatorId: opId,
-            equipmentId: targetEquipmentId,
+            equipmentId,
           },
         });
       }
