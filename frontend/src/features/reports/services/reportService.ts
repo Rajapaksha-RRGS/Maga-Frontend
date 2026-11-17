@@ -87,6 +87,7 @@ export interface ReportFilters {
   employeeType?: '' | 'internal' | 'external';
   equipmentQuery?: string;
   condition?: string;
+  status?: string;
 }
 
 // ── 1. Summary Report Types ──────────────────────────────────────────────────

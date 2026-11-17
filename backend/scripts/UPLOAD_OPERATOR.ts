@@ -28,7 +28,12 @@
 import fs from 'fs';
 import path from 'path';
 import prisma from '../src/config/prisma';
-import { DateResolutionEngine, DateAnalysisResult, DateResolveResult } from '../src/utils/dateResolutionEngine';
+import {
+  StrictDateValidator,
+  StrictDateConfig,
+  StrictDateResult,
+  DatasetDateAudit,
+} from '../src/utils/dateResolutionEngine';
 
 // ANSI Colors for clear terminal output
 const GREEN = '\x1b[32m';
@@ -111,39 +116,27 @@ export function normalizeTime(val?: string | null): string | null {
   return null;
 }
 
-// Shared Global Date Resolution Engine instance
-let activeDateEngine = new DateResolutionEngine();
-let activeDateAnalysis: DateAnalysisResult = {
-  dmyVotes: 0,
-  mdyVotes: 0,
-  isoVotes: 0,
-  ambiguousCount: 0,
-  dominantMonth: null,
-  dominantYear: null,
-  isMixed: false,
-  detectedFormat: 'AMBIGUOUS',
-};
+// Shared active strict validator instance
+let activeValidator: StrictDateValidator | null = null;
 
-export function initDateResolution(
-  rawDates: string[],
-  options?: { targetMonth?: number | null; targetYear?: number | null; strictPeriod?: boolean }
-) {
-  activeDateEngine = new DateResolutionEngine(options);
-  activeDateAnalysis = activeDateEngine.analyzeDataset(rawDates);
-  return { engine: activeDateEngine, analysis: activeDateAnalysis };
+export function initStrictDateValidator(config: StrictDateConfig): StrictDateValidator {
+  activeValidator = new StrictDateValidator(config);
+  return activeValidator;
 }
 
-// Helper: Parse date string into UTC Date object using active engine
+// Helper: Parse date string into UTC Date object with strict target period validation
 export function parseDateInput(val?: string | null): Date | null {
-  if (!val) return null;
-  const res = activeDateEngine.resolveDate(val, activeDateAnalysis);
-  return res.date;
+  if (!val || !activeValidator) return null;
+  const res = activeValidator.validateDate(val);
+  return res.isValid ? res.date : null;
 }
 
-// Helper: Resolve date with full error diagnostics
-export function resolveDateStrict(val?: string | null): DateResolveResult {
-  if (!val) return { date: null, error: 'Missing Date' };
-  return activeDateEngine.resolveDate(val, activeDateAnalysis);
+// Helper: Resolve date with full error diagnostics against strict target period
+export function validateDateStrict(val?: string | null, lineNum?: number): StrictDateResult {
+  if (!activeValidator) {
+    return { isValid: false, date: null, error: 'Strict validator not initialized' };
+  }
+  return activeValidator.validateDate(val, lineNum);
 }
 
 // Helper: Check if equipment code indicates idle or unassigned machine
@@ -291,24 +284,19 @@ function calculateShiftAndOvertime(
   };
 }
 
-interface ParseRawFileOptions {
-  targetMonth?: number | null;
-  targetYear?: number | null;
-  strictPeriod?: boolean;
-}
-
 // Helper: Parse CSV / TSV file with robust delimiters and header detection
 function parseRawFile(
   content: string,
-  options?: ParseRawFileOptions
-): OperatorParseResult & { dateAnalysis: DateAnalysisResult } {
+  validator: StrictDateValidator,
+  allowExcelRepair: boolean = false
+): OperatorParseResult & { dateAudit: DatasetDateAudit } {
   const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length === 0) {
     return {
       rows: [],
       parseErrors: [],
       totalLines: 0,
-      dateAnalysis: activeDateAnalysis,
+      dateAudit: validator.auditDataset([]),
     };
   }
 
@@ -420,18 +408,29 @@ function parseRawFile(
   const rows: RawOperatorRow[] = [];
   const parseErrors: ProcessError[] = [];
 
-  // Pre-scan all date tokens across the dataset to initialize the Date Resolution Engine
-  const rawDates: string[] = [];
+  // Collect all raw dates with line numbers for strict audit
+  const rawDatesWithLines: Array<{ line: number; rawDate: string }> = [];
   if (colMap.date >= 0) {
     for (let i = startIndex; i < lines.length; i++) {
       const tokens = lines[i].split(delimiter).map((t) => t.trim().replace(/^["']+|["']+$/g, ''));
       if (tokens.length > colMap.date && tokens[colMap.date]) {
-        rawDates.push(tokens[colMap.date]);
+        let rawD = tokens[colMap.date];
+        if (allowExcelRepair) {
+          const p = rawD.split(/[\/\-\.]/);
+          if (p.length === 3) {
+            const p0 = parseInt(p[0], 10);
+            const p1 = parseInt(p[1], 10);
+            if (p0 === (validator as any).targetMonth && p1 !== (validator as any).targetMonth && p1 <= 31) {
+              rawD = `${String(p1).padStart(2, '0')}/${String(p0).padStart(2, '0')}/${p[2]}`;
+            }
+          }
+        }
+        rawDatesWithLines.push({ line: i + 1, rawDate: rawD });
       }
     }
   }
 
-  const { analysis: dateAnalysis } = initDateResolution(rawDates, options);
+  const dateAudit = validator.auditDataset(rawDatesWithLines);
 
   for (let i = startIndex; i < lines.length; i++) {
     const rawTokens = lines[i].split(delimiter).map((t) => t.trim().replace(/^[\"']+|[\"']+$/g, ''));
@@ -459,6 +458,18 @@ function parseRawFile(
     const unt = colMap.unit >= 0 && colMap.unit < rawTokens.length ? rawTokens[colMap.unit] : '';
     const hrsStr = colMap.hours >= 0 && colMap.hours < rawTokens.length ? rawTokens[colMap.hours] : '';
 
+    let finalDateStr = dt;
+    if (allowExcelRepair && dt) {
+      const p = dt.split(/[\/\-\.]/);
+      if (p.length === 3) {
+        const p0 = parseInt(p[0], 10);
+        const p1 = parseInt(p[1], 10);
+        if (p0 === (validator as any).targetMonth && p1 !== (validator as any).targetMonth && p1 <= 31) {
+          finalDateStr = `${String(p1).padStart(2, '0')}/${String(p0).padStart(2, '0')}/${p[2]}`;
+        }
+      }
+    }
+
     // Skip completely blank rows with no meaningful fields
     if (!op && !eq && !hrsStr && !inT && !outT && !dt) continue;
 
@@ -472,7 +483,7 @@ function parseRawFile(
         equipment: eq,
         condition: cond,
         unit: unt,
-        dateStr: dt,
+        dateStr: finalDateStr,
         inTime: inT,
         outTime: outT,
         reason: 'Missing Operator / Employee Code',
@@ -491,7 +502,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           reason: `Invalid In Time format: '${inT}'`,
@@ -513,7 +524,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           reason: `Invalid Out Time format: '${outT}'`,
@@ -532,7 +543,7 @@ function parseRawFile(
         equipment: eq,
         condition: cond,
         unit: unt,
-        dateStr: dt,
+        dateStr: finalDateStr,
         inTime: inT,
         outTime: outT,
         reason: `In Time and Out Time cannot be identical ('${inT.trim()}'). Shift duration cannot be 0.`,
@@ -551,7 +562,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           reason: `Invalid Hours format (not a valid number): '${hrsStr}'`,
@@ -564,7 +575,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           hours: parsed,
@@ -587,7 +598,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           reason: `Invalid Additional Hours format: '${addHrsStr}'`,
@@ -600,7 +611,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           additionalHours: parsedAdd,
@@ -628,19 +639,19 @@ function parseRawFile(
       });
       hasLineError = true;
     } else {
-      const dateRes = resolveDateStrict(dt);
-      if (dateRes.error || !dateRes.date) {
+      const dateRes = validator.validateDate(finalDateStr, lineNum);
+      if (!dateRes.isValid || !dateRes.date) {
         parseErrors.push({
           line: lineNum,
           operator: op || 'UNKNOWN',
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           hours: hoursVal,
-          reason: dateRes.error || `Invalid Date format or invalid calendar day: '${dt}'`,
+          reason: dateRes.error || `Invalid Date format: '${dt}'. Expected strictly ${validator.expectedFormatName} for period ${validator.targetPeriodString}.`,
         });
         hasLineError = true;
       }
@@ -656,7 +667,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           hours: hoursVal,
@@ -676,7 +687,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           hours: hoursVal,
@@ -697,7 +708,7 @@ function parseRawFile(
           equipment: eq,
           condition: cond,
           unit: unt,
-          dateStr: dt,
+          dateStr: finalDateStr,
           inTime: inT,
           outTime: outT,
           hours: hoursVal,
@@ -714,7 +725,7 @@ function parseRawFile(
       inTime: normIn,
       outTime: normOut,
       additionalHours: addHoursVal,
-      dateStr: dt,
+      dateStr: finalDateStr,
       equipmentIdentifier: eq || undefined,
       condition: cond || undefined,
       unit: unt || undefined,
@@ -723,7 +734,7 @@ function parseRawFile(
     });
   }
 
-  return { rows, parseErrors, totalLines: lines.length - startIndex, dateAnalysis };
+  return { rows, parseErrors, totalLines: lines.length - startIndex, dateAudit };
 }
 
 async function main() {
@@ -744,6 +755,7 @@ async function main() {
   let explicitSupervisor: string | null = null;
   let explicitMonth: number | null = null;
   let explicitYear: number | null = null;
+  const allowExcelRepair = rawArgs.some((a) => a.includes('--allow-excel-repair') || a.includes('--auto-fix-excel'));
   const positionalArgs: string[] = [];
 
   for (const a of rawArgs) {
@@ -884,6 +896,21 @@ async function main() {
   }
   console.log(`👷 Active Supervisor/Admin: ${BOLD}${supervisor.fullName} (@${supervisor.username})${RESET}`);
 
+  // Validate required target billing period parameters
+  if (!explicitYear || !explicitMonth) {
+    console.error(`\n${RED}${BOLD}❌ ERROR: Target Year and Month parameters are REQUIRED!${RESET}`);
+    console.log(`\n${CYAN}${BOLD}Please specify target Year and Month for upload validation:${RESET}`);
+    console.log(`   ${BOLD}--year=2026 --month=7${RESET}   (or --period=2026-07)`);
+    console.log(`\n${YELLOW}Example:${RESET}`);
+    console.log(`   npx ts-node backend/scripts/UPLOAD_OPERATOR.ts --subdomain=527 --supervisor=admin527 --year=2026 --month=7\n`);
+    process.exit(1);
+  }
+
+  const strictValidator = initStrictDateValidator({
+    targetYear: explicitYear,
+    targetMonth: explicitMonth,
+  });
+
   if (!fs.existsSync(targetFilePath)) {
     console.error(`${RED}❌ Error: Input file not found: ${targetFilePath}${RESET}`);
     process.exit(1);
@@ -891,25 +918,42 @@ async function main() {
 
   console.log(`📂 Reading data from: ${BOLD}${targetFilePath}${RESET}`);
   const rawFileContent = fs.readFileSync(targetFilePath, 'utf-8');
-  const { rows: parsedRows, parseErrors, totalLines, dateAnalysis } = parseRawFile(rawFileContent, {
-    targetMonth: explicitMonth,
-    targetYear: explicitYear,
-  });
+  const { rows: parsedRows, parseErrors, totalLines, dateAudit } = parseRawFile(
+    rawFileContent,
+    strictValidator,
+    allowExcelRepair
+  );
   const errors: ProcessError[] = [...parseErrors];
 
-  console.log(`\n${CYAN}${BOLD}📅 DATE FORMAT AUDIT & HEALTH CHECK:${RESET}`);
-  console.log(`   - Detected Date Format  : ${BOLD}${dateAnalysis.detectedFormat}${RESET}`);
-  console.log(`   - Target Billing Period : ${BOLD}${dateAnalysis.dominantYear ? dateAnalysis.dominantYear + '-' + String(dateAnalysis.dominantMonth).padStart(2, '0') : 'Auto-detected'}${RESET}`);
-  console.log(`   - DMY Rows (DD/MM/YYYY) : ${dateAnalysis.dmyVotes} rows`);
-  console.log(`   - MDY Rows (MM/DD/YYYY) : ${dateAnalysis.mdyVotes} rows`);
-  console.log(`   - Ambiguous (Day <= 12) : ${dateAnalysis.ambiguousCount} rows`);
-  if (dateAnalysis.isMixed) {
-    console.log(`   ${YELLOW}⚠️ Note: Excel mixed-locale export detected. Auto-correcting ambiguous days 1-12 to match billing month.${RESET}`);
+  console.log(`\n${CYAN}${BOLD}=====================================================${RESET}`);
+  console.log(`${CYAN}${BOLD}      STRICT DATE FORMAT & PERIOD AUDIT REPORT       ${RESET}`);
+  console.log(`${CYAN}${BOLD}=====================================================${RESET}`);
+  console.log(`📌 Enforced Standard Format: ${BOLD}DD/MM/YYYY${RESET} (Day/Month/Year)`);
+  console.log(`📌 Target Billing Period   : ${BOLD}${strictValidator.targetPeriodString}${RESET}`);
+  console.log(`📋 Total Dates Checked     : ${dateAudit.totalDatesChecked}`);
+  console.log(`✅ Valid In-Period Dates   : ${GREEN}${BOLD}${dateAudit.validDatesCount}${RESET}`);
+  console.log(`❌ Format / Period Errors  : ${dateAudit.invalidDatesCount > 0 ? RED : GREEN}${BOLD}${dateAudit.invalidDatesCount}${RESET}`);
+  console.log(`${CYAN}${BOLD}=====================================================${RESET}\n`);
+
+  if (dateAudit.invalidDatesCount > 0) {
+    console.error(`${RED}${BOLD}⛔ UPLOAD ABORTED: Found ${dateAudit.invalidDatesCount} rows with date format or month mismatches!${RESET}`);
+    console.log(`${YELLOW}Every date must strictly be in DD/MM/YYYY format and belong to ${strictValidator.targetPeriodString}.${RESET}\n`);
+
+    console.log(`${RED}Sample Format / Period Violations:${RESET}`);
+    dateAudit.formatErrors.slice(0, 10).forEach((err) => {
+      console.log(` - Line ${err.line}: Date '${err.rawDate}' -> ${err.reason}`);
+    });
+    if (dateAudit.formatErrors.length > 10) {
+      console.log(` ... and ${dateAudit.formatErrors.length - 10} more rows.`);
+    }
+
+    const skippedCsvPath = path.join(__dirname, 'skipped_operator_records.csv');
+    const header = 'Line,Operator,Date,Reason\n';
+    const rows = dateAudit.formatErrors.map((e) => `${e.line},UNKNOWN,"${e.rawDate}","${e.reason.replace(/"/g, '""')}"\n`).join('');
+    fs.writeFileSync(skippedCsvPath, header + rows, 'utf-8');
+    console.log(`\n${YELLOW}📁 All ${dateAudit.invalidDatesCount} date errors exported to:${RESET} ${BOLD}${skippedCsvPath}${RESET}\n`);
+    process.exit(1);
   }
-  if (errors.length > 0) {
-    console.log(`   ${RED}⚠️ Date Format / Row Validation Errors Detected: ${errors.length} rows failed validation.${RESET}`);
-  }
-  console.log('');
 
   if (parsedRows.length === 0 && errors.length === 0) {
     console.log(`${YELLOW}⚠️ No data rows found in file.${RESET}`);
@@ -1145,9 +1189,9 @@ async function main() {
       continue;
     }
 
-    // Validation 3: Date Parsing with Engine Diagnostics
-    const dateRes = resolveDateStrict(dtStr);
-    if (!dateRes.date) {
+    // Validation 3: Date Parsing with Strict Period Validation
+    const dateRes = validateDateStrict(dtStr, r.rawLineIndex);
+    if (!dateRes.isValid || !dateRes.date) {
       errors.push({
         line: r.rawLineIndex,
         operator: opKey,

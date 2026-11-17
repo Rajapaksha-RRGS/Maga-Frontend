@@ -22,7 +22,12 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 import fs from 'fs';
 import prisma from '../src/config/prisma';
-import { DateResolutionEngine, DateAnalysisResult, DateResolveResult } from '../src/utils/dateResolutionEngine';
+import {
+  StrictDateValidator,
+  StrictDateConfig,
+  StrictDateResult,
+  DatasetDateAudit,
+} from '../src/utils/dateResolutionEngine';
 
 // ANSI Colors for clear terminal output
 const GREEN = '\x1b[32m';
@@ -102,39 +107,27 @@ function normalizeTime(val?: string | null): string | null {
   return null;
 }
 
-// Shared Global Date Resolution Engine instance for Labor
-let activeLaborDateEngine = new DateResolutionEngine();
-let activeLaborDateAnalysis: DateAnalysisResult = {
-  dmyVotes: 0,
-  mdyVotes: 0,
-  isoVotes: 0,
-  ambiguousCount: 0,
-  dominantMonth: null,
-  dominantYear: null,
-  isMixed: false,
-  detectedFormat: 'AMBIGUOUS',
-};
+// Shared active strict validator instance for Labor
+let activeLaborValidator: StrictDateValidator | null = null;
 
-export function initLaborDateResolution(
-  rawDates: string[],
-  options?: { targetMonth?: number | null; targetYear?: number | null; strictPeriod?: boolean }
-) {
-  activeLaborDateEngine = new DateResolutionEngine(options);
-  activeLaborDateAnalysis = activeLaborDateEngine.analyzeDataset(rawDates);
-  return { engine: activeLaborDateEngine, analysis: activeLaborDateAnalysis };
+export function initLaborStrictValidator(config: StrictDateConfig): StrictDateValidator {
+  activeLaborValidator = new StrictDateValidator(config);
+  return activeLaborValidator;
 }
 
-// Helper: Parse date string into UTC Date object using active engine
+// Helper: Parse date string into UTC Date object with strict target period validation
 export function parseDateInput(val?: string | null): Date | null {
-  if (!val) return null;
-  const res = activeLaborDateEngine.resolveDate(val, activeLaborDateAnalysis);
-  return res.date;
+  if (!val || !activeLaborValidator) return null;
+  const res = activeLaborValidator.validateDate(val);
+  return res.isValid ? res.date : null;
 }
 
-// Helper: Resolve date with full error diagnostics
-export function resolveLaborDateStrict(val?: string | null): DateResolveResult {
-  if (!val) return { date: null, error: 'Missing Date' };
-  return activeLaborDateEngine.resolveDate(val, activeLaborDateAnalysis);
+// Helper: Resolve date with full error diagnostics against strict target period
+export function resolveLaborDateStrict(val?: string | null, lineNum?: number): StrictDateResult {
+  if (!activeLaborValidator) {
+    return { isValid: false, date: null, error: 'Strict date validator not initialized' };
+  }
+  return activeLaborValidator.validateDate(val, lineNum);
 }
 
 // Helper: Compute lunch break hours
@@ -203,15 +196,16 @@ function calculateShiftAndOvertime(
 // Helper: Parse raw text file (supports tab-delimited, comma-delimited, semicolon)
 function parseRawFile(
   content: string,
-  options?: { targetMonth?: number | null; targetYear?: number | null; strictPeriod?: boolean }
-): ParseResult & { dateAnalysis: DateAnalysisResult } {
+  validator: StrictDateValidator,
+  allowExcelRepair: boolean = false
+): ParseResult & { dateAudit: DatasetDateAudit } {
   const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length === 0) {
     return {
       rows: [],
       parseErrors: [],
       totalLines: 0,
-      dateAnalysis: activeLaborDateAnalysis,
+      dateAudit: validator.auditDataset([]),
     };
   }
 
@@ -277,18 +271,29 @@ function parseRawFile(
   const rows: RawRowInput[] = [];
   const parseErrors: ProcessError[] = [];
 
-  // Pre-scan all date tokens across the dataset to initialize the Labor Date Resolution Engine
-  const rawDates: string[] = [];
+  // Collect all raw dates with line numbers for strict audit
+  const rawDatesWithLines: Array<{ line: number; rawDate: string }> = [];
   if (colMap.date >= 0) {
     for (let i = startIndex; i < lines.length; i++) {
       const tokens = lines[i].split(delimiter).map((t) => t.trim().replace(/^["']+|["']+$/g, ''));
       if (tokens.length > colMap.date && tokens[colMap.date]) {
-        rawDates.push(tokens[colMap.date]);
+        let rawD = tokens[colMap.date];
+        if (allowExcelRepair) {
+          const p = rawD.split(/[\/\-\.]/);
+          if (p.length === 3) {
+            const p0 = parseInt(p[0], 10);
+            const p1 = parseInt(p[1], 10);
+            if (p0 === (validator as any).targetMonth && p1 !== (validator as any).targetMonth && p1 <= 31) {
+              rawD = `${String(p1).padStart(2, '0')}/${String(p0).padStart(2, '0')}/${p[2]}`;
+            }
+          }
+        }
+        rawDatesWithLines.push({ line: i + 1, rawDate: rawD });
       }
     }
   }
 
-  const { analysis: dateAnalysis } = initLaborDateResolution(rawDates, options);
+  const dateAudit = validator.auditDataset(rawDatesWithLines);
 
   for (let i = startIndex; i < lines.length; i++) {
     const rawTokens = lines[i].split(delimiter).map((t) => t.trim());
@@ -313,6 +318,18 @@ function parseRawFile(
     const outT = colMap.out >= 0 && colMap.out < rawTokens.length ? rawTokens[colMap.out] : '';
     const dt = colMap.date >= 0 && colMap.date < rawTokens.length ? rawTokens[colMap.date] : '';
     const addHrsStr = colMap.additionalHours >= 0 && colMap.additionalHours < rawTokens.length ? rawTokens[colMap.additionalHours] : '';
+
+    let finalDateStr = dt;
+    if (allowExcelRepair && dt) {
+      const p = dt.split(/[\/\-\.]/);
+      if (p.length === 3) {
+        const p0 = parseInt(p[0], 10);
+        const p1 = parseInt(p[1], 10);
+        if (p0 === (validator as any).targetMonth && p1 !== (validator as any).targetMonth && p1 <= 31) {
+          finalDateStr = `${String(p1).padStart(2, '0')}/${String(p0).padStart(2, '0')}/${p[2]}`;
+        }
+      }
+    }
 
     // Skip completely blank rows with no meaningful fields
     if (!emp && !act && !hrsStr && !inT && !outT && !dt) continue;
@@ -440,9 +457,9 @@ function parseRawFile(
     }
 
     // Validate Date
-    if (dt) {
-      const dateRes = resolveLaborDateStrict(dt);
-      if (dateRes.error || !dateRes.date) {
+    if (finalDateStr) {
+      const dateRes = validator.validateDate(finalDateStr, lineNum);
+      if (!dateRes.isValid || !dateRes.date) {
         parseErrors.push({
           line: lineNum,
           employee: emp || 'UNKNOWN',
@@ -451,7 +468,7 @@ function parseRawFile(
           outTime: outT,
           activityCode: act,
           hours: hoursVal,
-          reason: dateRes.error || `Invalid Date format or invalid calendar day: '${dt}'`,
+          reason: dateRes.error || `Invalid Date format: '${dt}'. Expected strictly ${validator.expectedFormatName} for period ${validator.targetPeriodString}.`,
         });
         hasLineError = true;
       }
@@ -466,12 +483,12 @@ function parseRawFile(
       additionalHours: addHoursVal,
       inTime: normIn,
       outTime: normOut,
-      dateStr: dt,
+      dateStr: finalDateStr,
       rawLineIndex: lineNum,
     });
   }
 
-  return { rows, parseErrors, totalLines: lines.length - startIndex, dateAnalysis };
+  return { rows, parseErrors, totalLines: lines.length - startIndex, dateAudit };
 }
 
 async function main() {
@@ -495,6 +512,7 @@ async function main() {
   let explicitDate: string | null = null;
   let explicitMonth: number | null = null;
   let explicitYear: number | null = null;
+  const allowExcelRepair = rawArgs.some((a) => a.includes('--allow-excel-repair') || a.includes('--auto-fix-excel'));
   const positionalArgs: string[] = [];
 
   for (const a of rawArgs) {

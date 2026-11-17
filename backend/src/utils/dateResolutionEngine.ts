@@ -1,254 +1,222 @@
 /**
  * dateResolutionEngine.ts
  * 
- * Industrial-grade Date Format Detection, Anomaly Resolution,
- * and Cross-Month Contamination Protection Engine.
+ * Strict Single-Format Date Validator and Month Boundary Enforcement Engine.
  * 
- * Handles:
- * 1. Excel Mixed-Locale Anomalies (e.g. days 1-12 exported as MM/DD/YYYY, days 13-31 as DD/MM/YYYY)
- * 2. Cross-Month Contamination Protection (stops data intended for one month spilling into others)
- * 3. Leap Year & Calendar Bounds Validation (e.g. rejects 29/02 on non-leap years, 31/04, etc.)
- * 4. Comprehensive Dataset Auditing & Error Ledger with Line-by-Line Tracking
+ * Rules:
+ * 1. Single Strict Format: DD/MM/YYYY (or DD-MM-YYYY, or ISO YYYY-MM-DD).
+ *    - Part 0 is strictly DAY (1-31).
+ *    - Part 1 is strictly MONTH (1-12).
+ *    - Part 2 is strictly YEAR (YYYY).
+ *    NO auto-guessing. NO automatic swapping of day and month.
+ * 
+ * 2. Explicit Target Period Parameters:
+ *    - targetYear (e.g. 2026)
+ *    - targetMonth (e.g. 7 for July)
+ * 
+ * 3. Strict Boundary Validation:
+ *    - If row's year !== targetYear -> ERROR: Year mismatch.
+ *    - If row's month !== targetMonth -> ERROR: Month mismatch (Date must be DD/MM/YYYY).
+ *    - If row's day is invalid for that month/year (e.g. 31/02, 31/04) -> ERROR: Invalid calendar day.
+ * 
+ * 4. Error Transparency:
+ *    - Collects all format/date errors with line numbers.
+ *    - Aborts upload if any date is invalid or out-of-period.
  */
 
-export interface DateAnalysisResult {
-  dmyVotes: number;
-  mdyVotes: number;
-  isoVotes: number;
-  ambiguousCount: number;
-  dominantMonth: number | null;
-  dominantYear: number | null;
-  isMixed: boolean;
-  detectedFormat: 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'MIXED_EXCEL_ANOMALY' | 'AMBIGUOUS' | 'ISO';
+export interface StrictDateConfig {
+  targetYear: number;
+  targetMonth: number; // 1 - 12
 }
 
-export interface DateResolveResult {
+export interface StrictDateResult {
+  isValid: boolean;
   date: Date | null;
+  day?: number;
+  month?: number;
+  year?: number;
   error?: string;
-  warning?: string;
 }
 
-export class DateResolutionEngine {
-  private targetMonth: number | null = null;
-  private targetYear: number | null = null;
-  private strictPeriod: boolean = true;
+export interface DatasetDateAudit {
+  targetYear: number;
+  targetMonth: number;
+  targetPeriodFormatted: string; // e.g. "2026-07"
+  totalDatesChecked: number;
+  validDatesCount: number;
+  invalidDatesCount: number;
+  formatErrors: Array<{
+    line: number;
+    rawDate: string;
+    reason: string;
+  }>;
+}
 
-  constructor(options: { targetMonth?: number | null; targetYear?: number | null; strictPeriod?: boolean } = {}) {
-    this.targetMonth = options.targetMonth || null;
-    this.targetYear = options.targetYear || null;
-    this.strictPeriod = options.strictPeriod !== false;
+export class StrictDateValidator {
+  private targetYear: number;
+  private targetMonth: number;
+
+  constructor(config: StrictDateConfig) {
+    if (!config.targetYear || isNaN(config.targetYear) || config.targetYear < 2000 || config.targetYear > 2100) {
+      throw new Error(`Invalid targetYear: ${config.targetYear}. Must be between 2000 and 2100.`);
+    }
+    if (!config.targetMonth || isNaN(config.targetMonth) || config.targetMonth < 1 || config.targetMonth > 12) {
+      throw new Error(`Invalid targetMonth: ${config.targetMonth}. Must be between 1 and 12.`);
+    }
+    this.targetYear = config.targetYear;
+    this.targetMonth = config.targetMonth;
+  }
+
+  get targetPeriodString(): string {
+    return `${this.targetYear}-${String(this.targetMonth).padStart(2, '0')}`;
+  }
+
+  get expectedFormatName(): string {
+    return 'DD/MM/YYYY';
   }
 
   /**
-   * Pre-scans all date values across the dataset to statistically discover
-   * the date conventions, dominant billing month, and detect any Excel format mix-ups.
+   * Strictly validates and parses a single date string.
+   * Expects DD/MM/YYYY (or DD-MM-YYYY, or YYYY-MM-DD).
+   * Verifies that the date belongs strictly to the configured targetYear and targetMonth.
    */
-  analyzeDataset(rawDates: string[]): DateAnalysisResult {
-    let dmyVotes = 0;
-    let mdyVotes = 0;
-    let isoVotes = 0;
-    const monthCounts = new Map<number, number>();
-    const yearCounts = new Map<number, number>();
-    let ambiguousCount = 0;
-
-    for (const raw of rawDates) {
-      if (!raw || typeof raw !== 'string') continue;
-      const clean = raw.trim();
-      if (!clean) continue;
-
-      if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-        isoVotes++;
-        const [y, m] = clean.split('-').map(Number);
-        if (y >= 2000 && y <= 2100) yearCounts.set(y, (yearCounts.get(y) || 0) + 1);
-        if (m >= 1 && m <= 12) monthCounts.set(m, (monthCounts.get(m) || 0) + 1);
-        continue;
-      }
-
-      const delimiter = clean.includes('/') ? '/' : clean.includes('-') ? '-' : clean.includes('.') ? '.' : null;
-      if (!delimiter) continue;
-      const parts = clean.split(delimiter);
-      if (parts.length !== 3) continue;
-
-      let [p0, p1, p2] = parts.map((p) => parseInt(p, 10));
-      if (isNaN(p0) || isNaN(p1) || isNaN(p2)) continue;
-
-      let year = p2;
-      let d = p0;
-      let m = p1;
-      if (year < 100) year += 2000;
-      if (year >= 2000 && year <= 2100) {
-        yearCounts.set(year, (yearCounts.get(year) || 0) + 1);
-      }
-
-      if (d > 12 && m <= 12) {
-        dmyVotes++;
-        monthCounts.set(m, (monthCounts.get(m) || 0) + 1);
-      } else if (m > 12 && d <= 12) {
-        mdyVotes++;
-        monthCounts.set(d, (monthCounts.get(d) || 0) + 1);
-      } else if (d <= 12 && m <= 12) {
-        ambiguousCount++;
-      }
+  validateDate(rawVal: string | undefined | null, lineNum?: number): StrictDateResult {
+    if (!rawVal || typeof rawVal !== 'string') {
+      return { isValid: false, date: null, error: 'Missing or empty date field.' };
     }
 
-    // Determine dominant month
-    let dominantMonth: number | null = this.targetMonth;
-    if (!dominantMonth) {
-      let maxMonthCount = 0;
-      for (const [m, count] of monthCounts.entries()) {
-        if (count > maxMonthCount) {
-          maxMonthCount = count;
-          dominantMonth = m;
-        }
-      }
-    }
-
-    // Determine dominant year
-    let dominantYear: number | null = this.targetYear;
-    if (!dominantYear) {
-      let maxYearCount = 0;
-      for (const [y, count] of yearCounts.entries()) {
-        if (count > maxYearCount) {
-          maxYearCount = count;
-          dominantYear = y;
-        }
-      }
-    }
-
-    const isMixed = dmyVotes > 0 && mdyVotes > 0;
-    let detectedFormat: DateAnalysisResult['detectedFormat'] = 'AMBIGUOUS';
-    if (isoVotes > 0 && dmyVotes === 0 && mdyVotes === 0) detectedFormat = 'ISO';
-    else if (isMixed) detectedFormat = 'MIXED_EXCEL_ANOMALY';
-    else if (dmyVotes > 0) detectedFormat = 'DD/MM/YYYY';
-    else if (mdyVotes > 0) detectedFormat = 'MM/DD/YYYY';
-
-    return {
-      dmyVotes,
-      mdyVotes,
-      isoVotes,
-      ambiguousCount,
-      dominantMonth,
-      dominantYear,
-      isMixed,
-      detectedFormat,
-    };
-  }
-
-  /**
-   * Resolves an individual date string with robust error handling and bounds verification.
-   */
-  resolveDate(rawVal: string | undefined | null, context: DateAnalysisResult): DateResolveResult {
-    if (!rawVal) return { date: null, error: 'Missing date value (empty field)' };
     const clean = rawVal.trim();
-    if (!clean) return { date: null, error: 'Empty date string' };
-
-    // Standard ISO YYYY-MM-DD
-    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-      const [y, m, d] = clean.split('-').map(Number);
-      return this._validateAndBuild(y, m, d, clean, context);
-    }
-
-    const delimiter = clean.includes('/') ? '/' : clean.includes('-') ? '-' : clean.includes('.') ? '.' : null;
-    if (!delimiter) {
-      return { date: null, error: `Unrecognized date format (missing delimiter '/', '-', or '.'): '${clean}'` };
-    }
-
-    const parts = clean.split(delimiter);
-    if (parts.length !== 3) {
-      return { date: null, error: `Malformed date structure (expected 3 parts, got ${parts.length}): '${clean}'` };
-    }
-
-    let [p0, p1, year] = parts.map((p) => parseInt(p, 10));
-    if (isNaN(p0) || isNaN(p1) || isNaN(year)) {
-      return { date: null, error: `Non-numeric date components found in '${clean}'` };
-    }
-    if (year < 100) year += 2000;
-    if (year < 2000 || year > 2100) {
-      return { date: null, error: `Year ${year} is out of valid range (2000-2100) in '${clean}'` };
+    if (!clean) {
+      return { isValid: false, date: null, error: 'Empty date string.' };
     }
 
     let day: number;
     let month: number;
-    let warning: string | undefined = undefined;
+    let year: number;
 
-    // Case 1: First part is clearly day (> 12)
-    if (p0 > 12 && p1 <= 12) {
+    // Support ISO YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+      const parts = clean.split('-').map(Number);
+      year = parts[0];
+      month = parts[1];
+      day = parts[2];
+    } else {
+      // Standard DD/MM/YYYY or DD-MM-YYYY
+      const delimiter = clean.includes('/') ? '/' : clean.includes('-') ? '-' : clean.includes('.') ? '.' : null;
+      if (!delimiter) {
+        return {
+          isValid: false,
+          date: null,
+          error: `Invalid date structure '${clean}'. Expected strictly ${this.expectedFormatName} (e.g. 15/07/${this.targetYear}).`,
+        };
+      }
+
+      const parts = clean.split(delimiter);
+      if (parts.length !== 3) {
+        return {
+          isValid: false,
+          date: null,
+          error: `Malformed date '${clean}'. Expected 3 parts in ${this.expectedFormatName} format (Day/Month/Year).`,
+        };
+      }
+
+      const p0 = parseInt(parts[0], 10);
+      const p1 = parseInt(parts[1], 10);
+      let p2 = parseInt(parts[2], 10);
+
+      if (isNaN(p0) || isNaN(p1) || isNaN(p2)) {
+        return {
+          isValid: false,
+          date: null,
+          error: `Non-numeric date components found in '${clean}'. Expected strictly ${this.expectedFormatName}.`,
+        };
+      }
+
+      if (p2 < 100) p2 += 2000;
+
+      // STRICT FORMAT: Part 0 is ALWAYS Day, Part 1 is ALWAYS Month, Part 2 is ALWAYS Year
       day = p0;
       month = p1;
-    }
-    // Case 2: Second part is clearly day (> 12)
-    else if (p1 > 12 && p0 <= 12) {
-      day = p1;
-      month = p0;
-    }
-    // Case 3: Both parts are <= 12 (Ambiguous)
-    else if (p0 <= 12 && p1 <= 12) {
-      if (context.dominantMonth) {
-        // One of the parts matches the proven billing month of the dataset
-        if (p1 === context.dominantMonth && p0 !== context.dominantMonth) {
-          day = p0;
-          month = p1; // DD/MM/YYYY
-        } else if (p0 === context.dominantMonth && p1 !== context.dominantMonth) {
-          day = p1;
-          month = p0; // MM/DD/YYYY (Excel US anomaly)
-          warning = `Excel US locale anomaly auto-corrected: '${clean}' interpreted as Day ${day} of Month ${month}`;
-        } else if (p0 === context.dominantMonth && p1 === context.dominantMonth) {
-          day = p0;
-          month = p1; // Same day & month (e.g. 07/07)
-        } else {
-          // Neither component matches the file's dominant billing month!
-          return {
-            date: null,
-            error: `Ambiguous date '${clean}': neither component matches detected billing month (${context.dominantMonth}). Possible cross-month contamination or invalid date.`,
-          };
-        }
-      } else {
-        // Fallback default: standard DD/MM/YYYY
-        day = p0;
-        month = p1;
-      }
-    } else {
-      return { date: null, error: `Invalid date components (both day and month exceed 12): '${clean}'` };
+      year = p2;
     }
 
-    return this._validateAndBuild(year, month, day, clean, context, warning);
-  }
-
-  private _validateAndBuild(
-    year: number,
-    month: number,
-    day: number,
-    raw: string,
-    context: DateAnalysisResult,
-    warning?: string
-  ): DateResolveResult {
-    if (month < 1 || month > 12) {
-      return { date: null, error: `Month value ${month} out of valid range (1-12) in '${raw}'` };
+    // 1. Strict Year Validation
+    if (year !== this.targetYear) {
+      return {
+        isValid: false,
+        date: null,
+        day,
+        month,
+        year,
+        error: `Year mismatch in '${clean}': Date has year ${year}, but required target year is ${this.targetYear}.`,
+      };
     }
 
-    // Accurate Days-in-month calculation including leap years
+    // 2. Strict Month Validation (Ensures ONLY the target month is accepted)
+    if (month !== this.targetMonth) {
+      return {
+        isValid: false,
+        date: null,
+        day,
+        month,
+        year,
+        error: `Month mismatch in '${clean}': Date has month ${String(month).padStart(2, '0')}, but required billing month is ${String(this.targetMonth).padStart(2, '0')}. Please ensure date is strictly formatted as ${this.expectedFormatName} (e.g. 05/${String(this.targetMonth).padStart(2, '0')}/${this.targetYear}).`,
+      };
+    }
+
+    // 3. Strict Calendar Day Range Validation (including leap years)
     const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
     if (day < 1 || day > daysInMonth) {
       return {
+        isValid: false,
         date: null,
-        error: `Calendar day ${day} is invalid for ${year}-${String(month).padStart(2, '0')} (max days: ${daysInMonth}) in '${raw}'`,
+        day,
+        month,
+        year,
+        error: `Invalid calendar day ${day} in '${clean}'. Month ${String(month).padStart(2, '0')}/${year} only has ${daysInMonth} days.`,
       };
     }
 
-    // Strict Target Period Enforcement
-    if (this.strictPeriod && context.dominantMonth && month !== context.dominantMonth) {
-      return {
-        date: null,
-        error: `Date '${raw}' resolves to month ${month}, which does not match file billing month ${context.dominantMonth}. Cross-month entry rejected.`,
-      };
+    // Date is 100% strictly valid
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return {
+      isValid: true,
+      date,
+      day,
+      month,
+      year,
+      error: undefined,
+    };
+  }
+
+  /**
+   * Pre-audits an entire array of raw date strings against the strict month/year configuration.
+   */
+  auditDataset(rawDatesWithLines: Array<{ line: number; rawDate: string }>): DatasetDateAudit {
+    const audit: DatasetDateAudit = {
+      targetYear: this.targetYear,
+      targetMonth: this.targetMonth,
+      targetPeriodFormatted: this.targetPeriodString,
+      totalDatesChecked: rawDatesWithLines.length,
+      validDatesCount: 0,
+      invalidDatesCount: 0,
+      formatErrors: [],
+    };
+
+    for (const item of rawDatesWithLines) {
+      const result = this.validateDate(item.rawDate, item.line);
+      if (result.isValid) {
+        audit.validDatesCount++;
+      } else {
+        audit.invalidDatesCount++;
+        audit.formatErrors.push({
+          line: item.line,
+          rawDate: item.rawDate,
+          reason: result.error || 'Unknown date format error',
+        });
+      }
     }
 
-    const d = new Date(Date.UTC(year, month - 1, day));
-    if (isNaN(d.getTime())) {
-      return { date: null, error: `Internal Date conversion failed for '${raw}'` };
-    }
-
-    return { date: d, error: undefined, warning };
+    return audit;
   }
 }
-
