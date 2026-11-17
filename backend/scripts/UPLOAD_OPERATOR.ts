@@ -17,7 +17,7 @@
  * 2. Supervisor / Admin Sheet: Automatically ensures MF_OP_DailySheet exists for each date with status 'submitted'.
  * 3. Daily Attendance Roster: Automatically registers operators into MF_OP_DailyAssignment.
  * 4. Idle Equipment Handling: Automatically detects 'ZXQOPRIDLE', 'IDLE', 'NONE', '-' and records operator shift with equipmentId = null without crashing or skipping.
- * 5. Equipment Resolution: Matches against Project & Corporate Equipment master. Supports aliases (e.g. MCH12 -> MCHM0012) and auto-registers new machines with Condition & Unit.
+ * 5. Equipment Resolution: Matches against Project & Corporate Equipment master. Supports aliases (e.g. MCH12 -> MCHM0012). Strict Mode: Rejects unknown machines not found in Master.
  * 6. Daily Equipment Assignment: Links assigned machine to operator in MF_OP_DailyEquipmentAssignment.
  * 7. Meal & Shift Calculation: Computes lunch (12:00-13:00) and dinner (22:00-23:00) breaks.
  * 8. Additional Hours: Accurately applies positive/negative additional hours (shiftHours = rawShiftHours + additionalHours).
@@ -165,7 +165,7 @@ export function isIdleEquipment(eq?: string | null): boolean {
 export function normalizeEquipmentCode(eq?: string | null): string {
   if (!eq) return '';
   const clean = eq.trim().toUpperCase();
- 
+
   return clean;
 }
 
@@ -1288,7 +1288,7 @@ async function main() {
         const isStandardPlaceholder =
           corpEmp &&
           (corpEmp.employeeCode?.trim().toUpperCase() === 'ZHLOL' ||
-           corpEmp.employeeCode?.trim().toUpperCase().startsWith('Z'));
+            corpEmp.employeeCode?.trim().toUpperCase().startsWith('Z'));
 
         if (isStandardPlaceholder && corpEmp) {
           if (!isDryRun) {
@@ -1352,7 +1352,7 @@ async function main() {
         continue;
       }
 
-      // Resolve Equipment (with idle equipment and auto-creation support)
+      // Resolve Equipment (with idle equipment support - Strict Integrity Policy)
       let localEq: typeof projectEquipmentList[0] | null = null;
       const isIdle = isIdleEquipment(group.equipmentIdentifier);
 
@@ -1363,52 +1363,40 @@ async function main() {
 
         localEq = eqMap.get(cleanEqKey) || eqMap.get(strippedEqKey) || null;
 
-        // Auto-link from corporate equipment master if not yet linked to Project 539
+        // Auto-link from corporate equipment master if not yet linked to Project
         if (!localEq) {
-          let corpEq = corpEqMap.get(cleanEqKey) || corpEqMap.get(strippedEqKey);
+          const corpEq = corpEqMap.get(cleanEqKey) || corpEqMap.get(strippedEqKey);
 
-          // If still not in corporate equipment master, auto-create to ensure zero upload failure
+          // STRICT MODE: Do NOT auto-create unknown machines in Corporate Equipment Master!
           if (!corpEq) {
-            if (!isDryRun) {
-              corpEq = await prisma.mF_G_Equipment.create({
-                data: {
-                  standardEquipmentNumber: normalizedCode,
-                  equipmentName: `${normalizedCode} (Machine)`,
-                  condition: group.condition || 'DRY',
-                  unit: group.unit || 'hrs',
-                  dailyRate: 2500,
-                  costRate: 0,
-                  status: 'active',
-                  currentProjectId: project.id,
-                },
-              });
-              corpEqMap.set(cleanEqKey, corpEq);
-              corpEqMap.set(strippedEqKey, corpEq);
-            } else {
-              corpEq = {
-                id: 'dry-run-corp-eq-id',
-                standardEquipmentNumber: normalizedCode,
-                equipmentName: `${normalizedCode} (Machine)`,
-                condition: group.condition || 'DRY',
-                unit: group.unit || 'hrs',
-                dailyRate: 2500,
-                costRate: 0,
-                status: 'active',
-              } as any;
-            }
+            errors.push({
+              line: group.rawLineIndex,
+              operator: group.operatorIdentifier,
+              equipment: group.equipmentIdentifier,
+              condition: group.condition,
+              unit: group.unit,
+              dateStr: group.dateStr,
+              inTime: group.inTime,
+              outTime: group.outTime,
+              additionalHours: group.additionalHours,
+              hours: group.hours,
+              reason: `Strict Mode: Equipment '${group.equipmentIdentifier}' not found in Project or Corporate Master.`,
+            });
+            skippedCount++;
+            continue;
           }
 
-          if (corpEq) {
-            if (!isDryRun) {
-              const created = await prisma.mF_P_Equipment.create({
-                data: {
-                  projectId: project.id,
-                  corporateEquipmentId: corpEq.id,
-                  condition: group.condition || corpEq.condition || 'DRY',
-                  costRate: corpEq.costRate || corpEq.dailyRate || 0,
-                  status: 'active',
-                  meterUnitCode: group.unit || corpEq.unit || 'hrs',
-                },
+                // If found in Corporate Master, link it to this Project
+                if(!isDryRun) {
+                  const created = await prisma.mF_P_Equipment.create({
+                    data: {
+                      projectId: project.id,
+                      corporateEquipmentId: corpEq.id,
+                      condition: group.condition || corpEq.condition || 'DRY',
+                      costRate: corpEq.costRate || corpEq.dailyRate || 0,
+                      status: 'active',
+                      meterUnitCode: group.unit || corpEq.unit || 'hrs',
+              },
                 include: {
                   corporateEquipment: true,
                 },
@@ -1431,114 +1419,38 @@ async function main() {
               } as any;
             }
           }
-        }
 
-        // If localEq exists, update condition or meterUnitCode if specified in CSV
-        if (localEq && !isDryRun) {
-          const needCondUpdate = group.condition && group.condition !== localEq.condition;
-          const needUnitUpdate = group.unit && group.unit !== localEq.meterUnitCode;
-          if (needCondUpdate || needUnitUpdate) {
-            await prisma.mF_P_Equipment.update({
-              where: { id: localEq.id },
-              data: {
-                condition: group.condition || localEq.condition,
-                meterUnitCode: group.unit || localEq.meterUnitCode,
-              },
-            });
+          // If localEq exists, update condition or meterUnitCode if specified in CSV
+          if (localEq && !isDryRun) {
+            const needCondUpdate = group.condition && group.condition !== localEq.condition;
+            const needUnitUpdate = group.unit && group.unit !== localEq.meterUnitCode;
+            if (needCondUpdate || needUnitUpdate) {
+              await prisma.mF_P_Equipment.update({
+                where: { id: localEq.id },
+                data: {
+                  condition: group.condition || localEq.condition,
+                  meterUnitCode: group.unit || localEq.meterUnitCode,
+                },
+              });
+            }
           }
         }
-      }
 
-      // Ensure isOperator is true on local employee
-      if (!localEmp.isOperator && !isDryRun) {
-        await prisma.mF_P_Employee.update({
-          where: { id: localEmp.id },
-          data: { isOperator: true },
-        });
-        localEmp.isOperator = true;
-      }
+        // Ensure isOperator is true on local employee
+        if (!localEmp.isOperator && !isDryRun) {
+          await prisma.mF_P_Employee.update({
+            where: { id: localEmp.id },
+            data: { isOperator: true },
+          });
+          localEmp.isOperator = true;
+        }
 
-      // Safety check: Prevent overwriting APPROVED time entries using fast O(1) in-memory check
-      const dateKey = group.date.toISOString().slice(0, 10);
-      const targetUtcDate = new Date(dateKey + 'T00:00:00.000Z');
-      const shiftDateKey = `${localEmp.id}__${dateKey}`;
+        // Safety check: Prevent overwriting APPROVED time entries using fast O(1) in-memory check
+        const dateKey = group.date.toISOString().slice(0, 10);
+        const targetUtcDate = new Date(dateKey + 'T00:00:00.000Z');
+        const shiftDateKey = `${localEmp.id}__${dateKey}`;
 
-      if (approvedSet.has(shiftDateKey)) {
-        errors.push({
-          line: group.rawLineIndex,
-          operator: group.operatorIdentifier,
-          equipment: group.equipmentIdentifier,
-          condition: group.condition,
-          unit: group.unit,
-          dateStr: group.dateStr,
-          inTime: group.inTime,
-          outTime: group.outTime,
-          additionalHours: group.additionalHours,
-          hours: group.hours,
-          reason: `Time Entry on ${dateKey} is already APPROVED by Admin/PM. Did not overwrite.`,
-        });
-        skippedCount++;
-        continue;
-      }
-
-      // Ensure DailySheet exists for date under supervisor/admin
-      let dailySheetId = processedDailySheets.get(dateKey);
-      if (!dailySheetId && !isDryRun) {
-        const dailySheet = await prisma.mF_OP_DailySheet.upsert({
-          where: {
-            projectId_supervisorId_date: {
-              projectId: project.id,
-              supervisorId: supervisor.id,
-              date: targetUtcDate,
-            },
-          },
-          update: {},
-          create: {
-            projectId: project.id,
-            supervisorId: supervisor.id,
-            date: targetUtcDate,
-            status: 'submitted',
-          },
-        });
-        dailySheetId = dailySheet.id;
-        processedDailySheets.set(dateKey, dailySheetId);
-      }
-
-      // Calculate shift hours, overtime, and break deductions
-      let finalInTime: string | null = group.inTime || null;
-      let finalOutTime: string | null = group.outTime || null;
-      let shiftHours = Number(group.hours || 0);
-      let otHours = 0;
-      let breakHours = 0;
-      let regularHours = shiftHours;
-      let isLunchDeducted = false;
-      let isDinnerDeducted = false;
-
-      const isExt = Boolean(localEmp.businessPartnerId || localEmp.corporateEmployee?.employeeType === 'external');
-      const dayRule = getDayTypeRuleForDate(targetUtcDate);
-
-      if (group.inTime && group.outTime) {
-        const { breakHours: bHrs } = computeBreakHoursAndSnapshots(group.inTime, group.outTime);
-        const [inH, inM] = group.inTime.split(':').map(Number);
-        const [outH, outM] = group.outTime.split(':').map(Number);
-        let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
-        if (diff <= 0) diff += 24 * 60;
-        const grossHrs = Math.round((diff / 60) * 100) / 100;
-        const rawShift = Math.max(0, Math.round((grossHrs - bHrs) * 100) / 100);
-        const addHrs = group.additionalHours || 0;
-        const maxAllowed = Math.round((rawShift + addHrs) * 100) / 100;
-
-        const isPlaceholder =
-          localEmp.corporateEmployee?.employeeCode?.trim().toUpperCase() === 'ZHLOL' ||
-          localEmp.corporateEmployee?.employeeCode?.trim().toUpperCase().startsWith('Z');
-
-        // Validation (Strict Option A): For regular human operators, if hours exceed shift duration and Additional Hours was not entered, reject as Error!
-        if (!isPlaceholder && group.hours > maxAllowed + 0.05) {
-          const excess = Math.round((group.hours - rawShift) * 100) / 100;
-          const reasonMsg = addHrs > 0
-            ? `Hours Exceeded: Operator hours (${group.hours}h) exceed shift duration with Additional Hours (${maxAllowed}h) by +${Math.round((group.hours - maxAllowed) * 100) / 100}h.`
-            : `Hours Exceeded: Operator hours (${group.hours}h) exceed shift duration (${rawShift}h) by +${excess}h, but Additional Hours was not entered.`;
-
+        if (approvedSet.has(shiftDateKey)) {
           errors.push({
             line: group.rawLineIndex,
             operator: group.operatorIdentifier,
@@ -1550,323 +1462,398 @@ async function main() {
             outTime: group.outTime,
             additionalHours: group.additionalHours,
             hours: group.hours,
-            reason: reasonMsg,
+            reason: `Time Entry on ${dateKey} is already APPROVED by Admin/PM. Did not overwrite.`,
           });
           skippedCount++;
           continue;
         }
 
-        if (isPlaceholder && group.hours > maxAllowed + 0.05) {
-          // Placeholder pool operator (e.g. ZHLOL Back Log clearance) representing multiple concurrent machines on this date
-          shiftHours = Math.round((group.hours + (group.additionalHours || 0)) * 100) / 100;
-          if (dayRule.isAllOvertime) {
+        // Ensure DailySheet exists for date under supervisor/admin
+        let dailySheetId = processedDailySheets.get(dateKey);
+        if (!dailySheetId && !isDryRun) {
+          const dailySheet = await prisma.mF_OP_DailySheet.upsert({
+            where: {
+              projectId_supervisorId_date: {
+                projectId: project.id,
+                supervisorId: supervisor.id,
+                date: targetUtcDate,
+              },
+            },
+            update: {},
+            create: {
+              projectId: project.id,
+              supervisorId: supervisor.id,
+              date: targetUtcDate,
+              status: 'submitted',
+            },
+          });
+          dailySheetId = dailySheet.id;
+          processedDailySheets.set(dateKey, dailySheetId);
+        }
+
+        // Calculate shift hours, overtime, and break deductions
+        let finalInTime: string | null = group.inTime || null;
+        let finalOutTime: string | null = group.outTime || null;
+        let shiftHours = Number(group.hours || 0);
+        let otHours = 0;
+        let breakHours = 0;
+        let regularHours = shiftHours;
+        let isLunchDeducted = false;
+        let isDinnerDeducted = false;
+
+        const isExt = Boolean(localEmp.businessPartnerId || localEmp.corporateEmployee?.employeeType === 'external');
+        const dayRule = getDayTypeRuleForDate(targetUtcDate);
+
+        if (group.inTime && group.outTime) {
+          const { breakHours: bHrs } = computeBreakHoursAndSnapshots(group.inTime, group.outTime);
+          const [inH, inM] = group.inTime.split(':').map(Number);
+          const [outH, outM] = group.outTime.split(':').map(Number);
+          let diff = (outH * 60 + (outM || 0)) - (inH * 60 + (inM || 0));
+          if (diff <= 0) diff += 24 * 60;
+          const grossHrs = Math.round((diff / 60) * 100) / 100;
+          const rawShift = Math.max(0, Math.round((grossHrs - bHrs) * 100) / 100);
+          const addHrs = group.additionalHours || 0;
+          const maxAllowed = Math.round((rawShift + addHrs) * 100) / 100;
+
+          const isPlaceholder =
+            localEmp.corporateEmployee?.employeeCode?.trim().toUpperCase() === 'ZHLOL' ||
+            localEmp.corporateEmployee?.employeeCode?.trim().toUpperCase().startsWith('Z');
+
+          // Validation (Strict Option A): For regular human operators, if hours exceed shift duration and Additional Hours was not entered, reject as Error!
+          if (!isPlaceholder && group.hours > maxAllowed + 0.05) {
+            const excess = Math.round((group.hours - rawShift) * 100) / 100;
+            const reasonMsg = addHrs > 0
+              ? `Hours Exceeded: Operator hours (${group.hours}h) exceed shift duration with Additional Hours (${maxAllowed}h) by +${Math.round((group.hours - maxAllowed) * 100) / 100}h.`
+              : `Hours Exceeded: Operator hours (${group.hours}h) exceed shift duration (${rawShift}h) by +${excess}h, but Additional Hours was not entered.`;
+
+            errors.push({
+              line: group.rawLineIndex,
+              operator: group.operatorIdentifier,
+              equipment: group.equipmentIdentifier,
+              condition: group.condition,
+              unit: group.unit,
+              dateStr: group.dateStr,
+              inTime: group.inTime,
+              outTime: group.outTime,
+              additionalHours: group.additionalHours,
+              hours: group.hours,
+              reason: reasonMsg,
+            });
+            skippedCount++;
+            continue;
+          }
+
+          if (isPlaceholder && group.hours > maxAllowed + 0.05) {
+            // Placeholder pool operator (e.g. ZHLOL Back Log clearance) representing multiple concurrent machines on this date
+            shiftHours = Math.round((group.hours + (group.additionalHours || 0)) * 100) / 100;
+            if (dayRule.isAllOvertime) {
+              otHours = shiftHours;
+              regularHours = 0;
+            } else {
+              regularHours = Math.min(dayRule.standardCap, shiftHours);
+              otHours = Math.max(0, Math.round((shiftHours - regularHours) * 100) / 100);
+            }
+            finalInTime = group.inTime;
+            finalOutTime = group.outTime;
+          } else {
+            const calc = calculateShiftAndOvertime(
+              group.inTime,
+              group.outTime,
+              dayRule,
+              isExt,
+              group.additionalHours
+            );
+            shiftHours = calc.shiftHours;
+            otHours = calc.otHours;
+            breakHours = calc.breakHours;
+            regularHours = calc.regularHours;
+            isLunchDeducted = calc.isLunchDeducted;
+            isDinnerDeducted = calc.isDinnerDeducted;
+            finalInTime = group.inTime;
+            finalOutTime = group.outTime;
+          }
+        } else {
+          // Fallback when flat hours provided
+          shiftHours = Math.max(0, shiftHours + group.additionalHours);
+          if (shiftHours <= 0) {
+            otHours = 0;
+            regularHours = 0;
+          } else if (dayRule.isAllOvertime) {
             otHours = shiftHours;
             regularHours = 0;
+          } else if (isExt) {
+            const cap = dayRule.isSaturday ? 5.5 : 8.0;
+            regularHours = Math.min(shiftHours, cap);
+            otHours = shiftHours > cap ? Math.round((shiftHours - cap) * 100) / 100 : 0;
+          } else if (dayRule.isSaturday) {
+            regularHours = Math.min(shiftHours, 5.5);
+            otHours = Math.round((shiftHours - 5.5) * 100) / 100;
+          } else if (shiftHours > 6.0) {
+            regularHours = Math.min(shiftHours, 8.0);
+            otHours = Math.round((shiftHours - 8.0) * 100) / 100;
           } else {
-            regularHours = Math.min(dayRule.standardCap, shiftHours);
-            otHours = Math.max(0, Math.round((shiftHours - regularHours) * 100) / 100);
+            regularHours = Math.min(shiftHours, 4.0);
+            otHours = Math.round((shiftHours - 4.0) * 100) / 100;
           }
-          finalInTime = group.inTime;
-          finalOutTime = group.outTime;
-        } else {
-          const calc = calculateShiftAndOvertime(
-            group.inTime,
-            group.outTime,
-            dayRule,
-            isExt,
-            group.additionalHours
-          );
-          shiftHours = calc.shiftHours;
-          otHours = calc.otHours;
-          breakHours = calc.breakHours;
-          regularHours = calc.regularHours;
-          isLunchDeducted = calc.isLunchDeducted;
-          isDinnerDeducted = calc.isDinnerDeducted;
-          finalInTime = group.inTime;
-          finalOutTime = group.outTime;
         }
-      } else {
-        // Fallback when flat hours provided
-        shiftHours = Math.max(0, shiftHours + group.additionalHours);
-        if (shiftHours <= 0) {
-          otHours = 0;
-          regularHours = 0;
-        } else if (dayRule.isAllOvertime) {
-          otHours = shiftHours;
-          regularHours = 0;
-        } else if (isExt) {
-          const cap = dayRule.isSaturday ? 5.5 : 8.0;
-          regularHours = Math.min(shiftHours, cap);
-          otHours = shiftHours > cap ? Math.round((shiftHours - cap) * 100) / 100 : 0;
-        } else if (dayRule.isSaturday) {
-          regularHours = Math.min(shiftHours, 5.5);
-          otHours = Math.round((shiftHours - 5.5) * 100) / 100;
-        } else if (shiftHours > 6.0) {
-          regularHours = Math.min(shiftHours, 8.0);
-          otHours = Math.round((shiftHours - 8.0) * 100) / 100;
-        } else {
-          regularHours = Math.min(shiftHours, 4.0);
-          otHours = Math.round((shiftHours - 4.0) * 100) / 100;
+
+        // Build remarks for multi-machine splits if multiple machines were operated
+        const splitsArray = Array.from(group.equipmentSplits.values());
+        const splitsRemarksList: string[] = [];
+        for (const sp of splitsArray) {
+          splitsRemarksList.push(`${sp.equipmentIdentifier}: ${sp.hours}h`);
         }
-      }
+        const finalRemarks = splitsRemarksList.length > 1 ? `Splits: ${splitsRemarksList.join(', ')}` : undefined;
 
-      // Build remarks for multi-machine splits if multiple machines were operated
-      const splitsArray = Array.from(group.equipmentSplits.values());
-      const splitsRemarksList: string[] = [];
-      for (const sp of splitsArray) {
-        splitsRemarksList.push(`${sp.equipmentIdentifier}: ${sp.hours}h`);
-      }
-      const finalRemarks = splitsRemarksList.length > 1 ? `Splits: ${splitsRemarksList.join(', ')}` : undefined;
-
-      const eqDisplay = splitsArray.length > 1
-        ? splitsRemarksList.join(', ')
-        : (localEq
+        const eqDisplay = splitsArray.length > 1
+          ? splitsRemarksList.join(', ')
+          : (localEq
             ? localEq.corporateEquipment?.standardEquipmentNumber || group.equipmentIdentifier
             : 'ZXQOPRIDLE (Idle)');
 
-      if (isDryRun) {
-        console.log(
-          `  ${GREEN}✓ [DRY RUN]${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | Day: ${dayRule.code} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
-        );
-        successCount++;
-        continue;
-      }
+        if (isDryRun) {
+          console.log(
+            `  ${GREEN}✓ [DRY RUN]${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | Day: ${dayRule.code} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
+          );
+          successCount++;
+          continue;
+        }
 
-      // Step 1: Ensure DailyAssignment exists for operator (Attendance gang)
-      await prisma.mF_OP_DailyAssignment.upsert({
-        where: {
-          dailySheetId_employeeId: {
+        // Step 1: Ensure DailyAssignment exists for operator (Attendance gang)
+        await prisma.mF_OP_DailyAssignment.upsert({
+          where: {
+            dailySheetId_employeeId: {
+              dailySheetId: dailySheetId!,
+              employeeId: localEmp.id,
+            },
+          },
+          update: {},
+          create: {
             dailySheetId: dailySheetId!,
             employeeId: localEmp.id,
           },
-        },
-        update: {},
-        create: {
-          dailySheetId: dailySheetId!,
-          employeeId: localEmp.id,
-        },
-      });
+        });
 
-      // Step 2: Ensure DailyEquipmentAssignment exists linking operator to machine(s)
-      if (splitsArray.length > 0) {
-        for (const sp of splitsArray) {
-          const spKey = sp.equipmentIdentifier.toLowerCase();
-          const spEq = eqMap.get(spKey) || eqMap.get(spKey.replace(/[^a-z0-9]/g, ''));
-          if (spEq) {
-            await prisma.mF_OP_DailyEquipmentAssignment.upsert({
-              where: {
-                dailySheetId_equipmentId: {
+        // Step 2: Ensure DailyEquipmentAssignment exists linking operator to machine(s)
+        if (splitsArray.length > 0) {
+          for (const sp of splitsArray) {
+            const spKey = sp.equipmentIdentifier.toLowerCase();
+            const spEq = eqMap.get(spKey) || eqMap.get(spKey.replace(/[^a-z0-9]/g, ''));
+            if (spEq) {
+              await prisma.mF_OP_DailyEquipmentAssignment.upsert({
+                where: {
+                  dailySheetId_equipmentId: {
+                    dailySheetId: dailySheetId!,
+                    equipmentId: spEq.id,
+                  },
+                },
+                update: { operatorId: localEmp.id },
+                create: {
                   dailySheetId: dailySheetId!,
                   equipmentId: spEq.id,
+                  operatorId: localEmp.id,
                 },
-              },
-              update: { operatorId: localEmp.id },
-              create: {
-                dailySheetId: dailySheetId!,
-                equipmentId: spEq.id,
-                operatorId: localEmp.id,
-              },
-            });
+              });
+            }
           }
-        }
-      } else if (localEq) {
-        await prisma.mF_OP_DailyEquipmentAssignment.upsert({
-          where: {
-            dailySheetId_equipmentId: {
+        } else if (localEq) {
+          await prisma.mF_OP_DailyEquipmentAssignment.upsert({
+            where: {
+              dailySheetId_equipmentId: {
+                dailySheetId: dailySheetId!,
+                equipmentId: localEq.id,
+              },
+            },
+            update: { operatorId: localEmp.id },
+            create: {
               dailySheetId: dailySheetId!,
               equipmentId: localEq.id,
+              operatorId: localEmp.id,
+            },
+          });
+        }
+
+        // Step 3: Upsert into MF_OP_TimeEntry with unique composite key (projectId, employeeId, date)
+        const upsertedTe = await prisma.mF_OP_TimeEntry.upsert({
+          where: {
+            projectId_employeeId_date: {
+              projectId: project.id,
+              employeeId: localEmp.id,
+              date: targetUtcDate,
             },
           },
-          update: { operatorId: localEmp.id },
-          create: {
+          update: {
             dailySheetId: dailySheetId!,
-            equipmentId: localEq.id,
-            operatorId: localEmp.id,
+            equipmentId: localEq ? localEq.id : null,
+            effectiveDayTypeId: dayRule.dayTypeId,
+            inTime: finalInTime,
+            outTime: finalOutTime,
+            shiftHours,
+            overtimeHours: otHours,
+            breakHours,
+            isLunchDeducted,
+            isDinnerDeducted,
+            additionalHours: group.additionalHours || 0.0,
+            hours: regularHours,
+            status: 'submitted',
+            submittedAt: new Date(),
+            appliedDailyRate: localEmp.dailyRate ? Number(localEmp.dailyRate) : 1400.0,
+            remarks: finalRemarks,
           },
-        });
-      }
-
-      // Step 3: Upsert into MF_OP_TimeEntry with unique composite key (projectId, employeeId, date)
-      const upsertedTe = await prisma.mF_OP_TimeEntry.upsert({
-        where: {
-          projectId_employeeId_date: {
+          create: {
             projectId: project.id,
+            dailySheetId: dailySheetId!,
             employeeId: localEmp.id,
             date: targetUtcDate,
-          },
-        },
-        update: {
-          dailySheetId: dailySheetId!,
-          equipmentId: localEq ? localEq.id : null,
-          effectiveDayTypeId: dayRule.dayTypeId,
-          inTime: finalInTime,
-          outTime: finalOutTime,
-          shiftHours,
-          overtimeHours: otHours,
-          breakHours,
-          isLunchDeducted,
-          isDinnerDeducted,
-          additionalHours: group.additionalHours || 0.0,
-          hours: regularHours,
-          status: 'submitted',
-          submittedAt: new Date(),
-          appliedDailyRate: localEmp.dailyRate ? Number(localEmp.dailyRate) : 1400.0,
-          remarks: finalRemarks,
-        },
-        create: {
-          projectId: project.id,
-          dailySheetId: dailySheetId!,
-          employeeId: localEmp.id,
-          date: targetUtcDate,
-          equipmentId: localEq ? localEq.id : null,
-          effectiveDayTypeId: dayRule.dayTypeId,
-          inTime: finalInTime,
-          outTime: finalOutTime,
-          shiftHours,
-          overtimeHours: otHours,
-          breakHours,
-          isLunchDeducted,
-          isDinnerDeducted,
-          additionalHours: group.additionalHours || 0.0,
-          hours: regularHours,
-          status: 'submitted',
-          submittedAt: new Date(),
-          appliedDailyRate: localEmp.dailyRate ? Number(localEmp.dailyRate) : 1400.0,
-          remarks: finalRemarks,
-        },
-      });
-
-      // Step 4: Upsert granular OperatorEquipmentSplit rows for each machine operated
-      if (splitsArray.length > 0) {
-        for (const sp of splitsArray) {
-          const spKey = sp.equipmentIdentifier.toLowerCase();
-          const spEq = eqMap.get(spKey) || eqMap.get(spKey.replace(/[^a-z0-9]/g, ''));
-          if (spEq) {
-            await prisma.mF_OP_OperatorEquipmentSplit.upsert({
-              where: {
-                timeEntryId_equipmentId: {
-                  timeEntryId: upsertedTe.id,
-                  equipmentId: spEq.id,
-                },
-              },
-              update: { hours: sp.hours },
-              create: {
-                timeEntryId: upsertedTe.id,
-                equipmentId: spEq.id,
-                hours: sp.hours,
-              },
-            });
-          }
-        }
-      } else if (localEq) {
-        await prisma.mF_OP_OperatorEquipmentSplit.upsert({
-          where: {
-            timeEntryId_equipmentId: {
-              timeEntryId: upsertedTe.id,
-              equipmentId: localEq.id,
-            },
-          },
-          update: { hours: regularHours || shiftHours },
-          create: {
-            timeEntryId: upsertedTe.id,
-            equipmentId: localEq.id,
-            hours: regularHours || shiftHours,
+            equipmentId: localEq ? localEq.id : null,
+            effectiveDayTypeId: dayRule.dayTypeId,
+            inTime: finalInTime,
+            outTime: finalOutTime,
+            shiftHours,
+            overtimeHours: otHours,
+            breakHours,
+            isLunchDeducted,
+            isDinnerDeducted,
+            additionalHours: group.additionalHours || 0.0,
+            hours: regularHours,
+            status: 'submitted',
+            submittedAt: new Date(),
+            appliedDailyRate: localEmp.dailyRate ? Number(localEmp.dailyRate) : 1400.0,
+            remarks: finalRemarks,
           },
         });
-      }
 
-      console.log(
-        `  ${GREEN}✓${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
-      );
-      successCount++;
-    } catch (err: any) {
-      errors.push({
-        line: group.rawLineIndex,
-        operator: group.operatorIdentifier,
-        equipment: group.equipmentIdentifier,
-        condition: group.condition,
-        unit: group.unit,
-        dateStr: group.dateStr,
-        inTime: group.inTime,
-        outTime: group.outTime,
-        additionalHours: group.additionalHours,
-        hours: group.hours,
-        reason: `Unexpected database error: ${err.message || String(err)}`,
-      });
-      skippedCount++;
+        // Step 4: Upsert granular OperatorEquipmentSplit rows for each machine operated
+        if (splitsArray.length > 0) {
+          for (const sp of splitsArray) {
+            const spKey = sp.equipmentIdentifier.toLowerCase();
+            const spEq = eqMap.get(spKey) || eqMap.get(spKey.replace(/[^a-z0-9]/g, ''));
+            if (spEq) {
+              await prisma.mF_OP_OperatorEquipmentSplit.upsert({
+                where: {
+                  timeEntryId_equipmentId: {
+                    timeEntryId: upsertedTe.id,
+                    equipmentId: spEq.id,
+                  },
+                },
+                update: { hours: sp.hours },
+                create: {
+                  timeEntryId: upsertedTe.id,
+                  equipmentId: spEq.id,
+                  hours: sp.hours,
+                },
+              });
+            }
+          }
+        } else if (localEq) {
+          await prisma.mF_OP_OperatorEquipmentSplit.upsert({
+            where: {
+              timeEntryId_equipmentId: {
+                timeEntryId: upsertedTe.id,
+                equipmentId: localEq.id,
+              },
+            },
+            update: { hours: regularHours || shiftHours },
+            create: {
+              timeEntryId: upsertedTe.id,
+              equipmentId: localEq.id,
+              hours: regularHours || shiftHours,
+            },
+          });
+        }
+
+        console.log(
+          `  ${GREEN}✓${RESET} Op: ${localEmp.corporateEmployee.employeeCode} (${localEmp.callingName || localEmp.corporateEmployee.fullName}) | Eq: ${eqDisplay} | In: ${finalInTime || '-'} Out: ${finalOutTime || '-'} Add: ${group.additionalHours || 0}h | Shift: ${shiftHours}h (OT: ${otHours}h)`
+        );
+        successCount++;
+      } catch (err: any) {
+        errors.push({
+          line: group.rawLineIndex,
+          operator: group.operatorIdentifier,
+          equipment: group.equipmentIdentifier,
+          condition: group.condition,
+          unit: group.unit,
+          dateStr: group.dateStr,
+          inTime: group.inTime,
+          outTime: group.outTime,
+          additionalHours: group.additionalHours,
+          hours: group.hours,
+          reason: `Unexpected database error: ${err.message || String(err)}`,
+        });
+        skippedCount++;
+      }
     }
-  }
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-  // Summary Report
-  console.log(`\n${CYAN}${BOLD}=====================================================${RESET}`);
-  console.log(`${CYAN}${BOLD}             OPERATOR UPLOAD SUMMARY REPORT          ${RESET}`);
-  console.log(`${CYAN}${BOLD}=====================================================${RESET}`);
-  console.log(`🔹 Total File Rows         : ${BOLD}${totalLines}${RESET}`);
-  console.log(`✅ Successfully Processed  : ${GREEN}${BOLD}${successCount}${RESET} operator shifts`);
-  console.log(`⚠️ Skipped / Errors        : ${errors.length > 0 ? RED : GREEN}${BOLD}${errors.length}${RESET}`);
-  console.log(`⏱️ Duration                : ${duration} seconds`);
-  console.log(`${CYAN}=====================================================${RESET}`);
+    // Summary Report
+    console.log(`\n${CYAN}${BOLD}=====================================================${RESET}`);
+    console.log(`${CYAN}${BOLD}             OPERATOR UPLOAD SUMMARY REPORT          ${RESET}`);
+    console.log(`${CYAN}${BOLD}=====================================================${RESET}`);
+    console.log(`🔹 Total File Rows         : ${BOLD}${totalLines}${RESET}`);
+    console.log(`✅ Successfully Processed  : ${GREEN}${BOLD}${successCount}${RESET} operator shifts`);
+    console.log(`⚠️ Skipped / Errors        : ${errors.length > 0 ? RED : GREEN}${BOLD}${errors.length}${RESET}`);
+    console.log(`⏱️ Duration                : ${duration} seconds`);
+    console.log(`${CYAN}=====================================================${RESET}`);
 
-  const skippedCsvPath = path.join(__dirname, 'skipped_operator_records.csv');
+    const skippedCsvPath = path.join(__dirname, 'skipped_operator_records.csv');
 
-  if (errors.length > 0) {
-    console.log(`\n${RED}${BOLD}❌ SKIPPED / REJECTED OPERATOR RECORDS TABLE:${RESET}`);
-    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
-    console.log(
-      `${BOLD}${'Line'.padEnd(6)} | ${'Operator'.padEnd(12)} | ${'Date'.padEnd(12)} | ${'Equipment'.padEnd(14)} | ${'In/Out'.padEnd(13)} | ${'Hours'.padEnd(6)} | Reason${RESET}`
-    );
-    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
+    if (errors.length > 0) {
+      console.log(`\n${RED}${BOLD}❌ SKIPPED / REJECTED OPERATOR RECORDS TABLE:${RESET}`);
+      console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
+      console.log(
+        `${BOLD}${'Line'.padEnd(6)} | ${'Operator'.padEnd(12)} | ${'Date'.padEnd(12)} | ${'Equipment'.padEnd(14)} | ${'In/Out'.padEnd(13)} | ${'Hours'.padEnd(6)} | Reason${RESET}`
+      );
+      console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
 
-    const previewLimit = 25;
-    const previewList = errors.slice(0, previewLimit);
+      const previewLimit = 25;
+      const previewList = errors.slice(0, previewLimit);
 
-    previewList.forEach((e) => {
-      const lineStr = String(e.line).padEnd(6);
-      const opStr = String(e.operator).padEnd(12);
-      const dtStr = String(e.dateStr || '-').padEnd(12);
-      const eqStr = String(e.equipment || '-').padEnd(14);
-      const timeStr = `${e.inTime || '-'}/${e.outTime || '-'}`.padEnd(13);
-      const hrsStr = String(e.hours !== undefined ? e.hours : '-').padEnd(6);
-      console.log(`${lineStr} | ${opStr} | ${dtStr} | ${eqStr} | ${timeStr} | ${hrsStr} | ${RED}${e.reason}${RESET}`);
-    });
+      previewList.forEach((e) => {
+        const lineStr = String(e.line).padEnd(6);
+        const opStr = String(e.operator).padEnd(12);
+        const dtStr = String(e.dateStr || '-').padEnd(12);
+        const eqStr = String(e.equipment || '-').padEnd(14);
+        const timeStr = `${e.inTime || '-'}/${e.outTime || '-'}`.padEnd(13);
+        const hrsStr = String(e.hours !== undefined ? e.hours : '-').padEnd(6);
+        console.log(`${lineStr} | ${opStr} | ${dtStr} | ${eqStr} | ${timeStr} | ${hrsStr} | ${RED}${e.reason}${RESET}`);
+      });
 
-    if (errors.length > previewLimit) {
-      console.log(`${YELLOW}... and ${errors.length - previewLimit} more skipped records.${RESET}`);
+      if (errors.length > previewLimit) {
+        console.log(`${YELLOW}... and ${errors.length - previewLimit} more skipped records.${RESET}`);
+      }
+      console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
+
+      const csvHeader = 'Line,Operator,Date,In,Out,AdditionalHours,Hours,Equipment,Condition,Unit,Reason\n';
+      const csvRows = errors
+        .map((e) => {
+          const cleanReason = `"${(e.reason || '').replace(/"/g, '""')}"`;
+          const cleanOp = `"${(e.operator || '').replace(/"/g, '""')}"`;
+          const cleanEq = `"${(e.equipment || '').replace(/"/g, '""')}"`;
+          const cleanCond = `"${(e.condition || '').replace(/"/g, '""')}"`;
+          const cleanUnt = `"${(e.unit || '').replace(/"/g, '""')}"`;
+          return `${e.line},${cleanOp},${e.dateStr || ''},${e.inTime || ''},${e.outTime || ''},${e.additionalHours !== undefined ? e.additionalHours : ''},${e.hours !== undefined ? e.hours : ''},${cleanEq},${cleanCond},${cleanUnt},${cleanReason}`;
+        })
+        .join('\n');
+
+      fs.writeFileSync(skippedCsvPath, csvHeader + csvRows, 'utf-8');
+      console.log(`\n${YELLOW}${BOLD}📁 Skipped Records Exported to File:${RESET}`);
+      console.log(`   ${BOLD}${skippedCsvPath}${RESET}`);
+      console.log(`${YELLOW}👉 You can open 'skipped_operator_records.csv' in Excel to inspect and correct all skipped rows.${RESET}\n`);
+    } else {
+      if (fs.existsSync(skippedCsvPath)) {
+        fs.unlinkSync(skippedCsvPath);
+      }
+      console.log(`\n${GREEN}${BOLD}🎉 ALL OPERATOR SHIFTS SUBMITTED SUCCESSFULLY! (0 ERRORS)${RESET}\n`);
     }
-    console.log(`${CYAN}----------------------------------------------------------------------------------------------------------------------------------${RESET}`);
-
-    const csvHeader = 'Line,Operator,Date,In,Out,AdditionalHours,Hours,Equipment,Condition,Unit,Reason\n';
-    const csvRows = errors
-      .map((e) => {
-        const cleanReason = `"${(e.reason || '').replace(/"/g, '""')}"`;
-        const cleanOp = `"${(e.operator || '').replace(/"/g, '""')}"`;
-        const cleanEq = `"${(e.equipment || '').replace(/"/g, '""')}"`;
-        const cleanCond = `"${(e.condition || '').replace(/"/g, '""')}"`;
-        const cleanUnt = `"${(e.unit || '').replace(/"/g, '""')}"`;
-        return `${e.line},${cleanOp},${e.dateStr || ''},${e.inTime || ''},${e.outTime || ''},${e.additionalHours !== undefined ? e.additionalHours : ''},${e.hours !== undefined ? e.hours : ''},${cleanEq},${cleanCond},${cleanUnt},${cleanReason}`;
-      })
-      .join('\n');
-
-    fs.writeFileSync(skippedCsvPath, csvHeader + csvRows, 'utf-8');
-    console.log(`\n${YELLOW}${BOLD}📁 Skipped Records Exported to File:${RESET}`);
-    console.log(`   ${BOLD}${skippedCsvPath}${RESET}`);
-    console.log(`${YELLOW}👉 You can open 'skipped_operator_records.csv' in Excel to inspect and correct all skipped rows.${RESET}\n`);
-  } else {
-    if (fs.existsSync(skippedCsvPath)) {
-      fs.unlinkSync(skippedCsvPath);
-    }
-    console.log(`\n${GREEN}${BOLD}🎉 ALL OPERATOR SHIFTS SUBMITTED SUCCESSFULLY! (0 ERRORS)${RESET}\n`);
+    console.log(`${CYAN}${BOLD}=====================================================${RESET}\n`);
   }
-  console.log(`${CYAN}${BOLD}=====================================================${RESET}\n`);
-}
 
-main()
-  .catch((e) => {
-    console.error(`\n${RED}Fatal Error during upload:${RESET}`, e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  main()
+    .catch((e) => {
+      console.error(`\n${RED}Fatal Error during upload:${RESET}`, e);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
