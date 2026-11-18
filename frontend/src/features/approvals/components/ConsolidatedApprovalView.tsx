@@ -63,6 +63,27 @@ export interface ConsolidatedEquipmentItem extends ApprovalEquipmentItem {
   supervisorUsername: string;
 }
 
+const roundEq5 = (n: unknown): number => {
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.round(v * 100000) / 100000 : 0;
+};
+
+const formatEqDecimal = (n: unknown): string => {
+  const r = roundEq5(n);
+  return Number(r.toFixed(5)).toString();
+};
+
+const formatEqUnitLabel = (unit?: string | null): string => {
+  const u = String(unit || 'hrs').trim().toLowerCase();
+  if (u === 'mth' || u === 'month') return 'mth';
+  if (u === 'day' || u === 'days') return 'Day';
+  if (u === 'hrs' || u === 'hr' || u === 'hour' || u === 'hours') return 'Hrs';
+  if (u === 'ex.hrs' || u === 'exhrs') return 'EX.hrs';
+  if (u === 'km') return 'km';
+  if (u === 'm2') return 'm²';
+  return unit || 'Hrs';
+};
+
 const isEquipmentLogged = (eq: ApprovalEquipmentItem) =>
   eq.netHours > 0 ||
   eq.workingHours > 0 ||
@@ -551,12 +572,17 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
     }
   };
 
-  // --- Equipment Editing Handlers ---
+  // --- Equipment Editing Handlers (Direct Unit + 5 Decimals + Splits-Synced Total) ---
   const startEditingEquipment = (eq: any) => {
     setEditingEquipmentKey(`${eq.supervisorId}_${eq.equipmentId}`);
-    setEditEqCondition(eq.condition || 'WORKING');
-    const netH = eq.netHours || eq.workingHours || eq.loggedQuantity || 0;
-    setEditEqNetHours(String(netH));
+    setEditEqCondition(eq.condition || 'DRY');
+    const splitsSum = eq.splits && eq.splits.length > 0
+      ? roundEq5(eq.splits.reduce((acc: number, s: any) => acc + (Number(s.utilization) || 0), 0))
+      : 0;
+    const baseQty = splitsSum > 0
+      ? splitsSum
+      : roundEq5(eq.loggedQuantity || eq.netHours || eq.workingHours || 0);
+    setEditEqNetHours(formatEqDecimal(baseQty));
     setEditEqInitialMeter(String(eq.initialMeter || 0));
     setEditEqFinalMeter(String(eq.finalMeter || 0));
     setEditEqFuelLiters(String(eq.fuelLiters || 0));
@@ -567,7 +593,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
           id: `eq-split-${idx}-${Date.now()}`,
           activityCodeId: s.activityCodeId || '',
           activityCode: s.activityCode || '',
-          hours: s.utilization !== undefined ? String(s.utilization) : '0',
+          hours: s.utilization !== undefined ? formatEqDecimal(s.utilization) : '0',
         }))
       );
     } else {
@@ -576,7 +602,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
           id: `eq-split-0-${Date.now()}`,
           activityCodeId: '',
           activityCode: '',
-          hours: String(netH),
+          hours: formatEqDecimal(baseQty),
         },
       ]);
     }
@@ -589,36 +615,41 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
 
   const handleAddEqSplitRow = (suggestedHours?: number) => {
     setEditEqSplits((prev) => {
-      const sum = prev.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0);
-      const netVal = parseFloat(editEqNetHours) || 0;
+      const sum = roundEq5(prev.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0));
+      const netVal = roundEq5(parseFloat(editEqNetHours) || 0);
       const rem =
         suggestedHours !== undefined
-          ? suggestedHours
-          : Math.max(0, parseFloat((netVal - sum).toFixed(2)));
-      return [
+          ? roundEq5(suggestedHours)
+          : Math.max(0, roundEq5(netVal - sum));
+      const next = [
         ...prev,
         {
           id: `eq-split-${Date.now()}-${Math.random()}`,
           activityCodeId: '',
           activityCode: '',
-          hours: rem > 0 ? String(rem) : '0',
+          hours: rem > 0 ? formatEqDecimal(rem) : '0',
         },
       ];
+      const nextSum = roundEq5(next.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0));
+      if (nextSum > 0) setEditEqNetHours(formatEqDecimal(nextSum));
+      return next;
     });
   };
 
   const handleRemoveEqSplitRow = (rowId: string) => {
     setEditEqSplits((prev) => {
-      if (prev.length <= 1) {
-        return [{ id: `eq-split-${Date.now()}`, activityCodeId: '', activityCode: '', hours: '0' }];
-      }
-      return prev.filter((s) => s.id !== rowId);
+      const next = prev.length <= 1
+        ? [{ id: `eq-split-${Date.now()}`, activityCodeId: '', activityCode: '', hours: '0' }]
+        : prev.filter((s) => s.id !== rowId);
+      const nextSum = roundEq5(next.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0));
+      setEditEqNetHours(formatEqDecimal(nextSum));
+      return next;
     });
   };
 
   const handleUpdateEqSplitRow = (rowId: string, field: 'activityCode' | 'hours', val: any) => {
-    setEditEqSplits((prev) =>
-      prev.map((s) => {
+    setEditEqSplits((prev) => {
+      const next = prev.map((s) => {
         if (s.id !== rowId) return s;
         if (field === 'activityCode') {
           const matched = activityOptions.find(
@@ -631,14 +662,18 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
           };
         }
         return { ...s, hours: val };
-      })
-    );
+      });
+      if (field === 'hours') {
+        const nextSum = roundEq5(next.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0));
+        setEditEqNetHours(formatEqDecimal(nextSum));
+      }
+      return next;
+    });
   };
 
   const handleSaveEquipmentEdit = async (eq: any) => {
     setIsSavingEqEdit(true);
     try {
-      const netVal = parseFloat(editEqNetHours) || 0;
       const initMeter = parseFloat(editEqInitialMeter) || 0;
       const finMeter = parseFloat(editEqFinalMeter) || 0;
       const fuelVal = parseFloat(editEqFuelLiters) || 0;
@@ -649,34 +684,42 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
           const matched = activityOptions.find(
             (a) => a.code.toUpperCase() === s.activityCode.trim().toUpperCase()
           );
+          const util = roundEq5(parseFloat(s.hours) || 0);
           return {
             activityCodeId: matched?.id || s.activityCodeId,
             activityCode: s.activityCode.trim(),
-            utilization: parseFloat(s.hours) || 0,
-            hours: parseFloat(s.hours) || 0,
+            utilization: util,
+            hours: util,
           };
         });
+
+      const splitsSum = roundEq5(validSplits.reduce((acc, s) => acc + s.utilization, 0));
+      const finalQty = validSplits.length > 0 ? splitsSum : roundEq5(parseFloat(editEqNetHours) || 0);
 
       const res = await adminAdjustEquipment({
         supervisorId: eq.supervisorId,
         equipmentId: eq.equipmentId,
         date: selectedDate,
+        unitCode: eq.primaryUnit,
+        totalUtilization: finalQty,
+        loggedQuantity: finalQty,
         initialMeter: initMeter,
         finalMeter: finMeter,
-        netHours: netVal,
-        workingHours: netVal,
+        netHours: finalQty,
+        workingHours: finalQty,
         fuelLiters: fuelVal,
         condition: editEqCondition,
         splits: validSplits,
       });
 
+      const eqUnit = res.primaryUnit || eq.primaryUnit || 'hrs';
       let nextSplits: Array<{ activityCode: string; activityDesc: string; unit: string; utilization: number }> = [];
       if (res.splits && res.splits.length > 0) {
         nextSplits = res.splits.map((s) => ({
           activityCode: s.activityCode,
           activityDesc: s.activityDesc,
-          unit: s.unit || 'hrs',
-          utilization: s.utilization,
+          unit: s.unit || eqUnit,
+          utilization: roundEq5(s.utilization),
         }));
       } else if (validSplits.length > 0) {
         nextSplits = validSplits.map((sp) => {
@@ -684,13 +727,15 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
           return {
             activityCode: sp.activityCode,
             activityDesc: opt?.name || sp.activityCode,
-            unit: 'hrs',
+            unit: eqUnit,
             utilization: sp.utilization,
           };
         });
       } else {
         nextSplits = eq.splits || [];
       }
+
+      const savedTotal = roundEq5(res.loggedQuantity ?? res.totalUtilization ?? finalQty);
 
       setLocalGroups((prev) =>
         prev.map((group) => {
@@ -702,9 +747,9 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                 ? {
                     ...e,
                     condition: editEqCondition,
-                    netHours: res.netHours ?? netVal,
-                    workingHours: res.workingHours ?? netVal,
-                    loggedQuantity: res.netHours ?? netVal,
+                    netHours: res.netHours ?? savedTotal,
+                    workingHours: res.workingHours ?? savedTotal,
+                    loggedQuantity: savedTotal,
                     initialMeter: res.initialMeter ?? initMeter,
                     finalMeter: res.finalMeter ?? finMeter,
                     fuelLiters: res.fuelLiters ?? fuelVal,
@@ -1867,47 +1912,51 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                             <div className="flex items-center gap-1">
                               <input
                                 type="number"
-                                step="0.5"
+                                step="any"
                                 min="0"
                                 value={editEqNetHours}
                                 onChange={(e) => setEditEqNetHours(e.target.value)}
-                                className="w-16 px-1.5 py-0.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
-                                title="Net Hours / Quantity"
+                                className="w-20 px-1.5 py-0.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
+                                title={`Logged Usage (${formatEqUnitLabel(eq.primaryUnit)})`}
                               />
-                              <span className="text-[11px] font-semibold text-slate-600">Hrs</span>
+                              <span className="text-[11px] font-semibold text-slate-600">
+                                {formatEqUnitLabel(eq.primaryUnit)}
+                              </span>
                             </div>
                           ) : (() => {
                             const unitUpper = (eq.primaryUnit || 'hrs').toUpperCase();
-                            if (unitUpper === 'HRS') {
-                              const hrs = Number(eq.netHours || eq.workingHours || eq.loggedQuantity || 0);
+                            const splitsSum = eq.splits && eq.splits.length > 0
+                              ? roundEq5(eq.splits.reduce((s, a) => s + (Number(a.utilization) || 0), 0))
+                              : 0;
+                            const effectiveQty = splitsSum > 0 ? splitsSum : roundEq5(eq.loggedQuantity ?? 0);
+                            if (unitUpper === 'HRS' || unitUpper === 'HR') {
+                              const hrs = effectiveQty > 0 ? effectiveQty : roundEq5(eq.netHours || eq.workingHours || 0);
                               return (
                                 <>
-                                  <div className="font-semibold text-slate-900">{hrs.toFixed(1)} Hrs</div>
+                                  <div className="font-semibold text-slate-900">{formatEqDecimal(hrs)} Hrs</div>
                                   <span className="text-[10px] text-slate-400 font-mono">Unit: HRS</span>
                                 </>
                               );
                             }
                             if (unitUpper === 'MTH') {
-                              const qty = Number(eq.loggedQuantity ?? 0);
                               return (
                                 <>
-                                  <div className="font-semibold text-slate-900">{qty} mth</div>
+                                  <div className="font-semibold text-slate-900">{formatEqDecimal(effectiveQty)} mth</div>
                                   <span className="text-[10px] text-violet-600 font-medium">Monthly Hire (mth)</span>
                                 </>
                               );
                             }
                             if (unitUpper === 'DAYS' || unitUpper === 'DAY') {
-                              const days = Number(eq.loggedQuantity || 1);
                               return (
                                 <>
-                                  <div className="font-semibold text-slate-900">{days} Day{days === 1 ? '' : 's'}</div>
+                                  <div className="font-semibold text-slate-900">{formatEqDecimal(effectiveQty)} Day{effectiveQty === 1 ? '' : 's'}</div>
                                   <span className="text-[10px] text-slate-400 font-mono">Unit: DAY</span>
                                 </>
                               );
                             }
                             return (
                               <>
-                                <div className="font-semibold text-slate-900">{eq.loggedQuantity ?? 0} {unitUpper}</div>
+                                <div className="font-semibold text-slate-900">{formatEqDecimal(effectiveQty)} {formatEqUnitLabel(eq.primaryUnit)}</div>
                                 <span className="text-[10px] text-slate-400 font-mono">Unit: {unitUpper}</span>
                               </>
                             );
@@ -2006,13 +2055,13 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                                   </div>
                                   <input
                                     type="number"
-                                    step="0.5"
+                                    step="any"
                                     min="0"
                                     value={sp.hours}
                                     onChange={(e) => handleUpdateEqSplitRow(sp.id, 'hours', e.target.value)}
-                                    className="w-14 px-1 py-1 text-xs font-mono font-semibold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
-                                    placeholder="Hrs"
-                                    title="Hours / Utilization"
+                                    className="w-20 px-1 py-1 text-xs font-mono font-semibold bg-white border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 text-center"
+                                    placeholder={formatEqUnitLabel(eq.primaryUnit)}
+                                    title={`Utilization (${formatEqUnitLabel(eq.primaryUnit)}) — up to 5 decimals`}
                                   />
                                   <button
                                     type="button"
@@ -2034,17 +2083,18 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                                   <span>Add Split</span>
                                 </button>
                                 {(() => {
-                                  const sum = editEqSplits.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0);
-                                  const netVal = parseFloat(editEqNetHours) || 0;
-                                  const isMismatch = Math.abs(sum - netVal) > 0.05 && netVal > 0;
+                                  const unitLbl = formatEqUnitLabel(eq.primaryUnit);
+                                  const sum = roundEq5(editEqSplits.reduce((acc, s) => acc + (parseFloat(s.hours) || 0), 0));
+                                  const netVal = roundEq5(parseFloat(editEqNetHours) || 0);
+                                  const isMismatch = Math.abs(sum - netVal) > 0.00001 && netVal > 0;
                                   return (
                                     <span
                                       className={`text-[10px] font-mono font-bold ${
                                         isMismatch ? 'text-amber-600' : 'text-emerald-600'
                                       }`}
-                                      title={isMismatch ? `Split total (${sum}h) differs from logged hours (${netVal}h)` : 'Split sum matches logged hours'}
+                                      title={isMismatch ? `Split total (${formatEqDecimal(sum)} ${unitLbl}) differs from logged usage (${formatEqDecimal(netVal)} ${unitLbl})` : `Split sum matches logged usage (${formatEqDecimal(sum)} ${unitLbl})`}
                                     >
-                                      Σ {sum.toFixed(1)} / {netVal.toFixed(1)}h
+                                      Σ {formatEqDecimal(sum)} / {formatEqDecimal(netVal)} {unitLbl}
                                     </span>
                                   );
                                 })()}
@@ -2059,7 +2109,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                                   title={act.activityDesc}
                                 >
                                   <Tag size={10} />
-                                  {act.activityCode}: {act.utilization} {act.unit}
+                                  {act.activityCode}: {formatEqDecimal(act.utilization)} {act.unit}
                                 </span>
                               ))}
                             </div>

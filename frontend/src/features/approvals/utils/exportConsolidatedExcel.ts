@@ -38,20 +38,25 @@ function formatBreakLabel(
 }
 
 function formatEquipmentUsage(eq: ConsolidatedEquipmentItem): string {
+  const round5 = (n: number) => (Number.isFinite(n) ? Math.round(n * 100000) / 100000 : 0);
+  const fmt = (n: number) => Number(round5(n).toFixed(5)).toString();
   const unitUpper = (eq.primaryUnit || 'hrs').toUpperCase();
-  if (unitUpper === 'HRS') {
-    const hrs = Number(eq.netHours || eq.workingHours || eq.loggedQuantity || 0);
-    return `${hrs.toFixed(1)} Hrs`;
+  const splitsSum = eq.splits && eq.splits.length > 0
+    ? round5(eq.splits.reduce((s, a) => s + (Number(a.utilization) || 0), 0))
+    : 0;
+  const qty = splitsSum > 0 ? splitsSum : round5(Number(eq.loggedQuantity ?? 0));
+
+  if (unitUpper === 'HRS' || unitUpper === 'HR') {
+    const hrs = qty > 0 ? qty : round5(Number(eq.netHours || eq.workingHours || 0));
+    return `${fmt(hrs)} Hrs`;
   }
   if (unitUpper === 'MTH') {
-    const qty = Number(eq.loggedQuantity ?? 0);
-    return `${qty} mth`;
+    return `${fmt(qty)} mth`;
   }
   if (unitUpper === 'DAYS' || unitUpper === 'DAY') {
-    const days = Number(eq.loggedQuantity || 1);
-    return `${days} Day${days === 1 ? '' : 's'}`;
+    return `${fmt(qty)} Day${qty === 1 ? '' : 's'}`;
   }
-  return `${eq.loggedQuantity ?? 0} ${unitUpper}`;
+  return `${fmt(qty)} ${unitUpper}`;
 }
 
 function getColumnLetter(colNum: number): string {

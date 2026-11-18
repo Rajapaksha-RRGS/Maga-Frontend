@@ -399,24 +399,49 @@ export const supervisorStorage = {
         if (res.ok) {
           const assignedData = await res.json();
           const mapped: EquipmentLogEntry[] = (assignedData || []).map((asgn: any) => {
-            const dbPrimaryUnit: EquipmentRatingUnit = normalizeRatingUnit(asgn.primaryUnit);
+            const dbPrimaryUnit: EquipmentRatingUnit = normalizeRatingUnit(asgn.dailyLog?.unitCode || asgn.primaryUnit);
             const dbAvailableUnits: EquipmentRatingUnit[] = [dbPrimaryUnit];
             const log = asgn.dailyLog;
+            const round5 = (n: number) => Math.round((Number(n) || 0) * 100000) / 100000;
+
+            const seenSplitCodes = new Set<string>();
+            const backendSplits = (Array.isArray(log?.activitySplits) && log.activitySplits.length > 0)
+              ? log.activitySplits
+                  .map((s: any) => ({
+                    id: s.id || `split-${Math.random()}`,
+                    activityCode: String(s.activityCode || '').trim(),
+                    unit: normalizeRatingUnit(s.unit || dbPrimaryUnit),
+                    utilization: round5(s.utilization ?? 0),
+                  }))
+                  .filter((s: any) => {
+                    const key = s.activityCode.toUpperCase();
+                    if (!key) return true;
+                    if (seenSplitCodes.has(key)) return false;
+                    seenSplitCodes.add(key);
+                    return true;
+                  })
+              : [];
+
+            const splitsSum = round5(backendSplits.reduce((acc: number, s: any) => acc + (Number(s.utilization) || 0), 0));
+            const derivedTotal = backendSplits.length > 0
+              ? splitsSum
+              : round5(log?.totalUtilization ?? 0);
+
             const logDays = (dbPrimaryUnit === 'Days' || dbPrimaryUnit === 'mth')
-              ? Number(log?.daysValue ?? log?.totalUtilization ?? 0)
+              ? (derivedTotal > 0 ? derivedTotal : round5(log?.daysValue ?? 0))
               : undefined;
             const logHours = (dbPrimaryUnit === 'Hrs')
-              ? Number(log?.hoursValue ?? log?.totalUtilization ?? log?.workingHours ?? 0)
+              ? (derivedTotal > 0 ? derivedTotal : round5(log?.hoursValue ?? log?.workingHours ?? 0))
               : undefined;
-
-            const backendSplits = (Array.isArray(log?.activitySplits) && log.activitySplits.length > 0)
-              ? log.activitySplits.map((s: any) => ({
-                  id: s.id || `split-${Math.random()}`,
-                  activityCode: s.activityCode,
-                  unit: normalizeRatingUnit(s.unit || dbPrimaryUnit),
-                  utilization: Number(s.utilization ?? 0),
-                }))
-              : [];
+            const logExtraHours = (dbPrimaryUnit === 'EX.hrs')
+              ? (derivedTotal > 0 ? derivedTotal : round5(log?.extraHoursValue ?? 0))
+              : undefined;
+            const logArea = (dbPrimaryUnit === 'm2')
+              ? (derivedTotal > 0 ? derivedTotal : round5(log?.areaValue ?? 0))
+              : undefined;
+            const logMileage = (dbPrimaryUnit === 'km')
+              ? (derivedTotal > 0 ? derivedTotal : round5(log?.totalMileage ?? 0))
+              : round5(log?.totalMileage ?? 0);
 
             return {
               id: asgn.equipmentId || asgn.id,
@@ -432,8 +457,8 @@ export const supervisorStorage = {
               additionalUnit: null,
               daysValue: logDays && logDays > 0 ? logDays : undefined,
               hoursValue: logHours && logHours > 0 ? logHours : undefined,
-              extraHoursValue: undefined,
-              areaValue: undefined,
+              extraHoursValue: logExtraHours && logExtraHours > 0 ? logExtraHours : undefined,
+              areaValue: logArea && logArea > 0 ? logArea : undefined,
               startMeter: Number(log?.startMeter ?? 0),
               endMeter: Number(log?.endMeter ?? 0),
               netHours: Number(log?.netHours ?? log?.workingHours ?? 0),
@@ -441,11 +466,11 @@ export const supervisorStorage = {
               idleHours: Number(log?.idleHours ?? 0),
               breakdownHours: Number(log?.breakdownHours ?? 0),
               fuelIssuedLiters: Number(log?.fuelIssuedLiters ?? 0),
-              totalMileage: Number(log?.totalMileage ?? 0),
+              totalMileage: logMileage,
               startMileage: Number(log?.startMileage ?? 0),
               endMileage: Number(log?.endMileage ?? 0),
               operatorId: asgn.operatorId,
-              activityCode: log?.activityCode || (log?.activitySplits?.[0]?.activityCode ?? ''),
+              activityCode: log?.activityCode || (backendSplits[0]?.activityCode ?? ''),
               activitySplits: backendSplits,
               activities: [],
               remarks: log?.remarks || '',
@@ -982,40 +1007,74 @@ export const supervisorStorage = {
 
   async syncEquipmentToBackend(supervisorId: string, date: string, equipment: EquipmentLogEntry[]): Promise<boolean> {
     try {
+      const round5 = (n: unknown) => {
+        const v = Number(n);
+        return Number.isFinite(v) ? Math.round(v * 100000) / 100000 : 0;
+      };
+
       const entries = equipment.map((eq) => {
-        const isDays = eq.primaryUnit === 'Days' || eq.primaryUnit === 'mth';
+        const pUnit = normalizeRatingUnit(eq.primaryUnit || eq.activeUnit);
+        const isDaysOrMth = pUnit === 'Days' || pUnit === 'mth';
+        const isHours = pUnit === 'Hrs';
+        const consolidatedSplitsMap = new Map<string, { activityCode: string; unit: string; utilization: number }>();
+        if (eq.activitySplits && eq.activitySplits.length > 0) {
+          for (const s of eq.activitySplits) {
+            const code = String(s.activityCode || '').trim();
+            const key = code.toUpperCase() || `__empty_${consolidatedSplitsMap.size}`;
+            const util = round5(s.utilization || 0);
+            const existing = consolidatedSplitsMap.get(key);
+            if (existing) {
+              existing.utilization = round5(existing.utilization + util);
+            } else {
+              consolidatedSplitsMap.set(key, {
+                activityCode: code,
+                unit: s.unit || pUnit || 'Hrs',
+                utilization: util,
+              });
+            }
+          }
+        }
+        const normalizedSplits = consolidatedSplitsMap.size > 0
+          ? Array.from(consolidatedSplitsMap.values())
+          : undefined;
+        const splitsSum = normalizedSplits
+          ? round5(normalizedSplits.reduce((acc, s) => acc + s.utilization, 0))
+          : 0;
+
+        let directTotal = 0;
+        if (pUnit === 'km') directTotal = round5(eq.totalMileage || 0);
+        else if (pUnit === 'm2') directTotal = round5(eq.areaValue || 0);
+        else if (pUnit === 'EX.hrs') directTotal = round5(eq.extraHoursValue || 0);
+        else if (isDaysOrMth) directTotal = round5(eq.daysValue || 0);
+        else directTotal = round5(eq.hoursValue || eq.workingHours || eq.netHours || 0);
+
+        const effectiveTotal = splitsSum > 0 ? splitsSum : directTotal;
+
         return {
           id: eq.id,
           equipmentId: eq.id,
           operatorId: eq.operatorId || undefined,
-          daysValue: isDays ? Number(eq.daysValue || eq.workingHours || 0) : undefined,
-          hoursValue: !isDays ? Number(eq.hoursValue || eq.workingHours || 0) : undefined,
+          unitCode: pUnit,
+          primaryUnit: pUnit,
+          totalUtilization: effectiveTotal,
+          daysValue: isDaysOrMth ? effectiveTotal : undefined,
+          hoursValue: isHours ? effectiveTotal : undefined,
+          extraHoursValue: pUnit === 'EX.hrs' ? effectiveTotal : undefined,
+          areaValue: pUnit === 'm2' ? effectiveTotal : undefined,
           startMeter: eq.startMeter !== undefined ? Number(eq.startMeter) : undefined,
           endMeter: eq.endMeter !== undefined ? Number(eq.endMeter) : undefined,
-          netHours: Number(eq.netHours || eq.workingHours || 0),
-          workingHours: Number(eq.workingHours || eq.netHours || 0),
+          netHours: isHours ? effectiveTotal : Number(eq.netHours || 0),
+          workingHours: isHours ? effectiveTotal : Number(eq.workingHours || 0),
           idleHours: Number(eq.idleHours || 0),
           breakdownHours: Number(eq.breakdownHours || 0),
           fuelIssuedLiters: Number(eq.fuelIssuedLiters || 0),
-          totalMileage: Number(eq.totalMileage || 0),
+          totalMileage: pUnit === 'km' ? effectiveTotal : Number(eq.totalMileage || 0),
           startMileage: eq.startMileage !== undefined ? Number(eq.startMileage) : undefined,
           endMileage: eq.endMileage !== undefined ? Number(eq.endMileage) : undefined,
           remarks: eq.remarks || undefined,
           status: eq.status || 'draft',
-          splits: (eq.activitySplits && eq.activitySplits.length > 0)
-            ? eq.activitySplits.map((s) => ({
-                activityCode: s.activityCode,
-                unit: s.unit || eq.primaryUnit || 'Hrs',
-                utilization: Number(s.utilization || 0),
-              }))
-            : undefined,
-          activitySplits: (eq.activitySplits && eq.activitySplits.length > 0)
-            ? eq.activitySplits.map((s) => ({
-                activityCode: s.activityCode,
-                unit: s.unit || eq.primaryUnit || 'Hrs',
-                utilization: Number(s.utilization || 0),
-              }))
-            : undefined,
+          splits: normalizedSplits,
+          activitySplits: normalizedSplits,
         };
       });
 

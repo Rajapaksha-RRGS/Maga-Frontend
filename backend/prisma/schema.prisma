@@ -448,7 +448,7 @@ model MF_OP_EquipmentDailyLog {
   
   // Dynamic Units & Total Utilization
   unitCode         String?  @map("unit_code")
-  totalUtilization Decimal? @default(0.00) @map("total_utilization") @db.Decimal(8, 2)
+  totalUtilization Decimal? @default(0.00000) @map("total_utilization") @db.Decimal(12, 5)
   
   // Meter & Running Hours
   initialMeter     Decimal  @default(0.00) @map("initial_meter") @db.Decimal(10, 2)
@@ -483,13 +483,14 @@ model MF_OP_EquipmentDailyLogActivity {
   dailyLogId     String   @map("daily_log_id")
   activityCodeId String   @map("activity_code_id")
   hours          Decimal? @default(0.00) @map("hours") @db.Decimal(6, 2)
-  utilization    Decimal  @default(0.00) @map("utilization") @db.Decimal(8, 2)
+  utilization    Decimal  @default(0.00000) @map("utilization") @db.Decimal(12, 5)
   remarks        String?
   createdAt      DateTime @default(now()) @map("created_at")
 
   dailyLog     MF_OP_EquipmentDailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
   activityCode MF_P_ActivityCode       @relation(fields: [activityCodeId], references: [id])
 
+  @@unique([dailyLogId, activityCodeId], name: "dailyLogId_activityCodeId")
   @@index([dailyLogId])
   @@index([activityCodeId])
   @@map("MF_L_EQUIPMENT_DAILY_LOG_ACTIVITY")
