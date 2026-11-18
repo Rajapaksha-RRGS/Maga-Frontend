@@ -1,35 +1,4 @@
-/**
- * UPLOAD_EQUIPMENT.ts
- *
- * Maga Equipment Bulk Utilization Entry Script
- *
- * Dedicated Default Target: Project 527 (M00000527 - 527M -CEP-III -1R / subdomain: 527)
- * (Overrideable via --project=<code> if needed)
- *
- * Supports:
- * 1. Standard Maga SAP/ERP 6-Column Format:
- *    Equipment Code | Condition | Unit | Date | Activity | Utilization
- *
- * 2. 5-Column Format:
- *    Equipment | Total Utilization | Activity | Utilization | Date
- *
- * Capabilities & Error Detection:
- * 1. Reads CSV / TSV (comma, tab, or semicolon delimited) with RFC-style quote handling & exact CSV line numbers.
- * 2. Strict row-by-row validation:
- *    - Missing fields (Equipment, Condition, Unit, Date, Activity, Utilization)
- *    - Invalid calendar dates (rejects impossible dates like 31/02/2026)
- *    - Non-numeric, zero (0.00), negative, or out-of-range utilization
- *    - Invalid Condition (must be DRY or WET)
- *    - Unknown Unit (validated strictly against MF_G_UnitMaster to prevent FK crashes)
- *    - Unregistered Equipment (not in Project 527 or Corporate Master)
- *    - Unknown Activity Codes (exact match only; rejects typos instead of auto-creating fake codes)
- *    - Conflicting Condition/Unit across split rows on the same (Equipment, Date)
- *    - Approved-entry protection (never overwrites logs with status = 'approved')
- * 3. Pre-Upload Diagnostics Scan (duplicate activity splits, unit/condition mismatches vs DB, monthly mth cap check, bulk values).
- * 4. Groups multi-activity splits per (Equipment, Date) & consolidates duplicate (Equipment, Date, Activity) lines cleanly.
- * 5. Preserves existing operatorId on MF_OP_DailyEquipmentAssignment updates while setting null on new equipment-only entries.
- * 6. Zero-Crash Policy: row/group-level try/catch, terminal error table, error summary by category, and skipped_equipment_records.csv export.
- */
+
 
 import dotenv from 'dotenv';
 import path from 'path';
