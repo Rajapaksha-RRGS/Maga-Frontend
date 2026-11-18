@@ -834,7 +834,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
-        status: statusFilter,
+        status: statusFilter, 
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(empFilter ? { employee: empFilter } : {}),
       },
@@ -897,7 +897,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
 
       if (!bpMap.has(bpName)) bpMap.set(bpName, new Map());
       const empMap = bpMap.get(bpName)!;
-
+ 
       const effectiveDailyRate = (entry.appliedDailyRate !== null && Number(entry.appliedDailyRate) > 0)
         ? Number(entry.appliedDailyRate)
         : (Number(entry.employee.dailyRate) > 0

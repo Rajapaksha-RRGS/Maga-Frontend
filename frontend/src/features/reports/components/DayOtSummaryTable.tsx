@@ -1,17 +1,34 @@
 /**
- * DayOtSummaryTable.tsx — Wide pivoted table for Day & OT Summary report.
+ * DayOtSummaryTable.tsx — Wide pivoted table for Day & OT Summary report
+ * powered by @tanstack/react-table.
  * Matches GET /api/reports/day-ot-summary.
  *
  * Rules:
- *   - One row per employee.
- *   - A Days / O.T. column pair per date in the selected range.
- *   - Wrapped in an overflow-x-auto container for horizontal scrolling.
- *   - Fixed/clean employee identity columns.
- *   - Summary row with date-by-date totals at bottom.
+ *   - One row per employee, paginated (25/50/100/250) to prevent DOM freeze on wide date matrices.
+ *   - A Hrs / O.T. column pair per date in the selected range.
+ *   - Sticky employee identity column & horizontal scroll container.
+ *   - Quick search + sortable summary columns (Employee, Trade, BP, Total Hrs, Total OT).
+ *   - Summary row with date-by-date grand totals at bottom.
  */
-import { Fragment } from 'react';
-import type { DayOtSummaryResponse } from '../services/reportService';
+import { Fragment, useState, useMemo, useDeferredValue, useCallback } from 'react';
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  type ColumnDef,
+  type SortingState,
+  type PaginationState,
+  type FilterFn,
+} from '@tanstack/react-table';
+import type { DayOtSummaryResponse, DayOtSummaryItem } from '../services/reportService';
 import { CalendarRange } from 'lucide-react';
+import {
+  ReportTableToolbar,
+  ReportTablePagination,
+  SortableHeader,
+} from './ReportTableControls';
 
 interface Props {
   data: DayOtSummaryResponse;
@@ -32,12 +49,84 @@ function formatShortDate(dateStr: string): string {
   return dateStr;
 }
 
+const dayOtGlobalFilterFn: FilterFn<DayOtSummaryItem> = (row, _columnId, filterValue) => {
+  const q = String(filterValue || '').trim().toLowerCase();
+  if (!q) return true;
+  const r = row.original;
+  return Boolean(
+    r.employeeCode?.toLowerCase().includes(q) ||
+      r.employeeName?.toLowerCase().includes(q) ||
+      r.callingName?.toLowerCase().includes(q) ||
+      r.tradeGroup?.toLowerCase().includes(q) ||
+      r.businessPartner?.toLowerCase().includes(q) ||
+      r.employeeType?.toLowerCase().includes(q)
+  );
+};
+
 export default function DayOtSummaryTable({ data }: Props) {
   const { dates, items, totals } = data;
 
+  const [searchInput, setSearchInput] = useState('');
+  const deferredSearch = useDeferredValue(searchInput);
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 50,
+  });
+
+  const handleSearchChange = useCallback((val: string) => {
+    setSearchInput(val);
+    setPagination((prev) => (prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }));
+  }, []);
+
+  const columns = useMemo<ColumnDef<DayOtSummaryItem>[]>(
+    () => [
+      {
+        id: 'employee',
+        accessorFn: (row) => row.employeeCode || row.employeeName || '',
+      },
+      {
+        accessorKey: 'tradeGroup',
+      },
+      {
+        accessorKey: 'businessPartner',
+      },
+      {
+        id: 'totalWorkHours',
+        accessorFn: (row) => (row.totalWorkHours != null ? row.totalWorkHours : row.totalDays),
+      },
+      {
+        accessorKey: 'totalOtHours',
+      },
+    ],
+    []
+  );
+
+  const table = useReactTable({
+    data: items,
+    columns,
+    state: {
+      sorting,
+      globalFilter: deferredSearch,
+      pagination,
+    },
+    onSortingChange: setSorting,
+    onPaginationChange: setPagination,
+    globalFilterFn: dayOtGlobalFilterFn,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getRowId: (row, idx) => row.id || `dayot-${idx}`,
+  });
+
+  const filteredCount = table.getFilteredRowModel().rows.length;
+  const pageRows = table.getRowModel().rows;
+  const totalColSpan = 3 + dates.length * 2 + 2;
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between text-xs text-slate-500">
+      <div className="flex items-center justify-between text-xs text-slate-500 flex-wrap gap-2">
         <span className="flex items-center gap-1.5 font-medium">
           <CalendarRange size={14} className="text-slate-400" />
           Showing {dates.length} days ({dates[0]} to {dates[dates.length - 1]})
@@ -46,6 +135,18 @@ export default function DayOtSummaryTable({ data }: Props) {
       </div>
 
       <div className="bg-white rounded-lg border border-slate-200 shadow-2xs overflow-hidden">
+        <ReportTableToolbar
+          searchValue={searchInput}
+          onSearchChange={handleSearchChange}
+          searchPlaceholder="Search employee, trade, partner…"
+          totalCount={items.length}
+          filteredCount={filteredCount}
+          pageRowCount={pageRows.length}
+          pageIndex={pagination.pageIndex}
+          pageSize={pagination.pageSize}
+          itemLabel="workers"
+        />
+
         <div className="overflow-x-auto max-w-full">
           <table className="w-full text-xs text-left border-collapse min-w-[900px]">
             <thead>
@@ -55,19 +156,19 @@ export default function DayOtSummaryTable({ data }: Props) {
                   rowSpan={2}
                   className="sticky left-0 z-20 bg-slate-50 px-4 py-3 min-w-[170px] border-r border-slate-200 shadow-[1px_0_0_0_#e2e8f0]"
                 >
-                  Employee
+                  <SortableHeader column={table.getColumn('employee')} label="Employee" />
                 </th>
                 <th
                   rowSpan={2}
                   className="px-3 py-3 min-w-[110px] border-r border-slate-200"
                 >
-                  Trade group
+                  <SortableHeader column={table.getColumn('tradeGroup')} label="Trade group" />
                 </th>
                 <th
                   rowSpan={2}
                   className="px-3 py-3 min-w-[140px] border-r border-slate-200"
                 >
-                  Business partner
+                  <SortableHeader column={table.getColumn('businessPartner')} label="Business partner" />
                 </th>
 
                 {/* Date Group Headers */}
@@ -103,92 +204,115 @@ export default function DayOtSummaryTable({ data }: Props) {
                   </Fragment>
                 ))}
                 <th className="px-3 py-1.5 text-right min-w-[60px] text-slate-800 bg-blue-50/40">
-                  Hrs
+                  <SortableHeader column={table.getColumn('totalWorkHours')} label="Hrs" align="right" />
                 </th>
                 <th className="px-3 py-1.5 text-right min-w-[60px] text-amber-800 bg-blue-50/40 font-semibold">
-                  O.T.
+                  <SortableHeader column={table.getColumn('totalOtHours')} label="O.T." align="right" />
                 </th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {items.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                 
-                  {/* Sticky Employee Name */}
-                  <td className="sticky left-0 z-10 bg-white hover:bg-slate-50 px-4 py-2.5 border-r border-slate-200 shadow-[1px_0_0_0_#e2e8f0]">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-medium font-mono text-slate-900 truncate max-w-[130px]">
-                        {row.employeeCode || row.employeeName}
-                      </span>
-                      {row.employeeType && (
-                        <span
-                          className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-semibold uppercase tracking-wide border ${
-                            row.employeeType === 'internal'
-                              ? 'bg-sky-50 text-sky-700 border-sky-200'
-                              : 'bg-violet-50 text-violet-700 border-violet-200'
-                          }`}
+              {pageRows.length === 0 ? (
+                <tr>
+                  <td colSpan={totalColSpan} className="px-4 py-10 text-center text-slate-400">
+                    {items.length === 0 ? (
+                      'No records found.'
+                    ) : (
+                      <div className="flex flex-col items-center gap-2">
+                        <span>No workers match &ldquo;{searchInput}&rdquo;.</span>
+                        <button
+                          type="button"
+                          onClick={() => handleSearchChange('')}
+                          className="text-blue-600 hover:underline font-medium cursor-pointer"
                         >
-                          {row.employeeType}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-slate-400 truncate max-w-[160px]">
-                      {row.employeeName}
-                    </div>
-                  </td>
-
-                  <td className="px-3 py-2.5 text-slate-600 border-r border-slate-100 truncate max-w-[120px]">
-                    {row.tradeGroup}
-                  </td>
-                  <td className="px-3 py-2.5 text-slate-600 border-r border-slate-100 truncate max-w-[140px]">
-                    {row.businessPartner}
-                  </td>
-
-                  {/* Date Entries — show effective work hours instead of day count */}
-                  {dates.map((date) => {
-                    const entry = row.dailyEntries[date] || { days: 0, otHours: 0, workHours: 0 };
-                    return (
-                      <Fragment key={`${row.id}-${date}`}>
-                        <td className="px-2 py-2 text-center tabular-nums text-slate-700 font-mono">
-                          {entry.workHours > 0 ? (
-                            entry.workHours.toFixed(1)
-                          ) : (
-                            <span className="text-slate-300">—</span>
-                          )}
-                        </td>
-                        <td className="px-2 py-2 text-center tabular-nums font-mono border-r border-slate-100">
-                          {entry.otHours > 0 ? (
-                            <span className="text-amber-700 font-medium">
-                              {entry.otHours.toFixed(1)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-300">—</span>
-                          )}
-                        </td>
-                      </Fragment>
-                    );
-                  })}
-
-                  {/* Row Totals */}
-                  <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900 bg-slate-50/40">
-                    {row.totalWorkHours != null ? row.totalWorkHours.toFixed(2) : row.totalDays}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-amber-700 bg-amber-50/20">
-                    {row.totalOtHours > 0 ? row.totalOtHours.toFixed(2) : '0.00'}
+                          Clear search
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                pageRows.map((tableRow) => {
+                  const row = tableRow.original;
+                  return (
+                    <tr key={tableRow.id} className="hover:bg-slate-50/80 transition-colors">
+                      {/* Sticky Employee Name */}
+                      <td className="sticky left-0 z-10 bg-white hover:bg-slate-50 px-4 py-2.5 border-r border-slate-200 shadow-[1px_0_0_0_#e2e8f0]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium font-mono text-slate-900 truncate max-w-[130px]">
+                            {row.employeeCode || row.employeeName}
+                          </span>
+                          {row.employeeType && (
+                            <span
+                              className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-semibold uppercase tracking-wide border ${
+                                row.employeeType === 'internal'
+                                  ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                  : 'bg-violet-50 text-violet-700 border-violet-200'
+                              }`}
+                            >
+                              {row.employeeType}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 truncate max-w-[160px]">
+                          {row.employeeName}
+                        </div>
+                      </td>
+
+                      <td className="px-3 py-2.5 text-slate-600 border-r border-slate-100 truncate max-w-[120px]">
+                        {row.tradeGroup}
+                      </td>
+                      <td className="px-3 py-2.5 text-slate-600 border-r border-slate-100 truncate max-w-[140px]">
+                        {row.businessPartner}
+                      </td>
+
+                      {/* Date Entries */}
+                      {dates.map((date) => {
+                        const entry = row.dailyEntries[date] || { days: 0, otHours: 0, workHours: 0 };
+                        return (
+                          <Fragment key={`${row.id}-${date}`}>
+                            <td className="px-2 py-2 text-center tabular-nums text-slate-700 font-mono">
+                              {entry.workHours > 0 ? (
+                                entry.workHours.toFixed(1)
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-2 text-center tabular-nums font-mono border-r border-slate-100">
+                              {entry.otHours > 0 ? (
+                                <span className="text-amber-700 font-medium">
+                                  {entry.otHours.toFixed(1)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+                          </Fragment>
+                        );
+                      })}
+
+                      {/* Row Totals */}
+                      <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900 bg-slate-50/40">
+                        {row.totalWorkHours != null ? row.totalWorkHours.toFixed(2) : row.totalDays}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-amber-700 bg-amber-50/20">
+                        {row.totalOtHours > 0 ? row.totalOtHours.toFixed(2) : '0.00'}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
 
-            {/* Table Footer with Aggregates */}
+            {/* Table Footer with Grand Aggregates */}
             <tfoot>
               <tr className="bg-slate-100/90 border-t-2 border-slate-200 text-xs font-medium text-slate-800">
                 <td
                   colSpan={3}
                   className="sticky left-0 z-20 bg-slate-100 px-4 py-3 uppercase tracking-wider font-semibold border-r border-slate-200 shadow-[1px_0_0_0_#cbd5e1]"
                 >
-                  Total ({items.length} workers)
+                  Grand Total ({items.length.toLocaleString()} workers)
                 </td>
 
                 {dates.map((date) => {
@@ -215,6 +339,13 @@ export default function DayOtSummaryTable({ data }: Props) {
             </tfoot>
           </table>
         </div>
+
+        <ReportTablePagination
+          table={table}
+          totalCount={items.length}
+          filteredCount={filteredCount}
+          itemLabel="workers"
+        />
       </div>
     </div>
   );

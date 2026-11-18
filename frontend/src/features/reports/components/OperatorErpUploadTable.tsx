@@ -1,34 +1,72 @@
 /**
- * OperatorErpUploadTable.tsx — Plant Operator ERP Upload Preview & Export.
+ * OperatorErpUploadTable.tsx — Plant Operator ERP Upload Preview & Export
+ * powered by @tanstack/react-table.
  *
- * Implements the user's uploaded Excel specification for Maga SAP/ERP batch upload:
+ * Implements the Maga SAP/ERP batch upload specification:
  *   - Columns: Employee | Date | Equipment | Condition | Unit | Hours | Overtime Hours | Remarks
- *   - Dual Export:
- *       1. Comma-delimited CSV (.csv) with UTF-8 BOM (per user's direct instruction)
- *       2. Excel spreadsheet (.xlsx) with purple "Upload Details" header styling
- *   - Maintains 100% visual and layout consistency with existing Labor & Equipment tables.
+ *   - TanStack pagination (25/50/100/250), sorting, and deferred search
+ *   - Dual Export (all rows): CSV (.csv) + Excel (.xlsx)
  */
-import React, { useState, useMemo } from 'react';
-import type { OperatorErpUploadResponse } from '../services/reportService';
+import React, { useState, useMemo, useDeferredValue, useCallback } from 'react';
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  flexRender,
+  type ColumnDef,
+  type SortingState,
+  type PaginationState,
+  type FilterFn,
+} from '@tanstack/react-table';
+import type { OperatorErpUploadResponse, OperatorErpUploadRow } from '../services/reportService';
 import { exportOperatorErpToExcel, exportOperatorErpToCsv } from '../services/excelExport';
-import { 
-  Download, 
-  FileSpreadsheet, 
-  FileText, 
-  Layers, 
-  Clock, 
-  Timer, 
+import {
+  Download,
+  FileSpreadsheet,
+  FileText,
+  Layers,
+  Clock,
+  Timer,
   Search,
+  X,
 } from 'lucide-react';
+import { ReportTablePagination, SortableHeader } from './ReportTableControls';
 
 interface Props {
   data: OperatorErpUploadResponse;
 }
 
+const operatorErpGlobalFilterFn: FilterFn<OperatorErpUploadRow> = (row, _columnId, filterValue) => {
+  const q = String(filterValue || '').trim().toLowerCase();
+  if (!q) return true;
+  const r = row.original;
+  return Boolean(
+    r.employee?.toLowerCase().includes(q) ||
+      r.employeeName?.toLowerCase().includes(q) ||
+      r.equipment?.toLowerCase().includes(q) ||
+      r.date?.toLowerCase().includes(q) ||
+      r.condition?.toLowerCase().includes(q) ||
+      r.remarks?.toLowerCase().includes(q)
+  );
+};
+
 export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const deferredSearch = useDeferredValue(searchTerm);
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 50,
+  });
+
+  const handleSearchChange = useCallback((val: string) => {
+    setSearchTerm(val);
+    setPagination((prev) => (prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }));
+  }, []);
 
   // Handle CSV export (comma-delimited)
   const handleExportCsv = () => {
@@ -54,18 +92,137 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
     }
   };
 
-  // Filter rows based on search
-  const filteredRows = useMemo(() => {
-    if (!searchTerm.trim()) return data.rows;
-    const q = searchTerm.toLowerCase();
-    return data.rows.filter(
-      (r) =>
-        r.employee.toLowerCase().includes(q) ||
-        r.employeeName.toLowerCase().includes(q) ||
-        r.equipment.toLowerCase().includes(q) ||
-        r.date.includes(q)
-    );
-  }, [data.rows, searchTerm]);
+  const columns = useMemo<ColumnDef<OperatorErpUploadRow>[]>(
+    () => [
+      {
+        accessorKey: 'employee',
+        header: ({ column }) => <SortableHeader column={column} label="Employee" />,
+        meta: {
+          thClass: 'px-4 py-2.5 border-r border-slate-300 min-w-[140px]',
+          tdClass: 'px-4 py-2 border-r border-slate-200',
+        },
+        cell: ({ row }) => (
+          <div className="flex flex-col">
+            <span className="font-bold text-slate-900 font-mono">{row.original.employee}</span>
+            <span className="text-[10px] text-slate-500 leading-tight">{row.original.employeeName}</span>
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'date',
+        header: ({ column }) => <SortableHeader column={column} label="Date" align="center" />,
+        meta: {
+          thClass: 'px-4 py-2.5 border-r border-slate-300 w-28 text-center',
+          tdClass: 'px-4 py-2 border-r border-slate-200 text-center font-mono text-slate-700 whitespace-nowrap',
+        },
+        cell: ({ getValue }) => getValue<string>(),
+      },
+      {
+        accessorKey: 'equipment',
+        header: ({ column }) => <SortableHeader column={column} label="Equipment" />,
+        meta: {
+          thClass: 'px-4 py-2.5 border-r border-slate-300 min-w-[120px]',
+          tdClass: 'px-4 py-2 border-r border-slate-200',
+        },
+        cell: ({ row }) => {
+          const r = row.original;
+          const isOt = r.isOtRow || r.equipment.toUpperCase() === 'OT';
+          return isOt ? (
+            <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-100 border border-amber-300 font-bold text-amber-900 font-mono text-[11px]">
+              OT
+            </span>
+          ) : (
+            <span className="font-bold text-slate-800 font-mono">{r.equipment}</span>
+          );
+        },
+      },
+      {
+        accessorKey: 'condition',
+        header: ({ column }) => <SortableHeader column={column} label="Condition" align="center" />,
+        meta: {
+          thClass: 'px-4 py-2.5 border-r border-slate-300 w-24 text-center',
+          tdClass: 'px-4 py-2 border-r border-slate-200 text-center',
+        },
+        cell: ({ getValue }) => {
+          const val = getValue<string>();
+          return val ? (
+            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[11px]">
+              {val}
+            </span>
+          ) : (
+            <span className="text-slate-300">-</span>
+          );
+        },
+      },
+      {
+        accessorKey: 'unit',
+        header: ({ column }) => <SortableHeader column={column} label="Unit" align="center" />,
+        meta: {
+          thClass: 'px-4 py-2.5 border-r border-slate-300 w-20 text-center',
+          tdClass: 'px-4 py-2 border-r border-slate-200 text-center font-mono text-slate-600',
+        },
+        cell: ({ getValue }) => getValue<string>() || <span className="text-slate-300">-</span>,
+      },
+      {
+        accessorKey: 'hours',
+        header: ({ column }) => <SortableHeader column={column} label="Hours" align="right" />,
+        sortingFn: (rowA, rowB) => (parseFloat(String(rowA.original.hours)) || 0) - (parseFloat(String(rowB.original.hours)) || 0),
+        meta: {
+          thClass: 'px-4 py-2.5 border-r border-slate-300 w-24 text-right',
+          tdClass: 'px-4 py-2 border-r border-slate-200 text-right font-mono font-bold tabular-nums text-slate-900',
+        },
+        cell: ({ getValue }) => getValue<string | number>() || <span className="text-slate-300 font-normal">-</span>,
+      },
+      {
+        accessorKey: 'overtimeHours',
+        header: ({ column }) => <SortableHeader column={column} label="Overtime Hours" align="right" />,
+        sortingFn: (rowA, rowB) => (parseFloat(String(rowA.original.overtimeHours)) || 0) - (parseFloat(String(rowB.original.overtimeHours)) || 0),
+        meta: {
+          thClass: 'px-4 py-2.5 border-r border-slate-300 w-28 text-right',
+          tdClass: 'px-4 py-2 border-r border-slate-200 text-right font-mono tabular-nums',
+        },
+        cell: ({ getValue }) => {
+          const val = getValue<string | number>();
+          return val ? (
+            <span className="font-bold text-amber-900">{val}</span>
+          ) : (
+            <span className="text-slate-300 font-normal">-</span>
+          );
+        },
+      },
+      {
+        accessorKey: 'remarks',
+        header: ({ column }) => <SortableHeader column={column} label="Remarks" />,
+        meta: {
+          thClass: 'px-4 py-2.5 min-w-[140px]',
+          tdClass: 'px-4 py-2 text-slate-600 truncate max-w-[200px]',
+        },
+        cell: ({ getValue }) => getValue<string>() || <span className="text-slate-300">-</span>,
+      },
+    ],
+    []
+  );
+
+  const table = useReactTable({
+    data: data.rows,
+    columns,
+    state: {
+      sorting,
+      globalFilter: deferredSearch,
+      pagination,
+    },
+    onSortingChange: setSorting,
+    onPaginationChange: setPagination,
+    globalFilterFn: operatorErpGlobalFilterFn,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getRowId: (row, idx) => row.id || `op-erp-${idx}`,
+  });
+
+  const filteredCount = table.getFilteredRowModel().rows.length;
+  const pageRows = table.getRowModel().rows;
 
   return (
     <div className="flex flex-col gap-4 font-sans">
@@ -76,7 +233,7 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
             <Layers size={14} className="text-slate-400" /> Total Export Rows
           </span>
           <span className="text-2xl font-bold text-slate-900 tabular-nums">
-            {data.totalRows}
+            {data.totalRows.toLocaleString()}
           </span>
         </div>
 
@@ -111,7 +268,7 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <span>Operator ERP Batch Upload</span>
               <span className="text-xs font-normal text-slate-500 font-mono">
-                ({filteredRows.length} {filteredRows.length === 1 ? 'row' : 'rows'})
+                ({filteredCount.toLocaleString()} {filteredCount === 1 ? 'row' : 'rows'})
               </span>
             </h3>
             <p className="text-xs text-slate-500">
@@ -123,21 +280,31 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
         <div className="flex flex-wrap items-center gap-2">
           {/* Quick Search */}
           <div className="relative">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="text"
               placeholder="Search emp / equipment…"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-48 sm:w-56"
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-48 sm:w-56"
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => handleSearchChange('')}
+                title="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X size={13} />
+              </button>
+            )}
           </div>
 
-          {/* Download CSV Button (Comma-delimited - Primary requirement from user) */}
+          {/* Download CSV Button */}
           <button
             onClick={handleExportCsv}
             disabled={isExportingCsv || data.rows.length === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-semibold transition-colors shadow-2xs disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-semibold transition-colors shadow-2xs disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed cursor-pointer"
             title="Download standard comma-delimited (.csv) file for ERP import"
           >
             <FileText size={14} />
@@ -148,7 +315,7 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
           <button
             onClick={handleExportExcel}
             disabled={isExportingExcel || data.rows.length === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-800 border border-slate-300 text-xs font-semibold transition-colors shadow-2xs disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-800 border border-slate-300 text-xs font-semibold transition-colors shadow-2xs disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed cursor-pointer"
             title="Download formatted Excel (.xlsx) file"
           >
             <Download size={14} className="text-purple-700" />
@@ -162,46 +329,49 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left border-collapse font-sans">
             <thead>
-              <tr className="bg-slate-100 border-b border-slate-300 text-slate-800 font-semibold tracking-wide">
-                <th className="px-4 py-2.5 border-r border-slate-300 min-w-[140px]">
-                  Employee
-                </th>
-                <th className="px-4 py-2.5 border-r border-slate-300 w-28 text-center">
-                  Date
-                </th>
-                <th className="px-4 py-2.5 border-r border-slate-300 min-w-[120px]">
-                  Equipment
-                </th>
-                <th className="px-4 py-2.5 border-r border-slate-300 w-24 text-center">
-                  Condition
-                </th>
-                <th className="px-4 py-2.5 border-r border-slate-300 w-20 text-center">
-                  Unit
-                </th>
-                <th className="px-4 py-2.5 border-r border-slate-300 w-24 text-right">
-                  Hours
-                </th>
-                <th className="px-4 py-2.5 border-r border-slate-300 w-28 text-right">
-                  Overtime Hours
-                </th>
-                <th className="px-4 py-2.5 min-w-[140px]">
-                  Remarks
-                </th>
-              </tr>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <tr
+                  key={headerGroup.id}
+                  className="bg-slate-100 border-b border-slate-300 text-slate-800 font-semibold tracking-wide"
+                >
+                  {headerGroup.headers.map((header) => {
+                    const meta = header.column.columnDef.meta as { thClass?: string } | undefined;
+                    return (
+                      <th key={header.id} className={meta?.thClass || 'px-4 py-2.5'}>
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(header.column.columnDef.header, header.getContext())}
+                      </th>
+                    );
+                  })}
+                </tr>
+              ))}
             </thead>
 
             <tbody className="divide-y divide-slate-200">
-              {filteredRows.length === 0 ? (
+              {pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-400 font-sans">
-                    {data.rows.length === 0
-                      ? 'No operator ERP upload rows found for the selected dates.'
-                      : 'No rows match your search query.'}
+                  <td colSpan={columns.length} className="px-4 py-12 text-center text-slate-400 font-sans">
+                    {data.rows.length === 0 ? (
+                      'No operator ERP upload rows found for the selected dates.'
+                    ) : (
+                      <div className="flex flex-col items-center gap-2">
+                        <span>No rows match &ldquo;{searchTerm}&rdquo;.</span>
+                        <button
+                          type="button"
+                          onClick={() => handleSearchChange('')}
+                          className="text-blue-600 hover:underline font-medium cursor-pointer"
+                        >
+                          Clear search
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ) : (
-                filteredRows.map((row) => {
-                  const isOt = row.isOtRow || row.equipment.toUpperCase() === 'OT';
+                pageRows.map((row) => {
+                  const orig = row.original;
+                  const isOt = orig.isOtRow || orig.equipment.toUpperCase() === 'OT';
 
                   return (
                     <tr
@@ -212,72 +382,14 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
                           : 'hover:bg-slate-50/70'
                       }`}
                     >
-                      {/* Employee Code & Name */}
-                      <td className="px-4 py-2 border-r border-slate-200">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-slate-900 font-mono">
-                            {row.employee}
-                          </span>
-                          <span className="text-[10px] text-slate-500 leading-tight">
-                            {row.employeeName}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Date (DD-MM-YYYY) */}
-                      <td className="px-4 py-2 border-r border-slate-200 text-center font-mono text-slate-700">
-                        {row.date}
-                      </td>
-
-                      {/* Equipment */}
-                      <td className="px-4 py-2 border-r border-slate-200">
-                        {isOt ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-100 border border-amber-300 font-bold text-amber-900 font-mono text-[11px]">
-                            OT
-                          </span>
-                        ) : (
-                          <span className="font-bold text-slate-800 font-mono">
-                            {row.equipment}
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Condition */}
-                      <td className="px-4 py-2 border-r border-slate-200 text-center">
-                        {row.condition ? (
-                          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[11px]">
-                            {row.condition}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-
-                      {/* Unit */}
-                      <td className="px-4 py-2 border-r border-slate-200 text-center font-mono text-slate-600">
-                        {row.unit || <span className="text-slate-300">-</span>}
-                      </td>
-
-                      {/* Hours */}
-                      <td className="px-4 py-2 border-r border-slate-200 text-right font-mono font-bold tabular-nums text-slate-900">
-                        {row.hours || <span className="text-slate-300 font-normal">-</span>}
-                      </td>
-
-                      {/* Overtime Hours */}
-                      <td className="px-4 py-2 border-r border-slate-200 text-right font-mono tabular-nums">
-                        {row.overtimeHours ? (
-                          <span className="font-bold text-amber-900">
-                            {row.overtimeHours}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 font-normal">-</span>
-                        )}
-                      </td>
-
-                      {/* Remarks */}
-                      <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">
-                        {row.remarks || <span className="text-slate-300">-</span>}
-                      </td>
+                      {row.getVisibleCells().map((cell) => {
+                        const meta = cell.column.columnDef.meta as { tdClass?: string } | undefined;
+                        return (
+                          <td key={cell.id} className={meta?.tdClass || 'px-4 py-2'}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 })
@@ -285,11 +397,11 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
             </tbody>
 
             {/* Table Footer Totals */}
-            {filteredRows.length > 0 && (
+            {data.rows.length > 0 && (
               <tfoot>
                 <tr className="bg-slate-50 border-t-2 border-slate-300 font-semibold text-slate-800">
                   <td colSpan={5} className="px-4 py-2.5 border-r border-slate-200 text-right">
-                    Total ({filteredRows.length} rows):
+                    Grand Total ({data.totalRows.toLocaleString()} rows):
                   </td>
                   <td className="px-4 py-2.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
                     {data.totalHours.toFixed(2)}
@@ -305,8 +417,14 @@ export const OperatorErpUploadTable: React.FC<Props> = ({ data }) => {
             )}
           </table>
         </div>
+
+        <ReportTablePagination
+          table={table}
+          totalCount={data.rows.length}
+          filteredCount={filteredCount}
+          itemLabel="rows"
+        />
       </div>
     </div>
   );
 };
-

@@ -12,11 +12,13 @@ import {
   WifiOff,
   RefreshCw
 } from 'lucide-react';
-import type { 
-  LaborerEntry, 
-  OperatorEntry, 
-  EquipmentLogEntry, 
-  SiteProject 
+import {
+  normalizeRatingUnit,
+  type LaborerEntry,
+  type OperatorEntry,
+  type EquipmentLogEntry,
+  type EquipmentRatingUnit,
+  type SiteProject,
 } from '../services/supervisorStorageService';
 import { formatHhmm, sumHhmm } from '../utils/timeUtils';
 
@@ -60,6 +62,88 @@ export function DailySummaryView({
   // Machine assignment is optional — unassigned operators auto-balance to ZXQOPRIDLE.
   const completedOperators = (operators || []).filter((o) => o.inTime && o.outTime).length;
   const totalOperatorHours = sumHhmm((operators || []).map((o) => o.shiftHours));
+
+  // Equipment aggregation across all rating units (Hrs, EX.hrs, Days, mth, km, m2)
+  const round5 = (n: number): number => (Number.isFinite(n) ? Math.round(n * 100000) / 100000 : 0);
+  const formatEquipmentQty = (n: number): string => {
+    const r = round5(n);
+    return Number(r.toFixed(5)).toString();
+  };
+  const getDirectEquipmentVal = (eq: EquipmentLogEntry, unit: EquipmentRatingUnit): number => {
+    switch (unit) {
+      case 'Days':
+        return round5(Number(eq.daysValue) || 0);
+      case 'mth':
+        return round5(Number(eq.daysValue) || Number(eq.netHours) || 0);
+      case 'Hrs':
+        return round5(
+          Number(eq.hoursValue) ||
+          Number(eq.netHours) ||
+          Number(eq.workingHours) ||
+          (Number(eq.endMeter) > Number(eq.startMeter) ? Number(eq.endMeter) - Number(eq.startMeter) : 0)
+        );
+      case 'EX.hrs':
+        return round5(Number(eq.extraHoursValue) || 0);
+      case 'm2':
+        return round5(Number(eq.areaValue) || 0);
+      case 'km':
+        return round5(
+          Number(eq.totalMileage) ||
+          (Number(eq.endMileage) > Number(eq.startMileage) ? Number(eq.endMileage) - Number(eq.startMileage) : 0)
+        );
+      default:
+        return round5(Number(eq.hoursValue) || Number(eq.daysValue) || Number(eq.netHours) || 0);
+    }
+  };
+
+  const equipmentUnitTotals: Partial<Record<EquipmentRatingUnit, number>> = {};
+  let loggedEquipmentCount = 0;
+
+  (equipment || []).forEach((eq) => {
+    const primaryUnit = normalizeRatingUnit(eq.primaryUnit || eq.activeUnit);
+    const positiveSplits = (eq.activitySplits || []).filter((s) => Number(s.utilization) > 0);
+    let hasLoggedValue = false;
+
+    if (positiveSplits.length > 0) {
+      hasLoggedValue = true;
+      positiveSplits.forEach((s) => {
+        const u = normalizeRatingUnit(s.unit || primaryUnit);
+        equipmentUnitTotals[u] = round5((equipmentUnitTotals[u] || 0) + (Number(s.utilization) || 0));
+      });
+    } else {
+      const primaryVal = getDirectEquipmentVal(eq, primaryUnit);
+      if (primaryVal > 0) {
+        hasLoggedValue = true;
+        equipmentUnitTotals[primaryUnit] = round5((equipmentUnitTotals[primaryUnit] || 0) + primaryVal);
+      }
+      if (eq.additionalUnit) {
+        const addUnit = normalizeRatingUnit(eq.additionalUnit);
+        if (addUnit !== primaryUnit) {
+          const addVal = getDirectEquipmentVal(eq, addUnit);
+          if (addVal > 0) {
+            hasLoggedValue = true;
+            equipmentUnitTotals[addUnit] = round5((equipmentUnitTotals[addUnit] || 0) + addVal);
+          }
+        }
+      }
+    }
+
+    if (hasLoggedValue || eq.status === 'done') {
+      loggedEquipmentCount += 1;
+    }
+  });
+
+  const totalEquipmentHours = sumHhmm([
+    equipmentUnitTotals['Hrs'] || 0,
+    equipmentUnitTotals['EX.hrs'] || 0,
+  ]);
+  const equipmentUnitOrder: EquipmentRatingUnit[] = ['Hrs', 'EX.hrs', 'Days', 'mth', 'km', 'm2'];
+  const equipmentSummaryParts = equipmentUnitOrder
+    .filter((u) => (equipmentUnitTotals[u] || 0) > 0)
+    .map((u) => `${formatEquipmentQty(equipmentUnitTotals[u] || 0)} ${u === 'm2' ? 'm²' : u}`);
+  const equipmentSummaryLabel = equipmentSummaryParts.length > 0 ? equipmentSummaryParts.join(', ') : '0h';
+
+  const totalLoggedHours = sumHhmm([totalLaborHours, totalOperatorHours, totalEquipmentHours]);
   const operatorsMissingTime = (operators || []).filter((o) => !o.inTime || !o.outTime).length;
   // Operators that have times but no machine assignment → will be ZXQOPRIDLE (valid)
   const zxqopridleOperators = (operators || []).filter((o) => o.inTime && o.outTime && !o.assignedEquipmentId && (!o.equipmentSplits || o.equipmentSplits.length === 0)).length;
@@ -455,6 +539,12 @@ export function DailySummaryView({
               </p>
               <p className="text-slate-600 dark:text-slate-300">
                 • <strong>{completedOperators}</strong> Equipment Operators verified ({totalOperatorHours}h)
+              </p>
+              <p className="text-slate-600 dark:text-slate-300">
+                • <strong>{loggedEquipmentCount}</strong> Equipment logged ({equipmentSummaryLabel})
+              </p>
+              <p className="text-slate-900 dark:text-slate-100 font-semibold pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700">
+                • Total Logged Hours: <strong>{totalLoggedHours}h</strong>
               </p>
             </div>
 
