@@ -292,3 +292,62 @@ export async function adminAdjustWorker(payload: {
   return res.json();
 }
 
+export interface AdminAdjustEquipmentPayload {
+  supervisorId?: string;
+  equipmentId: string;
+  date: string;
+  initialMeter?: number;
+  finalMeter?: number;
+  netHours?: number;
+  workingHours?: number;
+  idleHours?: number;
+  breakdownHours?: number;
+  fuelLiters?: number;
+  condition?: string;
+  remarks?: string;
+  splits?: Array<{
+    activityCode?: string;
+    activityCodeId?: string;
+    utilization?: number;
+    hours?: number;
+  }>;
+}
+
+/**
+ * Admin adjust an equipment's daily log (meter, hours, fuel, condition, remarks, activities) directly during approval
+ */
+export async function adminAdjustEquipment(payload: AdminAdjustEquipmentPayload): Promise<{
+  success: boolean;
+  equipmentId: string;
+  initialMeter: number;
+  finalMeter: number;
+  netHours: number;
+  workingHours: number;
+  idleHours: number;
+  breakdownHours: number;
+  fuelLiters: number;
+  condition?: string;
+  remarks?: string;
+  splits: Array<{
+    activityCodeId: string;
+    activityCode: string;
+    activityDesc: string;
+    unit: string;
+    utilization: number;
+  }>;
+  message?: string;
+}> {
+  const res = await apiFetch(`${API_URL}/time-entries/admin-adjust-equipment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || 'Failed to adjust equipment daily log');
+  }
+  invalidateApprovalRelatedCaches();
+  return res.json();
+}
+
+

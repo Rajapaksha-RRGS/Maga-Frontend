@@ -2,6 +2,7 @@ import { AlertTriangle } from 'lucide-react';
 import type { AssignedEmployee } from '../services/timeEntryService';
 import type { DayType } from '../../calendar/services/calendarService';
 import { calculateShiftBreakdown, formatDecimalHours } from '../../../utils/overtimeCalculator';
+import { TimeInput24 } from '../../../components/TimeInput24';
 
 interface CheckoutRowProps {
   employee: AssignedEmployee;
@@ -122,14 +123,13 @@ export function CheckoutRow({
           <label htmlFor={inputId} className="text-xs text-slate-500">
             Out
           </label>
-          <input
+          <TimeInput24
             id={inputId}
-            type="time"
             value={outTime ?? ''}
-            onChange={(e) => onOutTimeChange(employee.id, e.target.value)}
+            onChange={(val) => onOutTimeChange(employee.id, val)}
             disabled={submitted}
             className={[
-              'w-full bg-transparent text-sm font-medium text-slate-800 tabular-nums outline-none',
+              'w-full bg-transparent text-sm font-medium font-mono text-slate-800 tabular-nums outline-none',
               'focus-visible:ring-1 focus-visible:ring-blue-600 rounded',
               submitted ? 'text-slate-400 cursor-not-allowed' : '',
             ].join(' ')}

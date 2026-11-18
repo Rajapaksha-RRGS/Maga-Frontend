@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Users, CheckSquare, Square, CheckCircle2 } from 'lucide-react';
 import { supervisorStorage, type ActivityCodeItem, type LaborerEntry } from '../services/supervisorStorageService';
+import { TimeInput24 } from '../../../components/TimeInput24';
 
 interface BulkUpdateModalProps {
   open: boolean;
@@ -92,24 +93,22 @@ export function BulkUpdateModal({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-xs text-slate-500 dark:text-slate-400 block mb-1">
-                In Time
+                In Time (24H)
               </label>
-              <input
-                type="time"
+              <TimeInput24
                 value={bulkIn}
-                onChange={(e) => setBulkIn(e.target.value)}
-                className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                onChange={(val) => setBulkIn(val)}
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
               />
             </div>
             <div>
               <label className="text-xs text-slate-500 dark:text-slate-400 block mb-1">
-                Out Time
+                Out Time (24H)
               </label>
-              <input
-                type="time"
+              <TimeInput24
                 value={bulkOut}
-                onChange={(e) => setBulkOut(e.target.value)}
-                className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
+                onChange={(val) => setBulkOut(val)}
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600"
               />
             </div>
           </div>

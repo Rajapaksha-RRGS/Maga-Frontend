@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import Breadcrumb from '../components/Breadcrumb';
 import { useAuth } from '../context/AuthContext';
+import { TimeInput24 } from '../components/TimeInput24';
 import {
   getTenantById,
   updatePoolModes,
@@ -501,22 +502,20 @@ export default function AdminSettingsPage() {
 
                 <div className="grid grid-cols-3 gap-2.5 pt-1">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Start Time</label>
-                    <input
-                      type="time"
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Start Time (24H)</label>
+                    <TimeInput24
                       value={lunchStart}
                       disabled={!lunchEnabled}
-                      onChange={(e) => setLunchStart(e.target.value)}
+                      onChange={(val) => setLunchStart(val)}
                       className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">End Time</label>
-                    <input
-                      type="time"
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">End Time (24H)</label>
+                    <TimeInput24
                       value={lunchEnd}
                       disabled={!lunchEnabled}
-                      onChange={(e) => setLunchEnd(e.target.value)}
+                      onChange={(val) => setLunchEnd(val)}
                       className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
                     />
                   </div>
@@ -559,22 +558,20 @@ export default function AdminSettingsPage() {
 
                 <div className="grid grid-cols-3 gap-2.5 pt-1">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Start Time</label>
-                    <input
-                      type="time"
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Start Time (24H)</label>
+                    <TimeInput24
                       value={dinnerStart}
                       disabled={!dinnerEnabled}
-                      onChange={(e) => setDinnerStart(e.target.value)}
+                      onChange={(val) => setDinnerStart(val)}
                       className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">End Time</label>
-                    <input
-                      type="time"
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">End Time (24H)</label>
+                    <TimeInput24
                       value={dinnerEnd}
                       disabled={!dinnerEnabled}
-                      onChange={(e) => setDinnerEnd(e.target.value)}
+                      onChange={(val) => setDinnerEnd(val)}
                       className="w-full text-xs font-mono font-bold py-1.5 px-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                     />
                   </div>

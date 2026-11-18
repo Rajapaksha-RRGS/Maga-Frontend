@@ -2492,6 +2492,164 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
   }
 };
 
+// 7.4 POST /api/time-entries/admin-adjust-equipment — Admin equipment log adjustment
+export const adminAdjustEquipmentLog = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      supervisorId,
+      equipmentId,
+      date,
+      initialMeter,
+      finalMeter,
+      netHours,
+      workingHours,
+      idleHours,
+      breakdownHours,
+      fuelLiters,
+      remarks,
+      condition,
+      splits,
+    } = req.body || {};
+
+    if (!equipmentId || !date) {
+      res.status(400).json({ error: 'equipmentId and date are required' });
+      return;
+    }
+
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      req.body.projectId ||
+      req.body.tenantId ||
+      (await getDefaultTenantId());
+
+    const targetDate = parseDate(date);
+
+    let effectiveSupId = supervisorId;
+    if (!effectiveSupId) {
+      const supUser = await prisma.mF_P_User.findFirst({
+        where: { projectId, role: 'supervisor' },
+        select: { id: true },
+      });
+      effectiveSupId = supUser?.id || '';
+    }
+
+    const dailySheet = await getOrCreateDailySheet(projectId, effectiveSupId, targetDate);
+
+    // Find or create assignment
+    const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
+      where: {
+        dailySheetId_equipmentId: {
+          dailySheetId: dailySheet.id,
+          equipmentId,
+        },
+      },
+      update: {},
+      create: {
+        dailySheetId: dailySheet.id,
+        equipmentId,
+      },
+    });
+
+    const netVal = netHours !== undefined ? Number(netHours) : undefined;
+    const workVal = workingHours !== undefined ? Number(workingHours) : netVal;
+
+    const updatedLog = await prisma.mF_OP_EquipmentDailyLog.upsert({
+      where: { assignmentId: assignment.id },
+      create: {
+        assignmentId: assignment.id,
+        initialMeter: initialMeter !== undefined ? Number(initialMeter) : 0,
+        finalMeter: finalMeter !== undefined ? Number(finalMeter) : 0,
+        netRunningHours: netVal || 0,
+        workingHours: workVal || 0,
+        idleHours: idleHours !== undefined ? Number(idleHours) : 0,
+        breakdownHours: breakdownHours !== undefined ? Number(breakdownHours) : 0,
+        fuelLiters: fuelLiters !== undefined ? Number(fuelLiters) : 0,
+        totalUtilization: netVal || 0,
+        remarks: remarks || null,
+        status: 'submitted',
+      },
+      update: {
+        initialMeter: initialMeter !== undefined ? Number(initialMeter) : undefined,
+        finalMeter: finalMeter !== undefined ? Number(finalMeter) : undefined,
+        netRunningHours: netVal,
+        workingHours: workVal,
+        idleHours: idleHours !== undefined ? Number(idleHours) : undefined,
+        breakdownHours: breakdownHours !== undefined ? Number(breakdownHours) : undefined,
+        fuelLiters: fuelLiters !== undefined ? Number(fuelLiters) : undefined,
+        totalUtilization: netVal,
+        remarks: remarks !== undefined ? remarks : undefined,
+        status: 'submitted',
+      },
+    });
+
+    // Update equipment condition if provided
+    if (condition) {
+      await prisma.mF_P_Equipment.update({
+        where: { id: equipmentId },
+        data: { condition },
+      }).catch(() => null);
+    }
+
+    // Handle activity splits if provided
+    if (Array.isArray(splits)) {
+      await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({
+        where: { dailyLogId: updatedLog.id },
+      });
+
+      for (const sp of splits) {
+        const rawCode = (sp.activityCode || sp.activityCodeId || '').trim();
+        const util = Number(sp.utilization ?? sp.hours ?? 0);
+        if (rawCode) {
+          const actId = await resolveProjectActivityId(rawCode, projectId);
+          if (actId) {
+            await prisma.mF_OP_EquipmentDailyLogActivity.create({
+              data: {
+                dailyLogId: updatedLog.id,
+                activityCodeId: actId,
+                utilization: util,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    // Retrieve fresh splits
+    const logActivities = await prisma.mF_OP_EquipmentDailyLogActivity.findMany({
+      where: { dailyLogId: updatedLog.id },
+      include: { activityCode: { select: { id: true, code: true, description: true, unit: true } } },
+    });
+
+    const resultSplits = logActivities.map((a) => ({
+      activityCodeId: a.activityCodeId,
+      activityCode: a.activityCode?.code || 'N/A',
+      activityDesc: a.activityCode?.description || '',
+      unit: a.activityCode?.unit || 'hrs',
+      utilization: Number(a.utilization || 0),
+    }));
+
+    res.json({
+      success: true,
+      equipmentId,
+      initialMeter: Number(updatedLog.initialMeter || 0),
+      finalMeter: Number(updatedLog.finalMeter || 0),
+      netHours: Number(updatedLog.netRunningHours || 0),
+      workingHours: Number(updatedLog.workingHours || 0),
+      idleHours: Number(updatedLog.idleHours || 0),
+      breakdownHours: Number(updatedLog.breakdownHours || 0),
+      fuelLiters: Number(updatedLog.fuelLiters || 0),
+      condition,
+      remarks: updatedLog.remarks,
+      splits: resultSplits,
+      message: 'Equipment log adjusted successfully by Admin.',
+    });
+  } catch (error) {
+    console.error('Error in adminAdjustEquipmentLog:', error);
+    res.status(500).json({ error: 'Failed to adjust equipment log' });
+  }
+};
+
 // 8. GET /api/time-entries/operators — Get operator entries
 export const getOperatorEntries = async (req: Request, res: Response): Promise<void> => {
   try {
