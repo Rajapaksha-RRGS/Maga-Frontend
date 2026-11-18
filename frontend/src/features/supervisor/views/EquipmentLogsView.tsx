@@ -104,7 +104,6 @@ function getUnitValueInfo(eq: EquipmentLogEntry, rawUnit: EquipmentRatingUnit | 
 }
 
 function syncUnitTotalField(
-  eq: EquipmentLogEntry,
   unit: EquipmentRatingUnit,
   total: number
 ): Partial<EquipmentLogEntry> {
@@ -561,7 +560,7 @@ export function EquipmentLogsView({
       );
       return {
         ...e,
-        ...syncUnitTotalField(e, unit, sameUnitSum),
+        ...syncUnitTotalField(unit, sameUnitSum),
         activitySplits: splits,
         status: (sameUnitSum > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
@@ -613,7 +612,7 @@ export function EquipmentLogsView({
       );
       return {
         ...e,
-        ...syncUnitTotalField(e, unit, sameUnitSum),
+        ...syncUnitTotalField(unit, sameUnitSum),
         activitySplits: nextSplits,
         status: (sameUnitSum > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
@@ -645,7 +644,7 @@ export function EquipmentLogsView({
 
       return {
         ...e,
-        ...(updates.utilization !== undefined ? syncUnitTotalField(e, unit, sameUnitSum) : {}),
+        ...(updates.utilization !== undefined ? syncUnitTotalField(unit, sameUnitSum) : {}),
         activitySplits: splits,
         status: (sameUnitSum > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
