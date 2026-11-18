@@ -19,6 +19,58 @@ function isSheetLocked(sheet: { status?: string | null; isLocked?: boolean | nul
   return sheet.status === 'submitted' || sheet.status === 'approved' || Boolean(sheet.isLocked);
 }
 
+// Shared precision & unit helpers for Direct Equipment Utilization Model (up to 5 decimals)
+function roundUtil5(val: unknown): number {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num * 100000) / 100000;
+}
+
+function round2(val: unknown): number {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num * 100) / 100;
+}
+
+function isHoursBasedEquipmentUnit(unit?: string | null): boolean {
+  const u = String(unit || '').trim().toLowerCase();
+  return u === 'hrs' || u === 'hr' || u === 'hour' || u === 'hours' || u === 'ex.hrs' || u === 'exhrs';
+}
+
+function buildEquipmentUnitLookup(units: Array<{ code: string }>): (raw?: string | null) => string | null {
+  const exactSet = new Set(units.map((u) => u.code));
+  const lowerMap = new Map<string, string>();
+  for (const u of units) lowerMap.set(u.code.toLowerCase(), u.code);
+  const aliases: Record<string, string[]> = {
+    day: ['day', 'days'],
+    days: ['day', 'days'],
+    hr: ['hrs', 'hr'],
+    hrs: ['hrs', 'hr'],
+    hour: ['hrs', 'hr'],
+    hours: ['hrs', 'hr'],
+    exhrs: ['ex.hrs'],
+    'ex.hrs': ['ex.hrs'],
+    mth: ['mth'],
+    month: ['mth'],
+    km: ['km'],
+    m2: ['m2'],
+  };
+  return (raw?: string | null): string | null => {
+    const clean = String(raw || '').trim();
+    if (!clean) return null;
+    if (exactSet.has(clean)) return clean;
+    const lower = clean.toLowerCase();
+    if (lowerMap.has(lower)) return lowerMap.get(lower)!;
+    const targets = aliases[lower];
+    if (targets) {
+      for (const t of targets) {
+        if (lowerMap.has(t)) return lowerMap.get(t)!;
+      }
+    }
+    return null;
+  };
+}
+
 // Site Meal Policy configuration
 export interface SiteMealPolicy {
   lunchBreakEnabled: boolean;
@@ -1856,24 +1908,38 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         const eq = ea.equipment;
         const corp = eq?.corporateEquipment;
         const log = ea.dailyLog;
-        const primaryUnit = (eq?.meterUnitCode || corp?.unit || 'hrs').toLowerCase();
+        const primaryUnit = (log?.unitCode || eq?.meterUnitCode || corp?.unit || 'hrs').toLowerCase();
         const condition = eq?.condition || corp?.condition || 'DRY';
         const initialMeter = Number(log?.initialMeter || 0);
         const finalMeter = Number(log?.finalMeter || 0);
-        const isHrUnit = primaryUnit === 'hrs' || primaryUnit === 'hr';
-        const netHours = Number(log?.netRunningHours || log?.workingHours || (isHrUnit ? log?.totalUtilization : 0) || 0);
-        const workingHours = Number(log?.workingHours || log?.netRunningHours || (isHrUnit ? log?.totalUtilization : 0) || 0);
-        const idleHours = Number(log?.idleHours || 0);
-        const fuelLiters = Number(log?.fuelLiters || 0);
-        const totalMileage = Number(log?.totalMileage || 0);
-        const loggedQuantity = Number(log?.totalUtilization || (isHrUnit ? netHours : 0) || 0);
+        const isHrUnit = isHoursBasedEquipmentUnit(primaryUnit);
 
         const splits = (log?.activities || []).map((act) => ({
           activityCode: act.activityCode?.code || 'N/A',
           activityDesc: act.activityCode?.description || '',
           unit: primaryUnit || 'hrs',
-          utilization: Number(act.utilization || 0),
+          utilization: roundUtil5(act.utilization || 0),
         }));
+
+        const splitsSum = roundUtil5(splits.reduce((s, a) => s + Number(a.utilization || 0), 0));
+        const rawTotalUtil = roundUtil5(log?.totalUtilization || 0);
+        const totalMileage = Number(log?.totalMileage || 0);
+        const loggedQuantity = splits.length > 0
+          ? splitsSum
+          : (rawTotalUtil > 0
+              ? rawTotalUtil
+              : (primaryUnit === 'km'
+                  ? roundUtil5(totalMileage)
+                  : (isHrUnit ? roundUtil5(log?.netRunningHours || log?.workingHours || 0) : 0)));
+
+        const netHours = isHrUnit
+          ? loggedQuantity
+          : Number(log?.netRunningHours || log?.workingHours || 0);
+        const workingHours = isHrUnit
+          ? loggedQuantity
+          : Number(log?.workingHours || log?.netRunningHours || 0);
+        const idleHours = Number(log?.idleHours || 0);
+        const fuelLiters = Number(log?.fuelLiters || 0);
 
         const isLogged = netHours > 0 || workingHours > 0 || loggedQuantity > 0 || fuelLiters > 0 || splits.length > 0;
 
@@ -1906,15 +1972,17 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
       const laborHours = workerDetails.reduce((sum, w) => sum + Number(w.hours || 0), 0);
       const laborOvertime = workerDetails.reduce((sum, w) => sum + Number(w.otHours || 0), 0);
       const equipmentFuel = equipmentDetails.reduce((sum, e) => sum + Number(e.fuelLiters || 0), 0);
-      const equipmentDays = equipmentDetails.reduce(
-        (sum, e) =>
-          sum +
-          (e.primaryUnit === 'mth' || e.primaryUnit === 'day' || e.primaryUnit === 'days'
-            ? e.loggedQuantity > 0
-              ? e.loggedQuantity
-              : 1
-            : 0),
-        0
+      const equipmentDays = roundUtil5(
+        equipmentDetails.reduce(
+          (sum, e) =>
+            sum +
+            (e.primaryUnit === 'mth' || e.primaryUnit === 'day' || e.primaryUnit === 'days'
+              ? e.loggedQuantity > 0
+                ? e.loggedQuantity
+                : 0
+              : 0),
+          0
+        )
       );
 
       // For submitted or approved sheets, only show workers who actually attended/worked
@@ -2536,6 +2604,52 @@ export const adminAdjustEquipmentLog = async (req: Request, res: Response): Prom
 
     const dailySheet = await getOrCreateDailySheet(projectId, effectiveSupId, targetDate);
 
+    // Load equipment master unit & valid unit codes so unitCode & hours are stored accurately
+    const [eqRecord, unitMasters] = await Promise.all([
+      prisma.mF_P_Equipment.findUnique({
+        where: { id: equipmentId },
+        select: {
+          meterUnitCode: true,
+          corporateEquipment: { select: { unit: true } },
+        },
+      }),
+      prisma.mF_G_UnitMaster.findMany({ select: { code: true } }),
+    ]);
+    const resolveUnitCode = buildEquipmentUnitLookup(unitMasters);
+    const rawUnit = req.body.unitCode || eqRecord?.meterUnitCode || eqRecord?.corporateEquipment?.unit || 'hrs';
+    const resolvedUnitCode = resolveUnitCode(rawUnit);
+    const unitLower = (resolvedUnitCode || rawUnit || 'hrs').toLowerCase();
+    const isHoursBased = isHoursBasedEquipmentUnit(unitLower);
+
+    // Pre-resolve and deduplicate splits FIRST so totalUtilization = SUM(splits) (5-decimal precision)
+    const consolidatedSplits = new Map<string, number>();
+    let splitsSum = 0;
+    if (Array.isArray(splits)) {
+      for (const sp of splits) {
+        const rawCode = String(sp.activityCode || sp.activityCodeId || '').trim();
+        const util = roundUtil5(sp.utilization ?? sp.hours ?? 0);
+        if (rawCode && util > 0) {
+          const actId = await resolveProjectActivityId(rawCode, projectId);
+          if (actId) {
+            const prev = consolidatedSplits.get(actId) || 0;
+            consolidatedSplits.set(actId, roundUtil5(prev + util));
+          }
+        }
+      }
+      splitsSum = roundUtil5(Array.from(consolidatedSplits.values()).reduce((s, v) => s + v, 0));
+    }
+
+    const inputTotal = roundUtil5(req.body.totalUtilization ?? req.body.loggedQuantity ?? netHours ?? workingHours ?? 0);
+    const finalTotalUtil = consolidatedSplits.size > 0 ? splitsSum : inputTotal;
+
+    const initMeterNum = initialMeter !== undefined ? Number(initialMeter) : undefined;
+    const finMeterNum = finalMeter !== undefined ? Number(finalMeter) : undefined;
+    const meterDiff = (initMeterNum !== undefined && finMeterNum !== undefined && finMeterNum > initMeterNum)
+      ? round2(finMeterNum - initMeterNum)
+      : 0;
+    const effectiveNetHours = isHoursBased ? round2(finalTotalUtil) : meterDiff;
+    const effectiveWorkHours = isHoursBased ? round2(finalTotalUtil) : 0;
+
     // Find or create assignment
     const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
       where: {
@@ -2551,33 +2665,34 @@ export const adminAdjustEquipmentLog = async (req: Request, res: Response): Prom
       },
     });
 
-    const netVal = netHours !== undefined ? Number(netHours) : undefined;
-    const workVal = workingHours !== undefined ? Number(workingHours) : netVal;
-
     const updatedLog = await prisma.mF_OP_EquipmentDailyLog.upsert({
       where: { assignmentId: assignment.id },
       create: {
         assignmentId: assignment.id,
-        initialMeter: initialMeter !== undefined ? Number(initialMeter) : 0,
-        finalMeter: finalMeter !== undefined ? Number(finalMeter) : 0,
-        netRunningHours: netVal || 0,
-        workingHours: workVal || 0,
+        unitCode: resolvedUnitCode,
+        initialMeter: initMeterNum ?? 0,
+        finalMeter: finMeterNum ?? 0,
+        netRunningHours: effectiveNetHours,
+        workingHours: effectiveWorkHours,
         idleHours: idleHours !== undefined ? Number(idleHours) : 0,
         breakdownHours: breakdownHours !== undefined ? Number(breakdownHours) : 0,
         fuelLiters: fuelLiters !== undefined ? Number(fuelLiters) : 0,
-        totalUtilization: netVal || 0,
+        totalMileage: unitLower === 'km' ? finalTotalUtil : 0,
+        totalUtilization: finalTotalUtil,
         remarks: remarks || null,
         status: 'submitted',
       },
       update: {
-        initialMeter: initialMeter !== undefined ? Number(initialMeter) : undefined,
-        finalMeter: finalMeter !== undefined ? Number(finalMeter) : undefined,
-        netRunningHours: netVal,
-        workingHours: workVal,
+        unitCode: resolvedUnitCode || undefined,
+        initialMeter: initMeterNum,
+        finalMeter: finMeterNum,
+        netRunningHours: effectiveNetHours,
+        workingHours: effectiveWorkHours,
         idleHours: idleHours !== undefined ? Number(idleHours) : undefined,
         breakdownHours: breakdownHours !== undefined ? Number(breakdownHours) : undefined,
         fuelLiters: fuelLiters !== undefined ? Number(fuelLiters) : undefined,
-        totalUtilization: netVal,
+        totalMileage: unitLower === 'km' ? finalTotalUtil : undefined,
+        totalUtilization: finalTotalUtil,
         remarks: remarks !== undefined ? remarks : undefined,
         status: 'submitted',
       },
@@ -2591,28 +2706,27 @@ export const adminAdjustEquipmentLog = async (req: Request, res: Response): Prom
       }).catch(() => null);
     }
 
-    // Handle activity splits if provided
+    // Handle activity splits atomically if provided (deduplicated by activityCodeId)
     if (Array.isArray(splits)) {
-      await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({
-        where: { dailyLogId: updatedLog.id },
-      });
+      const splitRows = Array.from(consolidatedSplits.entries()).map(([activityCodeId, utilization]) => ({
+        dailyLogId: updatedLog.id,
+        activityCodeId,
+        utilization,
+        hours: isHoursBased ? round2(utilization) : null,
+      }));
 
-      for (const sp of splits) {
-        const rawCode = (sp.activityCode || sp.activityCodeId || '').trim();
-        const util = Number(sp.utilization ?? sp.hours ?? 0);
-        if (rawCode) {
-          const actId = await resolveProjectActivityId(rawCode, projectId);
-          if (actId) {
-            await prisma.mF_OP_EquipmentDailyLogActivity.create({
-              data: {
-                dailyLogId: updatedLog.id,
-                activityCodeId: actId,
-                utilization: util,
-              },
-            });
-          }
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${updatedLog.id}))`;
+        await tx.mF_OP_EquipmentDailyLogActivity.deleteMany({
+          where: { dailyLogId: updatedLog.id },
+        });
+        if (splitRows.length > 0) {
+          await tx.mF_OP_EquipmentDailyLogActivity.createMany({
+            data: splitRows,
+            skipDuplicates: true,
+          });
         }
-      }
+      });
     }
 
     // Retrieve fresh splits
@@ -2625,17 +2739,23 @@ export const adminAdjustEquipmentLog = async (req: Request, res: Response): Prom
       activityCodeId: a.activityCodeId,
       activityCode: a.activityCode?.code || 'N/A',
       activityDesc: a.activityCode?.description || '',
-      unit: a.activityCode?.unit || 'hrs',
-      utilization: Number(a.utilization || 0),
+      unit: unitLower || a.activityCode?.unit || 'hrs',
+      utilization: roundUtil5(a.utilization || 0),
     }));
+
+    const finalReturnedUtil = roundUtil5(updatedLog.totalUtilization || finalTotalUtil);
 
     res.json({
       success: true,
       equipmentId,
+      primaryUnit: unitLower,
+      unitCode: updatedLog.unitCode || unitLower,
+      loggedQuantity: finalReturnedUtil,
+      totalUtilization: finalReturnedUtil,
       initialMeter: Number(updatedLog.initialMeter || 0),
       finalMeter: Number(updatedLog.finalMeter || 0),
-      netHours: Number(updatedLog.netRunningHours || 0),
-      workingHours: Number(updatedLog.workingHours || 0),
+      netHours: isHoursBased ? finalReturnedUtil : Number(updatedLog.netRunningHours || 0),
+      workingHours: isHoursBased ? finalReturnedUtil : Number(updatedLog.workingHours || 0),
       idleHours: Number(updatedLog.idleHours || 0),
       breakdownHours: Number(updatedLog.breakdownHours || 0),
       fuelLiters: Number(updatedLog.fuelLiters || 0),
@@ -3302,90 +3422,101 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
       return;
     }
 
-    // Reconcile: delete stale draft equipment assignments removed by supervisor
-    const incomingEqIds = (entries || []).map((item: any) => item.id || item.equipmentId).filter(Boolean);
-    const staleAssignments = await prisma.mF_OP_DailyEquipmentAssignment.findMany({
-      where: {
-        dailySheetId: dailySheet.id,
-        ...(incomingEqIds.length > 0 ? { equipmentId: { notIn: incomingEqIds } } : {}),
-      },
-      include: { dailyLog: true },
-    });
-    for (const asgn of staleAssignments) {
-      if (!asgn.dailyLog || asgn.dailyLog.status === 'draft' || asgn.dailyLog.status === 'pending') {
-        if (asgn.dailyLog) {
-          await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({ where: { dailyLogId: asgn.dailyLog.id } });
-          await prisma.mF_OP_EquipmentDailyLog.delete({ where: { id: asgn.dailyLog.id } });
-        }
-        await prisma.mF_OP_DailyEquipmentAssignment.delete({ where: { id: asgn.id } });
+    // Deduplicate incoming entries by equipmentId (latest entry wins)
+    const uniqueEntriesMap = new Map<string, any>();
+    for (const item of entries) {
+      const eqId = item.id || item.equipmentId;
+      if (eqId) uniqueEntriesMap.set(eqId, item);
+    }
+    const dedupedEntries = Array.from(uniqueEntriesMap.entries());
+    const incomingEqIds = dedupedEntries.map(([eqId]) => eqId);
+
+    // Pre-load project activity codes, stale draft assignments, equipment master units, & unit master in parallel
+    const [projectActivities, staleAssignments, projectEquipments, unitMasters] = await Promise.all([
+      prisma.mF_P_ActivityCode.findMany({
+        where: { projectId },
+        select: { id: true, code: true },
+      }),
+      prisma.mF_OP_DailyEquipmentAssignment.findMany({
+        where: {
+          dailySheetId: dailySheet.id,
+          ...(incomingEqIds.length > 0 ? { equipmentId: { notIn: incomingEqIds } } : {}),
+        },
+        include: { dailyLog: true },
+      }),
+      incomingEqIds.length > 0
+        ? prisma.mF_P_Equipment.findMany({
+            where: { id: { in: incomingEqIds } },
+            select: {
+              id: true,
+              meterUnitCode: true,
+              corporateEquipment: { select: { unit: true } },
+            },
+          })
+        : Promise.resolve([]),
+      prisma.mF_G_UnitMaster.findMany({ select: { code: true } }),
+    ]);
+
+    const eqUnitMap = new Map<string, string>();
+    for (const pe of projectEquipments) {
+      eqUnitMap.set(pe.id, pe.meterUnitCode || pe.corporateEquipment?.unit || 'hrs');
+    }
+    const resolveUnitCode = buildEquipmentUnitLookup(unitMasters);
+
+    const activityResolutionCache = new Map<string, string>();
+    for (const pa of projectActivities) {
+      activityResolutionCache.set(`${projectId}_${pa.id}`, pa.id);
+      if (pa.code) {
+        activityResolutionCache.set(`${projectId}_${pa.code}`, pa.id);
+        activityResolutionCache.set(`${projectId}_${pa.code.toUpperCase()}`, pa.id);
+        activityResolutionCache.set(`${projectId}_${pa.code.toLowerCase()}`, pa.id);
       }
     }
 
-    for (const item of entries) {
-      const eqId = item.id || item.equipmentId;
-      if (!eqId) continue;
-
-      // Do NOT fallback to firstOp! Never hijack all machines to the first operator.
-      const explicitOpId = item.operatorId || null;
-
-      const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
-        where: {
-          dailySheetId_equipmentId: {
-            dailySheetId: dailySheet.id,
-            equipmentId: eqId,
-          },
-        },
-        update: {
-          operatorId: explicitOpId,
-        },
-        create: {
-          dailySheetId: dailySheet.id,
-          operatorId: explicitOpId,
-          equipmentId: eqId,
-        },
+    // Reconcile: delete stale draft equipment assignments removed by supervisor
+    const removableStale = staleAssignments.filter(
+      (asgn) => !asgn.dailyLog || asgn.dailyLog.status === 'draft' || asgn.dailyLog.status === 'pending'
+    );
+    if (removableStale.length > 0) {
+      const staleLogIds = removableStale.map((a) => a.dailyLog?.id).filter((id): id is string => Boolean(id));
+      const staleAsgnIds = removableStale.map((a) => a.id);
+      await prisma.$transaction(async (tx) => {
+        if (staleLogIds.length > 0) {
+          await tx.mF_OP_EquipmentDailyLogActivity.deleteMany({ where: { dailyLogId: { in: staleLogIds } } });
+          await tx.mF_OP_EquipmentDailyLog.deleteMany({ where: { id: { in: staleLogIds } } });
+        }
+        await tx.mF_OP_DailyEquipmentAssignment.deleteMany({ where: { id: { in: staleAsgnIds } } });
       });
+    }
 
-      const effectiveNetHours = Number(item.netHours || item.hoursValue || item.workingHours || 0);
-      const effectiveWorkingHours = Number(item.workingHours || item.hoursValue || item.netHours || 0);
+    let cachedDefaultActId: string | null = null;
+    const getCachedDefaultActivityId = async (): Promise<string> => {
+      if (!cachedDefaultActId) {
+        cachedDefaultActId = await getOrCreateDefaultActivityId(projectId);
+      }
+      return cachedDefaultActId;
+    };
 
-      const loggedQty = item.daysValue !== undefined && Number(item.daysValue) > 0
-        ? Number(item.daysValue)
-        : (effectiveNetHours > 0 ? effectiveNetHours : Number(item.totalUtilization || 0));
+    // Step 1: Resolve unit, splits, and derived totalUtilization BEFORE writing daily logs
+    interface PreparedEquipmentEntry {
+      eqId: string;
+      item: any;
+      resolvedUnitCode: string | null;
+      unitLower: string;
+      isHoursBased: boolean;
+      finalTotal: number;
+      hasExplicitSplits: boolean;
+      consolidatedSplits: Array<{ activityCodeId: string; utilization: number }>;
+      shouldPersistLog: boolean;
+    }
 
-      const dailyLog = await prisma.mF_OP_EquipmentDailyLog.upsert({
-        where: { assignmentId: assignment.id },
-        create: {
-          assignmentId: assignment.id,
-          initialMeter: item.startMeter !== undefined ? Number(item.startMeter) : 0,
-          finalMeter: item.endMeter !== undefined ? Number(item.endMeter) : 0,
-          netRunningHours: effectiveNetHours,
-          workingHours: effectiveWorkingHours,
-          idleHours: item.idleHours !== undefined ? Number(item.idleHours) : 0,
-          breakdownHours: item.breakdownHours !== undefined ? Number(item.breakdownHours) : 0,
-          fuelLiters: item.fuelIssuedLiters !== undefined ? Number(item.fuelIssuedLiters) : (item.fuelLiters ? Number(item.fuelLiters) : 0),
-          totalMileage: item.totalMileage !== undefined ? Number(item.totalMileage) : 0,
-          startMileage: item.startMileage !== undefined ? Number(item.startMileage) : 0,
-          endMileage: item.endMileage !== undefined ? Number(item.endMileage) : 0,
-          totalUtilization: loggedQty,
-          remarks: item.remarks || null,
-          status: item.status || 'draft',
-        },
-        update: {
-          initialMeter: item.startMeter !== undefined ? Number(item.startMeter) : undefined,
-          finalMeter: item.endMeter !== undefined ? Number(item.endMeter) : undefined,
-          netRunningHours: effectiveNetHours > 0 ? effectiveNetHours : (item.netHours !== undefined ? Number(item.netHours) : undefined),
-          workingHours: effectiveWorkingHours > 0 ? effectiveWorkingHours : (item.workingHours !== undefined ? Number(item.workingHours) : undefined),
-          idleHours: item.idleHours !== undefined ? Number(item.idleHours) : undefined,
-          breakdownHours: item.breakdownHours !== undefined ? Number(item.breakdownHours) : undefined,
-          fuelLiters: item.fuelIssuedLiters !== undefined ? Number(item.fuelIssuedLiters) : (item.fuelLiters !== undefined ? Number(item.fuelLiters) : undefined),
-          totalMileage: item.totalMileage !== undefined ? Number(item.totalMileage) : undefined,
-          startMileage: item.startMileage !== undefined ? Number(item.startMileage) : undefined,
-          endMileage: item.endMileage !== undefined ? Number(item.endMileage) : undefined,
-          totalUtilization: loggedQty,
-          remarks: item.remarks !== undefined ? item.remarks : undefined,
-          status: item.status || undefined,
-        },
-      });
+    const preparedEntries: PreparedEquipmentEntry[] = [];
+
+    for (const [eqId, item] of dedupedEntries) {
+      const rawUnit = item.unitCode || item.primaryUnit || eqUnitMap.get(eqId) || 'hrs';
+      const resolvedUnitCode = resolveUnitCode(rawUnit);
+      const unitLower = (resolvedUnitCode || rawUnit || 'hrs').toLowerCase();
+      const isHoursBased = isHoursBasedEquipmentUnit(unitLower);
 
       const rawSplits = (Array.isArray(item.activitySplits) && item.activitySplits.length > 0)
         ? item.activitySplits
@@ -3393,60 +3524,237 @@ export const saveBulkEquipmentLogs = async (req: Request, res: Response): Promis
         ? item.splits
         : [];
 
-      if (rawSplits.length > 0) {
-        await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({
-          where: { dailyLogId: dailyLog.id },
-        });
+      let directInput = 0;
+      if (unitLower === 'km') {
+        directInput = roundUtil5(item.totalMileage ?? item.totalUtilization ?? 0);
+      } else if (unitLower === 'm2') {
+        directInput = roundUtil5(item.areaValue ?? item.totalUtilization ?? 0);
+      } else if (unitLower === 'ex.hrs' || unitLower === 'exhrs') {
+        directInput = roundUtil5(item.extraHoursValue ?? item.totalUtilization ?? 0);
+      } else if (unitLower === 'day' || unitLower === 'days' || unitLower === 'mth') {
+        directInput = roundUtil5(item.daysValue ?? item.totalUtilization ?? 0);
+      } else {
+        directInput = roundUtil5(item.hoursValue ?? item.netHours ?? item.workingHours ?? item.totalUtilization ?? 0);
+      }
 
+      const consolidatedByAct = new Map<string, number>();
+      if (rawSplits.length > 0) {
         for (const split of rawSplits) {
-          let actCodeId = null;
+          let actCodeId: string | null = null;
           const rawCode = split.activityCode || split.code;
 
           if (rawCode) {
-            actCodeId = await resolveProjectActivityId(rawCode, projectId);
+            actCodeId = await resolveProjectActivityId(String(rawCode), projectId, activityResolutionCache);
           } else if (split.activityCodeId || split.activityId) {
             const possibleId = String(split.activityCodeId || split.activityId);
             if (!possibleId.startsWith('split-')) {
-              actCodeId = await resolveProjectActivityId(possibleId, projectId);
+              actCodeId = await resolveProjectActivityId(possibleId, projectId, activityResolutionCache);
             }
           }
 
           if (!actCodeId) {
-            actCodeId = await getOrCreateDefaultActivityId(projectId);
+            actCodeId = await getCachedDefaultActivityId();
           }
 
           if (actCodeId) {
-            const utilVal = Number(split.utilization ?? split.hours ?? split.quantity ?? 0);
-            await prisma.mF_OP_EquipmentDailyLogActivity.create({
-              data: {
-                dailyLogId: dailyLog.id,
-                activityCodeId: actCodeId,
-                utilization: utilVal > 0 ? utilVal : (loggedQty > 0 ? loggedQty : effectiveWorkingHours),
-              },
-            });
-          }
-        }
-      } else if (loggedQty > 0 || effectiveWorkingHours > 0) {
-        // Fallback: If equipment has logged hours/days but no explicit split was picked, auto-assign default activity
-        const existingCount = await prisma.mF_OP_EquipmentDailyLogActivity.count({
-          where: { dailyLogId: dailyLog.id },
-        });
-        if (existingCount === 0) {
-          const defaultActId = await getOrCreateDefaultActivityId(projectId);
-          if (defaultActId) {
-            await prisma.mF_OP_EquipmentDailyLogActivity.create({
-              data: {
-                dailyLogId: dailyLog.id,
-                activityCodeId: defaultActId,
-                utilization: loggedQty > 0 ? loggedQty : effectiveWorkingHours,
-              },
-            });
+            const rawUtil = roundUtil5(split.utilization ?? split.hours ?? split.quantity ?? 0);
+            const utilVal = rawUtil > 0 ? rawUtil : (rawSplits.length === 1 ? directInput : 0);
+            if (utilVal > 0) {
+              const prev = consolidatedByAct.get(actCodeId) || 0;
+              consolidatedByAct.set(actCodeId, roundUtil5(prev + utilVal));
+            }
           }
         }
       }
+
+      const consolidatedSplits = Array.from(consolidatedByAct.entries()).map(([activityCodeId, utilization]) => ({
+        activityCodeId,
+        utilization,
+      }));
+      const sumSplits = roundUtil5(consolidatedSplits.reduce((s, a) => s + a.utilization, 0));
+      const finalTotal = consolidatedSplits.length > 0 ? sumSplits : directInput;
+
+      const fuelVal = Number(item.fuelIssuedLiters ?? item.fuelLiters ?? 0);
+      const startM = Number(item.startMeter ?? 0);
+      const endM = Number(item.endMeter ?? 0);
+      const hasAnyData =
+        finalTotal > 0 ||
+        consolidatedSplits.length > 0 ||
+        fuelVal > 0 ||
+        (endM > 0 && endM > startM) ||
+        Boolean(item.remarks && String(item.remarks).trim());
+
+      preparedEntries.push({
+        eqId,
+        item,
+        resolvedUnitCode,
+        unitLower,
+        isHoursBased,
+        finalTotal,
+        hasExplicitSplits: rawSplits.length > 0,
+        consolidatedSplits,
+        shouldPersistLog: hasAnyData,
+      });
     }
 
-    res.json({ success: true, count: entries.length });
+    // Step 2: Upsert assignments & daily logs in parallel
+    const upsertedLogs = await Promise.all(
+      preparedEntries.map(async (prep) => {
+        const { eqId, item, resolvedUnitCode, unitLower, isHoursBased, finalTotal, shouldPersistLog } = prep;
+        const explicitOpId = item.operatorId || null;
+
+        const assignment = await prisma.mF_OP_DailyEquipmentAssignment.upsert({
+          where: {
+            dailySheetId_equipmentId: {
+              dailySheetId: dailySheet.id,
+              equipmentId: eqId,
+            },
+          },
+          update: {
+            operatorId: explicitOpId,
+          },
+          create: {
+            dailySheetId: dailySheet.id,
+            operatorId: explicitOpId,
+            equipmentId: eqId,
+          },
+        });
+
+        // Avoid creating empty 0-utilization daily logs for untouched machines
+        if (!shouldPersistLog) {
+          const existingLog = await prisma.mF_OP_EquipmentDailyLog.findUnique({
+            where: { assignmentId: assignment.id },
+            select: { id: true },
+          });
+          if (!existingLog) {
+            return { prep, dailyLog: null };
+          }
+        }
+
+        const startM = item.startMeter !== undefined ? Number(item.startMeter) : 0;
+        const endM = item.endMeter !== undefined ? Number(item.endMeter) : 0;
+        const meterDiff = endM > startM ? round2(endM - startM) : 0;
+        const effectiveNetHours = isHoursBased ? round2(finalTotal) : meterDiff;
+        const effectiveWorkingHours = isHoursBased ? round2(finalTotal) : 0;
+        const mileageVal = unitLower === 'km'
+          ? finalTotal
+          : (item.totalMileage !== undefined ? Number(item.totalMileage) : 0);
+
+        const dailyLog = await prisma.mF_OP_EquipmentDailyLog.upsert({
+          where: { assignmentId: assignment.id },
+          create: {
+            assignmentId: assignment.id,
+            unitCode: resolvedUnitCode,
+            initialMeter: startM,
+            finalMeter: endM,
+            netRunningHours: effectiveNetHours,
+            workingHours: effectiveWorkingHours,
+            idleHours: item.idleHours !== undefined ? Number(item.idleHours) : 0,
+            breakdownHours: item.breakdownHours !== undefined ? Number(item.breakdownHours) : 0,
+            fuelLiters: item.fuelIssuedLiters !== undefined ? Number(item.fuelIssuedLiters) : (item.fuelLiters ? Number(item.fuelLiters) : 0),
+            totalMileage: mileageVal,
+            startMileage: item.startMileage !== undefined ? Number(item.startMileage) : 0,
+            endMileage: item.endMileage !== undefined ? Number(item.endMileage) : 0,
+            totalUtilization: finalTotal,
+            remarks: item.remarks || null,
+            status: item.status || 'draft',
+          },
+          update: {
+            unitCode: resolvedUnitCode || undefined,
+            initialMeter: item.startMeter !== undefined ? Number(item.startMeter) : undefined,
+            finalMeter: item.endMeter !== undefined ? Number(item.endMeter) : undefined,
+            netRunningHours: effectiveNetHours,
+            workingHours: effectiveWorkingHours,
+            idleHours: item.idleHours !== undefined ? Number(item.idleHours) : undefined,
+            breakdownHours: item.breakdownHours !== undefined ? Number(item.breakdownHours) : undefined,
+            fuelLiters: item.fuelIssuedLiters !== undefined ? Number(item.fuelIssuedLiters) : (item.fuelLiters !== undefined ? Number(item.fuelLiters) : undefined),
+            totalMileage: unitLower === 'km' ? finalTotal : (item.totalMileage !== undefined ? Number(item.totalMileage) : undefined),
+            startMileage: item.startMileage !== undefined ? Number(item.startMileage) : undefined,
+            endMileage: item.endMileage !== undefined ? Number(item.endMileage) : undefined,
+            totalUtilization: finalTotal,
+            remarks: item.remarks !== undefined ? item.remarks : undefined,
+            status: item.status || undefined,
+          },
+        });
+
+        return { prep, dailyLog };
+      })
+    );
+
+    // Step 3: Collect activity split replacements & fallbacks
+    const logIdsToReplace: string[] = [];
+    const splitsToInsert: Array<{ dailyLogId: string; activityCodeId: string; utilization: number; hours: number | null }> = [];
+    const fallbackCandidates: Array<{ dailyLogId: string; utilization: number; isHoursBased: boolean }> = [];
+
+    for (const { prep, dailyLog } of upsertedLogs) {
+      if (!dailyLog) continue;
+
+      if (prep.consolidatedSplits.length > 0) {
+        logIdsToReplace.push(dailyLog.id);
+        for (const sp of prep.consolidatedSplits) {
+          splitsToInsert.push({
+            dailyLogId: dailyLog.id,
+            activityCodeId: sp.activityCodeId,
+            utilization: sp.utilization,
+            hours: prep.isHoursBased ? round2(sp.utilization) : null,
+          });
+        }
+      } else if (prep.hasExplicitSplits && prep.finalTotal === 0) {
+        logIdsToReplace.push(dailyLog.id);
+      } else if (prep.finalTotal > 0) {
+        fallbackCandidates.push({
+          dailyLogId: dailyLog.id,
+          utilization: prep.finalTotal,
+          isHoursBased: prep.isHoursBased,
+        });
+      }
+    }
+
+    // Prepare fallback default activity ID if needed (outside transaction to keep tx brief)
+    const fallbackDefaultActId = fallbackCandidates.length > 0 ? await getCachedDefaultActivityId() : null;
+
+    // Step 4: Atomically replace & insert activity splits under a sheet-scoped advisory lock
+    if (logIdsToReplace.length > 0 || fallbackCandidates.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${dailySheet.id}))`;
+
+        if (logIdsToReplace.length > 0) {
+          await tx.mF_OP_EquipmentDailyLogActivity.deleteMany({
+            where: { dailyLogId: { in: logIdsToReplace } },
+          });
+        }
+
+        const finalInserts = [...splitsToInsert];
+
+        if (fallbackCandidates.length > 0 && fallbackDefaultActId) {
+          const existingForFallback = await tx.mF_OP_EquipmentDailyLogActivity.findMany({
+            where: { dailyLogId: { in: fallbackCandidates.map((c) => c.dailyLogId) } },
+            select: { dailyLogId: true },
+          });
+          const hasActivitiesSet = new Set(existingForFallback.map((e) => e.dailyLogId));
+
+          for (const cand of fallbackCandidates) {
+            if (!hasActivitiesSet.has(cand.dailyLogId)) {
+              finalInserts.push({
+                dailyLogId: cand.dailyLogId,
+                activityCodeId: fallbackDefaultActId,
+                utilization: cand.utilization,
+                hours: cand.isHoursBased ? round2(cand.utilization) : null,
+              });
+            }
+          }
+        }
+
+        if (finalInserts.length > 0) {
+          await tx.mF_OP_EquipmentDailyLogActivity.createMany({
+            data: finalInserts,
+            skipDuplicates: true,
+          });
+        }
+      });
+    }
+
+    res.json({ success: true, count: dedupedEntries.length });
   } catch (error) {
     console.error('Error saving equipment logs:', error);
     res.status(500).json({ error: 'Failed to save equipment logs' });

@@ -77,6 +77,8 @@ export default function SupervisorMobileApp() {
   const laborSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const operatorSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const equipmentSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const equipmentSavePromiseRef = useRef<Promise<void> | null>(null);
+  const pendingEquipmentSaveRef = useRef<{ supId: string; date: string; data: EquipmentLogEntry[] } | null>(null);
   const isInFlightSaveRef = useRef<boolean>(false);
   const isCheckingServerRef = useRef<boolean>(false);
   const lastSyncVersionRef = useRef<string | null>(null);
@@ -96,6 +98,8 @@ export default function SupervisorMobileApp() {
       laborSaveTimeoutRef.current ||
         operatorSaveTimeoutRef.current ||
         equipmentSaveTimeoutRef.current ||
+        equipmentSavePromiseRef.current ||
+        pendingEquipmentSaveRef.current ||
         isInFlightSaveRef.current
     );
 
@@ -327,6 +331,10 @@ export default function SupervisorMobileApp() {
       if (laborSaveTimeoutRef.current) { clearTimeout(laborSaveTimeoutRef.current); laborSaveTimeoutRef.current = null; }
       if (operatorSaveTimeoutRef.current) { clearTimeout(operatorSaveTimeoutRef.current); operatorSaveTimeoutRef.current = null; }
       if (equipmentSaveTimeoutRef.current) { clearTimeout(equipmentSaveTimeoutRef.current); equipmentSaveTimeoutRef.current = null; }
+      pendingEquipmentSaveRef.current = null;
+      if (equipmentSavePromiseRef.current) {
+        await equipmentSavePromiseRef.current.catch(() => {});
+      }
 
       await supervisorStorage.syncToBackend(user.id, selectedDate, laborers, operators, equipment);
       
@@ -408,29 +416,52 @@ export default function SupervisorMobileApp() {
     }, 800);
   };
 
+  const flushEquipmentSaveQueue = async () => {
+    if (equipmentSavePromiseRef.current) return;
+
+    const run = (async () => {
+      isInFlightSaveRef.current = true;
+      try {
+        while (pendingEquipmentSaveRef.current) {
+          const next = pendingEquipmentSaveRef.current;
+          pendingEquipmentSaveRef.current = null;
+          try {
+            await supervisorStorage.syncEquipmentToBackend(next.supId, next.date, next.data);
+            if (!pendingEquipmentSaveRef.current) {
+              setPendingSyncCount(0);
+              await refreshSyncVersionAfterLocalSave(next.supId, next.date);
+            }
+          } catch (err: any) {
+            pendingEquipmentSaveRef.current = null;
+            if (err instanceof DayLockedError) {
+              await handleLockedSyncRejection(err.message);
+            } else {
+              console.warn('Auto-save equipment error:', err);
+            }
+          }
+        }
+      } finally {
+        equipmentSavePromiseRef.current = null;
+        isInFlightSaveRef.current = false;
+      }
+    })();
+
+    equipmentSavePromiseRef.current = run;
+    await run;
+  };
+
   const handleSaveEquipment = (updated: EquipmentLogEntry[]) => {
     if (isDayLocked) return;
     setEquipment(updated);
     if (!user?.id) return;
     const supId = user.id;
+    const dateSnapshot = selectedDate;
     setPendingSyncCount(1);
     if (equipmentSaveTimeoutRef.current) clearTimeout(equipmentSaveTimeoutRef.current);
-    equipmentSaveTimeoutRef.current = setTimeout(async () => {
+    equipmentSaveTimeoutRef.current = setTimeout(() => {
       equipmentSaveTimeoutRef.current = null;
-      isInFlightSaveRef.current = true;
-      try {
-        await supervisorStorage.syncEquipmentToBackend(supId, selectedDate, updated);
-        setPendingSyncCount(0);
-        await refreshSyncVersionAfterLocalSave(supId, selectedDate);
-      } catch (err: any) {
-        if (err instanceof DayLockedError) {
-          await handleLockedSyncRejection(err.message);
-        } else {
-          console.warn('Auto-save equipment error:', err);
-        }
-      } finally {
-        isInFlightSaveRef.current = false;
-      }
+      pendingEquipmentSaveRef.current = { supId, date: dateSnapshot, data: updated };
+      void flushEquipmentSaveQueue();
     }, 800);
   };
 
@@ -441,6 +472,10 @@ export default function SupervisorMobileApp() {
       if (laborSaveTimeoutRef.current) { clearTimeout(laborSaveTimeoutRef.current); laborSaveTimeoutRef.current = null; }
       if (operatorSaveTimeoutRef.current) { clearTimeout(operatorSaveTimeoutRef.current); operatorSaveTimeoutRef.current = null; }
       if (equipmentSaveTimeoutRef.current) { clearTimeout(equipmentSaveTimeoutRef.current); equipmentSaveTimeoutRef.current = null; }
+      pendingEquipmentSaveRef.current = null;
+      if (equipmentSavePromiseRef.current) {
+        await equipmentSavePromiseRef.current.catch(() => {});
+      }
 
       const result = await supervisorStorage.submitDayToBackend(user.id, selectedDate, laborers, operators, equipment);
       if (result.status && result.isLocked !== undefined) {

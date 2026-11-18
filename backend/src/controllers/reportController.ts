@@ -2341,6 +2341,17 @@ export const getEquipmentSummaryReport = async (req: Request, res: Response): Pr
       orderBy: [{ corporateEquipment: { standardEquipmentNumber: 'asc' } }],
     });
 
+    // Smart formatter: preserves up to 5 decimals when fractional precision > 2 decimals (e.g. 0.03333),
+    // while keeping standard 2-decimal formatting (e.g. 1.00, 0.04) for cleaner sheets
+    const formatEquipmentUtil = (val: number): string => {
+      const rounded = Math.round(val * 100000) / 100000;
+      const twoDec = Math.round(rounded * 100) / 100;
+      if (Math.abs(rounded - twoDec) > 0.000001) {
+        return Number(rounded.toFixed(5)).toString();
+      }
+      return rounded.toFixed(2);
+    };
+
     const allRows = equipmentList.map((eq) => {
       const logs = eq.dailyAssignments.map((a) => a.dailyLog).filter(Boolean);
       const primaryUnit = (eq.meterUnitCode || eq.corporateEquipment.unit || 'hrs').toLowerCase();
@@ -2348,57 +2359,35 @@ export const getEquipmentSummaryReport = async (req: Request, res: Response): Pr
       let totalUtilization = 0;
       let totalMileage = 0;
 
-      const totalRunningHours = logs.reduce((sum: number, l: any) => {
-        let actSum = 0;
+      // Direct utilization sum from activity splits (Source of Truth), fallback to log totalUtilization (never fake 1)
+      const sumDirectLogUtil = (l: any): number => {
         if (Array.isArray(l?.activities) && l.activities.length > 0) {
-          actSum = l.activities.reduce((s: number, a: any) => s + (Number(a.utilization) || 0), 0);
+          return l.activities.reduce((s: number, a: any) => s + (Number(a.utilization) || 0), 0);
         }
-        const net = Number(l?.netRunningHours) || 
-                    (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0) || 
-                    actSum || 
-                    Number(l?.totalUtilization) || 
-                    0;
-        return sum + net;
-      }, 0);
+        return Number(l?.totalUtilization) || 0;
+      };
 
-      if (primaryUnit === 'mth') {
-        const totalDays = logs.reduce((sum: number, l: any) => {
-          let dayVal = 0;
-          if (l?.activities && l.activities.length > 0) {
-            dayVal = l.activities.reduce((actSum: number, act: any) => actSum + (Number(act.utilization) || 0), 0);
-          } else if (l?.totalUtilization && Number(l.totalUtilization) > 0) {
-            dayVal = Number(l.totalUtilization);
-          } else {
-            dayVal = 1;
-          }
-          return sum + dayVal;
-        }, 0);
-        // Minimum threshold for monthly rate: if days logged > 0 in a monthly scope, count as 1.00 mth
-        const MIN_DAYS_FOR_MONTH_RATE = 0;
-        totalUtilization = (month || (from && to && from !== to))
-          ? (totalDays > MIN_DAYS_FOR_MONTH_RATE ? 1.0 : 0)
-          : totalDays;
-      } else if (primaryUnit === 'day' || primaryUnit === 'days') {
-        const totalDays = logs.reduce((sum: number, l: any) => {
-          let dayVal = 0;
-          if (l?.totalUtilization && Number(l.totalUtilization) > 0) {
-            dayVal = Number(l.totalUtilization);
-          } else {
-            dayVal = 1;
-          }
-          return sum + dayVal;
-        }, 0);
-        // Minimum threshold for monthly rate: if days logged > 0 in a monthly scope, count as 1.00 mth
-        const MIN_DAYS_FOR_MONTH_RATE = 0;
-        totalUtilization = (month || (from && to && from !== to))
-          ? (totalDays > MIN_DAYS_FOR_MONTH_RATE ? 1.0 : 0)
-          : totalDays;
+      if (primaryUnit === 'mth' || primaryUnit === 'day' || primaryUnit === 'days') {
+        totalUtilization = logs.reduce((sum: number, l: any) => sum + sumDirectLogUtil(l), 0);
       } else if (primaryUnit === 'km') {
-        totalMileage = logs.reduce((sum: number, l: any) => sum + (Number(l?.totalMileage) || 0), 0);
+        totalMileage = logs.reduce((sum: number, l: any) => {
+          const direct = sumDirectLogUtil(l);
+          return sum + (direct > 0 ? direct : (Number(l?.totalMileage) || 0));
+        }, 0);
         totalUtilization = totalMileage;
       } else {
-        totalUtilization = totalRunningHours;
+        totalUtilization = logs.reduce((sum: number, l: any) => {
+          const direct = sumDirectLogUtil(l);
+          if (direct > 0) return sum + direct;
+          const net = Number(l?.netRunningHours) ||
+                      (Number(l?.workingHours) || 0) + (Number(l?.idleHours) || 0) ||
+                      0;
+          return sum + net;
+        }, 0);
       }
+
+      totalUtilization = Math.round(totalUtilization * 100000) / 100000;
+      totalMileage = Math.round(totalMileage * 100000) / 100000;
 
       const minUtil = eq.corporateEquipment.dailyRate ? Number(eq.corporateEquipment.dailyRate) : null;
       const vehicleOrMaga = eq.corporateEquipment.standardEquipmentNumber || eq.corporateEquipment.vehicleNo || '—';
@@ -2411,8 +2400,8 @@ export const getEquipmentSummaryReport = async (req: Request, res: Response): Pr
         condition: eq.condition || 'DRY',
         unit: primaryUnit,
         minUtilization: minUtil !== null ? minUtil.toFixed(2) : '—',
-        totalUtilization: totalUtilization > 0 ? totalUtilization.toFixed(2) : '—',
-        totalMileage: totalMileage > 0 ? totalMileage.toFixed(2) : '—',
+        totalUtilization: totalUtilization > 0 ? formatEquipmentUtil(totalUtilization) : '—',
+        totalMileage: totalMileage > 0 ? formatEquipmentUtil(totalMileage) : '—',
         numericUtilization: totalUtilization,
         numericMileage: totalMileage,
       };
@@ -2573,15 +2562,6 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
       utilization: string;
     }> = [];
 
-    // Group mth equipment entries by (Equipment + Calendar Month) so each month independently totals max 1.00 mth
-    const mthEntriesByEquipmentAndMonth = new Map<string, {
-      erpCode: string;
-      condition: string;
-      unit: string;
-      monthKey: string;
-      entries: Array<{ date: string; activity: string; rawQty: number }>;
-    }>();
-
     assignments.forEach((assignment) => {
       const l = assignment.dailyLog;
       if (!l) return;
@@ -2596,135 +2576,58 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
       const dStr = dObj instanceof Date ? dObj.toISOString().slice(0, 10) : String(dObj).slice(0, 10);
       const [yyyy, mm, dd] = dStr.split('-');
       const formattedDate = `${dd}-${mm}-${yyyy}`;
-      const monthKey = `${yyyy}-${mm}`; // E.g., "2026-08", "2026-09"
 
-      if (primaryUnit === 'mth') {
-        // Collect mth entries grouped by equipment AND month
-        const groupKey = `${erpCode}___${monthKey}`;
-        if (!mthEntriesByEquipmentAndMonth.has(groupKey)) {
-          mthEntriesByEquipmentAndMonth.set(groupKey, {
-            erpCode,
-            condition: eqCondition,
-            unit: 'mth',
-            monthKey,
-            entries: [],
-          });
+      // Exact 1-to-1 output of saved activity splits (all units: hrs, day, mth, km — up to 5 decimals)
+      const formatErpUtil = (val: number): string => {
+        const rounded = Math.round(val * 100000) / 100000;
+        const twoDec = Math.round(rounded * 100) / 100;
+        if (Math.abs(rounded - twoDec) > 0.000001) {
+          return Number(rounded.toFixed(5)).toString();
         }
-        const group = mthEntriesByEquipmentAndMonth.get(groupKey)!;
+        return rounded.toFixed(2);
+      };
 
-        let addedSplits = false;
-        if (l.activities && l.activities.length > 0) {
-          l.activities.forEach((act) => {
-            const code = act.activityCode?.code || defaultActivityCode;
-            const q = Number(act.utilization) || Number(act.hours) || 0;
-            if (q > 0) {
-              addedSplits = true;
-              group.entries.push({ date: formattedDate, activity: code, rawQty: q });
-            }
-          });
-        }
+      let addedAnyActivity = false;
 
-        if (!addedSplits) {
-          const q = Number(l.totalUtilization) > 0 ? Number(l.totalUtilization) : 1;
-          group.entries.push({ date: formattedDate, activity: defaultActivityCode, rawQty: q });
-        }
-      } else {
-        // Non-mth equipment: day-by-day (hrs, day, km)
-        let addedAnyActivity = false;
-
-        if (l.activities && l.activities.length > 0) {
-          l.activities.forEach((act) => {
-            const code = act.activityCode?.code || defaultActivityCode;
-            const q = Number(act.utilization) || Number(act.hours) || 0;
-            if (q > 0) {
-              addedAnyActivity = true;
-              rows.push({
-                equipment: erpCode,
-                condition: eqCondition,
-                unit: primaryUnit,
-                date: formattedDate,
-                activity: code,
-                utilization: q.toFixed(2),
-              });
-            }
-          });
-        }
-
-        if (!addedAnyActivity) {
-          let q = 0;
-          if (primaryUnit === 'km') {
-            q = Number(l.totalMileage) || 0;
-          } else if (primaryUnit === 'day' || primaryUnit === 'days') {
-            q = Number(l.totalUtilization) > 0 ? Number(l.totalUtilization) : 1;
-          } else {
-            q = Number(l.workingHours) || Number(l.netRunningHours) || 0;
-          }
-
+      if (l.activities && l.activities.length > 0) {
+        l.activities.forEach((act) => {
+          const code = act.activityCode?.code || defaultActivityCode;
+          const q = Number(act.utilization) || Number(act.hours) || 0;
           if (q > 0) {
+            addedAnyActivity = true;
             rows.push({
               equipment: erpCode,
               condition: eqCondition,
               unit: primaryUnit,
               date: formattedDate,
-              activity: defaultActivityCode,
-              utilization: q.toFixed(2),
+              activity: code,
+              utilization: formatErpUtil(q),
             });
           }
-        }
-      }
-    });
-
-    // Process mth equipment per calendar month so EACH month independently totals max 1.00 mth
-    mthEntriesByEquipmentAndMonth.forEach((grp) => {
-      const totalRaw = grp.entries.reduce((sum, e) => sum + e.rawQty, 0);
-      if (totalRaw <= 0) return;
-
-      const targetTotal = 1.00; // Cap/normalize to exactly 1.00 mth for this specific calendar month
-      let allocatedSum = 0;
-      const scaledRows: Array<{
-        equipment: string;
-        condition: string;
-        unit: string;
-        date: string;
-        activity: string;
-        utilizationVal: number;
-        rawQty: number;
-      }> = [];
-
-      grp.entries.forEach((e) => {
-        const val = Number(((e.rawQty / totalRaw) * targetTotal).toFixed(2));
-        allocatedSum += val;
-        scaledRows.push({
-          equipment: grp.erpCode,
-          condition: grp.condition,
-          unit: 'mth',
-          date: e.date,
-          activity: e.activity,
-          utilizationVal: val,
-          rawQty: e.rawQty,
         });
-      });
-
-      // Handle 2-decimal rounding difference to ensure month sum equals exactly 1.00
-      const diff = Number((targetTotal - allocatedSum).toFixed(2));
-      if (diff !== 0 && scaledRows.length > 0) {
-        let maxItem = scaledRows[0];
-        for (const item of scaledRows) {
-          if (item.rawQty > maxItem.rawQty) maxItem = item;
-        }
-        maxItem.utilizationVal = Math.max(0, Number((maxItem.utilizationVal + diff).toFixed(2)));
       }
 
-      scaledRows.forEach((r) => {
-        rows.push({
-          equipment: r.equipment,
-          condition: r.condition,
-          unit: r.unit,
-          date: r.date,
-          activity: r.activity,
-          utilization: r.utilizationVal.toFixed(2),
-        });
-      });
+      if (!addedAnyActivity) {
+        let q = 0;
+        if (primaryUnit === 'km') {
+          q = Number(l.totalMileage) || 0;
+        } else if (primaryUnit === 'mth' || primaryUnit === 'day' || primaryUnit === 'days') {
+          q = Number(l.totalUtilization) || 0;
+        } else {
+          q = Number(l.workingHours) || Number(l.netRunningHours) || Number(l.totalUtilization) || 0;
+        }
+
+        if (q > 0) {
+          rows.push({
+            equipment: erpCode,
+            condition: eqCondition,
+            unit: primaryUnit,
+            date: formattedDate,
+            activity: defaultActivityCode,
+            utilization: formatErpUtil(q),
+          });
+        }
+      }
     });
     // If an activity code filter was supplied, filter matching rows
     if (activityCodeParam) {

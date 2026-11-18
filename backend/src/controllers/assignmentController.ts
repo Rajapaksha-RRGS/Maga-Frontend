@@ -1527,34 +1527,55 @@ export const getEquipmentAssignmentsForDate = async (req: Request, res: Response
         costRate: Number(a.equipment.costRate || 0),
         primaryUnit,
         dailyLog: a.dailyLog
-          ? {
-              startMeter: Number(a.dailyLog.initialMeter || 0),
-              endMeter: Number(a.dailyLog.finalMeter || 0),
-              netHours: Number(a.dailyLog.netRunningHours || 0),
-              workingHours: Number(a.dailyLog.workingHours || 0),
-              idleHours: Number(a.dailyLog.idleHours || 0),
-              breakdownHours: Number(a.dailyLog.breakdownHours || 0),
-              fuelIssuedLiters: Number(a.dailyLog.fuelLiters || 0),
-              startMileage: Number(a.dailyLog.startMileage || 0),
-              endMileage: Number(a.dailyLog.endMileage || 0),
-              totalMileage: Number(a.dailyLog.totalMileage || 0),
-              totalUtilization: Number(a.dailyLog.totalUtilization || 0),
-              daysValue: (primaryUnit.toLowerCase() === 'day' || primaryUnit.toLowerCase() === 'days' || primaryUnit.toLowerCase() === 'mth')
-                ? Number(a.dailyLog.totalUtilization || 0)
-                : undefined,
-              hoursValue: (primaryUnit.toLowerCase() === 'hrs' || primaryUnit.toLowerCase() === 'hr')
-                ? Number(a.dailyLog.totalUtilization || a.dailyLog.workingHours || 0)
-                : undefined,
-              remarks: a.dailyLog.remarks,
-              status: a.dailyLog.status,
-              activityCode: a.dailyLog.activities[0]?.activityCode?.code || '',
-              activitySplits: a.dailyLog.activities.map((act) => ({
+          ? (() => {
+              const unitLower = (a.dailyLog.unitCode || primaryUnit || 'hrs').toLowerCase();
+              const splits = a.dailyLog.activities.map((act) => ({
                 id: act.id,
                 activityCode: act.activityCode?.code || '',
-                unit: a.dailyLog?.unitCode || primaryUnit || "Hrs",
-                utilization: Number(act.utilization || 0),
-              })),
-            }
+                unit: a.dailyLog?.unitCode || primaryUnit || 'Hrs',
+                utilization: Math.round(Number(act.utilization || 0) * 100000) / 100000,
+              }));
+              const splitsSum = Math.round(splits.reduce((s, x) => s + x.utilization, 0) * 100000) / 100000;
+              const derivedTotal = splits.length > 0
+                ? splitsSum
+                : Math.round(Number(a.dailyLog.totalUtilization || 0) * 100000) / 100000;
+              return {
+                unitCode: a.dailyLog.unitCode || primaryUnit,
+                startMeter: Number(a.dailyLog.initialMeter || 0),
+                endMeter: Number(a.dailyLog.finalMeter || 0),
+                netHours: (unitLower === 'hrs' || unitLower === 'hr')
+                  ? derivedTotal
+                  : Number(a.dailyLog.netRunningHours || 0),
+                workingHours: (unitLower === 'hrs' || unitLower === 'hr')
+                  ? derivedTotal
+                  : Number(a.dailyLog.workingHours || 0),
+                idleHours: Number(a.dailyLog.idleHours || 0),
+                breakdownHours: Number(a.dailyLog.breakdownHours || 0),
+                fuelIssuedLiters: Number(a.dailyLog.fuelLiters || 0),
+                startMileage: Number(a.dailyLog.startMileage || 0),
+                endMileage: Number(a.dailyLog.endMileage || 0),
+                totalMileage: unitLower === 'km'
+                  ? derivedTotal
+                  : Number(a.dailyLog.totalMileage || 0),
+                totalUtilization: derivedTotal,
+                daysValue: (unitLower === 'day' || unitLower === 'days' || unitLower === 'mth')
+                  ? derivedTotal
+                  : undefined,
+                hoursValue: (unitLower === 'hrs' || unitLower === 'hr')
+                  ? (derivedTotal || Number(a.dailyLog.workingHours || 0))
+                  : undefined,
+                extraHoursValue: (unitLower === 'ex.hrs' || unitLower === 'exhrs')
+                  ? derivedTotal
+                  : undefined,
+                areaValue: unitLower === 'm2'
+                  ? derivedTotal
+                  : undefined,
+                remarks: a.dailyLog.remarks,
+                status: a.dailyLog.status,
+                activityCode: a.dailyLog.activities[0]?.activityCode?.code || '',
+                activitySplits: splits,
+              };
+            })()
           : null,
         activityCode: a.dailyLog?.activities[0]?.activityCode?.code || '',
       };

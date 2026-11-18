@@ -782,7 +782,7 @@ async function main() {
       });
       continue;
     }
-    if (parsedUtil > 999999.99) {
+    if (parsedUtil > 9999999.99999) {
       errors.push({
         line: r.rawLineIndex,
         category: 'Out-of-Range Utilization',
@@ -792,7 +792,7 @@ async function main() {
         dateStr: dtStr,
         activityCode: r.activityCode,
         utilization: parsedUtil,
-        reason: `Utilization (${parsedUtil}) exceeds maximum supported decimal(8,2) capacity`,
+        reason: `Utilization (${parsedUtil}) exceeds maximum supported decimal(12,5) capacity`,
       });
       continue;
     }
@@ -1261,11 +1261,11 @@ async function main() {
         const mapKey = isDryRun ? act.activityCode.toUpperCase() : actId;
         const existing = consolidatedSplits.get(mapKey);
         if (existing) {
-          existing.utilization = Math.round((existing.utilization + act.utilization) * 100) / 100;
+          existing.utilization = Math.round((existing.utilization + act.utilization) * 100000) / 100000;
         } else {
           consolidatedSplits.set(mapKey, {
             activityCodeId: actId,
-            utilization: Math.round(act.utilization * 100) / 100,
+            utilization: Math.round(act.utilization * 100000) / 100000,
           });
         }
       }
@@ -1279,8 +1279,8 @@ async function main() {
       const sumSplits = validActivities.reduce((acc, a) => acc + a.utilization, 0);
       const finalTotalUtilization =
         group.totalUtilization && group.totalUtilization > 0
-          ? Math.round(group.totalUtilization * 100) / 100
-          : Math.round(sumSplits * 100) / 100;
+          ? Math.round(group.totalUtilization * 100000) / 100000
+          : Math.round(sumSplits * 100000) / 100000;
 
       const unitLower = group.unitCodeResolved.toLowerCase();
       const isHoursBased = unitLower === 'hrs' || unitLower === 'ex.hrs' || unitLower === 'hour';
@@ -1367,22 +1367,25 @@ async function main() {
         },
       });
 
-      // 3. Clear & recreate Equipment Daily Log Activities
-      await prisma.mF_OP_EquipmentDailyLogActivity.deleteMany({
-        where: { dailyLogId: dailyLog.id },
-      });
-
-      for (const act of validActivities) {
-        await prisma.mF_OP_EquipmentDailyLogActivity.create({
-          data: {
-            dailyLogId: dailyLog.id,
-            activityCodeId: act.activityCodeId,
-            utilization: act.utilization,
-            hours: isHoursBased ? act.utilization : null,
-          },
+      // 3. Atomically clear & recreate Equipment Daily Log Activities
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${dailyLog.id}))`;
+        await tx.mF_OP_EquipmentDailyLogActivity.deleteMany({
+          where: { dailyLogId: dailyLog.id },
         });
-        successActivitySplits++;
-      }
+        if (validActivities.length > 0) {
+          await tx.mF_OP_EquipmentDailyLogActivity.createMany({
+            data: validActivities.map((act) => ({
+              dailyLogId: dailyLog.id,
+              activityCodeId: act.activityCodeId,
+              utilization: act.utilization,
+              hours: isHoursBased ? act.utilization : null,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      });
+      successActivitySplits += validActivities.length;
 
       successGroups++;
     } catch (err: any) {

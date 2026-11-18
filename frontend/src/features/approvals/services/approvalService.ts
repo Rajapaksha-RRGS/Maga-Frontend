@@ -296,6 +296,9 @@ export interface AdminAdjustEquipmentPayload {
   supervisorId?: string;
   equipmentId: string;
   date: string;
+  unitCode?: string;
+  totalUtilization?: number;
+  loggedQuantity?: number;
   initialMeter?: number;
   finalMeter?: number;
   netHours?: number;
@@ -319,6 +322,10 @@ export interface AdminAdjustEquipmentPayload {
 export async function adminAdjustEquipment(payload: AdminAdjustEquipmentPayload): Promise<{
   success: boolean;
   equipmentId: string;
+  primaryUnit?: string;
+  unitCode?: string;
+  loggedQuantity?: number;
+  totalUtilization?: number;
   initialMeter: number;
   finalMeter: number;
   netHours: number;

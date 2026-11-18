@@ -41,11 +41,30 @@ interface EquipmentLogsViewProps {
   supervisorId?: string;
 }
 
+const round5 = (n: number): number => (Number.isFinite(n) ? Math.round(n * 100000) / 100000 : 0);
+
+const formatDecimal = (n: number): string => {
+  const r = round5(n);
+  return Number(r.toFixed(5)).toString();
+};
+
+const getUnitDisplayLabel = (unit: EquipmentRatingUnit): string => {
+  switch (unit) {
+    case 'Days': return 'Day';
+    case 'mth': return 'mth';
+    case 'Hrs': return 'Hrs';
+    case 'EX.hrs': return 'EX.hrs';
+    case 'm2': return 'm²';
+    case 'km': return 'km';
+    default: return unit;
+  }
+};
+
 const UNIT_META: Record<EquipmentRatingUnit, { label: string; sub: string; icon: string }> = {
   'Days': { label: 'Days', sub: 'Day / Shift Rate', icon: '📅' },
   'Hrs': { label: 'Hrs', sub: 'Operating Hours', icon: '⏱️' },
   'EX.hrs': { label: 'EX.hrs', sub: 'Extra / OT Hours', icon: '⚡' },
-  'mth': { label: 'Mth', sub: 'Monthly Contract (Logged in Days)', icon: '📆' },
+  'mth': { label: 'mth', sub: 'Monthly Hire (Direct mth)', icon: '📆' },
   'm2': { label: 'm²', sub: 'Work Area (Square Meters)', icon: '📐' },
   'km': { label: 'km', sub: 'Mileage / Kilometers', icon: '🚗' },
 };
@@ -54,31 +73,56 @@ function getUnitValueInfo(eq: EquipmentLogEntry, rawUnit: EquipmentRatingUnit | 
   const unit = normalizeRatingUnit(rawUnit);
   switch (unit) {
     case 'Days': {
-      const v = eq.daysValue ?? 0;
-      return { value: v, label: 'Days', display: `${v} Day${v === 1 ? '' : 's'}` };
+      const v = round5(eq.daysValue ?? 0);
+      return { value: v, label: 'Days', display: `${formatDecimal(v)} Day${v === 1 ? '' : 's'}` };
     }
     case 'Hrs': {
-      const v = (eq.hoursValue !== undefined && eq.hoursValue > 0) ? eq.hoursValue : (eq.netHours ?? 0);
-      return { value: v, label: 'Hrs', display: `${v.toFixed(1)} Hrs` };
+      const v = round5((eq.hoursValue !== undefined && eq.hoursValue > 0) ? eq.hoursValue : (eq.netHours ?? 0));
+      return { value: v, label: 'Hrs', display: `${formatDecimal(v)} Hrs` };
     }
     case 'EX.hrs': {
-      const v = eq.extraHoursValue ?? 0;
-      return { value: v, label: 'EX.hrs', display: `${v.toFixed(1)} EX.hrs` };
+      const v = round5(eq.extraHoursValue ?? 0);
+      return { value: v, label: 'EX.hrs', display: `${formatDecimal(v)} EX.hrs` };
     }
     case 'mth': {
-      const v = eq.daysValue ?? (eq.netHours && eq.netHours > 0 ? eq.netHours : 0);
-      return { value: v, label: 'Days (Mth)', display: `${v} Day${v === 1 ? '' : 's'}` };
+      const v = round5(eq.daysValue ?? (eq.netHours && eq.netHours > 0 ? eq.netHours : 0));
+      return { value: v, label: 'mth', display: `${formatDecimal(v)} mth` };
     }
     case 'm2': {
-      const v = eq.areaValue ?? 0;
-      return { value: v, label: 'm²', display: `${v} m²` };
+      const v = round5(eq.areaValue ?? 0);
+      return { value: v, label: 'm²', display: `${formatDecimal(v)} m²` };
     }
     case 'km': {
-      const v = eq.totalMileage ?? (eq.endMileage && eq.startMileage ? Math.max(0, eq.endMileage - eq.startMileage) : 0);
-      return { value: v, label: 'km', display: `${v.toFixed(1)} km` };
+      const v = round5(eq.totalMileage ?? (eq.endMileage && eq.startMileage ? Math.max(0, eq.endMileage - eq.startMileage) : 0));
+      return { value: v, label: 'km', display: `${formatDecimal(v)} km` };
     }
+    default: {
+      const v = round5(eq.daysValue ?? eq.hoursValue ?? eq.netHours ?? 0);
+      return { value: v, label: unit, display: `${formatDecimal(v)} ${unit}` };
+    }
+  }
+}
+
+function syncUnitTotalField(
+  eq: EquipmentLogEntry,
+  unit: EquipmentRatingUnit,
+  total: number
+): Partial<EquipmentLogEntry> {
+  const safe = Math.max(0, round5(total));
+  switch (unit) {
+    case 'Days':
+    case 'mth':
+      return { daysValue: safe };
+    case 'Hrs':
+      return { hoursValue: safe, netHours: safe, workingHours: safe };
+    case 'EX.hrs':
+      return { extraHoursValue: safe };
+    case 'm2':
+      return { areaValue: safe };
+    case 'km':
+      return { totalMileage: safe };
     default:
-      return { value: eq.daysValue ?? eq.hoursValue ?? eq.netHours ?? 0, label: unit, display: `${eq.daysValue ?? eq.hoursValue ?? eq.netHours ?? 0} ${unit}` };
+      return { daysValue: safe };
   }
 }
 
@@ -213,10 +257,9 @@ export function EquipmentLogsView({
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
-  // ── Days Rate Handler ──
+  // ── Days / Mth Rate Handler (up to 5 decimals) ──
   const handleDaysChange = (id: string, days: number) => {
-    // Allow any amount of days (no upper limit)
-    const safeDays = Math.max(0, parseFloat(days.toFixed(2)));
+    const safeDays = Math.max(0, round5(days));
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
 
@@ -225,7 +268,6 @@ export function EquipmentLogsView({
       let splits = eq.activitySplits || [];
       const daySplits = splits.filter((s) => normalizeRatingUnit(s.unit) === pUnit || normalizeRatingUnit(s.unit) === 'Days' || normalizeRatingUnit(s.unit) === 'mth');
 
-      // If only 1 activity split exists, keep it equal to safeDays (e.g. 1.0 Day)
       if (isDayOrMth) {
         if (daySplits.length === 1) {
           splits = splits.map((s) =>
@@ -256,9 +298,9 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
-  // ── Operating Hours (Hrs) Handler ──
+  // ── Operating Hours (Hrs) Handler (up to 5 decimals) ──
   const handleHoursChange = (id: string, hours: number) => {
-    const safeHours = Math.max(0, hours);
+    const safeHours = Math.max(0, round5(hours));
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
 
@@ -297,56 +339,95 @@ export function EquipmentLogsView({
 
   // ── Extra Hours (EX.hrs) Handler ──
   const handleExtraHoursChange = (id: string, exHours: number) => {
-    const safeEx = Math.max(0, exHours);
-    const updated = equipment.map((eq) => 
-      eq.id === id ? { 
-        ...eq, 
-        extraHoursValue: safeEx, 
-        status: (safeEx > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
-      } : eq
-    );
-    onSaveEquipment(updated);
-  };
-
-  // ── Square Meters (m2) Handler ──
-  const handleAreaChange = (id: string, area: number) => {
-    const safeArea = Math.max(0, area);
-    const updated = equipment.map((eq) => 
-      eq.id === id ? { 
-        ...eq, 
-        areaValue: safeArea, 
-        status: (safeArea > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done' 
-      } : eq
-    );
-    onSaveEquipment(updated);
-  };
-
-  // ── Meter Readings (mth) Handler ──
-  const handleMeterChange = (id: string, start: number, end: number) => {
-    const net = end >= start ? parseFloat((end - start).toFixed(1)) : 0;
+    const safeEx = Math.max(0, round5(exHours));
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
-      const working = eq.workingHours === eq.netHours || eq.workingHours === 0 ? net : eq.workingHours;
-      const idle = Math.max(0, parseFloat((net - working).toFixed(1)));
-
       let splits = eq.activitySplits || [];
-      const mthSplits = splits.filter((s) => normalizeRatingUnit(s.unit) === 'mth' || normalizeRatingUnit(s.unit) === 'Hrs');
-      if (mthSplits.length === 1) {
+      const exSplits = splits.filter((s) => normalizeRatingUnit(s.unit) === 'EX.hrs');
+      if (exSplits.length === 1) {
         splits = splits.map((s) =>
-          (normalizeRatingUnit(s.unit) === 'mth' || normalizeRatingUnit(s.unit) === 'Hrs')
-            ? { ...s, utilization: working, unit: normalizeRatingUnit(eq.primaryUnit || 'Hrs') }
-            : s
+          normalizeRatingUnit(s.unit) === 'EX.hrs' ? { ...s, utilization: safeEx, unit: 'EX.hrs' } : s
         );
-      } else if (mthSplits.length === 0 && working > 0) {
+      } else if (exSplits.length === 0 && safeEx > 0) {
         splits = [
           ...splits,
           {
             id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             activityCode: activityOptions[0]?.code || '',
-            unit: normalizeRatingUnit(eq.primaryUnit || 'Hrs'),
-            utilization: working,
+            unit: 'EX.hrs',
+            utilization: safeEx,
           },
         ];
+      }
+      return {
+        ...eq,
+        extraHoursValue: safeEx,
+        activitySplits: splits,
+        status: (safeEx > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
+  // ── Square Meters (m2) Handler ──
+  const handleAreaChange = (id: string, area: number) => {
+    const safeArea = Math.max(0, round5(area));
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+      let splits = eq.activitySplits || [];
+      const areaSplits = splits.filter((s) => normalizeRatingUnit(s.unit) === 'm2');
+      if (areaSplits.length === 1) {
+        splits = splits.map((s) =>
+          normalizeRatingUnit(s.unit) === 'm2' ? { ...s, utilization: safeArea, unit: 'm2' } : s
+        );
+      } else if (areaSplits.length === 0 && safeArea > 0) {
+        splits = [
+          ...splits,
+          {
+            id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            activityCode: activityOptions[0]?.code || '',
+            unit: 'm2',
+            utilization: safeArea,
+          },
+        ];
+      }
+      return {
+        ...eq,
+        areaValue: safeArea,
+        activitySplits: splits,
+        status: (safeArea > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
+      };
+    });
+    onSaveEquipment(updated);
+  };
+
+  // ── Meter Readings Handler ──
+  const handleMeterChange = (id: string, start: number, end: number) => {
+    const net = end >= start ? round5(end - start) : 0;
+    const updated = equipment.map((eq) => {
+      if (eq.id !== id) return eq;
+      const working = eq.workingHours === eq.netHours || eq.workingHours === 0 ? net : eq.workingHours;
+      const idle = Math.max(0, round5(net - working));
+      const pUnit = normalizeRatingUnit(eq.primaryUnit || 'Hrs');
+
+      let splits = eq.activitySplits || [];
+      if (pUnit === 'Hrs') {
+        const hrSplits = splits.filter((s) => normalizeRatingUnit(s.unit) === 'Hrs');
+        if (hrSplits.length === 1) {
+          splits = splits.map((s) =>
+            normalizeRatingUnit(s.unit) === 'Hrs' ? { ...s, utilization: working, unit: 'Hrs' } : s
+          );
+        } else if (hrSplits.length === 0 && working > 0) {
+          splits = [
+            ...splits,
+            {
+              id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              activityCode: activityOptions[0]?.code || '',
+              unit: 'Hrs',
+              utilization: working,
+            },
+          ];
+        }
       }
 
       return {
@@ -356,6 +437,7 @@ export function EquipmentLogsView({
         netHours: net,
         workingHours: working,
         idleHours: idle,
+        ...(pUnit === 'Hrs' ? { hoursValue: working } : {}),
         activitySplits: splits,
         status: (net > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
@@ -366,12 +448,30 @@ export function EquipmentLogsView({
 
   // ── Mileage (km) Handler ──
   const handleMileageChange = (id: string, mileage: number) => {
-    const safeMileage = Math.max(0, mileage);
+    const safeMileage = Math.max(0, round5(mileage));
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
+      let splits = eq.activitySplits || [];
+      const kmSplits = splits.filter((s) => normalizeRatingUnit(s.unit) === 'km');
+      if (kmSplits.length === 1) {
+        splits = splits.map((s) =>
+          normalizeRatingUnit(s.unit) === 'km' ? { ...s, utilization: safeMileage, unit: 'km' } : s
+        );
+      } else if (kmSplits.length === 0 && safeMileage > 0) {
+        splits = [
+          ...splits,
+          {
+            id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            activityCode: activityOptions[0]?.code || '',
+            unit: 'km',
+            utilization: safeMileage,
+          },
+        ];
+      }
       return {
         ...eq,
         totalMileage: safeMileage,
+        activitySplits: splits,
         status: (safeMileage > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
     });
@@ -379,14 +479,32 @@ export function EquipmentLogsView({
   };
 
   const handleMileageMeterChange = (id: string, start: number, end: number) => {
-    const total = end >= start ? parseFloat((end - start).toFixed(1)) : 0;
+    const total = end >= start ? round5(end - start) : 0;
     const updated = equipment.map((eq) => {
       if (eq.id !== id) return eq;
+      let splits = eq.activitySplits || [];
+      const kmSplits = splits.filter((s) => normalizeRatingUnit(s.unit) === 'km');
+      if (kmSplits.length === 1) {
+        splits = splits.map((s) =>
+          normalizeRatingUnit(s.unit) === 'km' ? { ...s, utilization: total, unit: 'km' } : s
+        );
+      } else if (kmSplits.length === 0 && total > 0) {
+        splits = [
+          ...splits,
+          {
+            id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            activityCode: activityOptions[0]?.code || '',
+            unit: 'km',
+            utilization: total,
+          },
+        ];
+      }
       return {
         ...eq,
         startMileage: start,
         endMileage: end,
         totalMileage: total,
+        activitySplits: splits,
         status: (total > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
     });
@@ -402,55 +520,50 @@ export function EquipmentLogsView({
     onSaveEquipment(updated);
   };
 
-  // ── Unit-Specific Activity Split Handlers ──
+  // ── Unit-Specific Activity Split Handlers (Splits-Driven Total + 5 Decimals) ──
   const handleAddActivitySplit = (eqId: string, rawUnit: EquipmentRatingUnit | string) => {
     const eq = equipment.find((e) => e.id === eqId);
     if (!eq) return;
 
     const unit = normalizeRatingUnit(rawUnit);
-    const isDayUnit = unit === 'Days' || unit === 'mth';
-    const totalTarget = isDayUnit
-      ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? eq.daysValue : 1.0)
-      : getUnitValueInfo(eq, unit).value;
+    const totalTarget = getUnitValueInfo(eq, unit).value;
 
-    const existingSplits = (eq.activitySplits || []).filter((s) => normalizeRatingUnit(s.unit) === unit);
-    const allocated = existingSplits.reduce((sum, s) => sum + (Number(s.utilization) || 0), 0);
-    let remaining = Math.max(0, parseFloat((totalTarget - allocated).toFixed(2)));
+    const existingSplits = (eq.activitySplits || []).filter((s) =>
+      eq.additionalUnit ? normalizeRatingUnit(s.unit) === unit : true
+    );
+    const allocated = round5(existingSplits.reduce((sum, s) => sum + (Number(s.utilization) || 0), 0));
+    let remaining = Math.max(0, round5(totalTarget - allocated));
 
-    // Scope existing splits: only retain other-unit splits if machine supports additional units
     const validOtherSplits = eq.additionalUnit
       ? (eq.activitySplits || []).filter((s) => normalizeRatingUnit(s.unit) !== unit)
       : [];
-    let updatedExistingSplits = [...validOtherSplits, ...existingSplits];
-
-    // If first activity took the full amount (e.g. 1.0 Day or 6.7 Hrs) and supervisor adds 2nd activity,
-    // split 50/50 so first becomes half and new gets remaining balance!
-    if (existingSplits.length === 1 && remaining <= 0.001 && totalTarget > 0 && existingSplits[0].utilization >= totalTarget) {
-      const precision = isDayUnit ? 2 : 1;
-      const half = parseFloat((totalTarget / 2).toFixed(precision));
-      const balance = parseFloat((totalTarget - half).toFixed(precision));
-      updatedExistingSplits = updatedExistingSplits.map((s) =>
-        s.id === existingSplits[0].id ? { ...s, utilization: half } : s
-      );
-      remaining = balance;
-    }
+    const updatedExistingSplits = [...validOtherSplits, ...existingSplits];
 
     const defaultAct = activityOptions.find((a) => !existingSplits.some((s) => s.activityCode === a.code))?.code || activityOptions[0]?.code || '';
+    const defaultQty = remaining > 0
+      ? remaining
+      : (unit === 'mth' ? 0.02 : (unit === 'Days' ? 0.25 : 1));
 
     const newSplit: EquipmentActivitySplit = {
       id: `split-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       activityCode: defaultAct,
       unit,
-      utilization: remaining > 0 ? remaining : (isDayUnit ? 0.2 : 1),
+      utilization: round5(defaultQty),
     };
 
     const updated = equipment.map((e) => {
       if (e.id !== eqId) return e;
       const splits = [...updatedExistingSplits, newSplit];
+      const sameUnitSum = round5(
+        splits
+          .filter((s) => (e.additionalUnit ? normalizeRatingUnit(s.unit) === unit : true))
+          .reduce((acc, s) => acc + (Number(s.utilization) || 0), 0)
+      );
       return {
         ...e,
+        ...syncUnitTotalField(e, unit, sameUnitSum),
         activitySplits: splits,
-        status: 'draft' as const,
+        status: (sameUnitSum > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
     });
     onSaveEquipment(updated);
@@ -490,10 +603,19 @@ export function EquipmentLogsView({
   const handleRemoveActivitySplit = (eqId: string, splitId: string) => {
     const updated = equipment.map((e) => {
       if (e.id !== eqId) return e;
+      const removed = (e.activitySplits || []).find((s) => s.id === splitId);
+      const unit = normalizeRatingUnit(removed?.unit || e.primaryUnit || e.activeUnit);
+      const nextSplits = (e.activitySplits || []).filter((s) => s.id !== splitId);
+      const sameUnitSum = round5(
+        nextSplits
+          .filter((s) => (e.additionalUnit ? normalizeRatingUnit(s.unit) === unit : true))
+          .reduce((acc, s) => acc + (Number(s.utilization) || 0), 0)
+      );
       return {
         ...e,
-        activitySplits: (e.activitySplits || []).filter((s) => s.id !== splitId),
-        status: 'draft' as const,
+        ...syncUnitTotalField(e, unit, sameUnitSum),
+        activitySplits: nextSplits,
+        status: (sameUnitSum > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
     });
     onSaveEquipment(updated);
@@ -506,40 +628,26 @@ export function EquipmentLogsView({
   ) => {
     const updated = equipment.map((e) => {
       if (e.id !== eqId) return e;
-      let splits = [...(e.activitySplits || [])];
-
-      const targetSplit = splits.find((s) => s.id === splitId);
+      const targetSplit = (e.activitySplits || []).find((s) => s.id === splitId);
       if (!targetSplit) return e;
 
-      const isDayUnit = targetSplit.unit === 'Days' || targetSplit.unit === 'mth';
-      const totalTarget = isDayUnit
-        ? ((e.daysValue !== undefined && e.daysValue > 0) ? e.daysValue : 1.0)
-        : getUnitValueInfo(e, targetSplit.unit).value;
+      const unit = normalizeRatingUnit(targetSplit.unit || e.primaryUnit || e.activeUnit);
+      const sanitizedUpdates = updates.utilization !== undefined
+        ? { ...updates, utilization: Math.max(0, round5(Number(updates.utilization) || 0)) }
+        : updates;
 
-      const sameUnitSplits = splits.filter((s) => s.unit === targetSplit.unit);
+      const splits = (e.activitySplits || []).map((s) => (s.id === splitId ? { ...s, ...sanitizedUpdates } : s));
+      const sameUnitSum = round5(
+        splits
+          .filter((s) => (e.additionalUnit ? normalizeRatingUnit(s.unit) === unit : true))
+          .reduce((acc, s) => acc + (Number(s.utilization) || 0), 0)
+      );
 
-      // If updating utilization and exactly 2 splits exist:
-      // When supervisor updates one split (e.g. 4.0 out of 6.7), automatically calculate the remaining balance on the other (2.7)
-      if (updates.utilization !== undefined && sameUnitSplits.length === 2 && totalTarget > 0) {
-        const precision = isDayUnit ? 2 : 1;
-        const newUtil = Math.min(totalTarget, Math.max(0, parseFloat(Number(updates.utilization).toFixed(precision))));
-        const otherSplit = sameUnitSplits.find((s) => s.id !== splitId);
-        if (otherSplit) {
-          const autoBalance = Math.max(0, parseFloat((totalTarget - newUtil).toFixed(precision)));
-          splits = splits.map((s) => {
-            if (s.id === splitId) return { ...s, ...updates, utilization: newUtil };
-            if (s.id === otherSplit.id) return { ...s, utilization: autoBalance };
-            return s;
-          });
-          return { ...e, activitySplits: splits, status: 'draft' as const };
-        }
-      }
-
-      splits = splits.map((s) => (s.id === splitId ? { ...s, ...updates } : s));
       return {
         ...e,
+        ...(updates.utilization !== undefined ? syncUnitTotalField(e, unit, sameUnitSum) : {}),
         activitySplits: splits,
-        status: 'draft' as const,
+        status: (sameUnitSum > 0 ? 'draft' : 'pending') as 'draft' | 'pending' | 'done',
       };
     });
     onSaveEquipment(updated);
@@ -649,10 +757,10 @@ export function EquipmentLogsView({
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                 Or custom days:
               </span>
-              <div className="w-24">
+              <div className="w-28">
                 <input
                   type="number"
-                  step="0.05"
+                  step="any"
                   min="0"
                   value={eq.daysValue ?? 0}
                   onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
@@ -663,28 +771,25 @@ export function EquipmentLogsView({
           </div>
         )}
 
-        {/* MONTHLY HIRE (mth) - Logged in Days */}
+        {/* MONTHLY HIRE (mth) - Direct mth Entry (up to 5 decimals) */}
         {unit === 'mth' && (
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-750">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-500 font-medium">Logged Days (Monthly Hire):</span>
-              <span className="font-bold text-emerald-700 dark:text-emerald-400 font-mono text-sm">
-                {eq.daysValue ?? 0} {(eq.daysValue ?? 0) === 1 ? 'Day' : 'Days'}
-                <span className="text-[11px] text-slate-500 font-normal ml-1.5">
-                  (Monthly Hire • 1 Mth at Month End)
-                </span>
+              <span className="text-slate-500 font-medium">Logged Monthly Hire (mth):</span>
+              <span className="font-bold text-violet-700 dark:text-violet-400 font-mono text-sm">
+                {formatDecimal(eq.daysValue ?? 0)} mth
               </span>
             </div>
 
-            {/* Quick Days Select */}
+            {/* Quick mth Select */}
             <div>
-              <span className="text-[10px] text-slate-400 block mb-1">Quick Select Days:</span>
+              <span className="text-[10px] text-slate-400 block mb-1">Quick Select (mth):</span>
               <div className="grid grid-cols-4 gap-1.5">
                 {[
-                  { d: 1, label: '1 Day' },
-                  { d: 0.75, label: '¾ Day' },
-                  { d: 0.5, label: '½ Day' },
-                  { d: 0.25, label: '¼ Day' }
+                  { d: 0.02, label: '0.02' },
+                  { d: 0.04, label: '0.04' },
+                  { d: 0.05, label: '0.05' },
+                  { d: 1, label: '1.00' }
                 ].map(({ d, label }) => (
                   <button
                     key={d}
@@ -693,11 +798,11 @@ export function EquipmentLogsView({
                     className={[
                       'py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center justify-center active:scale-95',
                       (eq.daysValue ?? 0) === d
-                        ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs ring-1 ring-emerald-500/20'
+                        ? 'bg-violet-600 border-violet-600 text-white shadow-xs ring-1 ring-violet-500/20'
                         : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
                     ].join(' ')}
                   >
-                    {label}
+                    {label} mth
                   </button>
                 ))}
               </div>
@@ -705,16 +810,16 @@ export function EquipmentLogsView({
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                Or custom days:
+                Custom mth (up to 5 decimals):
               </span>
-              <div className="w-24">
+              <div className="w-28">
                 <input
                   type="number"
-                  step="0.05"
+                  step="any"
                   min="0"
                   value={eq.daysValue ?? 0}
                   onChange={(e) => handleDaysChange(eq.id, parseFloat(e.target.value) || 0)}
-                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 font-mono"
+                  className="w-full px-2 py-1 text-xs font-bold text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-violet-500 font-mono"
                 />
               </div>
             </div>
@@ -807,7 +912,7 @@ export function EquipmentLogsView({
               <div className="w-28">
                 <input
                   type="number"
-                  step="1"
+                  step="any"
                   min="0"
                   value={eq.totalMileage ?? 0}
                   onChange={(e) => handleMileageChange(eq.id, parseFloat(e.target.value) || 0)}
@@ -862,7 +967,7 @@ export function EquipmentLogsView({
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500 font-medium">Recorded Hours:</span>
               <span className="font-bold text-blue-700 dark:text-blue-400 font-mono text-sm">
-                {(eq.hoursValue ?? 0).toFixed(1)} Hrs
+                {formatDecimal(eq.hoursValue ?? 0)} Hrs
               </span>
             </div>
 
@@ -891,10 +996,10 @@ export function EquipmentLogsView({
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                 Exact Operating Hours:
               </span>
-              <div className="w-24">
+              <div className="w-28">
                 <input
                   type="number"
-                  step="0.5"
+                  step="any"
                   min="0"
                   value={eq.hoursValue ?? 0}
                   onChange={(e) => handleHoursChange(eq.id, parseFloat(e.target.value) || 0)}
@@ -940,10 +1045,10 @@ export function EquipmentLogsView({
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                 Custom Extra Hours:
               </span>
-              <div className="w-24">
+              <div className="w-28">
                 <input
                   type="number"
-                  step="0.5"
+                  step="any"
                   min="0"
                   value={eq.extraHoursValue ?? 0}
                   onChange={(e) => handleExtraHoursChange(eq.id, parseFloat(e.target.value) || 0)}
@@ -987,7 +1092,7 @@ export function EquipmentLogsView({
               <div className="w-28">
                 <input
                   type="number"
-                  step="10"
+                  step="any"
                   min="0"
                   value={eq.areaValue ?? 0}
                   onChange={(e) => handleAreaChange(eq.id, parseFloat(e.target.value) || 0)}
@@ -998,36 +1103,35 @@ export function EquipmentLogsView({
           </div>
         )}
 
-        {/* ── ACTIVITY SPLITS FOR THIS SPECIFIC UNIT ── */}
+        {/* ── ACTIVITY SPLITS FOR THIS SPECIFIC UNIT (Direct Unit + 5 Decimals) ── */}
         {(() => {
-          const isDayUnit = unit === 'Days' || unit === 'mth';
-          const targetValue = isDayUnit
-            ? ((eq.daysValue !== undefined && eq.daysValue > 0) ? eq.daysValue : 1.0)
-            : unitInfo.value;
-          const unassigned = Math.max(0, parseFloat((targetValue - allocatedSum).toFixed(2)));
-          const isFullySplit = Math.abs(allocatedSum - targetValue) < 0.02;
+          const unitLabel = getUnitDisplayLabel(unit);
+          const targetValue = unitInfo.value;
+          const allocatedRounded = round5(allocatedSum);
+          const unassigned = Math.max(0, round5(targetValue - allocatedRounded));
+          const isFullySplit = Math.abs(allocatedRounded - targetValue) < 0.00001;
 
           return (
             <div className="mt-3 pt-3 border-t border-slate-200/90 dark:border-slate-700/80 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                   <Tag size={13} className="text-blue-600 dark:text-blue-400" />
-                  <span>Activity  ({isDayUnit ? 'Days' : unit})</span>
+                  <span>Activity ({unitLabel})</span>
                 </span>
 
-                {targetValue > 0 && (
+                {(targetValue > 0 || allocatedRounded > 0) && (
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                     isFullySplit
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
                       : 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'
                   }`}>
-                    {allocatedSum.toFixed(2)} / {targetValue.toFixed(2)} {isDayUnit ? 'Day(s)' : unit}
-                    {isFullySplit ? ' (100% Split)' : ` (${unassigned.toFixed(2)} unassigned)`}
+                    {formatDecimal(allocatedRounded)} / {formatDecimal(targetValue)} {unitLabel}
+                    {isFullySplit ? ' (100% Split)' : ` (${formatDecimal(unassigned)} unassigned)`}
                   </span>
                 )}
               </div>
 
-              {/* If no splits yet, provide quick 1-click button to assign 1st activity as 1 Day */}
+              {/* If no splits yet, provide quick 1-click button to assign 1st activity */}
               {unitSplits.length === 0 && (
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-dashed border-slate-200 dark:border-slate-700 text-center space-y-2">
                   <p className="text-[11px] text-slate-500">No activity assigned yet for this machine.</p>
@@ -1037,7 +1141,7 @@ export function EquipmentLogsView({
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-2xs cursor-pointer"
                   >
                     <Plus size={13} />
-                    <span>Assign 1st Activity ({isDayUnit ? `${targetValue.toFixed(2)} Day` : `${targetValue} ${unit}`})</span>
+                    <span>Assign 1st Activity ({formatDecimal(targetValue > 0 ? targetValue : (unit === 'mth' ? 0.02 : (unit === 'Days' ? 0.25 : 1)))} {unitLabel})</span>
                   </button>
                 </div>
               )}
@@ -1058,22 +1162,21 @@ export function EquipmentLogsView({
                         placeholder="Search activity code..."
                       />
 
-                      <div className="w-28 flex-shrink-0 flex items-center gap-1 bg-white dark:bg-slate-850 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                      <div className="w-32 flex-shrink-0 flex items-center gap-1 bg-white dark:bg-slate-850 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
                         <input
                           type="number"
-                          step={isDayUnit ? "0.05" : "0.1"}
+                          step="any"
                           min="0"
-                          placeholder={isDayUnit ? 'Days' : 'Qty'}
+                          placeholder={unitLabel}
                           value={split.utilization}
                           onChange={(e) => {
-                            let val = parseFloat(e.target.value) || 0;
-                            if (isDayUnit) val = Math.max(0, parseFloat(val.toFixed(2)));
+                            const val = Math.max(0, round5(parseFloat(e.target.value) || 0));
                             handleUpdateActivitySplit(eq.id, split.id, { utilization: val });
                           }}
                           className="w-full text-xs font-bold text-center bg-transparent text-slate-800 dark:text-slate-100 outline-none font-mono"
                         />
                         <span className="text-[10px] font-semibold text-slate-400">
-                          {isDayUnit ? 'Day' : unit}
+                          {unitLabel}
                         </span>
                       </div>
 
@@ -1097,7 +1200,7 @@ export function EquipmentLogsView({
                   className="w-full py-1.5 px-3 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-dashed border-blue-300 dark:border-blue-800 flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
                 >
                   <Plus size={13} />
-                  <span>+ Add Activity Split ({isDayUnit ? 'Days' : unit})</span>
+                  <span>+ Add Activity Split ({unitLabel})</span>
                 </button>
               )}
             </div>
