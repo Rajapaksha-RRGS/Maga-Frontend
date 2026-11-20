@@ -838,7 +838,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(empFilter ? { employee: empFilter } : {}),
       },
-      include: {
+      include: {   
         employee: {
           include: {
             corporateEmployee: {
@@ -902,7 +902,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
         ? Number(entry.appliedDailyRate)
         : (Number(entry.employee.dailyRate) > 0
             ? Number(entry.employee.dailyRate)
-            : Number(entry.employee.tradeGroup?.standardDailyRate || 1400));
+            : Number(entry.employee.tradeGroup?.standardDailyRate || 0));
 
       if (!empMap.has(empId)) {
         empMap.set(empId, {
@@ -1884,7 +1884,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
       );
       const dailyRateVal = snapEntry
         ? Number(snapEntry.appliedDailyRate)
-        : (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 1400));
+        : (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 0));
       const hourlyOtRate = Math.round((dailyRateVal / 8 * 1.5) * 100) / 100;
 
       const snapBpEntry = timeEntries.find(

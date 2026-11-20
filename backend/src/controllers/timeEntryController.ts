@@ -777,7 +777,7 @@ export const checkInEmployee = async (req: Request, res: Response): Promise<void
       },
     });
     const snapDailyRate = emp
-      ? (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 1400.0))
+      ? (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : (Number(emp.tradeGroup?.standardDailyRate) > 0 ? Number(emp.tradeGroup?.standardDailyRate) : null))
       : null;
     const snapBpId = emp?.businessPartnerId || null;
 
@@ -989,7 +989,7 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
       employees.map((e) => [
         e.id,
         {
-          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : Number(e.tradeGroup?.standardDailyRate || 1400.0),
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : (Number(e.tradeGroup?.standardDailyRate) > 0 ? Number(e.tradeGroup?.standardDailyRate) : null),
           bpId: e.businessPartnerId || null,
           isExternal: Boolean(e.businessPartnerId || e.corporateEmployee?.employeeType === 'external'),
         },
@@ -1514,8 +1514,9 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
                 id: true,
                 callingName: true,
                 isOperator: true,
+                dailyRate: true,
                 corporateEmployee: { select: { employeeCode: true, fullName: true, isOperator: true } },
-                tradeGroup: { select: { name: true } },
+                tradeGroup: { select: { name: true, standardDailyRate: true } },
                 businessPartner: { select: { name: true } },
               },
             },
@@ -1528,8 +1529,9 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
                 id: true,
                 callingName: true,
                 isOperator: true,
+                dailyRate: true,
                 corporateEmployee: { select: { employeeCode: true, fullName: true } },
-                tradeGroup: { select: { name: true } },
+                tradeGroup: { select: { name: true, standardDailyRate: true } },
                 businessPartner: { select: { name: true } },
               },
             },
@@ -1570,8 +1572,9 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
               select: {
                 id: true,
                 callingName: true,
+                dailyRate: true,
                 corporateEmployee: { select: { employeeCode: true, fullName: true } },
-                tradeGroup: { select: { name: true } },
+                tradeGroup: { select: { name: true, standardDailyRate: true } },
               },
             },
             dailyLog: {
@@ -1731,6 +1734,15 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         const activities = Array.from(seenActivities.values());
         const primaryStatus = entries.find((e: any) => e.status)?.status || (inTime ? 'draft' : 'pending');
 
+        const hasAttendance = Boolean(inTime || regularHours > 0 || shiftHours > 0);
+        const firstEntryWithRate = entries.find((e: any) => e.appliedDailyRate !== null && Number(e.appliedDailyRate) > 0);
+        const resolvedEmpRate = Number(emp.dailyRate || 0);
+        const resolvedTgRate = Number(emp.tradeGroup?.standardDailyRate || 0);
+        const effectiveRate = firstEntryWithRate
+          ? Number(firstEntryWithRate.appliedDailyRate)
+          : (resolvedEmpRate > 0 ? resolvedEmpRate : (resolvedTgRate > 0 ? resolvedTgRate : null));
+        const hasMissingRate = hasAttendance && !effectiveRate;
+
         return {
           employeeId: emp.id,
           employeeCode: emp.corporateEmployee?.employeeCode || 'N/A',
@@ -1754,6 +1766,8 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           idleHours,
           activities,
           status: primaryStatus,
+          appliedDailyRate: effectiveRate,
+          hasMissingRate,
         };
       });
 
@@ -1876,6 +1890,14 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           daysWorked = isExternal ? 0 : dayTypeRules.isAllOvertime ? 0 : (dayTypeRules.isSaturday || shiftHours > 6.0) ? 1.0 : shiftHours > 0 ? 0.5 : 0;
         }
         const eqDisplay = equipmentDisplays.length > 0 ? equipmentDisplays.join(', ') : '—';
+        const hasAttendance = Boolean(inTime || hours > 0 || shiftHours > 0);
+        const opEntryWithRate = opTeList.find((t: any) => t.appliedDailyRate !== null && Number(t.appliedDailyRate) > 0);
+        const opResolvedEmpRate = Number(op.dailyRate || 0);
+        const opResolvedTgRate = Number(op.tradeGroup?.standardDailyRate || 0);
+        const opEffectiveRate = opEntryWithRate
+          ? Number(opEntryWithRate.appliedDailyRate)
+          : (opResolvedEmpRate > 0 ? opResolvedEmpRate : (opResolvedTgRate > 0 ? opResolvedTgRate : null));
+        const opHasMissingRate = hasAttendance && !opEffectiveRate;
 
         return {
           operatorId: op.id,
@@ -1900,6 +1922,8 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           assignedEquipmentDisplay: eqDisplay,
           status: firstOpTe?.status || (inTime ? 'draft' : 'pending'),
           notes: firstOpTe?.remarks || '',
+          appliedDailyRate: opEffectiveRate,
+          hasMissingRate: opHasMissingRate,
         };
       });
 
@@ -2001,6 +2025,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
       const laborWorkedCount = displayWorkers.filter((w) => w.inTime || w.hours > 0).length;
       const operatorsWorkedCount = operatorDetails.filter((o) => o.inTime || o.hours > 0).length;
       const equipmentRunningCount = equipmentDetails.filter((e) => e.netHours > 0 || e.loggedQuantity > 0).length;
+      const missingRatesCount = displayWorkers.filter((w) => w.hasMissingRate).length + operatorDetails.filter((o) => o.hasMissingRate).length;
 
       const groupData = {
         supervisorId: sup.id,
@@ -2013,6 +2038,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         workedCount: laborWorkedCount,
         totalHours: laborHours,
         totalOvertime: laborOvertime,
+        missingRatesCount,
         counts: {
           laborAssigned: laborAssignedCount,
           laborWorked: laborWorkedCount,
@@ -2020,6 +2046,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
           operatorsWorked: operatorsWorkedCount,
           equipmentAssigned: equipmentDetails.length,
           equipmentRunning: equipmentRunningCount,
+          missingRates: missingRatesCount,
         },
         totals: {
           laborHours,
@@ -2131,6 +2158,62 @@ export const approveTimeEntries = async (req: Request, res: Response): Promise<v
     });
 
     const sheetIds = sheets.map((s) => s.id);
+
+    // Validate daily rates for all attended entries before approving (Method 2: Flag & Block at Approval)
+    const unratedEntries = await prisma.mF_OP_TimeEntry.findMany({
+      where: {
+        dailySheetId: { in: sheetIds },
+        OR: [
+          { hours: { gt: 0 } },
+          { shiftHours: { gt: 0 } },
+          { inTime: { not: null } },
+        ],
+        AND: [
+          {
+            OR: [
+              { appliedDailyRate: null },
+              { appliedDailyRate: 0 },
+            ],
+          },
+        ],
+      },
+      include: {
+        employee: {
+          include: {
+            corporateEmployee: true,
+            tradeGroup: true,
+          },
+        },
+      },
+    });
+
+    const entriesStillMissingRate: string[] = [];
+    for (const te of unratedEntries) {
+      const empDailyRate = Number(te.employee?.dailyRate || 0);
+      const tgDailyRate = Number(te.employee?.tradeGroup?.standardDailyRate || 0);
+      const resolvedRate = empDailyRate > 0 ? empDailyRate : (tgDailyRate > 0 ? tgDailyRate : null);
+
+      if (resolvedRate !== null && resolvedRate > 0) {
+        // Backfill snapshot rate if master data was updated
+        await prisma.mF_OP_TimeEntry.update({
+          where: { id: te.id },
+          data: { appliedDailyRate: resolvedRate },
+        });
+      } else {
+        const name = te.employee?.corporateEmployee?.fullName || te.employee?.callingName || 'Worker';
+        const code = te.employee?.corporateEmployee?.employeeCode || te.employeeId;
+        entriesStillMissingRate.push(`${name} (${code})`);
+      }
+    }
+
+    if (entriesStillMissingRate.length > 0) {
+      res.status(400).json({
+        error: `Cannot approve daily sheet: ${entriesStillMissingRate.length} worker(s) have no daily rate or trade group rate configured (${entriesStillMissingRate.join(', ')}). Please configure daily rates in Master Data before approving.`,
+        code: 'MISSING_DAILY_RATE',
+        missingWorkers: entriesStillMissingRate,
+      });
+      return;
+    }
 
     await prisma.mF_OP_DailySheet.updateMany({
       where: { id: { in: sheetIds } },
@@ -2938,7 +3021,7 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
         },
       });
       const snapRate = opEmp
-        ? (Number(opEmp.dailyRate) > 0 ? Number(opEmp.dailyRate) : Number(opEmp.tradeGroup?.standardDailyRate || 1400.0))
+        ? (Number(opEmp.dailyRate) > 0 ? Number(opEmp.dailyRate) : (Number(opEmp.tradeGroup?.standardDailyRate) > 0 ? Number(opEmp.tradeGroup?.standardDailyRate) : null))
         : null;
       const snapBpId = opEmp?.businessPartnerId || null;
       const isExternal = Boolean(snapBpId || opEmp?.corporateEmployee?.employeeType === 'external');
@@ -3161,7 +3244,7 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
       opEmployees.map((e) => [
         e.id,
         {
-          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : Number(e.tradeGroup?.standardDailyRate || 1400.0),
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : (Number(e.tradeGroup?.standardDailyRate) > 0 ? Number(e.tradeGroup?.standardDailyRate) : null),
           bpId: e.businessPartnerId || null,
           isExternal: Boolean(e.businessPartnerId || e.corporateEmployee?.employeeType === 'external'),
         },
@@ -3880,7 +3963,7 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
       empRecords.map((e) => [
         e.id,
         {
-          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : Number(e.tradeGroup?.standardDailyRate || 1400.0),
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : (Number(e.tradeGroup?.standardDailyRate) > 0 ? Number(e.tradeGroup?.standardDailyRate) : null),
           bpId: e.businessPartnerId || null,
           isExternal: Boolean(e.businessPartnerId || e.corporateEmployee?.employeeType === 'external'),
         },

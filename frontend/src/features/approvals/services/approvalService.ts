@@ -55,6 +55,8 @@ export interface ApprovalWorkerItem {
   idleHours?: number;
   activities: ApprovalWorkerActivity[];
   status: string;
+  appliedDailyRate?: number | null;
+  hasMissingRate?: boolean;
 }
 
 export interface ApprovalOperatorItem {
@@ -81,6 +83,8 @@ export interface ApprovalOperatorItem {
   assignedEquipmentDisplay: string;
   status: string;
   notes?: string;
+  appliedDailyRate?: number | null;
+  hasMissingRate?: boolean;
 }
 
 export interface ApprovalEquipmentItem {
@@ -120,6 +124,7 @@ export interface SupervisorApprovalGroup {
   submittedAt: string | null;
   approvedAt?: string | null;
   status: 'submitted' | 'approved' | 'draft' | 'not_started';
+  missingRatesCount?: number;
   counts?: {
     laborAssigned: number;
     laborWorked: number;
@@ -127,6 +132,7 @@ export interface SupervisorApprovalGroup {
     operatorsWorked: number;
     equipmentAssigned: number;
     equipmentRunning: number;
+    missingRates?: number;
   };
   totals?: {
     laborHours: number;

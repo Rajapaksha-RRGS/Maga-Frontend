@@ -15,7 +15,8 @@ import {
   Fuel,
   Gauge,
   Plus,
-  Trash2
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { 
   adminAdjustWorker, 
@@ -783,6 +784,16 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
               >
                 {isApproved ? 'Approved' : isSubmitted ? 'Submitted (Awaiting Approval)' : 'Draft in Progress'}
               </span>
+
+              {(group.missingRatesCount ?? 0) > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 animate-pulse"
+                  title="Daily rates missing in Master Data for workers in this sheet"
+                >
+                  <AlertTriangle size={12} className="text-rose-600" />
+                  <span>{group.missingRatesCount} Missing Rate{(group.missingRatesCount ?? 0) > 1 ? 's' : ''}</span>
+                </span>
+              )}
             </div>
 
             {/* 3 Pillars Summary Badges */}
@@ -1004,6 +1015,15 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               <div className="text-[11px] text-slate-500 truncate max-w-[140px]">
                                 {w.businessPartner}
                               </div>
+                              {w.hasMissingRate && hasAttendance && (
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded mt-1"
+                                  title="Daily rate is not configured in Master Data"
+                                >
+                                  <AlertTriangle size={10} className="text-rose-500" />
+                                  <span>No Daily Rate</span>
+                                </span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3">
                               {isEditingThis ? (
@@ -1418,6 +1438,15 @@ export const SupervisorApprovalCard: React.FC<SupervisorApprovalCardProps> = ({
                               <div className="text-[11px] text-slate-500 font-mono">
                                 {op.operatorCode}
                               </div>
+                              {op.hasMissingRate && hasAttendance && (
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded mt-1"
+                                  title="Daily rate is not configured in Master Data"
+                                >
+                                  <AlertTriangle size={10} className="text-rose-500" />
+                                  <span>No Daily Rate</span>
+                                </span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3">
                               {op.assignedEquipmentDisplay && op.assignedEquipmentDisplay !== '—' ? (

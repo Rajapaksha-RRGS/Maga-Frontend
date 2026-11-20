@@ -363,7 +363,7 @@ export default function SATradeGroupsPage() {
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Trade Code *</label>
                 <input
-                  type="text"
+                  type="text" 
                   placeholder="e.g. MMS, USD-MMS, INR-MMS, DRIVER"
                   value={formCode}
                   onChange={(e) => setFormCode(e.target.value.toUpperCase())}

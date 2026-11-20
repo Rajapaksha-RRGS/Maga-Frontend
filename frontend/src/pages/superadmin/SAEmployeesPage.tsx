@@ -27,6 +27,7 @@ import {
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
 import { TopUpErrorView } from '../../components/TopUpErrorView';
+import SearchableTradeGroupSelect from '../../components/SearchableTradeGroupSelect';
 
 
 const EMP_SAMPLE_HEADERS = [
@@ -1115,23 +1116,15 @@ export default function SAEmployeesPage() {
                   <label className="block text-xs font-medium text-slate-700 mb-1">
                     Trade Group <span className="text-red-500">*</span>
                   </label>
-                  <select
+                  <SearchableTradeGroupSelect
                     value={formTradeGroupId}
+                    options={tradeGroups}
                     required
-                    onChange={(e) => {
-                      setFormTradeGroupId(e.target.value);
-                      const matched = tradeGroups.find((t) => t.id === e.target.value);
+                    onChange={(selectedId, matched) => {
+                      setFormTradeGroupId(selectedId);
                       if (matched) setFormDailyRate(String(matched.standardDailyRate));
                     }}
-                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
-                  >
-                    <option value="" className="bg-white text-slate-900">-- Choose Trade Group * --</option>
-                    {tradeGroups.map((tg) => (
-                      <option key={tg.id} value={tg.id} className="bg-white text-slate-900">
-                        {tg.code} - {tg.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               </div>
 
@@ -1336,25 +1329,17 @@ export default function SAEmployeesPage() {
                   <label className="block text-xs font-medium text-slate-700 mb-1">
                     Trade Group <span className="text-red-500">*</span>
                   </label>
-                  <select
+                  <SearchableTradeGroupSelect
                     value={editTradeGroupId}
+                    options={tradeGroups}
                     required
-                    onChange={(e) => {
-                      setEditTradeGroupId(e.target.value);
-                      const matched = tradeGroups.find((t) => t.id === e.target.value);
+                    onChange={(selectedId, matched) => {
+                      setEditTradeGroupId(selectedId);
                       if (matched && (!editDailyRate || editDailyRate === '1400')) {
                         setEditDailyRate(String(matched.standardDailyRate));
                       }
                     }}
-                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
-                  >
-                    <option value="" className="bg-white text-slate-900">-- Choose Trade Group * --</option>
-                    {tradeGroups.map((tg) => (
-                      <option key={tg.id} value={tg.id} className="bg-white text-slate-900">
-                        {tg.code} - {tg.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               </div>
 
