@@ -34,7 +34,8 @@ export interface Employee {
   epfNo?: string;
   isOperator?: boolean;
   licenseNo?: string;
-  employeeType?: 'internal' | 'external';
+  employeeType?: string;
+  skillLevel?: string;
   documentUrl?: string | null;
   status: 'active' | 'inactive' | 'pending_approval' | 'rejected' | string;
   corporateStatus?: string;
@@ -59,7 +60,8 @@ export interface EmployeeFormData {
   epfNo?: string;
   isOperator?: boolean;
   licenseNo?: string;
-  employeeType?: 'internal' | 'external';
+  employeeType?: string;
+  skillLevel?: string;
   documentUrl?: string;
   status?: string;
   isSiteWalkIn?: boolean;
@@ -90,11 +92,12 @@ function mapEmployee(raw: any): Employee {
     tradeGroup: raw.tradeGroup || raw.trade_group || '',
     tradeGroupId: raw.tradeGroupId || raw.trade_group_id || undefined,
     nicNo: raw.nicNo || raw.nic_no || '',
-    dailyRate: raw.dailyRate !== undefined ? Number(raw.dailyRate) : 1400,
+    dailyRate: raw.dailyRate !== undefined && raw.dailyRate !== null ? Number(raw.dailyRate) : 0,
     epfNo: raw.epfNo || raw.epf_no || '',
     isOperator: Boolean(raw.isOperator ?? raw.is_operator ?? (raw.tradeGroup?.toLowerCase() === 'operator')),
     licenseNo: raw.licenseNo || raw.license_no || undefined,
-    employeeType: raw.employeeType || (raw.businessPartnerId || raw.businessPartner ? 'external' : 'internal'),
+    employeeType: raw.employeeType || (raw.businessPartnerId || raw.businessPartner ? 'EXTERNAL_SUPPLY' : 'INTERNAL'),
+    skillLevel: raw.skillLevel || raw.skill_level || 'SKILLED',
     documentUrl: raw.documentUrl || raw.document_url || null,
     status: raw.status || 'active',
     corporateStatus: raw.corporateStatus || raw.status || 'active',

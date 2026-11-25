@@ -43,6 +43,7 @@ export interface EditActivitySplit {
   activityCodeId?: string;
   activityCode: string;
   hours: string;
+  chargedBusinessPartnerId?: string | null;
 }
 
 export interface ConsolidatedWorkerItem extends ApprovalWorkerItem {
@@ -150,6 +151,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
   const [isSavingEqEdit, setIsSavingEqEdit] = useState(false);
 
   const [activityOptions, setActivityOptions] = useState<ActivityCodeItem[]>([]);
+  const [subcontractors, setSubcontractors] = useState<Array<{ id: string; code: string; name: string }>>([]);
 
   useEffect(() => {
     getAllActivityCodes()
@@ -166,6 +168,18 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
         );
       })
       .catch((err) => console.error('Failed to load activity codes for approvals:', err));
+
+    import('../../../config/api').then(({ apiFetch, API_URL }) => {
+      apiFetch(`${API_URL}/business-partners?status=active&type=subcontractor`)
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          const list = Array.isArray(data) ? data : (data?.data || []);
+          setSubcontractors(
+            list.filter((bp: any) => String(bp.type || '').trim().toLowerCase() === 'subcontractor')
+          );
+        })
+        .catch(() => setSubcontractors([]));
+    });
   }, []);
 
   // Local state for workers to allow immediate optimistic feedback on edit
@@ -350,6 +364,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
           activityCodeId: a.activityCodeId || a.id,
           activityCode: a.code,
           hours: a.hours !== undefined ? String(a.hours) : '0',
+          chargedBusinessPartnerId: a.chargedBusinessPartnerId || null,
         }))
       );
     } else {
@@ -359,6 +374,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
           activityCodeId: '',
           activityCode: '',
           hours: String(preview.effectiveHours > 0 ? preview.effectiveHours : 8),
+          chargedBusinessPartnerId: null,
         },
       ]);
     }
@@ -398,7 +414,11 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
     });
   };
 
-  const handleUpdateSplitRow = (rowId: string, field: 'activityCode' | 'hours', val: any) => {
+  const handleUpdateSplitRow = (
+    rowId: string,
+    field: 'activityCode' | 'hours' | 'chargedBusinessPartnerId',
+    val: any
+  ) => {
     setEditActivitySplits((prev) =>
       prev.map((s) => {
         if (s.id !== rowId) return s;
@@ -411,6 +431,9 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
             activityCode: val,
             activityCodeId: matched?.id || s.activityCodeId,
           };
+        }
+        if (field === 'chargedBusinessPartnerId') {
+          return { ...s, chargedBusinessPartnerId: val ? String(val) : null };
         }
         return { ...s, hours: val };
       })
@@ -433,6 +456,7 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
             activityCodeId: matched?.id || s.activityCodeId,
             activityCode: s.activityCode.trim(),
             hours: parseFloat(s.hours) || 0,
+            chargedBusinessPartnerId: s.chargedBusinessPartnerId || null,
           };
         });
 
@@ -1298,44 +1322,71 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
 
                                   <div className="space-y-1.5 max-h-44 overflow-y-auto pr-0.5 scrollbar-thin">
                                     {editActivitySplits.map((split, sIdx) => (
-                                      <div key={split.id} className="flex items-center gap-1.5">
-                                        <div className="flex-1 min-w-0">
-                                          <SearchableActivitySelect
-                                            value={split.activityCode}
-                                            onChange={(code) =>
-                                              handleUpdateSplitRow(split.id, 'activityCode', code)
-                                            }
-                                            options={activityOptions}
-                                            placeholder={`Activity #${sIdx + 1}...`}
-                                            className="w-full text-xs shadow-2xs"
-                                          />
+                                      <div
+                                        key={split.id}
+                                        className={`flex flex-col gap-1 p-1.5 rounded-lg border ${
+                                          split.chargedBusinessPartnerId
+                                            ? 'bg-red-50/70 border-red-300'
+                                            : 'border-transparent p-0'
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-1.5">
+                                          <div className="flex-1 min-w-0">
+                                            <SearchableActivitySelect
+                                              value={split.activityCode}
+                                              onChange={(code) =>
+                                                handleUpdateSplitRow(split.id, 'activityCode', code)
+                                              }
+                                              options={activityOptions}
+                                              placeholder={`Activity #${sIdx + 1}...`}
+                                              className="w-full text-xs shadow-2xs"
+                                            />
+                                          </div>
+                                          <div className="flex items-center gap-0.5 flex-shrink-0">
+                                            <input
+                                              type="number"
+                                              step="0.5"
+                                              min="0"
+                                              max="24"
+                                              value={split.hours}
+                                              onChange={(e) =>
+                                                handleUpdateSplitRow(split.id, 'hours', e.target.value)
+                                              }
+                                              className="w-14 px-1 py-1 rounded text-xs font-bold font-mono text-center border border-slate-200 bg-white focus:outline-none focus:border-blue-500 shadow-2xs"
+                                              placeholder="0.0"
+                                              title="Hours on this activity"
+                                            />
+                                            <span className="text-[10px] text-slate-400 font-bold">h</span>
+                                          </div>
+                                          {editActivitySplits.length > 1 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleRemoveSplitRow(split.id)}
+                                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer flex-shrink-0"
+                                              title="Remove this activity split"
+                                            >
+                                              <Trash2 size={13} />
+                                            </button>
+                                          )}
                                         </div>
-                                        <div className="flex items-center gap-0.5 flex-shrink-0">
-                                          <input
-                                            type="number"
-                                            step="0.5"
-                                            min="0"
-                                            max="24"
-                                            value={split.hours}
-                                            onChange={(e) =>
-                                              handleUpdateSplitRow(split.id, 'hours', e.target.value)
-                                            }
-                                            className="w-14 px-1 py-1 rounded text-xs font-bold font-mono text-center border border-slate-200 bg-white focus:outline-none focus:border-blue-500 shadow-2xs"
-                                            placeholder="0.0"
-                                            title="Hours on this activity"
-                                          />
-                                          <span className="text-[10px] text-slate-400 font-bold">h</span>
-                                        </div>
-                                        {editActivitySplits.length > 1 && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleRemoveSplitRow(split.id)}
-                                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer flex-shrink-0"
-                                            title="Remove this activity split"
-                                          >
-                                            <Trash2 size={13} />
-                                          </button>
-                                        )}
+                                        <select
+                                          value={split.chargedBusinessPartnerId || ''}
+                                          onChange={(e) =>
+                                            handleUpdateSplitRow(split.id, 'chargedBusinessPartnerId', e.target.value)
+                                          }
+                                          className={`w-full px-1.5 py-0.5 rounded border text-[10px] font-semibold focus:outline-none ${
+                                            split.chargedBusinessPartnerId
+                                              ? 'border-red-400 bg-white text-red-700'
+                                              : 'border-slate-200 bg-slate-50 text-slate-600'
+                                          }`}
+                                        >
+                                          <option value="">Company (Normal)</option>
+                                          {subcontractors.map((bp) => (
+                                            <option key={bp.id} value={bp.id}>
+                                              SUB DEDUCT: {bp.name} ({bp.code})
+                                            </option>
+                                          ))}
+                                        </select>
                                       </div>
                                     ))}
                                   </div>
@@ -1400,20 +1451,32 @@ export const ConsolidatedApprovalView: React.FC<ConsolidatedApprovalViewProps> =
                               <div className="flex flex-wrap gap-1 max-w-xs">
                                 {acts.map((act, i) => {
                                   const isIdle = act.code === 'ZIDLE' || act.code.toLowerCase().includes('idle');
+                                  const isSub = Boolean(act.chargedBusinessPartnerId);
                                   return (
                                     <span
                                       key={i}
                                       className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium border ${
-                                        isIdle
+                                        isSub
+                                          ? 'bg-red-50 text-red-700 border-red-300 font-semibold'
+                                          : isIdle
                                           ? 'bg-amber-50 text-amber-800 border-amber-300 font-semibold'
                                           : 'bg-blue-50 text-blue-700 border-blue-200'
                                       }`}
-                                      title={act.description || (isIdle ? 'Idle / Unallocated Hours' : '')}
+                                      title={
+                                        isSub
+                                          ? `Subcontractor Back-Charge: ${act.chargedBusinessPartnerName || 'Subcontractor'}`
+                                          : act.description || (isIdle ? 'Idle / Unallocated Hours' : '')
+                                      }
                                     >
-                                      <Tag size={10} className={isIdle ? 'text-amber-600' : 'text-blue-500'} />
+                                      <Tag size={10} className={isSub ? 'text-red-600' : isIdle ? 'text-amber-600' : 'text-blue-500'} />
                                       {isIdle
                                         ? `Idle (${act.code}): ${formatHoursDisplay(act.hours)}`
                                         : `${act.code}: ${formatHoursDisplay(act.hours)}`}
+                                      {isSub && (
+                                        <span className="ml-0.5 font-bold text-red-700">
+                                          [SUB: {act.chargedBusinessPartnerName || 'Deduct'}]
+                                        </span>
+                                      )}
                                     </span>
                                   );
                                 })}

@@ -8,7 +8,7 @@
  *   - min-h-[44px], focus-visible:ring-2 ring-blue-600
  */
 import type { ReportType, ReportCategory } from '../services/reportService';
-import { BarChart3, CalendarRange, Receipt, FileUp, Clock3, FileText, Truck } from 'lucide-react';
+import { BarChart3, CalendarRange, Receipt, FileUp, Clock3, FileText, Truck, Scissors } from 'lucide-react';
 
 interface Props {
   activeTab: ReportType;
@@ -29,6 +29,7 @@ const ALL_TABS: TabOption[] = [
   { id: 'summary',                 label: 'Attendance Summary',       icon: <BarChart3 size={16} />,     categories: ['labor'] },
   { id: 'day-ot-summary',          label: 'Day & OT Matrix',          icon: <CalendarRange size={16} />, categories: ['labor'] },
   { id: 'bp-bill',                 label: 'BP Subcontractor Bill',    icon: <Receipt size={16} />,       categories: ['labor'] },
+  { id: 'subcontractor-deduction', label: 'Subcontractor Deduction',  icon: <Scissors size={16} />,      categories: ['labor'] },
   { id: 'erp-upload',              label: 'ERP Upload File',          icon: <FileUp size={16} />,        categories: ['labor'] },
   // Operator Category
   { id: 'running-chart',           label: 'Operator Running Chart',   icon: <Clock3 size={16} />,        categories: ['operator'] },

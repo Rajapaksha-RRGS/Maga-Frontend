@@ -65,8 +65,11 @@ import CalendarPage from './pages/CalendarPage';
 import AssignmentsHubPage from './pages/AssignmentsHubPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import ReportsPage from './pages/ReportsPage';
+import PriceModelPage from './pages/PriceModelPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
 
+//practice 
+import PracticePage from './pages/practicePage';
 
 // Theme
 import { ThemeProvider } from './context/ThemeContext';
@@ -137,6 +140,7 @@ export default function App() {
               <Route path="assignments/equipment"  element={<AssignmentsHubPage defaultTab="equipment" />} />
               <Route path="approvals"     element={<ApprovalsPage />} />
               <Route path="reports"       element={<ReportsPage />} />
+              <Route path="price-model"   element={<PriceModelPage />} />
               <Route path="settings"      element={<AdminSettingsPage />} />
             </Route>
           </Route>
@@ -163,6 +167,11 @@ export default function App() {
               <Route index element={<SupervisorMobileApp />} />
             </Route>
           </Route>
+
+          {/*practice section  */}
+          <Route path='/pr' element={<PracticePage/>}/>
+          
+          
 
 
           {/* ── Fallback: everything else → /login ─────────────────────────── */}

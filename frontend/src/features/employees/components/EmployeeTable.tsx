@@ -8,6 +8,11 @@ import DataTable, { type Column } from '../../../components/DataTable';
 import StatusBadge from '../../../components/StatusBadge';
 import { getFileUrl } from '../../../config/api';
 import type { Employee } from '../services/employeeService';
+import {
+  formatEmployeeTypeLabel,
+  isExternalEmployeeTypeClient,
+  normalizeSkillLevelClient,
+} from '../../../utils/employeeTypes';
 
 interface EmployeeTableProps {
   data: Employee[];
@@ -53,7 +58,23 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
       {
         header: 'Trade Group',
         accessor: 'tradeGroup',
-        render: (e) => <span className="font-medium text-slate-900">{e.tradeGroup}</span>,
+        render: (e) => {
+          const isUnskilled = normalizeSkillLevelClient(e.skillLevel) === 'UNSKILLED';
+          return (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-medium text-slate-900">{e.tradeGroup}</span>
+              <span
+                className={`inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${
+                  isUnskilled
+                    ? 'text-slate-600 bg-slate-100 border-slate-200'
+                    : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                }`}
+              >
+                {isUnskilled ? 'Unskilled' : 'Skilled'}
+              </span>
+            </div>
+          );
+        },
       },
      
        {
@@ -70,27 +91,33 @@ export default function EmployeeTable({ data, onRowClick, onToggleStatus }: Empl
       {
         header: 'Business Partner / Type',
         accessor: 'businessPartner',
-        render: (e) => (
-          e.employeeType === 'internal' || !e.businessPartnerId || !e.businessPartner || e.businessPartner.toLowerCase().includes('direct') ? (
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
-               Internal
-            </span>
-          ) : (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-slate-800 font-medium text-xs leading-tight">
-                {e.businessPartnerCode}
+        render: (e) => {
+          const isExt = isExternalEmployeeTypeClient(e.employeeType);
+          const typeLabel = formatEmployeeTypeLabel(e.employeeType);
+          if (!isExt || !e.businessPartnerId || !e.businessPartner || e.businessPartner.toLowerCase().includes('direct')) {
+            return (
+              <span
+                className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                  typeLabel === 'Foreign'
+                    ? 'text-indigo-700 bg-indigo-50 border-indigo-200'
+                    : 'text-blue-700 bg-blue-50 border-blue-200'
+                }`}
+              >
+                {typeLabel}
               </span>
-              {/* {e.businessPartnerCode && (
-                <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-                  <span>{e.businessPartnerCode}</span>
-                  {e.businessPartnerStatus === 'pending_approval' && (
-                    <span className="text-amber-600 font-sans font-semibold text-[9px] bg-amber-50 border border-amber-200 px-1 rounded">Pending</span>
-                  )}
-                </span>
-              )} */}
+            );
+          }
+          return (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-slate-800 font-medium text-xs leading-tight">
+                {e.businessPartnerCode || e.businessPartner}
+              </span>
+              <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full border text-amber-700 bg-amber-50 border-amber-200">
+                {typeLabel}
+              </span>
             </div>
-          )
-        ),
+          );
+        },
       },
      
       

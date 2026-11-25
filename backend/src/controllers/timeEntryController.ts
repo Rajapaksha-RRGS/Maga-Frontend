@@ -4,6 +4,7 @@ import prisma from '../config/prisma';
 import '../middleware/tenantMiddleware';
 import { getDefaultTenantId } from '../utils/tenantHelper';
 import { getDayTypeRulesAndId } from './calendarController';
+import { isExternalEmployeeType } from '../utils/tradeRateHelper';
 
 // Re-export getDayTypeRulesAndId for backwards compatibility
 export { getDayTypeRulesAndId };
@@ -17,6 +18,38 @@ function parseDate(dateStr: string): Date {
 function isSheetLocked(sheet: { status?: string | null; isLocked?: boolean | null } | null | undefined): boolean {
   if (!sheet) return false;
   return sheet.status === 'submitted' || sheet.status === 'approved' || Boolean(sheet.isLocked);
+}
+
+async function upsertLaborActivitySplit(
+  timeEntryId: string,
+  activityCodeId: string,
+  hours: number,
+  chargedBusinessPartnerId: string | null = null
+) {
+  const existing = await prisma.mF_OP_LaborActivitySplit.findFirst({
+    where: {
+      timeEntryId,
+      activityCodeId,
+      chargedBusinessPartnerId,
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    return prisma.mF_OP_LaborActivitySplit.update({
+      where: { id: existing.id },
+      data: { hours },
+    });
+  }
+
+  return prisma.mF_OP_LaborActivitySplit.create({
+    data: {
+      timeEntryId,
+      activityCodeId,
+      chargedBusinessPartnerId,
+      hours,
+    },
+  });
 }
 
 // Shared precision & unit helpers for Direct Equipment Utilization Model (up to 5 decimals)
@@ -773,12 +806,9 @@ export const checkInEmployee = async (req: Request, res: Response): Promise<void
       select: {
         dailyRate: true,
         businessPartnerId: true,
-        tradeGroup: { select: { standardDailyRate: true } },
       },
     });
-    const snapDailyRate = emp
-      ? (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : (Number(emp.tradeGroup?.standardDailyRate) > 0 ? Number(emp.tradeGroup?.standardDailyRate) : null))
-      : null;
+    const snapDailyRate = emp && Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : null;
     const snapBpId = emp?.businessPartnerId || null;
 
     const created = await prisma.mF_OP_TimeEntry.create({
@@ -888,7 +918,7 @@ export const checkOutEmployee = async (req: Request, res: Response): Promise<voi
       });
       const isExternal = Boolean(
         emp?.businessPartnerId ||
-        emp?.corporateEmployee?.employeeType === 'external'
+        isExternalEmployeeType(emp?.corporateEmployee?.employeeType)
       );
       const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime, isSaturday, isExternal, mealPolicy);
       grossHours = calc.grossHours;
@@ -981,17 +1011,17 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
         id: true,
         dailyRate: true,
         businessPartnerId: true,
+        employeeType: true,
         corporateEmployee: { select: { employeeType: true } },
-        tradeGroup: { select: { standardDailyRate: true } },
       },
     });
     const empRateMap = new Map(
       employees.map((e) => [
         e.id,
         {
-          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : (Number(e.tradeGroup?.standardDailyRate) > 0 ? Number(e.tradeGroup?.standardDailyRate) : null),
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : null,
           bpId: e.businessPartnerId || null,
-          isExternal: Boolean(e.businessPartnerId || e.corporateEmployee?.employeeType === 'external'),
+          isExternal: Boolean(e.businessPartnerId || isExternalEmployeeType(e.employeeType || e.corporateEmployee?.employeeType)),
         },
       ])
     );
@@ -1029,21 +1059,8 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
 
       if (existingEntries.length > 0) {
         const primary = existingEntries[0];
-        // Add or update split in MF_OP_LaborActivitySplit using upsert
-        await prisma.mF_OP_LaborActivitySplit.upsert({
-          where: {
-            timeEntryId_activityCodeId: {
-              timeEntryId: primary.id,
-              activityCodeId: resolvedActivityId,
-            },
-          },
-          update: { hours: numHours },
-          create: {
-            timeEntryId: primary.id,
-            activityCodeId: resolvedActivityId,
-            hours: numHours,
-          },
-        });
+        // Add or update split in MF_OP_LaborActivitySplit
+        await upsertLaborActivitySplit(primary.id, resolvedActivityId, numHours, null);
 
         // Clean up redundant entries if any existed
         const redundant = existingEntries.slice(1);
@@ -1136,20 +1153,7 @@ export const assignActivityBulk = async (req: Request, res: Response): Promise<v
           }
         }
         if (numHours > 0) {
-          await prisma.mF_OP_LaborActivitySplit.upsert({
-            where: {
-              timeEntryId_activityCodeId: {
-                timeEntryId: parentId,
-                activityCodeId: resolvedActivityId,
-              },
-            },
-            update: { hours: numHours },
-            create: {
-              timeEntryId: parentId,
-              activityCodeId: resolvedActivityId,
-              hours: numHours,
-            },
-          });
+          await upsertLaborActivitySplit(parentId, resolvedActivityId, numHours, null);
         }
       }
     }
@@ -1237,6 +1241,7 @@ export const getTimeEntries = async (req: Request, res: Response): Promise<void>
         activitySplits: {
           include: {
             activityCode: { select: { id: true, code: true, description: true } },
+            chargedBusinessPartner: { select: { id: true, code: true, name: true } },
           },
         },
         equipment: {
@@ -1315,20 +1320,7 @@ export const submitDay = async (req: Request, res: Response): Promise<void> => {
 
       if (shortage > 0.05 && !hasZidle) {
         splitOps.push(
-          prisma.mF_OP_LaborActivitySplit.upsert({
-            where: {
-              timeEntryId_activityCodeId: {
-                timeEntryId: te.id,
-                activityCodeId: zidleId,
-              },
-            },
-            update: { hours: shortage },
-            create: {
-              timeEntryId: te.id,
-              activityCodeId: zidleId,
-              hours: shortage,
-            },
-          }),
+          upsertLaborActivitySplit(te.id, zidleId, shortage, null),
           prisma.mF_OP_TimeEntry.update({
             where: { id: te.id },
             data: { hours: effShift },
@@ -1516,7 +1508,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
                 isOperator: true,
                 dailyRate: true,
                 corporateEmployee: { select: { employeeCode: true, fullName: true, isOperator: true } },
-                tradeGroup: { select: { name: true, standardDailyRate: true } },
+                tradeGroup: { select: { name: true } },
                 businessPartner: { select: { name: true } },
               },
             },
@@ -1531,7 +1523,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
                 isOperator: true,
                 dailyRate: true,
                 corporateEmployee: { select: { employeeCode: true, fullName: true } },
-                tradeGroup: { select: { name: true, standardDailyRate: true } },
+                tradeGroup: { select: { name: true } },
                 businessPartner: { select: { name: true } },
               },
             },
@@ -1574,7 +1566,7 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
                 callingName: true,
                 dailyRate: true,
                 corporateEmployee: { select: { employeeCode: true, fullName: true } },
-                tradeGroup: { select: { name: true, standardDailyRate: true } },
+                tradeGroup: { select: { name: true } },
               },
             },
             dailyLog: {
@@ -1692,7 +1684,15 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         }
 
         // Collect all activities worked across all entries
-        const seenActivities = new Map<string, { activityCodeId?: string; id?: string; code: string; description: string; hours: number }>();
+        const seenActivities = new Map<string, {
+          activityCodeId?: string;
+          id?: string;
+          code: string;
+          description: string;
+          hours: number;
+          chargedBusinessPartnerId?: string | null;
+          chargedBusinessPartnerName?: string | null;
+        }>();
         let totalAllocatedHours = 0;
         for (const te of entries) {
           if (te.activitySplits && te.activitySplits.length > 0) {
@@ -1700,16 +1700,21 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
               const code = s.activityCode?.code || 'N/A';
               const description = s.activityCode?.description || '';
               const h = Number(s.hours || 0);
+              const chargedBpId = s.chargedBusinessPartnerId || null;
+              const chargedBpName = s.chargedBusinessPartner?.name || null;
+              const key = `${code}::${chargedBpId || ''}`;
               totalAllocatedHours += h;
-              if (seenActivities.has(code)) {
-                seenActivities.get(code)!.hours += h;
+              if (seenActivities.has(key)) {
+                seenActivities.get(key)!.hours += h;
               } else {
-                seenActivities.set(code, {
+                seenActivities.set(key, {
                   activityCodeId: s.activityCodeId || s.activityCode?.id,
                   id: s.activityCodeId || s.activityCode?.id,
                   code,
                   description,
                   hours: h,
+                  chargedBusinessPartnerId: chargedBpId,
+                  chargedBusinessPartnerName: chargedBpName,
                 });
               }
             }
@@ -1737,10 +1742,9 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         const hasAttendance = Boolean(inTime || regularHours > 0 || shiftHours > 0);
         const firstEntryWithRate = entries.find((e: any) => e.appliedDailyRate !== null && Number(e.appliedDailyRate) > 0);
         const resolvedEmpRate = Number(emp.dailyRate || 0);
-        const resolvedTgRate = Number(emp.tradeGroup?.standardDailyRate || 0);
         const effectiveRate = firstEntryWithRate
           ? Number(firstEntryWithRate.appliedDailyRate)
-          : (resolvedEmpRate > 0 ? resolvedEmpRate : (resolvedTgRate > 0 ? resolvedTgRate : null));
+          : (resolvedEmpRate > 0 ? resolvedEmpRate : null);
         const hasMissingRate = hasAttendance && !effectiveRate;
 
         return {
@@ -1893,10 +1897,9 @@ export const getApprovalOverview = async (req: Request, res: Response): Promise<
         const hasAttendance = Boolean(inTime || hours > 0 || shiftHours > 0);
         const opEntryWithRate = opTeList.find((t: any) => t.appliedDailyRate !== null && Number(t.appliedDailyRate) > 0);
         const opResolvedEmpRate = Number(op.dailyRate || 0);
-        const opResolvedTgRate = Number(op.tradeGroup?.standardDailyRate || 0);
         const opEffectiveRate = opEntryWithRate
           ? Number(opEntryWithRate.appliedDailyRate)
-          : (opResolvedEmpRate > 0 ? opResolvedEmpRate : (opResolvedTgRate > 0 ? opResolvedTgRate : null));
+          : (opResolvedEmpRate > 0 ? opResolvedEmpRate : null);
         const opHasMissingRate = hasAttendance && !opEffectiveRate;
 
         return {
@@ -2190,8 +2193,7 @@ export const approveTimeEntries = async (req: Request, res: Response): Promise<v
     const entriesStillMissingRate: string[] = [];
     for (const te of unratedEntries) {
       const empDailyRate = Number(te.employee?.dailyRate || 0);
-      const tgDailyRate = Number(te.employee?.tradeGroup?.standardDailyRate || 0);
-      const resolvedRate = empDailyRate > 0 ? empDailyRate : (tgDailyRate > 0 ? tgDailyRate : null);
+      const resolvedRate = empDailyRate > 0 ? empDailyRate : null;
 
       if (resolvedRate !== null && resolvedRate > 0) {
         // Backfill snapshot rate if master data was updated
@@ -2242,20 +2244,7 @@ export const approveTimeEntries = async (req: Request, res: Response): Promise<v
 
       if (shortage > 0.05 && !hasZidle) {
         const zidleId = await resolveProjectActivityId('ZIDLE', projectId, actCache);
-        await prisma.mF_OP_LaborActivitySplit.upsert({
-          where: {
-            timeEntryId_activityCodeId: {
-              timeEntryId: te.id,
-              activityCodeId: zidleId,
-            },
-          },
-          update: { hours: shortage },
-          create: {
-            timeEntryId: te.id,
-            activityCodeId: zidleId,
-            hours: shortage,
-          },
-        });
+        await upsertLaborActivitySplit(te.id, zidleId, shortage, null);
         await prisma.mF_OP_TimeEntry.update({
           where: { id: te.id },
           data: { hours: effShift, status: 'approved' },
@@ -2416,17 +2405,19 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
     }
 
     // Resolve multiple activity splits if provided
-    let resolvedSplits: Array<{ activityCodeId: string; hours: number }> = [];
+    let resolvedSplits: Array<{ activityCodeId: string; hours: number; chargedBusinessPartnerId: string | null }> = [];
     if (Array.isArray(activitySplits) && activitySplits.length > 0) {
       for (const sp of activitySplits) {
         const rawId = (sp.activityCodeId || sp.activityCode || '').toString().trim();
         const spHours = parseFloat(String(sp.hours ?? 0)) || 0;
+        const chargedBpId = sp.chargedBusinessPartnerId ? String(sp.chargedBusinessPartnerId).trim() : null;
         if (rawId) {
           const resId = await resolveProjectActivityId(rawId, projectId);
           if (resId) {
             resolvedSplits.push({
               activityCodeId: resId,
               hours: spHours,
+              chargedBusinessPartnerId: chargedBpId || null,
             });
           }
         }
@@ -2502,6 +2493,7 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
               id: crypto.randomUUID(),
               timeEntryId: primary.id,
               activityCodeId: sp.activityCodeId,
+              chargedBusinessPartnerId: sp.chargedBusinessPartnerId,
               hours: sp.hours,
             },
           });
@@ -2587,6 +2579,7 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
               id: crypto.randomUUID(),
               timeEntryId: created.id,
               activityCodeId: sp.activityCodeId,
+              chargedBusinessPartnerId: sp.chargedBusinessPartnerId,
               hours: sp.hours,
             },
           });
@@ -2608,7 +2601,10 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
     if (primaryEntryId) {
       const splits = await prisma.mF_OP_LaborActivitySplit.findMany({
         where: { timeEntryId: primaryEntryId },
-        include: { activityCode: { select: { id: true, code: true, description: true } } },
+        include: {
+          activityCode: { select: { id: true, code: true, description: true } },
+          chargedBusinessPartner: { select: { id: true, code: true, name: true } },
+        },
       });
       resultActivities = splits.map((s) => ({
         activityCodeId: s.activityCodeId,
@@ -2616,6 +2612,8 @@ export const adminAdjustWorkerTimeEntry = async (req: Request, res: Response): P
         code: s.activityCode?.code || 'N/A',
         description: s.activityCode?.description || '',
         hours: Number(s.hours || 0),
+        chargedBusinessPartnerId: s.chargedBusinessPartnerId || null,
+        chargedBusinessPartnerName: s.chargedBusinessPartner?.name || null,
       }));
     }
 
@@ -3016,15 +3014,13 @@ export const saveOperatorEntry = async (req: Request, res: Response): Promise<vo
         select: {
           dailyRate: true,
           businessPartnerId: true,
+          employeeType: true,
           corporateEmployee: { select: { employeeType: true } },
-          tradeGroup: { select: { standardDailyRate: true } },
         },
       });
-      const snapRate = opEmp
-        ? (Number(opEmp.dailyRate) > 0 ? Number(opEmp.dailyRate) : (Number(opEmp.tradeGroup?.standardDailyRate) > 0 ? Number(opEmp.tradeGroup?.standardDailyRate) : null))
-        : null;
+      const snapRate = opEmp && Number(opEmp.dailyRate) > 0 ? Number(opEmp.dailyRate) : null;
       const snapBpId = opEmp?.businessPartnerId || null;
-      const isExternal = Boolean(snapBpId || opEmp?.corporateEmployee?.employeeType === 'external');
+      const isExternal = Boolean(snapBpId || isExternalEmployeeType(opEmp?.employeeType || opEmp?.corporateEmployee?.employeeType));
 
       if (inTime && outTime) {
         const calc = calculateShiftAndOvertime(inTime, outTime, standardHoursCap, isAllOvertime, isSaturday, isExternal, mealPolicy, addHoursVal);
@@ -3202,8 +3198,8 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
           id: true,
           dailyRate: true,
           businessPartnerId: true,
+          employeeType: true,
           corporateEmployee: { select: { employeeType: true } },
-          tradeGroup: { select: { standardDailyRate: true } },
         },
       }),
       prisma.mF_P_Equipment.findMany({
@@ -3244,9 +3240,9 @@ export const saveBulkOperatorEntries = async (req: Request, res: Response): Prom
       opEmployees.map((e) => [
         e.id,
         {
-          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : (Number(e.tradeGroup?.standardDailyRate) > 0 ? Number(e.tradeGroup?.standardDailyRate) : null),
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : null,
           bpId: e.businessPartnerId || null,
-          isExternal: Boolean(e.businessPartnerId || e.corporateEmployee?.employeeType === 'external'),
+          isExternal: Boolean(e.businessPartnerId || isExternalEmployeeType(e.employeeType || e.corporateEmployee?.employeeType)),
         },
       ])
     );
@@ -3930,8 +3926,8 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
           id: true,
           dailyRate: true,
           businessPartnerId: true,
+          employeeType: true,
           corporateEmployee: { select: { employeeType: true } },
-          tradeGroup: { select: { standardDailyRate: true } },
         },
       }),
       prisma.mF_P_ActivityCode.findMany({
@@ -3963,9 +3959,9 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
       empRecords.map((e) => [
         e.id,
         {
-          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : (Number(e.tradeGroup?.standardDailyRate) > 0 ? Number(e.tradeGroup?.standardDailyRate) : null),
+          rate: Number(e.dailyRate) > 0 ? Number(e.dailyRate) : null,
           bpId: e.businessPartnerId || null,
-          isExternal: Boolean(e.businessPartnerId || e.corporateEmployee?.employeeType === 'external'),
+          isExternal: Boolean(e.businessPartnerId || isExternalEmployeeType(e.employeeType || e.corporateEmployee?.employeeType)),
         },
       ])
     );
@@ -3992,7 +3988,7 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
     }
 
     const allRedundantIds: string[] = [];
-    const timeEntryOps: Promise<{ parentId: string; splits: Array<{ activityCodeId: string; hours: number }> }>[] = [];
+    const timeEntryOps: Promise<{ parentId: string; splits: Array<{ activityCodeId: string; chargedBusinessPartnerId: string | null; hours: number }> }>[] = [];
 
     for (const [employeeId, empEntries] of entriesByEmployee.entries()) {
       const empSnap = empSnapMap.get(employeeId);
@@ -4076,26 +4072,33 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         allRedundantIds.push(...redundant.map((r) => r.id));
       }
 
-      // Calculate splits and ZIDLE in-memory (merge duplicate activityCodeIds so createMany doesn't drop hours)
+      // Calculate splits and ZIDLE in-memory (merge duplicate activityCodeIds + chargedBusinessPartnerId)
       let totalSavedSplitHours = 0;
       let hasZidleExplicit = false;
-      const workerSplitsMap = new Map<string, number>();
-      const addWorkerSplit = (activityCodeId: string, hours: number) => {
-        const prev = workerSplitsMap.get(activityCodeId) || 0;
-        workerSplitsMap.set(activityCodeId, Math.round((prev + hours) * 100) / 100);
+      const workerSplitsMap = new Map<string, { activityCodeId: string; chargedBusinessPartnerId: string | null; hours: number }>();
+      const addWorkerSplit = (activityCodeId: string, hours: number, chargedBusinessPartnerId: string | null = null) => {
+        const key = `${activityCodeId}::${chargedBusinessPartnerId || ''}`;
+        const prev = workerSplitsMap.get(key);
+        const nextHours = Math.round(((prev?.hours || 0) + hours) * 100) / 100;
+        workerSplitsMap.set(key, {
+          activityCodeId,
+          chargedBusinessPartnerId: chargedBusinessPartnerId || null,
+          hours: nextHours,
+        });
         totalSavedSplitHours = Math.round((totalSavedSplitHours + hours) * 100) / 100;
       };
 
       for (const item of empEntries) {
         const resolvedId = await resolveProjectActivityId(item.activityId, projectId, activityResolutionCache);
         const itemHours = item.hours !== undefined ? parseFloat(item.hours) : 0;
+        const chargedBpId = item.chargedBusinessPartnerId ? String(item.chargedBusinessPartnerId).trim() : null;
         if (itemHours > 0) {
           const actCode = actIdToCode.get(resolvedId);
           if (actCode === 'ZIDLE') {
             hasZidleExplicit = true;
           }
 
-          addWorkerSplit(resolvedId, itemHours);
+          addWorkerSplit(resolvedId, itemHours, chargedBpId);
         }
       }
 
@@ -4108,13 +4111,10 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
         : 0;
 
       if (idleShortage > 0 && (isSheetLockedOrSubmitted || isDone)) {
-        addWorkerSplit(zidleId, idleShortage);
+        addWorkerSplit(zidleId, idleShortage, null);
       }
 
-      const workerSplits = Array.from(workerSplitsMap.entries()).map(([activityCodeId, hours]) => ({
-        activityCodeId,
-        hours,
-      }));
+      const workerSplits = Array.from(workerSplitsMap.values());
 
       const finalHours = totalSavedSplitHours > 0 ? totalSavedSplitHours : totalActivityHours;
 
@@ -4221,13 +4221,20 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
     }
 
     // Batch insert all splits in a single multi-row query
-    const splitsToInsert: Array<{ id: string; timeEntryId: string; activityCodeId: string; hours: number }> = [];
+    const splitsToInsert: Array<{
+      id: string;
+      timeEntryId: string;
+      activityCodeId: string;
+      chargedBusinessPartnerId: string | null;
+      hours: number;
+    }> = [];
     for (const sp of savedParents) {
       for (const split of sp.splits) {
         splitsToInsert.push({
           id: crypto.randomUUID(),
           timeEntryId: sp.parentId,
           activityCodeId: split.activityCodeId,
+          chargedBusinessPartnerId: split.chargedBusinessPartnerId || null,
           hours: split.hours,
         });
       }
@@ -4236,7 +4243,6 @@ export const saveBulkLaborTimeEntries = async (req: Request, res: Response): Pro
     if (splitsToInsert.length > 0) {
       await prisma.mF_OP_LaborActivitySplit.createMany({
         data: splitsToInsert,
-        skipDuplicates: true,
       });
     }
 

@@ -183,7 +183,9 @@ function BpBillGroupCard({ group, filteredItems, dates }: BpBillGroupCardProps) 
                   {/* Sticky Employee */}
                   <td className="sticky left-0 z-10 bg-white hover:bg-slate-50 px-4 py-2.5 border-r border-slate-200 shadow-[1px_0_0_0_#e2e8f0]">
                     <div className="font-medium text-slate-800">{item.employeeName}</div>
-                    <div className="text-[10px] font-mono text-slate-400">{item.employeeId}</div>
+                    <div className="text-[10px] font-mono text-slate-400">
+                      {item.employeeCode || item.employeeId}
+                    </div>
                   </td>
 
                   <td className="px-3 py-2.5 text-slate-600 border-r border-slate-100">
@@ -307,6 +309,7 @@ export default function BpBillTable({ data }: Props) {
         const matchedItems = group.items.filter(
           (item) =>
             item.employeeName.toLowerCase().includes(q) ||
+            (item.employeeCode || '').toLowerCase().includes(q) ||
             item.employeeId.toLowerCase().includes(q) ||
             item.tradeGroup.toLowerCase().includes(q)
         );

@@ -1,3 +1,4 @@
+import { isExternalEmployeeType } from '../utils/tradeRateHelper';
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import '../middleware/tenantMiddleware';
@@ -119,7 +120,7 @@ async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date
       const netHours = Number(entry.shiftHours ?? entry.hours) || 0;
       const isExternal = Boolean(
         entry.employee?.businessPartnerId ||
-        entry.employee?.corporateEmployee?.employeeType === 'external'
+        isExternalEmployeeType(entry.employee?.corporateEmployee?.employeeType)
       );
       let otHours = 0;
 

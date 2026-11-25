@@ -9,7 +9,7 @@ export const TimeCardDocument: React.FC<TimeCardDocumentProps> = ({ card }) => {
   const { totals, days } = card;
 
   return (
-    <div className="time-card-sheet bg-white text-slate-900 p-6 sm:p-8 max-w-[800px] mx-auto border border-slate-350 shadow-md font-sans text-xs print:border-none print:shadow-none print:p-0 print:max-w-none print:text-[10px]">
+    <div className="time-card-sheet bg-white text-slate-900 p-6 sm:p-8 max-w-[800px] mx-auto border border-slate-350 shadow-md font-sans text-xs print:border-none print:shadow-none print:p-0 print:max-w-none print:text-[10.5px] print:leading-snug">
       
       {/* ── Top EPF & NIC ── */}
       <div className="flex justify-between items-center mb-1 text-[11px] print:text-[9px]">
@@ -24,17 +24,17 @@ export const TimeCardDocument: React.FC<TimeCardDocumentProps> = ({ card }) => {
       </div>
 
       {/* ── Title Banner ── */}
-      <div className="text-center mb-2">
-        <h1 className="text-base sm:text-lg font-bold tracking-wide uppercase font-serif">
+      <div className="text-center mb-2 print:mb-2">
+        <h1 className="text-base sm:text-lg font-bold tracking-wide uppercase font-serif print:text-base">
           {card.companyName || 'Maga Engineering (Pvt) Ltd.'}
         </h1>
-        <h2 className="text-sm sm:text-base font-bold tracking-widest uppercase mt-0.5 underline">
+        <h2 className="text-sm sm:text-base font-bold tracking-widest uppercase mt-0.5 underline print:text-sm print:mt-0.5">
           TIME CARD
         </h2>
       </div>
 
       {/* ── Employee Metadata Table ── */}
-      <div className="border border-slate-900 mb-2">
+      <div className="border border-slate-900 mb-2 print:mb-2">
         <div className="grid grid-cols-12 border-b border-slate-900">
           <div className="col-span-2 p-1 font-bold bg-slate-50 border-r border-slate-900">Name</div>
           <div className="col-span-6 p-1 font-semibold border-r border-slate-900 truncate uppercase">{card.fullName}</div>
@@ -60,9 +60,9 @@ export const TimeCardDocument: React.FC<TimeCardDocumentProps> = ({ card }) => {
       </div>
 
       {/* ── 31 Days Attendance Grid ── */}
-      <table className="w-full border-collapse border border-slate-900 text-center text-[11px] print:text-[9px]">
+      <table className="w-full border-collapse border border-slate-900 text-center text-[11px] print:text-[10px]">
         <thead>
-          <tr className="bg-slate-100 font-bold border-b border-slate-900 text-[10px] print:text-[8.5px]">
+          <tr className="bg-slate-100 font-bold border-b border-slate-900 text-[10px] print:text-[9.5px]">
             <th className="border border-slate-900 py-0.5 px-1 w-7">Key</th>
             <th className="border border-slate-900 py-0.5 px-1 w-7">Day</th>
             <th className="border border-slate-900 py-0.5 px-1 w-14">In</th>
@@ -81,7 +81,7 @@ export const TimeCardDocument: React.FC<TimeCardDocumentProps> = ({ card }) => {
               <tr 
                 key={d.day} 
                 className={[
-                  'border-b border-slate-900 h-[19px] print:h-[17px]',
+                  'border-b border-slate-900 h-[19px] print:h-[18px]',
                   d.isOffMonth ? 'bg-slate-50 text-slate-300' : '',
                   isNonWorking ? 'bg-slate-50/50' : '',
                 ].join(' ')}
@@ -232,7 +232,7 @@ export const TimeCardDocument: React.FC<TimeCardDocumentProps> = ({ card }) => {
       </div>
 
       {/* ── Signatures & Authorization Box ── */}
-      <div className="grid grid-cols-3 gap-6 pt-10 pb-2 text-center text-[10px] print:text-[8.5px]">
+      <div className="grid grid-cols-3 gap-6 pt-10 pb-2 print:pt-9 print:pb-1 text-center text-[10px] print:text-[9.5px]">
         <div>
           <div className="border-t border-dotted border-slate-800 pt-1 font-semibold uppercase">
             Prepared By

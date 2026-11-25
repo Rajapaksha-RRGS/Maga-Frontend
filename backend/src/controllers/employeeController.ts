@@ -2,6 +2,13 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import '../middleware/tenantMiddleware';
 import { getDefaultTenantId } from '../utils/tenantHelper';
+import {
+  normalizeEmployeeType,
+  normalizeSkillLevel,
+  isExternalEmployeeType,
+  resolveProjectTradeRate,
+  validateProjectTradeRatesPayload,
+} from '../utils/tradeRateHelper';
 
 // Re-export getDefaultTenantId for backwards compatibility
 export { getDefaultTenantId };
@@ -16,6 +23,8 @@ const employeeSelectOptimized = {
   projectId: true,
   corporateEmployeeId: true,
   callingName: true,
+  employeeType: true,
+  skillLevel: true,
   dailyRate: true,
   isOperator: true,
   status: true,
@@ -30,6 +39,7 @@ const employeeSelectOptimized = {
       dailyRate: true,
       isOperator: true,
       employeeType: true,
+      skillLevel: true,
       documentUrl: true,
       status: true,
       tradeGroup: {
@@ -37,7 +47,6 @@ const employeeSelectOptimized = {
           id: true,
           code: true,
           name: true,
-          standardDailyRate: true,
         },
       },
       corporateBusinessPartner: {
@@ -58,7 +67,6 @@ const employeeSelectOptimized = {
       id: true,
       code: true,
       name: true,
-      standardDailyRate: true,
     },
   },
   businessPartner: {
@@ -77,7 +85,9 @@ const employeeSelectOptimized = {
 function formatEmployee(emp: any) {
   const corp = emp.corporateEmployee || {};
   const effectiveTradeGroup = emp.tradeGroup || corp.tradeGroup || null;
-  const isInternalEmp = corp.employeeType === 'internal';
+  const resolvedEmpType = emp.employeeType || corp.employeeType || 'INTERNAL';
+  const resolvedSkillLevel = emp.skillLevel || corp.skillLevel || 'SKILLED';
+  const isInternalEmp = !isExternalEmployeeType(resolvedEmpType);
   const effectiveBusinessPartner = isInternalEmp ? null : (emp.businessPartner || corp.corporateBusinessPartner || null);
 
   const isEmployeeActive = emp.status === 'active' && corp.status === 'active';
@@ -97,10 +107,7 @@ function formatEmployee(emp: any) {
     }
   }
 
-  const rawSiteRate = emp.dailyRate !== null && emp.dailyRate !== undefined ? Number(emp.dailyRate) : 0;
-  const rawCorpRate = corp.dailyRate !== null && corp.dailyRate !== undefined ? Number(corp.dailyRate) : 0;
-  const tgRate = effectiveTradeGroup?.standardDailyRate ? Number(effectiveTradeGroup.standardDailyRate) : 1400.0;
-  const resolvedDailyRate = rawSiteRate > 0 ? rawSiteRate : (rawCorpRate > 0 ? rawCorpRate : tgRate);
+  const resolvedDailyRate = emp.dailyRate !== null && emp.dailyRate !== undefined ? Number(emp.dailyRate) : 0;
 
   return {
     id: emp.id,
@@ -126,7 +133,8 @@ function formatEmployee(emp: any) {
     tradeGroupId: effectiveTradeGroup?.id || null,
     tradeGroup: effectiveTradeGroup?.name || 'General Labour',
     trade_group: effectiveTradeGroup?.name || 'General Labour',
-    employeeType: corp.employeeType || (effectiveBusinessPartner ? 'external' : 'internal'),
+    employeeType: resolvedEmpType,
+    skillLevel: resolvedSkillLevel,
     businessPartnerId: effectiveBusinessPartner?.id || null,
     businessPartnerCode: effectiveBusinessPartner?.code || null,
     businessPartnerName: effectiveBusinessPartner?.name || null,
@@ -289,7 +297,6 @@ async function resolveTradeGroup(tradeGroupName?: string, tradeGroupId?: string)
     data: {
       code,
       name: cleanName,
-      standardDailyRate: 1400.0,
       status: 'active',
     },
     select: { id: true },
@@ -421,8 +428,9 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
       status: targetStatus === 'pending_approval' ? 'pending_approval' : undefined,
     });
 
-    const resolvedType = (req.body.employeeType === 'external' || (!req.body.employeeType && resolvedBpId)) ? 'external' : 'internal';
-    const finalBpId = resolvedType === 'external' ? resolvedBpId : null;
+    const resolvedType = normalizeEmployeeType(req.body.employeeType, Boolean(resolvedBpId));
+    const resolvedSkill = normalizeSkillLevel(req.body.skillLevel);
+    const finalBpId = isExternalEmployeeType(resolvedType) ? resolvedBpId : null;
 
     const tgInput = tradeGroup || req.body.tradeGroupId || req.body.tradeGroupName;
     if (!tgInput || !String(tgInput).trim()) {
@@ -457,9 +465,10 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
             fullName: fullName?.trim() || callingName.trim(),
             nicNo: cleanNic,
             epfNo: epfNo?.trim() || null,
-            dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : 1400.0,
+            dailyRate: null,
             isOperator: isOperatorBool,
             employeeType: resolvedType,
+            skillLevel: resolvedSkill,
             tradeGroupId: resolvedTradeGroupId,
             corporateBusinessPartnerId: finalBpId,
             documentUrl: documentUrl?.trim() || null,
@@ -473,13 +482,23 @@ export const createEmployee = async (req: Request, res: Response): Promise<void>
         });
       }
 
+      const projectRate = await resolveProjectTradeRate(
+        projectId,
+        resolvedTradeGroupId,
+        resolvedType,
+        resolvedSkill
+      );
+      const resolvedSiteRate = projectRate ?? 0;
+
       // 2. Create Site Employee enrollment
       const siteEmp = await tx.mF_P_Employee.create({
         data: {
           projectId,
           corporateEmployeeId: corpEmp.id,
           callingName: callingName.trim(),
-          dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : (corpEmp.dailyRate ?? 1400.0),
+          dailyRate: resolvedSiteRate,
+          employeeType: resolvedType,
+          skillLevel: resolvedSkill,
           isOperator: isOperatorBool,
           tradeGroupId: resolvedTradeGroupId,
           businessPartnerId: finalBpId,
@@ -517,11 +536,20 @@ export const updateEmployee = async (req: Request, res: Response): Promise<void>
       businessPartnerName,
       epfNo,
       nicNo,
+      employeeType,
+      skillLevel,
     } = req.body || {};
 
     const existing = await prisma.mF_P_Employee.findUnique({
       where: { id },
-      select: { id: true, corporateEmployeeId: true, projectId: true },
+      select: {
+        id: true,
+        corporateEmployeeId: true,
+        projectId: true,
+        tradeGroupId: true,
+        employeeType: true,
+        skillLevel: true,
+      },
     });
 
     if (!existing) {
@@ -532,13 +560,22 @@ export const updateEmployee = async (req: Request, res: Response): Promise<void>
     const tradeGroupId = tradeGroup !== undefined ? await resolveTradeGroup(tradeGroup) : undefined;
     const bpId = businessPartnerId || (businessPartnerName ? await resolveOrCreateBusinessPartner(existing.projectId, { name: businessPartnerName }) : undefined);
 
+    const nextEmpType = employeeType !== undefined ? normalizeEmployeeType(employeeType, Boolean(bpId)) : existing.employeeType;
+    const nextSkillLevel = skillLevel !== undefined ? normalizeSkillLevel(skillLevel) : existing.skillLevel;
+    const nextTgId = tradeGroupId !== undefined ? tradeGroupId : existing.tradeGroupId;
+
     const updateData: Record<string, any> = {};
     if (callingName !== undefined) updateData.callingName = callingName.trim();
-    if (dailyRate !== undefined) updateData.dailyRate = parseFloat(dailyRate);
+    if (employeeType !== undefined) updateData.employeeType = nextEmpType;
+    if (skillLevel !== undefined) updateData.skillLevel = nextSkillLevel;
+    if (tradeGroupId !== undefined || employeeType !== undefined || skillLevel !== undefined) {
+      const resolvedRate = await resolveProjectTradeRate(existing.projectId, nextTgId, nextEmpType, nextSkillLevel);
+      updateData.dailyRate = resolvedRate ?? 0;
+    }
     if (isOperator !== undefined) updateData.isOperator = Boolean(isOperator);
     if (status !== undefined) updateData.status = status;
     if (tradeGroupId !== undefined) updateData.tradeGroupId = tradeGroupId;
-    if (bpId !== undefined) updateData.businessPartnerId = bpId;
+    if (bpId !== undefined) updateData.businessPartnerId = isExternalEmployeeType(nextEmpType) ? bpId : null;
 
     await prisma.$transaction(async (tx) => {
       await tx.mF_P_Employee.update({
@@ -779,7 +816,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
           fullName: fullName?.trim() || callingName.trim(),
           nicNo: cleanNic,
           epfNo: epfNo?.trim() || null,
-          employeeType: 'internal',
+          employeeType: 'INTERNAL',
           tradeGroupId: finalTgId,
           status: 'active',
         },
@@ -925,10 +962,11 @@ export const getCorporateEmployeesCatalog = async (req: Request, res: Response):
         dailyRate: true,
         isOperator: true,
         employeeType: true,
+        skillLevel: true,
         status: true,
         currentProjectId: true,
         tradeGroup: {
-          select: { id: true, code: true, name: true, standardDailyRate: true },
+          select: { id: true, code: true, name: true },
         },
         corporateBusinessPartner: {
           select: { id: true, code: true, name: true },
@@ -936,7 +974,7 @@ export const getCorporateEmployeesCatalog = async (req: Request, res: Response):
       },
       orderBy: { employeeCode: 'asc' },
     });
-    res.json(list.map((emp: any) => ({ ...emp, dailyRate: Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : (emp.tradeGroup?.standardDailyRate ? Number(emp.tradeGroup.standardDailyRate) : 1400.0) })));
+    res.json(list.map((emp: any) => ({ ...emp, dailyRate: Number(emp.dailyRate ?? 0) })));
   } catch (error) {
     console.error('Error fetching corporate employees catalog:', error);
     res.status(500).json({ error: 'Failed to fetch corporate employees catalog' });
@@ -981,7 +1019,7 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       },
       include: {
         corporateEmployee: {
-          select: { employeeCode: true, fullName: true, nicNo: true, isOperator: true, employeeType: true },
+          select: { employeeCode: true, fullName: true, nicNo: true, isOperator: true, employeeType: true, skillLevel: true },
         },
         tradeGroup: { select: { id: true, name: true } },
         businessPartner: { select: { id: true, name: true, code: true } },
@@ -1151,7 +1189,8 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
       const otherClaim = lockedOtherClaim || claims.find((c) => c.supervisorId !== supervisorId);
       const myClaim = claims.find((c) => c.supervisorId === supervisorId);
 
-      const isInternal = emp.corporateEmployee.employeeType === 'internal';
+      const resolvedEmpType = emp.employeeType || emp.corporateEmployee.employeeType || 'INTERNAL';
+      const isInternal = !isExternalEmployeeType(resolvedEmpType);
 
       return {
         id: emp.id,
@@ -1161,7 +1200,8 @@ export const getSiteEmployeePool = async (req: Request, res: Response): Promise<
         nicNo: emp.corporateEmployee.nicNo,
         tradeGroup: emp.tradeGroup?.name || 'General labour',
         tradeGroupId: emp.tradeGroup?.id,
-        employeeType: emp.corporateEmployee.employeeType || (emp.businessPartnerId ? 'external' : 'internal'),
+        employeeType: resolvedEmpType,
+        skillLevel: emp.skillLevel || emp.corporateEmployee.skillLevel || 'SKILLED',
         businessPartner: isInternal ? 'Direct' : (emp.businessPartner?.name || 'Direct'),
         businessPartnerId: isInternal ? null : (emp.businessPartner?.id || null),
         businessPartnerCode: isInternal ? null : (emp.businessPartner?.code || null),
@@ -1252,7 +1292,11 @@ export const batchEnrollEmployees = async (req: Request, res: Response): Promise
         return;
       }
 
-      const isInternal = corpEmp.employeeType === 'internal' || item.employeeType === 'internal';
+      const empType = item.employeeType
+        ? normalizeEmployeeType(item.employeeType, Boolean(item.businessPartnerCode || item.businessPartner))
+        : corpEmp.employeeType;
+      const skillLvl = item.skillLevel ? normalizeSkillLevel(item.skillLevel) : corpEmp.skillLevel;
+      const isInternal = !isExternalEmployeeType(empType);
       const bpCodeOrName = isInternal ? '' : (item.businessPartnerCode || item.businessPartnerName || item.businessPartner || '');
       const resolvedBpId = isInternal
         ? null
@@ -1265,10 +1309,8 @@ export const batchEnrollEmployees = async (req: Request, res: Response): Promise
         null;
 
       const callingName = (item.callingName || corpEmp.fullName || 'Worker').trim().split(' ')[0] || 'Worker';
-      const dailyRate =
-        item.dailyRate !== undefined && item.dailyRate !== null && !isNaN(Number(item.dailyRate))
-          ? Number(item.dailyRate)
-          : Number(corpEmp.dailyRate ?? 1400.0);
+      const projectRate = await resolveProjectTradeRate(projectId, resolvedTgId, empType, skillLvl);
+      const dailyRate = projectRate ?? 0;
 
       const isOperator =
         item.isOperator !== undefined
@@ -1285,6 +1327,8 @@ export const batchEnrollEmployees = async (req: Request, res: Response): Promise
         update: {
           callingName,
           dailyRate,
+          employeeType: empType,
+          skillLevel: skillLvl,
           tradeGroupId: resolvedTgId,
           businessPartnerId: resolvedBpId,
           isOperator,
@@ -1295,6 +1339,8 @@ export const batchEnrollEmployees = async (req: Request, res: Response): Promise
           corporateEmployeeId: corpEmp.id,
           callingName,
           dailyRate,
+          employeeType: empType,
+          skillLevel: skillLvl,
           tradeGroupId: resolvedTgId,
           businessPartnerId: resolvedBpId,
           isOperator,
@@ -1317,5 +1363,123 @@ export const batchEnrollEmployees = async (req: Request, res: Response): Promise
   } catch (error: any) {
     console.error('Error in batchEnrollEmployees:', error);
     res.status(500).json({ error: error.message || 'Failed to batch enroll employees' });
+  }
+};
+
+// 12. GET /api/employees/trade-rates — Fetch active project's trade rates matrix
+export const getCurrentProjectTradeRates = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.query.projectId as string) ||
+      (await getDefaultTenantId());
+    if (!projectId) {
+      res.status(400).json({ error: 'Project context is required' });
+      return;
+    }
+
+    const [project, tradeGroups, rates] = await Promise.all([
+      prisma.mF_P_Project.findUnique({
+        where: { id: projectId },
+        select: { id: true, projectCode: true, projectName: true, currency: true },
+      }),
+      prisma.mF_G_TradeGroup.findMany({
+        where: { status: 'active' },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.mF_P_TradeRate.findMany({
+        where: { projectId },
+      }),
+    ]);
+
+    const rateMap = new Map(rates.map((r) => [r.tradeGroupId, r]));
+    const items = tradeGroups.map((tg) => {
+      const r = rateMap.get(tg.id);
+      return {
+        tradeGroupId: tg.id,
+        tradeGroupCode: tg.code,
+        tradeGroupName: tg.name,
+        internalSkilledRate: r ? Number(r.internalSkilledRate) : 0,
+        internalUnskilledRate: r ? Number(r.internalUnskilledRate) : 0,
+        foreignSkilledRate: r ? Number(r.foreignSkilledRate) : 0,
+        foreignUnskilledRate: r ? Number(r.foreignUnskilledRate) : 0,
+        supplySkilledRate: r ? Number(r.supplySkilledRate) : 0,
+        supplyUnskilledRate: r ? Number(r.supplyUnskilledRate) : 0,
+        subcontractorSkilledRate: r ? Number(r.subcontractorSkilledRate) : 0,
+        subcontractorUnskilledRate: r ? Number(r.subcontractorUnskilledRate) : 0,
+      };
+    });
+
+    res.json({ projectId, project, items });
+  } catch (error: any) {
+    console.error('Error fetching current project trade rates:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch project trade rates' });
+  }
+};
+
+// 13. PUT /api/employees/trade-rates — Save active project's trade rates matrix
+export const upsertCurrentProjectTradeRates = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const projectId =
+      req.resolvedProjectId ||
+      req.resolvedTenantId ||
+      (req.body?.projectId as string) ||
+      (await getDefaultTenantId());
+    if (!projectId) {
+      res.status(400).json({ error: 'Project context is required' });
+      return;
+    }
+
+    const { rates } = req.body || {};
+    const validation = await validateProjectTradeRatesPayload(projectId, rates);
+    if (!validation.valid) {
+      res.status(validation.status).json({ error: validation.error });
+      return;
+    }
+
+    const saved = await prisma.$transaction(
+      validation.items.map((r) =>
+        prisma.mF_P_TradeRate.upsert({
+          where: {
+            projectId_tradeGroupId: {
+              projectId,
+              tradeGroupId: r.tradeGroupId,
+            },
+          },
+          update: {
+            internalSkilledRate: r.internalSkilledRate,
+            internalUnskilledRate: r.internalUnskilledRate,
+            foreignSkilledRate: r.foreignSkilledRate,
+            foreignUnskilledRate: r.foreignUnskilledRate,
+            supplySkilledRate: r.supplySkilledRate,
+            supplyUnskilledRate: r.supplyUnskilledRate,
+            subcontractorSkilledRate: r.subcontractorSkilledRate,
+            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
+          },
+          create: {
+            projectId,
+            tradeGroupId: r.tradeGroupId,
+            internalSkilledRate: r.internalSkilledRate,
+            internalUnskilledRate: r.internalUnskilledRate,
+            foreignSkilledRate: r.foreignSkilledRate,
+            foreignUnskilledRate: r.foreignUnskilledRate,
+            supplySkilledRate: r.supplySkilledRate,
+            supplyUnskilledRate: r.supplyUnskilledRate,
+            subcontractorSkilledRate: r.subcontractorSkilledRate,
+            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
+          },
+        })
+      )
+    );
+
+    res.json({
+      success: true,
+      count: saved.length,
+      message: 'Project trade rates saved successfully',
+    });
+  } catch (error: any) {
+    console.error('Error saving current project trade rates:', error);
+    res.status(500).json({ error: error.message || 'Failed to save project trade rates' });
   }
 };

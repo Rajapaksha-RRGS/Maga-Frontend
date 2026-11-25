@@ -18,6 +18,7 @@ import type {
   EquipmentErpUploadResponse,
   TimeCardResponse,
   OperatorErpUploadResponse,
+  SubcontractorDeductionResponse,
 } from './reportService';
 
 // ── Formatting Helpers ───────────────────────────────────────────────────────
@@ -2003,4 +2004,75 @@ export async function exportOperatorErpToExcel(
   const d = new Date().toISOString().slice(0, 10);
   const exportFilename = filename || `Operator_ERP_Upload_${d}.xlsx`;
   await downloadWorkbook(wb, exportFilename);
+}
+
+export async function exportSubcontractorDeductionToExcel(
+  data: SubcontractorDeductionResponse
+): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Subcontractor Deductions');
+
+  ws.columns = [
+    { header: 'Subcontractor Code', key: 'subCode', width: 18 },
+    { header: 'Subcontractor Name', key: 'subName', width: 28 },
+    { header: 'Date', key: 'date', width: 14 },
+    { header: 'Emp Code', key: 'empCode', width: 14 },
+    { header: 'Employee Name', key: 'empName', width: 24 },
+    { header: 'Source', key: 'source', width: 18 },
+    { header: 'Activity', key: 'activity', width: 14 },
+    { header: 'In', key: 'inTime', width: 10 },
+    { header: 'Out', key: 'outTime', width: 10 },
+    { header: 'Split Hrs', key: 'splitHrs', width: 12 },
+    { header: 'Normal Hrs', key: 'normalHrs', width: 12 },
+    { header: 'OT Hrs', key: 'otHrs', width: 10 },
+    { header: 'Daily Rate', key: 'dailyRate', width: 14 },
+    { header: 'Deduction (LKR)', key: 'deduction', width: 18 },
+  ];
+
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB91C1C' } };
+
+  for (const grp of data.groups) {
+    for (const item of grp.items) {
+      ws.addRow({
+        subCode: grp.subcontractorCode,
+        subName: grp.subcontractorName,
+        date: item.date,
+        empCode: item.employeeCode,
+        empName: item.employeeName,
+        source: item.sourcePartner,
+        activity: item.activityCode,
+        inTime: item.inTime,
+        outTime: item.outTime,
+        splitHrs: item.splitHours,
+        normalHrs: item.normalHours,
+        otHrs: item.otHours,
+        dailyRate: item.dailyRate,
+        deduction: item.deductionAmount,
+      });
+    }
+    const subRow = ws.addRow({
+      subCode: '',
+      subName: `SUBTOTAL — ${grp.subcontractorName}`,
+      splitHrs: grp.totalSplitHours,
+      normalHrs: grp.totalNormalHours,
+      otHrs: grp.totalOtHours,
+      deduction: grp.totalDeductionAmount,
+    });
+    subRow.font = { bold: true, color: { argb: 'FF991B1B' } };
+    subRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF2F2' } };
+  }
+
+  const grandRow = ws.addRow({
+    subName: 'GRAND TOTAL DEDUCTION',
+    splitHrs: data.grandTotalHours,
+    normalHrs: data.grandTotalNormalHours,
+    otHrs: data.grandTotalOtHours,
+    deduction: data.grandTotalDeduction,
+  });
+  grandRow.font = { bold: true, color: { argb: 'FF7F1D1D' } };
+
+  const d = new Date().toISOString().slice(0, 10);
+  await downloadWorkbook(wb, `Subcontractor_Manpower_Deduction_${d}.xlsx`);
 }

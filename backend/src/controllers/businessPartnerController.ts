@@ -36,11 +36,25 @@ const partnerSelectOptimized = {
 // 1. GET /api/business-partners — List all business partners
 export const getAllBusinessPartners = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { status, search } = req.query;
+    const { status, search, type } = req.query;
 
     const where: Record<string, any> = {};
     if (status && typeof status === 'string' && status !== 'all') {
       where.status = status;
+    }
+    if (type && typeof type === 'string' && type !== 'all' && type.trim()) {
+      const types = type
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (types.length === 1) {
+        where.type = { equals: types[0], mode: 'insensitive' };
+      } else if (types.length > 1) {
+        where.OR = [
+          ...(where.OR || []),
+          ...types.map((t) => ({ type: { equals: t, mode: 'insensitive' } })),
+        ];
+      }
     }
     if (search && typeof search === 'string' && search.trim()) {
       const q = search.trim();

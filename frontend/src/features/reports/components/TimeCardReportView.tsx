@@ -35,10 +35,11 @@ import {
 } from '../services/reportService';
 import { useAuth } from '../../../context/AuthContext';
 import { getTenantById } from '../../auth/services/authService';
+import SearchableBusinessPartnerSelect, { type BusinessPartnerFilterOption } from '../../../components/SearchableBusinessPartnerSelect';
 
 interface TimeCardReportViewProps {
   initialMonth?: string;
-  businessPartners?: string[];
+  businessPartners?: (BusinessPartnerFilterOption | string)[];
   defaultWorkerType?: 'all' | 'labor' | 'operator';
 }
 
@@ -264,29 +265,30 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
               <select
                 aria-label="Employee type"
                 value={employeeType}
-                onChange={(e) => setEmployeeType(e.target.value as '' | 'internal' | 'external')}
+                onChange={(e) => setEmployeeType(e.target.value as any)}
                 className="px-2.5 py-1 text-xs rounded-lg border border-slate-300 bg-white text-slate-800"
               >
-                <option value="">All (Internal &amp; External)</option>
-                <option value="internal">Internal only</option>
-                <option value="external">External only</option>
+                <option value="">All Employee Types</option>
+                <option value="INTERNAL">Internal (Direct)</option>
+                <option value="FOREIGN">Foreign Worker</option>
+                <option value="EXTERNAL_SUPPLY">External — Supply Labor</option>
+                <option value="EXTERNAL_SUBCONTRACTOR">External — Subcontractor</option>
+                <option value="external">All External (Supply &amp; Subcontractor)</option>
               </select>
             </div>
 
             {/* Subcontractor Filter */}
             {businessPartners.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <Filter size={13} className="text-slate-400" />
-                <select
+              <div className="flex items-center gap-1.5 min-w-[200px]">
+                <Filter size={13} className="text-slate-400 shrink-0" />
+                <SearchableBusinessPartnerSelect
                   value={selectedBp}
-                  onChange={(e) => setSelectedBp(e.target.value)}
-                  className="px-2.5 py-1 text-xs rounded-lg border border-slate-300 bg-white text-slate-800"
-                >
-                  <option value="">All Contractors</option>
-                  {businessPartners.map((bp) => (
-                    <option key={bp} value={bp}>{bp}</option>
-                  ))}
-                </select>
+                  onChange={setSelectedBp}
+                  options={businessPartners}
+                  placeholder="All Contractors"
+                  allLabel="All Contractors"
+                  compact
+                />
               </div>
             )}
           </div>
@@ -406,6 +408,7 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
       </div>
 
       {/* ── Content View Area ── */}
+      <div className={selectedModalCard ? 'print:hidden' : ''}>
       {loading ? (
         <div className="py-20 text-center bg-white rounded-xl border border-slate-200 shadow-2xs space-y-3">
           <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
@@ -582,13 +585,14 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
           )
         )
       )}
+      </div>
 
       {/* ── Individual Official Card Overlay Modal ── */}
       {selectedModalCard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150 print:static print:inset-auto print:block print:p-0 print:bg-white">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden print:max-w-none print:max-h-none print:overflow-visible print:shadow-none print:border-none print:rounded-none">
             {/* Modal Header */}
-            <div className="px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+            <div className="px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between print:hidden">
               <div className="flex items-center gap-2">
                 <FileText size={16} className="text-blue-700" />
                 <h3 className="font-bold text-sm text-slate-800">
@@ -617,7 +621,7 @@ export const TimeCardReportView: React.FC<TimeCardReportViewProps> = ({
             </div>
 
             {/* Modal Body with Time Card Document */}
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-65px)] bg-slate-100/50">
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-65px)] bg-slate-100/50 print:p-0 print:overflow-visible print:max-h-none print:bg-white">
               <TimeCardDocument card={selectedModalCard} />
             </div>
           </div>

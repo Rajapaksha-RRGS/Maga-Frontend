@@ -14,6 +14,7 @@ import type {
   SummaryReportResponse,
   DayOtSummaryResponse,
   BpBillResponse,
+  SubcontractorDeductionResponse,
   ErpUploadResponse,
   RunningChartResponse,
   EquipmentRunningChartResponse,
@@ -60,6 +61,7 @@ export function useReports() {
   const [summaryData, setSummaryData] = useState<SummaryReportResponse | null>(null);
   const [dayOtData, setDayOtData] = useState<DayOtSummaryResponse | null>(null);
   const [bpBillData, setBpBillData] = useState<BpBillResponse | null>(null);
+  const [subcontractorDeductionData, setSubcontractorDeductionData] = useState<SubcontractorDeductionResponse | null>(null);
   const [erpData, setErpData] = useState<ErpUploadResponse | null>(null);
   const [runningChartData, setRunningChartData] = useState<RunningChartResponse | null>(null);
   const [equipmentRunningChartData, setEquipmentRunningChartData] = useState<EquipmentRunningChartResponse | null>(null);
@@ -77,6 +79,7 @@ export function useReports() {
   const [businessPartners, setBusinessPartners] = useState<string[]>(
     () => cacheManager.get<string[]>('reports:filter-opts:bp') || []
   );
+  const [businessPartnerDetails, setBusinessPartnerDetails] = useState<{ code: string; name: string }[]>([]);
   const [activityCodes, setActivityCodes] = useState<{ code: string; description: string }[]>([]);
 
   useEffect(() => {
@@ -92,6 +95,7 @@ export function useReports() {
     cacheManager.invalidate('reports:last-operator-erp');
     // Load business partner options
     svc.getBusinessPartnerOptions().then(setBusinessPartners);
+    svc.getBusinessPartnerDetailOptions().then(setBusinessPartnerDetails);
   }, []);
 
   // Dynamically load activity codes that actually occurred within the selected date range & employee scope
@@ -161,6 +165,7 @@ export function useReports() {
       (tab === 'summary' && !!summaryData && summaryData.items.length > 0) ||
       (tab === 'day-ot-summary' && !!dayOtData && dayOtData.items.length > 0) ||
       (tab === 'bp-bill' && !!bpBillData && bpBillData.groups.length > 0) ||
+      (tab === 'subcontractor-deduction' && !!subcontractorDeductionData && subcontractorDeductionData.groups.length > 0) ||
       (tab === 'erp-upload' && !!erpData && erpData.rows.length > 0) ||
       (tab === 'running-chart' && !!runningChartData && runningChartData.items.length > 0) ||
       (tab === 'equipment-running-chart' && !!equipmentRunningChartData && equipmentRunningChartData.items.length > 0) ||
@@ -191,6 +196,9 @@ export function useReports() {
         const res = await svc.getBpBillReport(filters);
         setBpBillData(res);
         cacheManager.set('reports:last-bp-bill', res);
+      } else if (activeTab === 'subcontractor-deduction') {
+        const res = await svc.getSubcontractorDeductionReport(filters);
+        setSubcontractorDeductionData(res);
       } else if (activeTab === 'erp-upload') {
         const res = await svc.getErpUploadReport(filters);
         setErpData(res);
@@ -260,6 +268,7 @@ export function useReports() {
     if (activeTab === 'summary') return !!summaryData && summaryData.items.length > 0;
     if (activeTab === 'day-ot-summary') return !!dayOtData && dayOtData.items.length > 0;
     if (activeTab === 'bp-bill') return !!bpBillData && bpBillData.groups.length > 0;
+    if (activeTab === 'subcontractor-deduction') return !!subcontractorDeductionData && subcontractorDeductionData.groups.length > 0;
     if (activeTab === 'erp-upload') return !!erpData && erpData.rows.length > 0;
     if (activeTab === 'running-chart') return !!runningChartData && runningChartData.items.length > 0;
     if (activeTab === 'equipment-running-chart') return !!equipmentRunningChartData && equipmentRunningChartData.items.length > 0;
@@ -283,12 +292,14 @@ export function useReports() {
     hasQueried,
     hasResults,
     businessPartners,
+    businessPartnerDetails,
     activityCodes,
 
     // Report data objects
     summaryData,
     dayOtData,
     bpBillData,
+    subcontractorDeductionData,
     erpData,
     runningChartData,
     equipmentRunningChartData,

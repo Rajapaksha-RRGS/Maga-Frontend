@@ -10,6 +10,7 @@
  */
 import type { ReportFilters as Filters, ReportType } from '../services/reportService';
 import { Search, RotateCcw, Play } from 'lucide-react';
+import SearchableBusinessPartnerSelect, { type BusinessPartnerFilterOption } from '../../../components/SearchableBusinessPartnerSelect';
 
 interface Props {
   activeTab: ReportType;
@@ -19,7 +20,7 @@ interface Props {
   onQuery: () => void;
   isLoading: boolean;
   isLoadingActivityCodes?: boolean;
-  businessPartners: string[];
+  businessPartners: (BusinessPartnerFilterOption | string)[];
   activityCodes: { code: string; description: string }[];
 }
 
@@ -123,9 +124,12 @@ export default function ReportFiltersBar({
               onChange={(e) => onFilterChange('employeeType', e.target.value)}
               className={INPUT_CLASS}
             >
-              <option value="">All (Internal &amp; External)</option>
-              <option value="internal">Internal only</option>
-              <option value="external">External only</option>
+              <option value="">All Employee Types</option>
+              <option value="INTERNAL">Internal (Direct)</option>
+              <option value="FOREIGN">Foreign Worker</option>
+              <option value="EXTERNAL_SUPPLY">External — Supply Labor</option>
+              <option value="EXTERNAL_SUBCONTRACTOR">External — Subcontractor</option>
+              <option value="external">All External (Supply &amp; Subcontractor)</option>
             </select>
           </div>
         )}
@@ -133,22 +137,16 @@ export default function ReportFiltersBar({
         {/* Business Partner Filter — Shown for Summary, Day & OT Summary, BP Bill */}
         {showBusinessPartner && (
           <div className="flex flex-col gap-1">
-            <label htmlFor="filter-bp" className={LABEL_CLASS}>
+            <label className={LABEL_CLASS}>
               Business partner
             </label>
-            <select
-              id="filter-bp"
+            <SearchableBusinessPartnerSelect
               value={filters.businessPartner ?? ''}
-              onChange={(e) => onFilterChange('businessPartner', e.target.value)}
-              className={INPUT_CLASS}
-            >
-              <option value="">All business partners</option>
-              {businessPartners.map((bp) => (
-                <option key={bp} value={bp}>
-                  {bp}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => onFilterChange('businessPartner', val)}
+              options={businessPartners}
+              placeholder="All business partners"
+              allLabel="All business partners"
+            />
           </div>
         )}
 

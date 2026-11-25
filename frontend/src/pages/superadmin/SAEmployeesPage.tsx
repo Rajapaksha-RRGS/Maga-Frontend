@@ -28,6 +28,15 @@ import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
 import { TopUpErrorView } from '../../components/TopUpErrorView';
 import SearchableTradeGroupSelect from '../../components/SearchableTradeGroupSelect';
+import {
+  EMPLOYEE_TYPE_OPTIONS,
+  SKILL_LEVEL_OPTIONS,
+  type EmployeeTypeValue,
+  type SkillLevelValue,
+  normalizeEmployeeTypeClient,
+  normalizeSkillLevelClient,
+  isExternalEmployeeTypeClient,
+} from '../../utils/employeeTypes';
 
 
 const EMP_SAMPLE_HEADERS = [
@@ -106,7 +115,8 @@ interface CorporateEmployeeItem {
   tradeGroupId?: string;
   tradeGroup: string;
   tradeGroupCode?: string;
-  employeeType: 'internal' | 'external';
+  employeeType: EmployeeTypeValue | string;
+  skillLevel?: SkillLevelValue | string;
   businessPartnerId?: string | null;
   businessPartner: string;
   businessPartnerCode?: string;
@@ -124,7 +134,8 @@ interface PendingEmployeeItem {
   epfNo?: string;
   dailyRate: number;
   isOperator: boolean;
-  employeeType: 'internal' | 'external';
+  employeeType: EmployeeTypeValue | string;
+  skillLevel?: SkillLevelValue | string;
   documentUrl?: string | null;
   status: string;
   createdAt: string;
@@ -147,7 +158,7 @@ interface TradeGroupOption {
   id: string;
   code: string;
   name: string;
-  standardDailyRate: number;
+  standardDailyRate?: number;
 }
 
 interface PartnerOption {
@@ -193,9 +204,10 @@ export default function SAEmployeesPage() {
   const [formNic, setFormNic] = useState('');
   const [formEpf, setFormEpf] = useState('');
   const [formTradeGroupId, setFormTradeGroupId] = useState('');
-  const [formDailyRate, setFormDailyRate] = useState('1400');
+  const [formDailyRate, setFormDailyRate] = useState('0');
   const [formIsOperator, setFormIsOperator] = useState(false);
-  const [formEmployeeType, setFormEmployeeType] = useState<'internal' | 'external'>('internal');
+  const [formEmployeeType, setFormEmployeeType] = useState<EmployeeTypeValue>('INTERNAL');
+  const [formSkillLevel, setFormSkillLevel] = useState<SkillLevelValue>('SKILLED');
   const [formPartnerId, setFormPartnerId] = useState('');
   const [formInitialProject, setFormInitialProject] = useState('');
 
@@ -219,7 +231,8 @@ export default function SAEmployeesPage() {
   const [editTradeGroupId, setEditTradeGroupId] = useState('');
   const [editDailyRate, setEditDailyRate] = useState('1400');
   const [editIsOperator, setEditIsOperator] = useState(false);
-  const [editEmployeeType, setEditEmployeeType] = useState<'internal' | 'external'>('internal');
+  const [editEmployeeType, setEditEmployeeType] = useState<EmployeeTypeValue>('INTERNAL');
+  const [editSkillLevel, setEditSkillLevel] = useState<SkillLevelValue>('SKILLED');
   const [editPartnerId, setEditPartnerId] = useState('');
   const [editStatus, setEditStatus] = useState('active');
 
@@ -231,7 +244,8 @@ export default function SAEmployeesPage() {
     setEditTradeGroupId(emp.tradeGroupId || (tradeGroups.find(t => t.name === emp.tradeGroup)?.id || ''));
     setEditDailyRate(String(emp.dailyRate ?? 1400));
     setEditIsOperator(Boolean(emp.isOperator));
-    setEditEmployeeType(emp.employeeType || 'internal');
+    setEditEmployeeType(normalizeEmployeeTypeClient(emp.employeeType));
+    setEditSkillLevel(normalizeSkillLevelClient(emp.skillLevel));
     setEditPartnerId(emp.businessPartnerId || (emp.businessPartnerCode ? (partners.find(p => p.code === emp.businessPartnerCode)?.id || '') : ''));
     setEditStatus(emp.status || 'active');
     setEditError('');
@@ -249,8 +263,9 @@ export default function SAEmployeesPage() {
       setEditError('Trade Group is strictly required.');
       return;
     }
-    if (editEmployeeType === 'external' && !editPartnerId) {
-      setEditError('Business Partner is required for external employees.');
+    const isExtEdit = isExternalEmployeeTypeClient(editEmployeeType);
+    if (isExtEdit && !editPartnerId) {
+      setEditError('Business Partner is required for external supply/subcontractor employees.');
       return;
     }
 
@@ -265,7 +280,8 @@ export default function SAEmployeesPage() {
         dailyRate: editDailyRate ? parseFloat(editDailyRate) : 1400,
         isOperator: editIsOperator,
         employeeType: editEmployeeType,
-        corporateBusinessPartnerId: editEmployeeType === 'external' ? editPartnerId : null,
+        skillLevel: editSkillLevel,
+        corporateBusinessPartnerId: isExtEdit ? editPartnerId : null,
         status: editStatus,
       });
 
@@ -375,8 +391,9 @@ export default function SAEmployeesPage() {
       setAddError('Trade Group is strictly required. Please select a valid Trade Group.');
       return;
     }
-    if (formEmployeeType === 'external' && !formPartnerId) {
-      setAddError('Please select a Business Partner for external / subcontractor employee');
+    const isExtAdd = isExternalEmployeeTypeClient(formEmployeeType);
+    if (isExtAdd && !formPartnerId) {
+      setAddError('Please select a Business Partner for external supply/subcontractor employee');
       return;
     }
     setIsSubmitting(true);
@@ -389,10 +406,10 @@ export default function SAEmployeesPage() {
         nicNo: formNic.trim().toUpperCase(),
         epfNo: formEpf.trim() || undefined,
         tradeGroupId: formTradeGroupId,
-        dailyRate: parseFloat(formDailyRate) || 1400,
         isOperator: formIsOperator,
         employeeType: formEmployeeType,
-        corporateBusinessPartnerId: formEmployeeType === 'external' ? formPartnerId : null,
+        skillLevel: formSkillLevel,
+        corporateBusinessPartnerId: isExtAdd ? formPartnerId : null,
         currentProjectId: selectedProj ? selectedProj.id : (formInitialProject || undefined),
       });
       setIsAddModalOpen(false);
@@ -404,7 +421,8 @@ export default function SAEmployeesPage() {
       setFormTradeGroupId('');
       setFormDailyRate('1400');
       setFormIsOperator(false);
-      setFormEmployeeType('internal');
+      setFormEmployeeType('INTERNAL');
+      setFormSkillLevel('SKILLED');
       setFormPartnerId('');
       setFormInitialProject('');
       await loadData();
@@ -1120,48 +1138,48 @@ export default function SAEmployeesPage() {
                     value={formTradeGroupId}
                     options={tradeGroups}
                     required
-                    onChange={(selectedId, matched) => {
+                    onChange={(selectedId) => {
                       setFormTradeGroupId(selectedId);
-                      if (matched) setFormDailyRate(String(matched.standardDailyRate));
                     }}
                   />
                 </div>
               </div>
 
-              {/* Employment Type Selector */}
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">Employment Type *</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setFormEmployeeType('internal'); setFormPartnerId(''); }}
-                    className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
-                      formEmployeeType === 'internal'
-                        ? 'bg-blue-50 border-blue-400 text-blue-700 shadow-xs'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+              {/* Employment Type & Skill Level Selector */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Employment Type *</label>
+                  <select
+                    value={formEmployeeType}
+                    onChange={(e) => {
+                      const next = e.target.value as EmployeeTypeValue;
+                      setFormEmployeeType(next);
+                      if (!isExternalEmployeeTypeClient(next)) setFormPartnerId('');
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
                   >
-                    <Building2 size={14} className={formEmployeeType === 'internal' ? 'text-blue-600' : 'text-slate-400'} />
-                    <span>Direct Employee (Internal)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormEmployeeType('external')}
-                    className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
-                      formEmployeeType === 'external'
-                        ? 'bg-purple-50 border-purple-400 text-purple-700 shadow-xs'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+                    {EMPLOYEE_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Skill Level *</label>
+                  <select
+                    value={formSkillLevel}
+                    onChange={(e) => setFormSkillLevel(e.target.value as SkillLevelValue)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
                   >
-                    <Users size={14} className={formEmployeeType === 'external' ? 'text-purple-600' : 'text-slate-400'} />
-                    <span>Subcontractor (External)</span>
-                  </button>
+                    {SKILL_LEVEL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Daily Rate (LKR)</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Default Daily Rate (LKR)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -1171,7 +1189,7 @@ export default function SAEmployeesPage() {
                   />
                 </div>
                 <div>
-                  {formEmployeeType === 'external' ? (
+                  {isExternalEmployeeTypeClient(formEmployeeType) ? (
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">
                         Business Partner / Contractor <span className="text-red-500">*</span>
@@ -1333,56 +1351,54 @@ export default function SAEmployeesPage() {
                     value={editTradeGroupId}
                     options={tradeGroups}
                     required
-                    onChange={(selectedId, matched) => {
+                    onChange={(selectedId) => {
                       setEditTradeGroupId(selectedId);
-                      if (matched && (!editDailyRate || editDailyRate === '1400')) {
-                        setEditDailyRate(String(matched.standardDailyRate));
-                      }
                     }}
                   />
                 </div>
               </div>
 
-              {/* Employment Type Selector */}
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">Employment Type *</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setEditEmployeeType('internal'); setEditPartnerId(''); }}
-                    className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
-                      editEmployeeType === 'internal'
-                        ? 'bg-blue-50 border-blue-400 text-blue-700 shadow-xs'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+              {/* Employment Type & Skill Level Selector */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Employment Type *</label>
+                  <select
+                    value={editEmployeeType}
+                    onChange={(e) => {
+                      const next = e.target.value as EmployeeTypeValue;
+                      setEditEmployeeType(next);
+                      if (!isExternalEmployeeTypeClient(next)) setEditPartnerId('');
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
                   >
-                    <Building2 size={14} className={editEmployeeType === 'internal' ? 'text-blue-600' : 'text-slate-400'} />
-                    <span>Direct Employee (Internal)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditEmployeeType('external')}
-                    className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
-                      editEmployeeType === 'external'
-                        ? 'bg-purple-50 border-purple-400 text-purple-700 shadow-xs'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+                    {EMPLOYEE_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Skill Level *</label>
+                  <select
+                    value={editSkillLevel}
+                    onChange={(e) => setEditSkillLevel(e.target.value as SkillLevelValue)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
                   >
-                    <Users size={14} className={editEmployeeType === 'external' ? 'text-purple-600' : 'text-slate-400'} />
-                    <span>Subcontractor (External)</span>
-                  </button>
+                    {SKILL_LEVEL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               {/* Business Partner (conditional if external) */}
-              {editEmployeeType === 'external' && (
+              {isExternalEmployeeTypeClient(editEmployeeType) && (
                 <div className="bg-purple-50/50 p-3 rounded-lg border border-purple-100">
                   <label className="block text-xs font-medium text-purple-900 mb-1">
                     Select Subcontractor / Partner <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={editPartnerId}
-                    required={editEmployeeType === 'external'}
+                    required={isExternalEmployeeTypeClient(editEmployeeType)}
                     onChange={(e) => setEditPartnerId(e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-purple-200 rounded-lg bg-white text-slate-900 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-purple-400 focus:outline-none"
                   >

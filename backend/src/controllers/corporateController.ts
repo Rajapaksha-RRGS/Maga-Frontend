@@ -1,7 +1,15 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
+import { EmployeeType, SkillLevel } from '@prisma/client';
 import prisma from '../config/prisma';
 import { classifyActivityCode } from '../utils/activityCodeHelper';
+import {
+  normalizeEmployeeType,
+  normalizeSkillLevel,
+  isExternalEmployeeType,
+  resolveProjectTradeRate,
+  validateProjectTradeRatesPayload,
+} from '../utils/tradeRateHelper';
 import {
   sendTransferRequestedEmail,
   sendTransferApprovedEmail,
@@ -1336,13 +1344,14 @@ export const getCorporateEmployees = async (req: Request, res: Response): Promis
       fullName: emp.fullName,
       nicNo: emp.nicNo,
       epfNo: emp.epfNo,
-      dailyRate: emp.dailyRate ? Number(emp.dailyRate) : 1400.0,
+      dailyRate: emp.dailyRate !== null && emp.dailyRate !== undefined ? Number(emp.dailyRate) : 0,
       isOperator: emp.isOperator,
       status: emp.status,
       tradeGroupId: emp.tradeGroupId,
       tradeGroup: emp.tradeGroup?.name || 'General Labour',
       tradeGroupCode: emp.tradeGroup?.code || '',
-      employeeType: emp.employeeType || (emp.corporateBusinessPartnerId ? 'external' : 'internal'),
+      employeeType: emp.employeeType,
+      skillLevel: emp.skillLevel,
       businessPartnerId: emp.corporateBusinessPartnerId,
       businessPartner: emp.corporateBusinessPartner?.name || 'Mäga Engineering (Direct)',
       businessPartnerCode: emp.corporateBusinessPartner?.code || '',
@@ -1372,6 +1381,7 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
       dailyRate,
       isOperator,
       employeeType,
+      skillLevel,
       corporateBusinessPartnerId,
       currentProjectId,
       currentWorkingProject,
@@ -1382,12 +1392,14 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
       return;
     }
 
-    const resolvedType = (employeeType === 'external' || (!employeeType && corporateBusinessPartnerId)) ? 'external' : 'internal';
-    if (resolvedType === 'external' && !corporateBusinessPartnerId) {
-      res.status(400).json({ error: 'Business Partner is required for external/subcontractor employees' });
+    const resolvedType = normalizeEmployeeType(employeeType, Boolean(corporateBusinessPartnerId));
+    const resolvedSkill = normalizeSkillLevel(skillLevel);
+    const isExt = isExternalEmployeeType(resolvedType);
+    if (isExt && !corporateBusinessPartnerId) {
+      res.status(400).json({ error: 'Business Partner is required for external supply/subcontractor employees' });
       return;
     }
-    const finalBpId = resolvedType === 'external' ? corporateBusinessPartnerId : null;
+    const finalBpId = isExt ? corporateBusinessPartnerId : null;
 
     // Check duplicate code or NIC
     const existing = await prisma.mF_G_Employee.findFirst({
@@ -1437,9 +1449,10 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
         nicNo: nicNo.trim().toUpperCase(),
         epfNo: epfNo ? epfNo.trim() : null,
         tradeGroupId: targetTradeGroupId,
-        dailyRate: dailyRate !== undefined ? Number(dailyRate) : 1400.0,
+        dailyRate: null,
         isOperator: Boolean(isOperator),
         employeeType: resolvedType,
+        skillLevel: resolvedSkill,
         corporateBusinessPartnerId: finalBpId,
         currentProjectId: resolvedProjectId,
         documentUrl: req.body.documentUrl || null,
@@ -1453,6 +1466,14 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
 
     // If project was resolved, auto-provision to site
     if (resolvedProjObj) {
+      const projectRate = await resolveProjectTradeRate(
+        resolvedProjObj.id,
+        created.tradeGroupId,
+        resolvedType,
+        resolvedSkill
+      );
+      const resolvedSiteRate = projectRate ?? 0;
+
       await prisma.mF_P_Employee.upsert({
         where: {
           projectId_corporateEmployeeId: {
@@ -1463,8 +1484,10 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
           update: {
             status: 'active',
             callingName: fullName.trim().split(' ')[0],
-            dailyRate: created.dailyRate ?? 1400.0,
+            dailyRate: resolvedSiteRate,
             tradeGroupId: created.tradeGroupId,
+            employeeType: resolvedType,
+            skillLevel: resolvedSkill,
             businessPartnerId: finalBpId,
             isOperator: Boolean(isOperator),
           },
@@ -1473,8 +1496,10 @@ export const createCorporateEmployee = async (req: Request, res: Response): Prom
             corporateEmployeeId: created.id,
             callingName: fullName.trim().split(' ')[0],
             status: 'active',
-            dailyRate: created.dailyRate ?? 1400.0,
+            dailyRate: resolvedSiteRate,
             tradeGroupId: created.tradeGroupId,
+            employeeType: resolvedType,
+            skillLevel: resolvedSkill,
             businessPartnerId: finalBpId,
             isOperator: Boolean(isOperator),
           },
@@ -1515,6 +1540,7 @@ export const updateCorporateEmployee = async (req: Request, res: Response): Prom
       dailyRate,
       isOperator,
       employeeType,
+      skillLevel,
       corporateBusinessPartnerId,
       status,
       documentUrl,
@@ -1542,8 +1568,12 @@ export const updateCorporateEmployee = async (req: Request, res: Response): Prom
       }
     }
 
-    const resolvedType = employeeType || existing.employeeType;
-    const finalBpId = resolvedType === 'external'
+    const resolvedType = employeeType
+      ? normalizeEmployeeType(employeeType, Boolean(corporateBusinessPartnerId))
+      : existing.employeeType;
+    const resolvedSkill = skillLevel ? normalizeSkillLevel(skillLevel) : existing.skillLevel;
+    const isExt = isExternalEmployeeType(resolvedType);
+    const finalBpId = isExt
       ? (corporateBusinessPartnerId !== undefined ? corporateBusinessPartnerId : existing.corporateBusinessPartnerId)
       : null;
 
@@ -1557,6 +1587,7 @@ export const updateCorporateEmployee = async (req: Request, res: Response): Prom
         ...(dailyRate !== undefined && dailyRate !== '' && !isNaN(Number(dailyRate)) ? { dailyRate: Number(dailyRate) } : {}),
         ...(isOperator !== undefined ? { isOperator: Boolean(isOperator) } : {}),
         ...(employeeType ? { employeeType: resolvedType } : {}),
+        ...(skillLevel ? { skillLevel: resolvedSkill } : {}),
         ...(corporateBusinessPartnerId !== undefined || employeeType ? { corporateBusinessPartnerId: finalBpId } : {}),
         ...(status ? { status } : {}),
         ...(documentUrl !== undefined ? { documentUrl: documentUrl || null } : {}),
@@ -1575,6 +1606,8 @@ export const updateCorporateEmployee = async (req: Request, res: Response): Prom
         ...(fullName ? { callingName: fullName.trim().split(' ')[0] } : {}),
         ...(dailyRate !== undefined && dailyRate !== '' && !isNaN(Number(dailyRate)) ? { dailyRate: Number(dailyRate) } : {}),
         ...(tradeGroupId ? { tradeGroupId: String(tradeGroupId).trim() } : {}),
+        ...(employeeType ? { employeeType: resolvedType } : {}),
+        ...(skillLevel ? { skillLevel: resolvedSkill } : {}),
         ...(corporateBusinessPartnerId !== undefined || employeeType ? { businessPartnerId: finalBpId } : {}),
         ...(isOperator !== undefined ? { isOperator: Boolean(isOperator) } : {}),
         ...(status ? { status } : {}),
@@ -1649,6 +1682,9 @@ export const batchCreateCorporateEmployees = async (req: Request, res: Response)
         });
         updated++;
       } else {
+        const batchEmpType = normalizeEmployeeType(item.employeeType, Boolean(item.corporateBusinessPartnerId));
+        const batchSkill = normalizeSkillLevel(item.skillLevel);
+        const batchBpId = isExternalEmployeeType(batchEmpType) ? (item.corporateBusinessPartnerId || null) : null;
         await prisma.mF_G_Employee.create({
           data: {
             employeeCode: code,
@@ -1658,8 +1694,9 @@ export const batchCreateCorporateEmployees = async (req: Request, res: Response)
             tradeGroupId,
             epfNo: item.epfNo || null,
             isOperator: Boolean(item.isOperator),
-            employeeType: (item.employeeType === 'internal' || item.employeeType === 'external') ? item.employeeType : (item.corporateBusinessPartnerId ? 'external' : 'internal'),
-            corporateBusinessPartnerId: item.employeeType === 'internal' ? null : (item.corporateBusinessPartnerId || null),
+            employeeType: batchEmpType,
+            skillLevel: batchSkill,
+            corporateBusinessPartnerId: batchBpId,
             status: 'active',
           },
         });
@@ -2163,24 +2200,16 @@ export const getCorporateTradeGroups = async (_req: Request, res: Response): Pro
 // ── 10. POST /api/corporate/trade-groups ──────────────────────────────────────
 export const createCorporateTradeGroup = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, name, currency, standardDailyRate, standardOtRate } = req.body || {};
+    const { code, name } = req.body || {};
     if (!code || !name) {
       res.status(400).json({ error: 'code and name are required' });
       return;
     }
 
-    const cur = currency && typeof currency === 'string' ? currency.trim().toUpperCase() : 'LKR';
-
     const created = await prisma.mF_G_TradeGroup.create({
       data: {
         code: code.trim().toUpperCase(),
         name: name.trim(),
-        currency: cur,
-        standardDailyRate: standardDailyRate !== undefined ? Number(standardDailyRate) : 1400.0,
-        standardOtRate:
-          standardOtRate !== undefined && standardOtRate !== '' && !isNaN(Number(standardOtRate))
-            ? Number(standardOtRate)
-            : Math.round(((Number(standardDailyRate) || 1400) / 8 * 1.5) * 100) / 100,
         status: 'active',
       },
     });
@@ -2196,7 +2225,7 @@ export const createCorporateTradeGroup = async (req: Request, res: Response): Pr
 export const updateCorporateTradeGroup = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = String(req.params.id);
-    const { code, name, currency, standardDailyRate, standardOtRate, status, syncEmployees } = req.body || {};
+    const { code, name, status } = req.body || {};
 
     const existing = await prisma.mF_G_TradeGroup.findUnique({ where: { id } });
     if (!existing) {
@@ -2204,40 +2233,121 @@ export const updateCorporateTradeGroup = async (req: Request, res: Response): Pr
       return;
     }
 
-    const cur = currency && typeof currency === 'string' ? currency.trim().toUpperCase() : existing.currency;
-    const newRate = standardDailyRate !== undefined && !isNaN(Number(standardDailyRate)) ? Number(standardDailyRate) : Number(existing.standardDailyRate);
-    const newOtRate = standardOtRate !== undefined && standardOtRate !== '' && !isNaN(Number(standardOtRate))
-      ? Number(standardOtRate)
-      : Math.round(((newRate || 1400) / 8 * 1.5) * 100) / 100;
-
     const updated = await prisma.mF_G_TradeGroup.update({
       where: { id },
       data: {
         ...(code ? { code: code.trim().toUpperCase() } : {}),
         ...(name ? { name: name.trim() } : {}),
-        currency: cur,
-        standardDailyRate: newRate,
-        standardOtRate: newOtRate,
         ...(status ? { status } : {}),
       },
     });
-
-    // Auto-sync employee daily rates if trade group standard rate was updated
-    if (newRate !== Number(existing.standardDailyRate) || syncEmployees) {
-      await prisma.mF_G_Employee.updateMany({
-        where: { tradeGroupId: id },
-        data: { dailyRate: newRate },
-      });
-      await prisma.mF_P_Employee.updateMany({
-        where: { tradeGroupId: id },
-        data: { dailyRate: newRate },
-      });
-    }
 
     res.json({ success: true, tradeGroup: updated });
   } catch (error: any) {
     console.error('Error updating trade group:', error);
     res.status(500).json({ error: error.message || 'Failed to update trade group' });
+  }
+};
+
+// ── 10.2. GET /api/corporate/projects/:projectId/trade-rates ──────────────────
+export const getProjectTradeRates = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const projectId = String(req.params.projectId);
+    const project = await prisma.mF_P_Project.findUnique({
+      where: { id: projectId },
+      select: { id: true, projectCode: true, projectName: true, currency: true },
+    });
+    if (!project) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+
+    const [tradeGroups, rates] = await Promise.all([
+      prisma.mF_G_TradeGroup.findMany({
+        where: { status: 'active' },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.mF_P_TradeRate.findMany({
+        where: { projectId },
+      }),
+    ]);
+
+    const rateMap = new Map(rates.map((r) => [r.tradeGroupId, r]));
+    const items = tradeGroups.map((tg) => {
+      const r = rateMap.get(tg.id);
+      return {
+        tradeGroupId: tg.id,
+        tradeGroupCode: tg.code,
+        tradeGroupName: tg.name,
+        id: r?.id || null,
+        internalSkilledRate: r ? Number(r.internalSkilledRate) : 0,
+        internalUnskilledRate: r ? Number(r.internalUnskilledRate) : 0,
+        foreignSkilledRate: r ? Number(r.foreignSkilledRate) : 0,
+        foreignUnskilledRate: r ? Number(r.foreignUnskilledRate) : 0,
+        supplySkilledRate: r ? Number(r.supplySkilledRate) : 0,
+        supplyUnskilledRate: r ? Number(r.supplyUnskilledRate) : 0,
+        subcontractorSkilledRate: r ? Number(r.subcontractorSkilledRate) : 0,
+        subcontractorUnskilledRate: r ? Number(r.subcontractorUnskilledRate) : 0,
+      };
+    });
+
+    res.json({ project, items });
+  } catch (error: any) {
+    console.error('Error fetching project trade rates:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch project trade rates' });
+  }
+};
+
+// ── 10.3. PUT /api/corporate/projects/:projectId/trade-rates ──────────────────
+export const upsertProjectTradeRates = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const projectId = String(req.params.projectId);
+    const { rates } = req.body || {};
+    const validation = await validateProjectTradeRatesPayload(projectId, rates);
+    if (!validation.valid) {
+      res.status(validation.status).json({ error: validation.error });
+      return;
+    }
+
+    await prisma.$transaction(
+      validation.items.map((r) =>
+        prisma.mF_P_TradeRate.upsert({
+          where: {
+            projectId_tradeGroupId: {
+              projectId,
+              tradeGroupId: r.tradeGroupId,
+            },
+          },
+          update: {
+            internalSkilledRate: r.internalSkilledRate,
+            internalUnskilledRate: r.internalUnskilledRate,
+            foreignSkilledRate: r.foreignSkilledRate,
+            foreignUnskilledRate: r.foreignUnskilledRate,
+            supplySkilledRate: r.supplySkilledRate,
+            supplyUnskilledRate: r.supplyUnskilledRate,
+            subcontractorSkilledRate: r.subcontractorSkilledRate,
+            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
+          },
+          create: {
+            projectId,
+            tradeGroupId: r.tradeGroupId,
+            internalSkilledRate: r.internalSkilledRate,
+            internalUnskilledRate: r.internalUnskilledRate,
+            foreignSkilledRate: r.foreignSkilledRate,
+            foreignUnskilledRate: r.foreignUnskilledRate,
+            supplySkilledRate: r.supplySkilledRate,
+            supplyUnskilledRate: r.supplyUnskilledRate,
+            subcontractorSkilledRate: r.subcontractorSkilledRate,
+            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
+          },
+        })
+      )
+    );
+
+    res.json({ success: true, count: validation.items.length, message: 'Project trade rates updated successfully' });
+  } catch (error: any) {
+    console.error('Error updating project trade rates:', error);
+    res.status(500).json({ error: error.message || 'Failed to update project trade rates' });
   }
 };
 
@@ -2860,6 +2970,8 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
       rawOp: string;
       epfNo: string | null;
       resolvedTradeGroupId: string;
+      resolvedEmpType: EmployeeType;
+      resolvedSkillLevel: SkillLevel;
       isExternal: boolean;
       finalBpId: string | null;
       resolvedProj: (typeof allProjects)[0] | null;
@@ -2929,7 +3041,8 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
       seenCodesInBatch.add(code);
 
       // Resolve Business Partner & Employee Type (Strict Enterprise Validation)
-      const explicitType = getFieldVal(item, ['employeeType', 'type', 'employmentType']).toLowerCase();
+      const explicitType = getFieldVal(item, ['employeeType', 'type', 'employmentType']);
+      const explicitSkill = getFieldVal(item, ['skillLevel', 'skill', 'skillType']);
       const bpCodeInput = getFieldVal(item, [
         'businessPartnerCode',
         'bpCode',
@@ -2957,9 +3070,9 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         }
       }
 
-      const isExternal =
-        explicitType === 'external' ||
-        (explicitType !== 'internal' && Boolean(bpCodeInput || resolvedBpId));
+      const resolvedEmpType = normalizeEmployeeType(explicitType, Boolean(bpCodeInput || resolvedBpId));
+      const resolvedSkillLevel = normalizeSkillLevel(explicitSkill);
+      const isExternal = isExternalEmployeeType(resolvedEmpType);
 
       if (isExternal && !resolvedBpId) {
         errors.push({
@@ -3043,6 +3156,8 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
         rawOp,
         epfNo,
         resolvedTradeGroupId: matchedTradeGroup.id,
+        resolvedEmpType,
+        resolvedSkillLevel,
         isExternal,
         finalBpId: isExternal ? resolvedBpId : null,
         resolvedProj: resolvedProj || null,
@@ -3055,7 +3170,6 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
       ops.map(async (op) => {
         try {
           let savedEmployeeId: string;
-          let finalDailyRate = op.dailyRate !== undefined ? op.dailyRate : 1400.0;
 
           if (op.existing) {
             const updated = await prisma.mF_G_Employee.update({
@@ -3063,9 +3177,9 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
               data: {
                 fullName: op.name,
                 nicNo: op.nic || op.existing.nicNo,
-                dailyRate: op.dailyRate !== undefined ? op.dailyRate : op.existing.dailyRate,
                 tradeGroupId: op.resolvedTradeGroupId || op.existing.tradeGroupId,
-                employeeType: op.isExternal ? 'external' : 'internal',
+                employeeType: op.resolvedEmpType,
+                skillLevel: op.resolvedSkillLevel,
                 corporateBusinessPartnerId: op.finalBpId !== null ? op.finalBpId : op.existing.corporateBusinessPartnerId,
                 epfNo: op.epfNo || op.existing.epfNo,
                 isOperator: op.rawOp !== '' ? op.isOperator : op.existing.isOperator,
@@ -3074,7 +3188,6 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
               },
             });
             savedEmployeeId = updated.id;
-            finalDailyRate = Number(updated.dailyRate ?? 1400.0);
             updatedCount++;
           } else {
             const created = await prisma.mF_G_Employee.create({
@@ -3082,9 +3195,10 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
                 employeeCode: op.code,
                 fullName: op.name,
                 nicNo: op.nic || `NIC-${op.code}`,
-                dailyRate: op.dailyRate !== undefined ? op.dailyRate : 1400.0,
+                dailyRate: null,
                 tradeGroupId: op.resolvedTradeGroupId,
-                employeeType: op.isExternal ? 'external' : 'internal',
+                employeeType: op.resolvedEmpType,
+                skillLevel: op.resolvedSkillLevel,
                 corporateBusinessPartnerId: op.finalBpId,
                 epfNo: op.epfNo,
                 isOperator: op.isOperator,
@@ -3098,6 +3212,14 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
 
           // Auto-provision to site if a valid project was specified
           if (op.resolvedProj) {
+            const projRate = await resolveProjectTradeRate(
+              op.resolvedProj.id,
+              op.resolvedTradeGroupId,
+              op.resolvedEmpType,
+              op.resolvedSkillLevel
+            );
+            const siteRate = projRate ?? 0;
+
             await prisma.mF_P_Employee.upsert({
               where: {
                 projectId_corporateEmployeeId: {
@@ -3108,8 +3230,10 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
               update: {
                 callingName: op.name.split(' ')[0] || op.name,
                 status: 'active',
-                dailyRate: finalDailyRate,
+                dailyRate: siteRate,
                 tradeGroupId: op.resolvedTradeGroupId,
+                employeeType: op.resolvedEmpType,
+                skillLevel: op.resolvedSkillLevel,
                 businessPartnerId: op.finalBpId,
                 isOperator: op.isOperator,
               },
@@ -3118,8 +3242,10 @@ export const bulkImportCorporateEmployees = async (req: Request, res: Response):
                 corporateEmployeeId: savedEmployeeId,
                 callingName: op.name.split(' ')[0] || op.name,
                 status: 'active',
-                dailyRate: finalDailyRate,
+                dailyRate: siteRate,
                 tradeGroupId: op.resolvedTradeGroupId,
+                employeeType: op.resolvedEmpType,
+                skillLevel: op.resolvedSkillLevel,
                 businessPartnerId: op.finalBpId,
                 isOperator: op.isOperator,
               },
@@ -3804,9 +3930,6 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
       rowNum: number;
       code: string;
       name: string;
-      currency: string;
-      normalRate: number;
-      otRate: number | null;
       existing?: (typeof existingTg)[0];
     }
 
@@ -3821,16 +3944,6 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
 
       const code = getFieldVal(item, ['code', 'tradeGroup', 'tradeCode', 'tradeGroupId']).toUpperCase().trim();
       const name = getFieldVal(item, ['name', 'tradeName', 'tradeGroupName', 'title']);
-      const rawCurrency = getFieldVal(item, ['currency', 'cur', 'Currency', 'CURRENCY']);
-      const currency = rawCurrency ? rawCurrency.toUpperCase().trim() : 'LKR';
-
-      const rawRate = getFieldVal(item, ['standardDailyRate', 'normalRate', 'dailyRate', 'rate', 'rateRs']);
-      const rawOt = getFieldVal(item, ['standardOtRate', 'otRate', 'otRateRs']);
-      const normalRate = rawRate !== '' && !isNaN(Number(rawRate)) ? Number(rawRate) : 1400.0;
-      const otRate =
-        rawOt !== '' && !isNaN(Number(rawOt))
-          ? Number(rawOt)
-          : Math.round((normalRate / 8 * 1.5) * 100) / 100;
 
       if (!code || !name) {
         errors.push({
@@ -3861,9 +3974,6 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
         rowNum,
         code,
         name,
-        currency,
-        normalRate,
-        otRate,
         existing: existingMap.get(code),
       });
     }
@@ -3877,19 +3987,8 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
               where: { id: op.existing.id },
               data: {
                 name: op.name,
-                currency: op.currency || (op.existing as any).currency || 'LKR',
-                standardDailyRate: op.normalRate,
-                standardOtRate: op.otRate !== null ? op.otRate : op.existing.standardOtRate,
                 status: 'active',
               },
-            });
-            await prisma.mF_G_Employee.updateMany({
-              where: { tradeGroupId: op.existing.id },
-              data: { dailyRate: op.normalRate },
-            });
-            await prisma.mF_P_Employee.updateMany({
-              where: { tradeGroupId: op.existing.id },
-              data: { dailyRate: op.normalRate },
             });
             updatedCount++;
           } else {
@@ -3897,9 +3996,6 @@ export const bulkImportCorporateTradeGroups = async (req: Request, res: Response
               data: {
                 code: op.code,
                 name: op.name,
-                currency: op.currency || 'LKR',
-                standardDailyRate: op.normalRate,
-                standardOtRate: op.otRate,
                 status: 'active',
               },
             });
@@ -4370,7 +4466,7 @@ export const getPendingCorporateEmployees = async (_req: Request, res: Response)
         fullName: emp.fullName,
         nicNo: emp.nicNo,
         epfNo: emp.epfNo,
-        dailyRate: emp.dailyRate ? Number(emp.dailyRate) : 1400.0,
+        dailyRate: emp.dailyRate !== null && emp.dailyRate !== undefined ? Number(emp.dailyRate) : 0,
         isOperator: emp.isOperator,
         employeeType: emp.employeeType,
         documentUrl: emp.documentUrl,
@@ -4417,7 +4513,7 @@ export const approveCorporateEmployee = async (req: Request, res: Response): Pro
 
     let finalCode = officialCode ? String(officialCode).trim().toUpperCase() : '';
     if (!finalCode || finalCode.includes('TMP')) {
-      const prefix = existing.employeeType === 'internal' ? 'HI' : 'HK';
+      const prefix = isExternalEmployeeType(existing.employeeType) ? 'HK' : 'HI';
       const latest = await prisma.mF_G_Employee.findFirst({
         where: { employeeCode: { startsWith: prefix } },
         orderBy: { employeeCode: 'desc' },

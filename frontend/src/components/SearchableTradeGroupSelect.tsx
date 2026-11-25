@@ -5,7 +5,7 @@ export interface TradeGroupOption {
   id: string;
   code: string;
   name: string;
-  standardDailyRate: number;
+  standardDailyRate?: number;
   currency?: string;
 }
 
@@ -208,11 +208,6 @@ export default function SearchableTradeGroupSelect({
                         </span>
                         <span className="text-slate-800 font-medium truncate">
                           {tg.name}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2">
-                        <span>
-                          Standard Daily: {tg.currency || 'LKR'} {Number(tg.standardDailyRate || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                     </div>

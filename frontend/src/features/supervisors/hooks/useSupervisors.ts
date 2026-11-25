@@ -1,5 +1,6 @@
 /**
  * useSupervisors.ts — State management for supervisor management.
+ * 
  */
 import { useState, useEffect, useCallback } from 'react';
 import type { Supervisor, SupervisorCreateData } from '../services/supervisorService';

@@ -43,6 +43,8 @@ export interface ActivitySplit {
   id: string;
   activityCode: string;
   hours: number;
+  chargedBusinessPartnerId?: string | null;
+  chargedBusinessPartnerName?: string | null;
 }
 
 export interface LaborerEntry {
@@ -698,6 +700,8 @@ export const supervisorStorage = {
             id: s.id || `act-${idx}`,
             activityCode: s.activityCode?.code || '',
             hours: Number(s.hours) || 0,
+            chargedBusinessPartnerId: s.chargedBusinessPartnerId || null,
+            chargedBusinessPartnerName: s.chargedBusinessPartner?.name || null,
           }));
 
           const hasBothTimes = Boolean(backendInTime && backendOutTime);
@@ -885,6 +889,7 @@ export const supervisorStorage = {
                 employeeId: lab.id,
                 activityId: resolvedActId,
                 hours: actHours,
+                chargedBusinessPartnerId: act.chargedBusinessPartnerId || null,
                 inTime: lab.inTime || undefined,
                 outTime: lab.outTime || undefined,
                 otHours: lab.otHours || undefined,

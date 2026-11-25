@@ -11,6 +11,8 @@ import {
   getCorporateEmployeesCatalog,
   getSiteEmployeePool,
   batchEnrollEmployees,
+  getCurrentProjectTradeRates,
+  upsertCurrentProjectTradeRates,
 } from '../controllers/employeeController';
 import {
   getPendingCorporateEmployees,
@@ -32,6 +34,8 @@ router.post('/cross-tenant-status', getCrossTenantEmployeeStatus);
 router.post('/transfer', requireAdmin, transferEmployee);
 
 // Standard routes matching frontend expectations
+router.get('/trade-rates', requireAuth, getCurrentProjectTradeRates);
+router.put('/trade-rates', requireAdmin, upsertCurrentProjectTradeRates);
 router.get('/site-pool', getSiteEmployeePool);
 router.get('/', requireAuth, getAllEmployees);
 router.get('/:id', requireAuth, getEmployeeById);

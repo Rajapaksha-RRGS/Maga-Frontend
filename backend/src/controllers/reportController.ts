@@ -1,6 +1,22 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { getDefaultProjectId, getDefaultTenantId } from '../utils/tenantHelper';
+import { isExternalEmployeeType } from '../utils/tradeRateHelper';
+
+function buildEmployeeTypeWhere(employeeType?: string) {
+  if (!employeeType) return undefined;
+  const val = employeeType.trim().toUpperCase();
+  if (val === 'INTERNAL') return { employeeType: 'INTERNAL' as const };
+  if (val === 'FOREIGN') return { employeeType: 'FOREIGN' as const };
+  if (val === 'EXTERNAL_SUPPLY' || val === 'SUPPLY') return { employeeType: 'EXTERNAL_SUPPLY' as const };
+  if (val === 'EXTERNAL_SUBCONTRACTOR' || val === 'SUBCONTRACTOR') {
+    return { employeeType: 'EXTERNAL_SUBCONTRACTOR' as const };
+  }
+  if (val === 'EXTERNAL') {
+    return { employeeType: { in: ['EXTERNAL_SUPPLY' as const, 'EXTERNAL_SUBCONTRACTOR' as const] } };
+  }
+  return undefined;
+}
 
 // ─── Helper: parse query param safely ─────────────────────────────────────────
 const qStr = (v: unknown): string | undefined =>
@@ -331,9 +347,10 @@ function buildEmployeeFilter(
     conditions.push({ isOperator: false });
   }
 
-  if (employeeType === 'internal' || employeeType === 'external') {
+  const empTypeCond = buildEmployeeTypeWhere(employeeType);
+  if (empTypeCond) {
     conditions.push({
-      corporateEmployee: { employeeType },
+      corporateEmployee: empTypeCond,
     });
   }
 
@@ -732,7 +749,7 @@ export const getDayOtSummaryReport = async (req: Request, res: Response): Promis
 
     const items = Array.from(empDailyMap.entries()).map(([empId, dayMap], idx) => {
       const empInfo = empInfoMap.get(empId);
-      const isExternal = empInfo?.employeeType === 'external' || Boolean(empInfo?.businessPartner);
+      const isExternal = isExternalEmployeeType(empInfo?.employeeType) || Boolean(empInfo?.businessPartner);
       const dailyEntries: Record<string, { days: number; otHours: number; workHours: number }> = {};
       let totalEmpDays = 0;
       let totalEmpWork = 0;
@@ -900,9 +917,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
  
       const effectiveDailyRate = (entry.appliedDailyRate !== null && Number(entry.appliedDailyRate) > 0)
         ? Number(entry.appliedDailyRate)
-        : (Number(entry.employee.dailyRate) > 0
-            ? Number(entry.employee.dailyRate)
-            : Number(entry.employee.tradeGroup?.standardDailyRate || 0));
+        : Number(entry.employee.dailyRate || 0);
 
       if (!empMap.has(empId)) {
         empMap.set(empId, {
@@ -976,7 +991,7 @@ export const getBpBillReport = async (req: Request, res: Response): Promise<void
             employeeName: op.operator.corporateEmployee.fullName || op.operator.callingName || '',
             tradeGroup: op.operator.tradeGroup?.name || 'Operator',
             dailyHours: {},
-            dailyRate: Number(op.operator.dailyRate) > 0 ? Number(op.operator.dailyRate) : Number(op.operator.tradeGroup?.standardDailyRate || 1600),
+            dailyRate: Number(op.operator.dailyRate) > 0 ? Number(op.operator.dailyRate) : 1600,
             isEmployeeApproved: isEmployeeActive,
             isPartnerApproved: isPartnerActive,
             isPayable,
@@ -1162,7 +1177,7 @@ function computeErpDayMetrics(groupEntries: any[], calendarMap?: Map<string, Day
   const effectiveForOt = shiftEffectiveHours > 0 ? shiftEffectiveHours : totalDayHours;
   const isExternal = Boolean(
     first.employee?.businessPartnerId ||
-    first.employee?.corporateEmployee?.employeeType === 'external'
+    isExternalEmployeeType(first.employee?.corporateEmployee?.employeeType)
   );
 
   let otHours = 0;
@@ -1442,6 +1457,7 @@ export const getReportFilterOptions = async (req: Request, res: Response): Promi
 
     res.json({
       businessPartners: partners.map((p) => p.name),
+      businessPartnerDetails: partners.map((p) => ({ code: p.code, name: p.name })),
       activityCodes: formattedActivityCodes,
     });
   } catch (error) {
@@ -1786,8 +1802,9 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
     } else if (workerType === 'operator') {
       empWhere.isOperator = true;
     }
-    if (employeeType === 'internal' || employeeType === 'external') {
-      empWhere.corporateEmployee = { employeeType };
+    const empTypeCond = buildEmployeeTypeWhere(employeeType);
+    if (empTypeCond) {
+      empWhere.corporateEmployee = empTypeCond;
     }
 
     const employees = await prisma.mF_P_Employee.findMany({
@@ -1884,7 +1901,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
       );
       const dailyRateVal = snapEntry
         ? Number(snapEntry.appliedDailyRate)
-        : (Number(emp.dailyRate) > 0 ? Number(emp.dailyRate) : Number(emp.tradeGroup?.standardDailyRate || 0));
+        : Number(emp.dailyRate || 0);
       const hourlyOtRate = Math.round((dailyRateVal / 8 * 1.5) * 100) / 100;
 
       const snapBpEntry = timeEntries.find(
@@ -3013,5 +3030,247 @@ export const getOperatorErpUploadReport = async (req: Request, res: Response): P
   } catch (error) {
     console.error('Error generating operator ERP upload report:', error);
     res.status(500).json({ error: 'Failed to generate operator ERP upload report' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reports/subcontractor-deduction?dateFrom=&dateTo=&businessPartner=
+// Accountant report: company/supply manpower hours & cost lent to Subcontractors
+// ─────────────────────────────────────────────────────────────────────────────
+export const getSubcontractorDeductionReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const projectId = await resolveProjectId(req);
+    const dateFrom = qStr(req.query.dateFrom);
+    const dateTo = qStr(req.query.dateTo);
+    const businessPartner = qStr(req.query.businessPartner);
+    const employeeQuery = qStr(req.query.employeeQuery);
+    const employeeType = qStr(req.query.employeeType);
+    const activityCode = qStr(req.query.activityCode);
+    const statusFilter = resolveStatusFilter(qStr(req.query.status));
+
+    const dateFilter = buildDateFilter(dateFrom, dateTo);
+    const empTypeFilter = buildEmployeeTypeWhere(employeeType);
+
+    const timeEntryWhere: Record<string, any> = {
+      projectId,
+      status: statusFilter,
+      ...(dateFilter ? { date: dateFilter } : {}),
+    };
+
+    if (empTypeFilter || employeeQuery) {
+      timeEntryWhere.employee = {
+        ...(empTypeFilter || {}),
+        ...(employeeQuery
+          ? {
+              OR: [
+                { callingName: { contains: employeeQuery, mode: 'insensitive' } },
+                { corporateEmployee: { fullName: { contains: employeeQuery, mode: 'insensitive' } } },
+                { corporateEmployee: { employeeCode: { contains: employeeQuery, mode: 'insensitive' } } },
+              ],
+            }
+          : {}),
+      };
+    }
+
+    const splitWhere: Record<string, any> = {
+      chargedBusinessPartnerId: { not: null },
+      timeEntry: timeEntryWhere,
+    };
+
+    if (businessPartner && businessPartner !== 'all') {
+      splitWhere.chargedBusinessPartner = {
+        OR: [
+          { id: businessPartner },
+          { name: { contains: businessPartner, mode: 'insensitive' } },
+          { code: { contains: businessPartner, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    if (activityCode && activityCode !== 'all') {
+      splitWhere.activityCode = {
+        OR: [
+          { id: activityCode },
+          { code: { contains: activityCode, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const splits = await prisma.mF_OP_LaborActivitySplit.findMany({
+      where: splitWhere,
+      include: {
+        chargedBusinessPartner: {
+          select: { id: true, code: true, name: true },
+        },
+        activityCode: {
+          select: { id: true, code: true, description: true },
+        },
+        timeEntry: {
+          include: {
+            effectiveDayType: true,
+            activitySplits: { select: { hours: true } },
+            employee: {
+              include: {
+                corporateEmployee: {
+                  select: { employeeCode: true, fullName: true, employeeType: true },
+                },
+                tradeGroup: { select: { name: true } },
+                businessPartner: { select: { id: true, name: true, code: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { timeEntry: { date: 'asc' } },
+        { createdAt: 'asc' },
+      ],
+    });
+
+    const round2 = (v: number) => Math.round(v * 100) / 100;
+
+    type DeductionItem = {
+      id: string;
+      date: string;
+      employeeId: string;
+      employeeCode: string;
+      employeeName: string;
+      employeeType: string;
+      sourcePartner: string;
+      tradeGroup: string;
+      inTime: string;
+      outTime: string;
+      activityCode: string;
+      activityDescription: string;
+      splitHours: number;
+      normalHours: number;
+      otHours: number;
+      dailyRate: number;
+      hourlyRate: number;
+      hourlyOtRate: number;
+      normalAmount: number;
+      otAmount: number;
+      deductionAmount: number;
+    };
+
+    type SubGroup = {
+      subcontractorId: string;
+      subcontractorCode: string;
+      subcontractorName: string;
+      employeeIds: Set<string>;
+      totalSplitHours: number;
+      totalNormalHours: number;
+      totalOtHours: number;
+      totalDeductionAmount: number;
+      items: DeductionItem[];
+    };
+
+    const groupMap = new Map<string, SubGroup>();
+
+    for (const sp of splits) {
+      if (!sp.chargedBusinessPartner) continue;
+      const te = sp.timeEntry;
+      const emp = te.employee;
+      const subId = sp.chargedBusinessPartner.id;
+
+      if (!groupMap.has(subId)) {
+        groupMap.set(subId, {
+          subcontractorId: subId,
+          subcontractorCode: sp.chargedBusinessPartner.code,
+          subcontractorName: sp.chargedBusinessPartner.name,
+          employeeIds: new Set<string>(),
+          totalSplitHours: 0,
+          totalNormalHours: 0,
+          totalOtHours: 0,
+          totalDeductionAmount: 0,
+          items: [],
+        });
+      }
+
+      const grp = groupMap.get(subId)!;
+      grp.employeeIds.add(emp.id);
+
+      const splitHours = Number(sp.hours || 0);
+      const totalDaySplitHours = te.activitySplits.reduce((sum, s) => sum + Number(s.hours || 0), 0);
+      const dayShiftHours = Number(te.shiftHours ?? te.hours ?? totalDaySplitHours);
+      const denom = totalDaySplitHours > 0 ? totalDaySplitHours : dayShiftHours;
+      const proportion = denom > 0 ? Math.min(1, splitHours / denom) : 1;
+
+      const dayOtHours = Math.max(0, Number(te.overtimeHours || 0));
+      const dayNormalHours = Math.max(0, dayShiftHours - dayOtHours);
+
+      const normalHours = round2(dayNormalHours * proportion);
+      const otHours = round2(dayOtHours * proportion);
+
+      const dailyRate =
+        te.appliedDailyRate !== null && Number(te.appliedDailyRate) > 0
+          ? Number(te.appliedDailyRate)
+          : Number(emp.dailyRate || 0);
+
+      const hourlyRate = round2(dailyRate / 8);
+      const hourlyOtRate = round2((dailyRate / 8) * 1.5);
+      const normalAmount = round2(normalHours * hourlyRate);
+      const otAmount = round2(otHours * hourlyOtRate);
+      const deductionAmount = round2(normalAmount + otAmount);
+
+      grp.totalSplitHours = round2(grp.totalSplitHours + splitHours);
+      grp.totalNormalHours = round2(grp.totalNormalHours + normalHours);
+      grp.totalOtHours = round2(grp.totalOtHours + otHours);
+      grp.totalDeductionAmount = round2(grp.totalDeductionAmount + deductionAmount);
+
+      grp.items.push({
+        id: sp.id,
+        date: te.date.toISOString().split('T')[0],
+        employeeId: emp.id,
+        employeeCode: emp.corporateEmployee?.employeeCode || '',
+        employeeName: emp.corporateEmployee?.fullName || emp.callingName || '',
+        employeeType: emp.employeeType || emp.corporateEmployee?.employeeType || 'INTERNAL',
+        sourcePartner: emp.businessPartner?.name || 'Maga (Direct)',
+        tradeGroup: emp.tradeGroup?.name || '',
+        inTime: te.inTime || '-',
+        outTime: te.outTime || '-',
+        activityCode: sp.activityCode?.code || '',
+        activityDescription: sp.activityCode?.description || '',
+        splitHours: round2(splitHours),
+        normalHours,
+        otHours,
+        dailyRate: round2(dailyRate),
+        hourlyRate,
+        hourlyOtRate,
+        normalAmount,
+        otAmount,
+        deductionAmount,
+      });
+    }
+
+    const groups = Array.from(groupMap.values()).map((g) => ({
+      subcontractorId: g.subcontractorId,
+      subcontractorCode: g.subcontractorCode,
+      subcontractorName: g.subcontractorName,
+      workerCount: g.employeeIds.size,
+      totalSplitHours: g.totalSplitHours,
+      totalNormalHours: g.totalNormalHours,
+      totalOtHours: g.totalOtHours,
+      totalDeductionAmount: g.totalDeductionAmount,
+      items: g.items,
+    }));
+
+    const grandTotalHours = round2(groups.reduce((s, g) => s + g.totalSplitHours, 0));
+    const grandTotalNormalHours = round2(groups.reduce((s, g) => s + g.totalNormalHours, 0));
+    const grandTotalOtHours = round2(groups.reduce((s, g) => s + g.totalOtHours, 0));
+    const grandTotalDeduction = round2(groups.reduce((s, g) => s + g.totalDeductionAmount, 0));
+
+    res.json({
+      dateFrom: dateFrom || null,
+      dateTo: dateTo || null,
+      grandTotalHours,
+      grandTotalNormalHours,
+      grandTotalOtHours,
+      grandTotalDeduction,
+      groups,
+    });
+  } catch (error) {
+    console.error('Error generating subcontractor deduction report:', error);
+    res.status(500).json({ error: 'Failed to generate subcontractor deduction report' });
   }
 };

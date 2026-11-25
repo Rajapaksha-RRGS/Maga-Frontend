@@ -111,7 +111,7 @@ export const getAssignmentsForDate = async (req: Request, res: Response): Promis
         id: true,
         employeeId: true,
         isStandby: true,
-        dailySheet: {
+        dailySheet: { 
           select: {
             id: true,
             supervisorId: true,
@@ -141,13 +141,14 @@ export const getAssignmentsForDate = async (req: Request, res: Response): Promis
 
     const formatted = assignments.map((a) => ({
       id: a.id,
-      date: dateStr,
+      date: dateStr,  
       supervisorId: a.dailySheet.supervisorId,
       employeeId: a.employeeId,
       supervisorName: a.dailySheet.supervisor.fullName,
-      employeeName: a.employee.callingName || a.employee.corporateEmployee.fullName,
+      employeeName: a.employee.callingName,
+      fullName : a.employee.corporateEmployee.fullName,
       employeeCode: a.employee.corporateEmployee.employeeCode,
-      employeeTrade: a.employee.tradeGroup?.name || 'General Labour',
+      employeeTrade: a.employee.tradeGroup?.name ,
       businessPartner: a.employee.businessPartner?.name || 'Direct',
       isStandby: a.isStandby,
     }));
@@ -821,7 +822,7 @@ export const getOperatorAssignmentsForDate = async (req: Request, res: Response)
     for (const te of existingOpEntries) {
       if (!te.employeeId) continue;
       const sId = te.dailySheet?.supervisorId || '';
-      const sName = te.dailySheet?.supervisor?.fullName || te.dailySheet?.supervisor?.username || 'Another Supervisor';
+      const sName = te.dailySheet?.supervisor?.fullName || te.dailySheet?.supervisor?.username || 'Another Supervisor sss';
       const mCode = te.equipment?.corporateEquipment?.standardEquipmentNumber || te.equipment?.corporateEquipment?.vehicleNo;
       const list = opClaimsMap.get(te.employeeId) || [];
       list.push({

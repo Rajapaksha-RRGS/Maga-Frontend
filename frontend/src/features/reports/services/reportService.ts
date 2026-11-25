@@ -32,7 +32,7 @@ export interface FilterOptionsParams {
   dateFrom?: string;
   dateTo?: string;
   workerType?: 'all' | 'labor' | 'operator';
-  employeeType?: '' | 'internal' | 'external';
+  employeeType?: string;
   employeeQuery?: string;
   businessPartner?: string;
   reportType?: ReportType;
@@ -40,6 +40,7 @@ export interface FilterOptionsParams {
 
 async function fetchFilterOptions(params?: FilterOptionsParams): Promise<{
   businessPartners: string[];
+  businessPartnerDetails?: { code: string; name: string }[];
   activityCodes: { code: string; description: string }[];
 } | null> {
   try {
@@ -66,6 +67,7 @@ export type ReportType =
   | 'summary' 
   | 'day-ot-summary' 
   | 'bp-bill' 
+  | 'subcontractor-deduction'
   | 'erp-upload' 
   | 'running-chart' 
   | 'time-card' 
@@ -84,7 +86,7 @@ export interface ReportFilters {
   activityCode?: string;
   month?: string;
   workerType?: 'all' | 'labor' | 'operator';
-  employeeType?: '' | 'internal' | 'external';
+  employeeType?: string;
   equipmentQuery?: string;
   condition?: string;
   status?: string;
@@ -253,6 +255,16 @@ export async function getBusinessPartnerOptions(): Promise<string[]> {
   return cacheManager.fetchWithCache(`reports:${tId}:filter-opts:bp`, async () => {
     const o = await fetchFilterOptions();
     if (o?.businessPartners?.length) return o.businessPartners;
+    return [];
+  });
+}
+
+export async function getBusinessPartnerDetailOptions(): Promise<{ code: string; name: string }[]> {
+  const tId = getCurrentTenantId() || 'default';
+  return cacheManager.fetchWithCache(`reports:${tId}:filter-opts:bp-details`, async () => {
+    const o = await fetchFilterOptions();
+    if (o?.businessPartnerDetails?.length) return o.businessPartnerDetails;
+    if (o?.businessPartners?.length) return o.businessPartners.map((name) => ({ code: '', name }));
     return [];
   });
 }
@@ -535,6 +547,7 @@ import {
   exportRunningChartToExcel,
   exportOperatorErpToExcel,
   exportOperatorErpToCsv,
+  exportSubcontractorDeductionToExcel,
   exportEquipmentErpToExcel,
   exportEquipmentSummaryToExcel,
   exportTimeCardToExcel,
@@ -560,6 +573,9 @@ export async function exportReport(
   } else if (type === 'bp-bill') {
     const data = await getBpBillReport(filters);
     await exportBpBillToExcel(data, tenant, preparedBy, filters);
+  } else if (type === 'subcontractor-deduction') {
+    const data = await getSubcontractorDeductionReport(filters);
+    await exportSubcontractorDeductionToExcel(data);
   } else if (type === 'erp-upload') {
     const data = await getErpUploadReport(filters);
     await exportErpUploadToExcel(data, tenant, preparedBy, filters);
@@ -870,6 +886,75 @@ export async function getOperatorErpUploadReport(
   };
 }
 
+export interface SubcontractorDeductionItem {
+  id: string;
+  date: string;
+  employeeId: string;
+  employeeCode: string;
+  employeeName: string;
+  employeeType: string;
+  sourcePartner: string;
+  tradeGroup: string;
+  inTime: string;
+  outTime: string;
+  activityCode: string;
+  activityDescription: string;
+  splitHours: number;
+  normalHours: number;
+  otHours: number;
+  dailyRate: number;
+  hourlyRate: number;
+  hourlyOtRate: number;
+  normalAmount: number;
+  otAmount: number;
+  deductionAmount: number;
+}
+
+export interface SubcontractorDeductionGroup {
+  subcontractorId: string;
+  subcontractorCode: string;
+  subcontractorName: string;
+  workerCount: number;
+  totalSplitHours: number;
+  totalNormalHours: number;
+  totalOtHours: number;
+  totalDeductionAmount: number;
+  items: SubcontractorDeductionItem[];
+}
+
+export interface SubcontractorDeductionResponse {
+  dateFrom: string | null;
+  dateTo: string | null;
+  grandTotalHours: number;
+  grandTotalNormalHours: number;
+  grandTotalOtHours: number;
+  grandTotalDeduction: number;
+  groups: SubcontractorDeductionGroup[];
+}
+
+export async function getSubcontractorDeductionReport(
+  filters: ReportFilters
+): Promise<SubcontractorDeductionResponse> {
+  try {
+    const qs = buildParams(filters);
+    const r = await apiFetch(`${API_URL}/reports/subcontractor-deduction?${qs}`);
+    if (r.ok) {
+      return await r.json();
+    }
+  } catch (err) {
+    console.warn('Failed to fetch subcontractor deduction report:', err);
+  }
+  return {
+    dateFrom: filters.dateFrom || null,
+    dateTo: filters.dateTo || null,
+    grandTotalHours: 0,
+    grandTotalNormalHours: 0,
+    grandTotalOtHours: 0,
+    grandTotalDeduction: 0,
+    groups: [],
+  };
+}
+
 export {
   exportSummaryToExcel,
   exportDayOtSummaryToExcel,
@@ -878,5 +963,6 @@ export {
   exportRunningChartToExcel,
   exportOperatorErpToExcel,
   exportOperatorErpToCsv,
+  exportSubcontractorDeductionToExcel,
 };
 

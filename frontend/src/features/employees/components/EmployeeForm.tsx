@@ -12,6 +12,16 @@ import * as businessPartnerService from '../../business-partners/services/busine
 import StatusBadge from '../../../components/StatusBadge';
 import { UserCheck, UserX } from 'lucide-react';
 import api from '../../../config/api';
+import {
+  EMPLOYEE_TYPE_OPTIONS,
+  SKILL_LEVEL_OPTIONS,
+  type EmployeeTypeValue,
+  type SkillLevelValue,
+  type ProjectTradeRateRow,
+  normalizeEmployeeTypeClient,
+  normalizeSkillLevelClient,
+  pickProjectTradeRateClient,
+} from '../../../utils/employeeTypes';
 
 interface EmployeeFormProps {
   /** If provided, form is in edit mode for this employee */
@@ -39,8 +49,10 @@ export default function EmployeeForm({
   const [fullName, setFullName] = useState('');
   const [businessPartnerId, setBusinessPartnerId] = useState('');
   const [tradeGroup, setTradeGroup] = useState('');
+  const [employeeType, setEmployeeType] = useState<EmployeeTypeValue>('INTERNAL');
+  const [skillLevel, setSkillLevel] = useState<SkillLevelValue>('SKILLED');
   const [nicNo, setNicNo] = useState('');
-  const [dailyRate, setDailyRate] = useState('1400');
+  const [dailyRate, setDailyRate] = useState('0');
   const [epfNo, setEpfNo] = useState('');
   const [status, setStatus] = useState<'active' | 'inactive' | 'pending_approval' | 'rejected'>('active');
   const [isSaving, setIsSaving] = useState(false);
@@ -48,29 +60,41 @@ export default function EmployeeForm({
 
   const [partners, setPartners] = useState<BusinessPartner[]>(businessPartners || []);
   const [loadingPartners, setLoadingPartners] = useState(!businessPartners || businessPartners.length === 0);
-  const [availableTradeGroups, setAvailableTradeGroups] = useState<Array<{ id: string; name: string; code: string; standardDailyRate: number }>>([]);
+  const [availableTradeGroups, setAvailableTradeGroups] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [projectTradeRates, setProjectTradeRates] = useState<ProjectTradeRateRow[]>([]);
 
-  // Fetch trade groups to support auto-filling standard daily rates
+  // Fetch trade groups and project-level trade rates
   useEffect(() => {
     let isMounted = true;
-    api.get('/corporate/trade-groups')
-      .then((res) => {
-        if (isMounted) setAvailableTradeGroups(res.data?.items ?? res.data ?? []);
+    Promise.all([
+      api.get('/corporate/trade-groups'),
+      api.get('/employees/trade-rates').catch(() => ({ data: { items: [] } })),
+    ])
+      .then(([tgRes, rateRes]) => {
+        if (!isMounted) return;
+        setAvailableTradeGroups(tgRes.data?.items ?? tgRes.data ?? []);
+        setProjectTradeRates(rateRes.data?.items ?? []);
       })
       .catch((err) => console.error('Failed to load trade groups for EmployeeForm:', err));
     return () => { isMounted = false; };
   }, []);
 
-  const handleTradeGroupChange = (value: string) => {
-    setTradeGroup(value);
+  const applyProjectRate = (tgValue: string, empType: EmployeeTypeValue, skill: SkillLevelValue) => {
     const matched = availableTradeGroups.find(
       (tg) =>
-        tg.name.toLowerCase() === value.trim().toLowerCase() ||
-        tg.code.toLowerCase() === value.trim().toLowerCase()
+        tg.name.toLowerCase() === tgValue.trim().toLowerCase() ||
+        tg.code.toLowerCase() === tgValue.trim().toLowerCase()
     );
-    if (matched && matched.standardDailyRate) {
-      setDailyRate(String(Number(matched.standardDailyRate)));
+    if (matched) {
+      const rateRow = projectTradeRates.find((r) => r.tradeGroupId === matched.id);
+      const rate = pickProjectTradeRateClient(rateRow, empType, skill);
+      setDailyRate(String(rate));
     }
+  };
+
+  const handleTradeGroupChange = (value: string) => {
+    setTradeGroup(value);
+    applyProjectRate(value, employeeType, skillLevel);
   };
 
   // Fetch partners if not supplied via props
@@ -114,8 +138,10 @@ export default function EmployeeForm({
       }
 
       setTradeGroup(employee.tradeGroup || '');
+      setEmployeeType(normalizeEmployeeTypeClient((employee as any).employeeType));
+      setSkillLevel(normalizeSkillLevelClient((employee as any).skillLevel));
       setNicNo(employee.nicNo || '');
-      setDailyRate(employee.dailyRate != null ? String(employee.dailyRate) : '1400');
+      setDailyRate(employee.dailyRate != null ? String(employee.dailyRate) : '0');
       setEpfNo(employee.epfNo || '');
     } else {
       setEmployeeCode('');
@@ -144,7 +170,8 @@ export default function EmployeeForm({
         fullName: fullName.trim() || callingName.trim() || employeeCode.trim() || 'Worker',
         businessPartnerId: businessPartnerId || undefined,
         businessPartner: selectedPartner?.name || 'Mäga Engineering (Direct)',
-        employeeType: businessPartnerId ? 'external' : 'internal',
+        employeeType,
+        skillLevel,
         tradeGroup: tradeGroup.trim(),
         nicNo: nicNo.trim(),
         dailyRate: parseFloat(dailyRate) || 1400,
@@ -228,10 +255,53 @@ export default function EmployeeForm({
         <datalist id="emp-tg-datalist">
           {availableTradeGroups.map((tg) => (
             <option key={tg.id} value={tg.name}>
-              {tg.code} — Rs. {Number(tg.standardDailyRate).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              {tg.code} — {tg.name}
             </option>
           ))}
         </datalist>
+      </div>
+
+      {/* Employee Type & Skill Level */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="emp-type" className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+            Employee Type *
+          </label>
+          <select
+            id="emp-type"
+            value={employeeType}
+            onChange={(e) => {
+              const nextType = e.target.value as EmployeeTypeValue;
+              setEmployeeType(nextType);
+              applyProjectRate(tradeGroup, nextType, skillLevel);
+            }}
+            className={INPUT_CLASS}
+          >
+            {EMPLOYEE_TYPE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="emp-skill" className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+            Skill Level *
+          </label>
+          <select
+            id="emp-skill"
+            value={skillLevel}
+            onChange={(e) => {
+              const nextSkill = e.target.value as SkillLevelValue;
+              setSkillLevel(nextSkill);
+              applyProjectRate(tradeGroup, employeeType, nextSkill);
+            }}
+            className={INPUT_CLASS}
+          >
+            {SKILL_LEVEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* NIC No. */}
@@ -249,20 +319,19 @@ export default function EmployeeForm({
         />
       </div>
 
-      {/* Daily Rate */}
+      {/* Daily Rate (Read-only from Project Price Model) */}
       <div className="flex flex-col gap-1">
         <label htmlFor="emp-rate" className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-          Daily Rate (LKR) *
+          Daily Rate (LKR — From Project Price Model)
         </label>
         <input
           id="emp-rate"
           type="number"
           step="0.01"
           value={dailyRate}
-          onChange={(e) => setDailyRate(e.target.value)}
-          className={INPUT_CLASS}
-          placeholder="1400.00"
-          required
+          readOnly
+          className={`${INPUT_CLASS} bg-slate-50 text-slate-600 cursor-not-allowed`}
+          placeholder="0.00"
         />
       </div>
 

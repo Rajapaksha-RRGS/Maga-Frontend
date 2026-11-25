@@ -348,4 +348,20 @@ textarea:disabled {
   color-scheme: light !important;
 }
 
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 6mm;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+}
+
 

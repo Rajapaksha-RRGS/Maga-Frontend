@@ -6,6 +6,7 @@
  * and deferred quick search so thousands of rows render instantaneously.
  */
 import { useState, useMemo, useDeferredValue, useCallback } from 'react';
+import { formatEmployeeTypeLabel, isExternalEmployeeTypeClient } from '../../../utils/employeeTypes';
 import {
   useReactTable,
   getCoreRowModel,
@@ -77,12 +78,12 @@ export default function ErpUploadTable({ data }: Props) {
                 {r.employeeType && (
                   <span
                     className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-semibold uppercase tracking-wide border ${
-                      r.employeeType === 'internal'
+                      !isExternalEmployeeTypeClient(r.employeeType)
                         ? 'bg-sky-50 text-sky-700 border-sky-200'
                         : 'bg-violet-50 text-violet-700 border-violet-200'
                     }`}
                   >
-                    {r.employeeType}
+                    {formatEmployeeTypeLabel(r.employeeType)}
                   </span>
                 )}
               </div>

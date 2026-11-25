@@ -21,17 +21,24 @@ import {
   CheckCircle2,
   AlertTriangle,
   Building2,
-  HardHat,
   ExternalLink,
 } from 'lucide-react';
 import api, { getFileUrl } from '../../../config/api';
 import type { BusinessPartner } from '../../business-partners/services/businessPartnerService';
+import {
+  EMPLOYEE_TYPE_OPTIONS,
+  SKILL_LEVEL_OPTIONS,
+  type EmployeeTypeValue,
+  type SkillLevelValue,
+  type ProjectTradeRateRow,
+  isExternalEmployeeTypeClient,
+  pickProjectTradeRateClient,
+} from '../../../utils/employeeTypes';
 
 interface TradeGroupOption {
   id: string;
   code: string;
   name: string;
-  standardDailyRate: number;
 }
 
 interface DirectSiteRegisterModalProps {
@@ -48,7 +55,8 @@ export default function DirectSiteRegisterModal({
   existingPartners,
 }: DirectSiteRegisterModalProps) {
   // Tabs: Worker classification
-  const [workerType, setWorkerType] = useState<'internal' | 'external'>('internal');
+  const [workerType, setWorkerType] = useState<EmployeeTypeValue>('INTERNAL');
+  const [skillLevel, setSkillLevel] = useState<SkillLevelValue>('SKILLED');
 
   // Employee Form State
   const [fullName, setFullName] = useState('');
@@ -56,7 +64,7 @@ export default function DirectSiteRegisterModal({
   const [nicNo, setNicNo] = useState('');
   const [epfNo, setEpfNo] = useState('');
   const [tradeGroupId, setTradeGroupId] = useState('');
-  const [dailyRate, setDailyRate] = useState('1400');
+  const [dailyRate, setDailyRate] = useState('0');
   const [isOperator, setIsOperator] = useState(false);
 
   // Employee Dossier File
@@ -69,22 +77,34 @@ export default function DirectSiteRegisterModal({
 
   // Data Loading & State
   const [tradeGroups, setTradeGroups] = useState<TradeGroupOption[]>([]);
+  const [projectTradeRates, setProjectTradeRates] = useState<ProjectTradeRateRow[]>([]);
   const [isLoadingTradeGroups, setIsLoadingTradeGroups] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Load Table-Driven Trade Groups from Central Master
+  // Load Table-Driven Trade Groups from Central Master + Project Trade Rates
   useEffect(() => {
     if (!isOpen) return;
     const fetchTradeGroups = async () => {
       setIsLoadingTradeGroups(true);
       try {
-        const res = await api.get('/corporate/trade-groups');
-        const groups = (res.data?.items || res.data || []) as TradeGroupOption[];
+        const [tgRes, rateRes] = await Promise.all([
+          api.get('/corporate/trade-groups'),
+          api.get('/employees/trade-rates').catch(() => ({ data: { items: [] } })),
+        ]);
+        const groups = (tgRes.data?.items || tgRes.data || []) as TradeGroupOption[];
+        const rates = (rateRes.data?.items || []) as ProjectTradeRateRow[];
         setTradeGroups(groups);
+        setProjectTradeRates(rates);
         if (groups.length > 0 && !tradeGroupId) {
-          setTradeGroupId(groups[0].id);
-          setDailyRate(String(groups[0].standardDailyRate || 1400));
+          const firstTgId = groups[0].id;
+          setTradeGroupId(firstTgId);
+          const rate = pickProjectTradeRateClient(
+            rates.find((r) => r.tradeGroupId === firstTgId),
+            workerType,
+            skillLevel
+          );
+          setDailyRate(String(rate));
         }
       } catch (err) {
         console.error('Failed to load trade groups:', err);
@@ -95,15 +115,22 @@ export default function DirectSiteRegisterModal({
     fetchTradeGroups();
   }, [isOpen]);
 
-  // Handle Trade Group change to auto-suggest daily rate
+  // Handle Trade Group / Worker Type / Skill Level change to auto-suggest daily rate
+  const updateSuggestedRate = (tgId: string, empType: EmployeeTypeValue, skill: SkillLevelValue) => {
+    const rate = pickProjectTradeRateClient(
+      projectTradeRates.find((r) => r.tradeGroupId === tgId),
+      empType,
+      skill
+    );
+    setDailyRate(String(rate));
+  };
+
   const handleTradeGroupChange = (tgId: string) => {
     setTradeGroupId(tgId);
+    updateSuggestedRate(tgId, workerType, skillLevel);
     const selected = tradeGroups.find((tg) => tg.id === tgId);
-    if (selected) {
-      setDailyRate(String(selected.standardDailyRate || 1400));
-      if (selected.name.toLowerCase().includes('operator') || selected.name.toLowerCase().includes('driver')) {
-        setIsOperator(true);
-      }
+    if (selected && (selected.name.toLowerCase().includes('operator') || selected.name.toLowerCase().includes('driver'))) {
+      setIsOperator(true);
     }
   };
 
@@ -169,7 +196,8 @@ export default function DirectSiteRegisterModal({
     const selectedTg = tradeGroups.find((tg) => tg.id === tradeGroupId);
     const tradeGroupName = selectedTg?.name || 'General Labour';
 
-    if (workerType === 'external') {
+    const isExt = isExternalEmployeeTypeClient(workerType);
+    if (isExt) {
       if (!selectedPartnerId) {
         setErrorMessage('Please select a registered Business Partner.');
         return;
@@ -188,12 +216,13 @@ export default function DirectSiteRegisterModal({
         dailyRate: parseFloat(dailyRate) || 1400,
         isOperator,
         employeeType: workerType,
+        skillLevel,
         documentUrl: empDocumentUrl || undefined,
         status: 'pending_approval',
         isSiteWalkIn: true,
       };
 
-      if (workerType === 'external') {
+      if (isExt) {
         payload.businessPartnerId = selectedPartnerId;
         const matched = existingPartners.find((p) => p.id === selectedPartnerId);
         if (matched) {
@@ -260,41 +289,51 @@ export default function DirectSiteRegisterModal({
             </div>
           )}
 
-          {/* Worker Classification Selector */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
-              1. Worker Classification
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setWorkerType('internal')}
-                className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
-                  workerType === 'internal'
-                    ? 'border-blue-600 bg-blue-50/80 text-blue-900 shadow-xs ring-2 ring-blue-500/20'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                }`}
+          {/* Worker Classification & Skill Level Selector */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+                1. Worker Classification
+              </label>
+              <select
+                value={workerType}
+                onChange={(e) => {
+                  const nextType = e.target.value as EmployeeTypeValue;
+                  setWorkerType(nextType);
+                  updateSuggestedRate(tradeGroupId, nextType, skillLevel);
+                }}
+                className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-medium"
+                style={{ colorScheme: 'light' }}
               >
-                <HardHat className="w-4 h-4 text-blue-600" />
-                <span>Direct Mäga (Internal)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setWorkerType('external')}
-                className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
-                  workerType === 'external'
-                    ? 'border-indigo-600 bg-indigo-50/80 text-indigo-900 shadow-xs ring-2 ring-indigo-500/20'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                }`}
+                {EMPLOYEE_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+                Skill Level
+              </label>
+              <select
+                value={skillLevel}
+                onChange={(e) => {
+                  const nextSkill = e.target.value as SkillLevelValue;
+                  setSkillLevel(nextSkill);
+                  updateSuggestedRate(tradeGroupId, workerType, nextSkill);
+                }}
+                className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-medium"
+                style={{ colorScheme: 'light' }}
               >
-                <Building2 className="w-4 h-4 text-indigo-600" />
-                <span>Subcontractor (External)</span>
-              </button>
+                {SKILL_LEVEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             </div>
           </div>
 
           {/* Subcontractor / Business Partner Section (If External) */}
-          {workerType === 'external' && (
+          {isExternalEmployeeTypeClient(workerType) && (
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-800 flex items-center gap-2">
@@ -415,7 +454,7 @@ export default function DirectSiteRegisterModal({
                   ) : (
                     tradeGroups.map((tg) => (
                       <option key={tg.id} value={tg.id} className="text-slate-900 bg-white font-medium">
-                        {tg.code} — {tg.name} (Std LKR {tg.standardDailyRate})
+                        {tg.code} — {tg.name}
                       </option>
                     ))
                   )}
@@ -424,17 +463,16 @@ export default function DirectSiteRegisterModal({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Daily Rate (LKR) <span className="text-red-500">*</span>
+                  Daily Rate (LKR — From Price Model)
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-xs text-slate-500 font-mono font-semibold">LKR</span>
                   <input
                     type="number"
-                    step="50"
-                    required
+                    step="0.01"
+                    readOnly
                     value={dailyRate}
-                    onChange={(e) => setDailyRate(e.target.value)}
-                    className="w-full pl-12 pr-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-hidden font-mono font-semibold text-slate-900 placeholder:text-slate-400"
+                    className="w-full pl-12 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg font-mono font-semibold text-slate-600 cursor-not-allowed"
                   />
                 </div>
               </div>

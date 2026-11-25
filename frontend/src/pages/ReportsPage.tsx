@@ -25,6 +25,7 @@ import ReportFiltersBar from '../features/reports/components/ReportFilters';
 import SummaryTable from '../features/reports/components/SummaryTable';
 import DayOtSummaryTable from '../features/reports/components/DayOtSummaryTable';
 import BpBillTable from '../features/reports/components/BpBillTable';
+import SubcontractorDeductionTable from '../features/reports/components/SubcontractorDeductionTable';
 import ErpUploadTable from '../features/reports/components/ErpUploadTable';
 import RunningChartTable from '../features/reports/components/RunningChartTable';
 import { EquipmentRunningChartTable } from '../features/reports/components/EquipmentRunningChartTable';
@@ -49,11 +50,13 @@ export default function ReportsPage() {
     hasQueried,
     hasResults,
     businessPartners,
+    businessPartnerDetails,
     activityCodes,
 
     summaryData,
     dayOtData,
     bpBillData,
+    subcontractorDeductionData,
     erpData,
     runningChartData,
     equipmentRunningChartData,
@@ -88,9 +91,9 @@ export default function ReportsPage() {
   }, [setActiveTab, updateFilter]);
 
   return (
-    <div className="px-4 md:px-6 py-5 max-w-7xl mx-auto flex flex-col gap-5">
+    <div className="px-4 md:px-6 py-5 max-w-7xl mx-auto flex flex-col gap-5 print:p-0 print:gap-0 print:max-w-none">
       {/* ── Top Bar: Title, Category Switcher & Export ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-300 shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-300 shadow-2xs print:hidden">
         <div className="flex flex-col gap-1">
           {/* Category Heading & Badge */}
           <div className="flex flex-wrap items-center gap-2.5">
@@ -184,16 +187,18 @@ export default function ReportsPage() {
       </div>
 
       {/* ── Category Sub-Reports Tabs ── */}
-      <ReportTypeSelector
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        category={selectedCategory}
-      />
+      <div className="print:hidden">
+        <ReportTypeSelector
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          category={selectedCategory}
+        />
+      </div>
 
       {/* ── Report Views ── */}
       {activeTab === 'time-card' ? (
         <TimeCardReportView 
-          businessPartners={businessPartners} 
+          businessPartners={businessPartnerDetails.length > 0 ? businessPartnerDetails : businessPartners} 
           defaultWorkerType={selectedCategory === 'operator' ? 'operator' : 'labor'} 
         />
       ) : (
@@ -207,7 +212,7 @@ export default function ReportsPage() {
             onQuery={runQuery}
             isLoading={isLoading}
             isLoadingActivityCodes={isLoadingActivityCodes}
-            businessPartners={businessPartners}
+            businessPartners={businessPartnerDetails.length > 0 ? businessPartnerDetails : businessPartners}
             activityCodes={activityCodes}
           />
 
@@ -241,6 +246,10 @@ export default function ReportsPage() {
 
               {activeTab === 'bp-bill' && bpBillData && (
                 <BpBillTable data={bpBillData} />
+              )}
+
+              {activeTab === 'subcontractor-deduction' && subcontractorDeductionData && (
+                <SubcontractorDeductionTable data={subcontractorDeductionData} />
               )}
 
               {activeTab === 'erp-upload' && erpData && (

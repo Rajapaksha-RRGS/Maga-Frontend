@@ -23,6 +23,7 @@ import {
   UserX
 } from 'lucide-react';
 import { SearchableActivitySelect } from '../components/SearchableActivitySelect';
+import { SearchableSubcontractorSelect } from '../components/SearchableSubcontractorSelect';
 import { SiteLaborPoolModal } from '../components/SiteLaborPoolModal';
 import { TimeInput24 } from '../../../components/TimeInput24';
 import { 
@@ -57,6 +58,8 @@ interface BatchActivityItem {
   id: string;
   activityCode: string;
   hours: number;
+  chargedBusinessPartnerId?: string | null;
+  chargedBusinessPartnerName?: string | null;
 }
 
 // Helper to get effective shift hours for a worker in current context
@@ -87,11 +90,24 @@ export function LaborEntryView({
   const effectiveSupervisorId = propSupervisorId || user?.id || '';
   const [isLaborPoolModalOpen, setIsLaborPoolModalOpen] = useState(false);
   const [isPoolMode, setIsPoolMode] = useState(false);
+  const [subcontractors, setSubcontractors] = useState<Array<{ id: string; code: string; name: string; type?: string | null }>>([]);
 
   useEffect(() => {
     supervisorStorage.isLaborPoolModeEnabled(projectId)
       .then(setIsPoolMode)
       .catch(() => setIsPoolMode(false));
+
+    import('../../../config/api').then(({ apiFetch, API_URL }) => {
+      apiFetch(`${API_URL}/business-partners?status=active&type=subcontractor`)
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          const list = Array.isArray(data) ? data : (data?.data || []);
+          setSubcontractors(
+            list.filter((bp: any) => String(bp.type || '').trim().toLowerCase() === 'subcontractor')
+          );
+        })
+        .catch(() => setSubcontractors([]));
+    });
   }, [projectId]);
 
   const handleAddLaborersFromPool = async (newLaborers: LaborerEntry[]) => {
@@ -457,12 +473,17 @@ export function LaborEntryView({
     setBatchActivities((prev) => [...prev, newRow]);
   };
 
-  const handleUpdateBatchActivityRow = (id: string, field: 'activityCode' | 'hours', value: any) => {
+  const handleUpdateBatchActivityRow = (id: string, field: 'activityCode' | 'hours' | 'chargedBusinessPartnerId', value: any) => {
     setBatchActivities((prev) => {
       if (field === 'hours') {
         const valNum = value === '' ? 0 : parseFloat(value);
         const safeHours = isNaN(valNum) ? 0 : Math.max(0, valNum);
         return prev.map((a) => (a.id === id ? { ...a, hours: safeHours } : a));
+      }
+      if (field === 'chargedBusinessPartnerId') {
+        const bpId = value ? String(value) : null;
+        const bpName = bpId ? (subcontractors.find((s) => s.id === bpId)?.name || null) : null;
+        return prev.map((a) => (a.id === id ? { ...a, chargedBusinessPartnerId: bpId, chargedBusinessPartnerName: bpName } : a));
       }
       return prev.map((a) => (a.id === id ? { ...a, [field]: value } : a));
     });
@@ -542,6 +563,8 @@ export function LaborEntryView({
           id: `split-${Date.now()}-${l.id}-${ba.id}`,
           activityCode: ba.activityCode,
           hours: ba.hours,
+          chargedBusinessPartnerId: ba.chargedBusinessPartnerId || null,
+          chargedBusinessPartnerName: ba.chargedBusinessPartnerName || null,
         }));
 
       return {
@@ -711,7 +734,12 @@ export function LaborEntryView({
     onSaveLaborers(updated);
   };
 
-  const handleUpdateIndividualActivitySplit = (laborerId: string, splitId: string, field: 'activityCode' | 'hours', value: any) => {
+  const handleUpdateIndividualActivitySplit = (
+    laborerId: string,
+    splitId: string,
+    field: 'activityCode' | 'hours' | 'chargedBusinessPartnerId',
+    value: any
+  ) => {
     const updated = laborers.map((l) => {
       if (l.id !== laborerId) return l;
       const autoStatus = (!l.isAbsent && l.inTime && l.outTime ? 'done' : 'draft') as 'draft' | 'pending' | 'done';
@@ -722,6 +750,17 @@ export function LaborEntryView({
 
         const activities = l.activities.map((a) =>
           a.id === splitId ? { ...a, hours: safeHours } : a
+        );
+        return { ...l, activities, status: autoStatus };
+      }
+
+      if (field === 'chargedBusinessPartnerId') {
+        const bpId = value ? String(value) : null;
+        const bpName = bpId ? (subcontractors.find((s) => s.id === bpId)?.name || null) : null;
+        const activities = l.activities.map((a) =>
+          a.id === splitId
+            ? { ...a, chargedBusinessPartnerId: bpId, chargedBusinessPartnerName: bpName }
+            : a
         );
         return { ...l, activities, status: autoStatus };
       }
@@ -1191,45 +1230,62 @@ export function LaborEntryView({
               </div>
 
               {batchActivities.map((row) => (
-                <div key={row.id} className="flex items-center gap-1.5 w-full">
-                  <SearchableActivitySelect
-                    value={row.activityCode}
-                    onChange={(code) => handleUpdateBatchActivityRow(row.id, 'activityCode', code)}
-                    options={activityOptions}
-                    placeholder="Search activity code..."
-                  />
-
-                  <div className="w-20 flex-shrink-0 flex flex-col items-center">
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      max="24"
-                      value={row.hours}
-                      onChange={(e) => handleUpdateBatchActivityRow(row.id, 'hours', parseFloat(e.target.value) || 0)}
-                      placeholder="Hrs"
-                      className="w-full px-1.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-center text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 font-mono"
+                <div
+                  key={row.id}
+                  className={[
+                    'flex flex-col gap-1.5 w-full p-2 rounded-xl border transition-colors',
+                    row.chargedBusinessPartnerId
+                      ? 'bg-red-50/70 dark:bg-red-950/25 border-red-300 dark:border-red-800'
+                      : 'bg-transparent border-transparent p-0',
+                  ].join(' ')}
+                >
+                  <div className="flex items-center gap-1.5 w-full">
+                    <SearchableActivitySelect
+                      value={row.activityCode}
+                      onChange={(code) => handleUpdateBatchActivityRow(row.id, 'activityCode', code)}
+                      options={activityOptions}
+                      placeholder="Search activity code..."
                     />
-                    <div className="flex items-center gap-1 mt-0.5">
-                      <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400">
-                        {formatClockMinutes(row.hours)}
-                      </span>
-                      {getTimeInputHint(row.hours) && (
-                        <span className="text-[8px] font-bold text-amber-600 dark:text-amber-400" title={getTimeInputHint(row.hours)!}>
-                          ⚠️
+
+                    <div className="w-20 flex-shrink-0 flex flex-col items-center">
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="24"
+                        value={row.hours}
+                        onChange={(e) => handleUpdateBatchActivityRow(row.id, 'hours', parseFloat(e.target.value) || 0)}
+                        placeholder="Hrs"
+                        className="w-full min-h-[44px] px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-center text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-600 font-mono"
+                      />
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400">
+                          {formatClockMinutes(row.hours)}
                         </span>
-                      )}
+                        {getTimeInputHint(row.hours) && (
+                          <span className="text-[8px] font-bold text-amber-600 dark:text-amber-400" title={getTimeInputHint(row.hours)!}>
+                            ⚠️
+                          </span>
+                        )}
+                      </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveBatchActivityRow(row.id)}
+                      title={batchActivities.length > 1 ? "Remove activity row" : "Clear activity code"}
+                      className="w-11 h-11 flex-shrink-0 rounded-xl flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveBatchActivityRow(row.id)}
-                    title={batchActivities.length > 1 ? "Remove activity row" : "Clear activity code"}
-                    className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {/* Subcontractor Back-Charge (Red-Pen) Bottom Sheet Selector */}
+                  <SearchableSubcontractorSelect
+                    value={row.chargedBusinessPartnerId}
+                    onChange={(bpId) => handleUpdateBatchActivityRow(row.id, 'chargedBusinessPartnerId', bpId)}
+                    options={subcontractors}
+                  />
                 </div>
               ))}
 
@@ -1601,27 +1657,48 @@ export function LaborEntryView({
                         {worker.activities.length > 0 && (
                           <>
                             <span className="text-[10px] uppercase font-bold text-slate-400">Tasks:</span>
-                            {worker.activities.map((act) => (
-                              <span
-                                key={act.id}
-                                className="group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
-                              >
-                                <span>{act.activityCode ? `${act.activityCode}: ` : 'Select Code: '}{formatHourWithClockText(act.hours)}</span>
-                                {!isDayLocked && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleRemoveIndividualActivitySplit(worker.id, act.id);
-                                    }}
-                                    className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer"
-                                    title={act.activityCode ? `Delete ${act.activityCode}` : 'Delete task'}
-                                  >
-                                    <X size={10} />
-                                  </button>
-                                )}
-                              </span>
-                            ))}
+                            {worker.activities.map((act) => {
+                              const subName =
+                                act.chargedBusinessPartnerName ||
+                                (act.chargedBusinessPartnerId
+                                  ? subcontractors.find((s) => s.id === act.chargedBusinessPartnerId)?.name
+                                  : null);
+                              const isSub = Boolean(act.chargedBusinessPartnerId);
+                              return (
+                                <span
+                                  key={act.id}
+                                  className={[
+                                    'group text-[10px] font-semibold pl-2 pr-1.5 py-0.5 rounded-full border flex items-center gap-1',
+                                    isSub
+                                      ? 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700'
+                                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700',
+                                  ].join(' ')}
+                                >
+                                  <span>
+                                    {act.activityCode ? `${act.activityCode}: ` : 'Select Code: '}
+                                    {formatHourWithClockText(act.hours)}
+                                    {isSub && (
+                                      <span className="ml-1 font-bold text-red-600 dark:text-red-400">
+                                        [SUB: {subName || 'Back-Charge'}]
+                                      </span>
+                                    )}
+                                  </span>
+                                  {!isDayLocked && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRemoveIndividualActivitySplit(worker.id, act.id);
+                                      }}
+                                      className="w-6 h-6 -mr-0.5 rounded-full flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-100/70 dark:hover:bg-red-950/50 cursor-pointer"
+                                      title={act.activityCode ? `Delete ${act.activityCode}` : 'Delete task'}
+                                    >
+                                      <X size={12} />
+                                    </button>
+                                  )}
+                                </span>
+                              );
+                            })}
                           </>
                         )}
 
@@ -1653,7 +1730,7 @@ export function LaborEntryView({
                       <button
                         type="button"
                         onClick={() => setExpandedId(worker.id)}
-                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 ml-auto cursor-pointer"
+                        className="min-h-[36px] px-2.5 py-1.5 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 text-[11px] font-bold text-blue-700 hover:bg-blue-100 dark:text-blue-300 ml-auto cursor-pointer"
                       >
                         Edit Tasks ({worker.activities.length}) →
                       </button>
@@ -1704,49 +1781,64 @@ export function LaborEntryView({
                           worker.activities.map((act) => (
                             <div
                               key={act.id}
-                              className="flex items-center gap-1.5 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 w-full"
+                              className={[
+                                'flex flex-col gap-1.5 p-2 rounded-xl border w-full transition-colors',
+                                act.chargedBusinessPartnerId
+                                  ? 'bg-red-50/70 dark:bg-red-950/25 border-red-300 dark:border-red-800'
+                                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700',
+                              ].join(' ')}
                             >
-                              <SearchableActivitySelect
-                                disabled={isDayLocked}
-                                value={act.activityCode}
-                                onChange={(code) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'activityCode', code)}
-                                options={activityOptions}
-                                placeholder="Select activity code..."
-                              />
-
-                              <div className="w-20 flex-shrink-0 flex flex-col items-center">
-                                <input
-                                  type="number"
-                                  step="0.5"
-                                  min="0"
-                                  max={worker.shiftHours || 24}
+                              <div className="flex items-center gap-1.5 w-full">
+                                <SearchableActivitySelect
                                   disabled={isDayLocked}
-                                  value={act.hours}
-                                  onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'hours', parseFloat(e.target.value) || 0)}
-                                  className="w-full px-1.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600 font-mono"
+                                  value={act.activityCode}
+                                  onChange={(code) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'activityCode', code)}
+                                  options={activityOptions}
+                                  placeholder="Select activity code..."
                                 />
-                                <div className="flex items-center gap-1 mt-0.5">
-                                  <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400">
-                                    {formatClockMinutes(act.hours)}
-                                  </span>
-                                  {getTimeInputHint(act.hours) && (
-                                    <span className="text-[8px] font-bold text-amber-600 dark:text-amber-400" title={getTimeInputHint(act.hours)!}>
-                                      ⚠️
+
+                                <div className="w-20 flex-shrink-0 flex flex-col items-center">
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    min="0"
+                                    max={worker.shiftHours || 24}
+                                    disabled={isDayLocked}
+                                    value={act.hours}
+                                    onChange={(e) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'hours', parseFloat(e.target.value) || 0)}
+                                    className="w-full min-h-[44px] px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold text-slate-800 dark:text-slate-100 text-center focus:ring-2 focus:ring-blue-600 font-mono"
+                                  />
+                                  <div className="flex items-center gap-1 mt-0.5">
+                                    <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400">
+                                      {formatClockMinutes(act.hours)}
                                     </span>
-                                  )}
+                                    {getTimeInputHint(act.hours) && (
+                                      <span className="text-[8px] font-bold text-amber-600 dark:text-amber-400" title={getTimeInputHint(act.hours)!}>
+                                        ⚠️
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
+
+                                {!isDayLocked && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveIndividualActivitySplit(worker.id, act.id)}
+                                    className="w-11 h-11 flex-shrink-0 rounded-xl flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer transition-colors"
+                                    title="Delete activity"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                )}
                               </div>
 
-                              {!isDayLocked && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveIndividualActivitySplit(worker.id, act.id)}
-                                  className="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer transition-colors"
-                                  title="Delete activity"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              )}
+                              {/* Subcontractor Back-Charge (Red-Pen) Bottom Sheet Selector */}
+                              <SearchableSubcontractorSelect
+                                disabled={isDayLocked}
+                                value={act.chargedBusinessPartnerId}
+                                onChange={(bpId) => handleUpdateIndividualActivitySplit(worker.id, act.id, 'chargedBusinessPartnerId', bpId)}
+                                options={subcontractors}
+                              />
                             </div>
                           ))
                         )}

@@ -44,22 +44,21 @@ model MF_G_BusinessPartner {
   corporateEmployees MF_G_Employee[]
   employees          MF_P_Employee[]
   equipment          MF_P_Equipment[]
-  appliedTimeEntries MF_OP_TimeEntry[] @relation("TimeEntryAppliedBP")
+  appliedTimeEntries    MF_OP_TimeEntry[]          @relation("TimeEntryAppliedBP")
+  chargedActivitySplits MF_OP_LaborActivitySplit[] @relation("ActivitySplitChargedBP")
   @@map("MF_G_BUSINESS_PARTNER")
 }
 
 model MF_G_TradeGroup {
-  id                String   @id @default(uuid()) @map("trade_group_id")
-  code              String   @unique
-  name              String
-  currency          String   @default("LKR") @db.VarChar(10)
-  standardDailyRate Decimal  @default(1400.00) @map("standard_daily_rate") @db.Decimal(10, 2)
-  standardOtRate    Decimal? @map("standard_ot_rate") @db.Decimal(10, 2)
-  status            String   @default("active")
-  createdAt         DateTime @default(now()) @map("created_at")
+  id        String   @id @default(uuid()) @map("trade_group_id")
+  code      String   @unique
+  name      String
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @map("created_at")
 
   corporateEmployees MF_G_Employee[]
   employees          MF_P_Employee[]
+  projectTradeRates  MF_P_TradeRate[]
 
   @@map("MF_G_TRADE_GROUP")
 }
@@ -99,9 +98,10 @@ model MF_G_Employee {
   tradeGroupId               String   @map("trade_group_id")
   dailyRate                  Decimal? @map("daily_rate") @db.Decimal(12, 2)
   isOperator                 Boolean  @default(false) @map("is_operator")
-  epfNo                      String?  @map("epf_no")
-  employeeType               String   @map("employee_type") // "internal" | "external" - Strictly Mandatory
-  corporateBusinessPartnerId String?  @map("business_partner_id")
+  epfNo                      String?      @map("epf_no")
+  employeeType               EmployeeType @default(INTERNAL) @map("employee_type")
+  skillLevel                 SkillLevel   @default(SKILLED) @map("skill_level")
+  corporateBusinessPartnerId String?      @map("business_partner_id")
   currentProjectId           String?  @map("current_project_id")
   documentUrl                String?  @map("document_url")
   status                     String   @default("active")
@@ -243,6 +243,7 @@ model MF_P_Project {
   // Site Operations & Resources
   users          MF_P_User[]
   employees      MF_P_Employee[]
+  tradeRates     MF_P_TradeRate[]
   equipment      MF_P_Equipment[]
   activityCodes  MF_P_ActivityCode[]
   calendarDays   MF_P_CalendarDay[]
@@ -285,9 +286,11 @@ model MF_P_Employee {
   projectId           String   @map("project_id")
   corporateEmployeeId String   @map("corporate_employee_id")
   callingName         String?  @map("calling_name")
-  tradeGroupId        String?  @map("trade_group_id")
-  businessPartnerId   String?  @map("business_partner_id")
-  dailyRate           Decimal  @default(1400.00) @map("daily_rate") @db.Decimal(10, 2)
+  tradeGroupId        String?      @map("trade_group_id")
+  businessPartnerId   String?      @map("business_partner_id")
+  employeeType        EmployeeType @default(INTERNAL) @map("employee_type")
+  skillLevel          SkillLevel   @default(SKILLED) @map("skill_level")
+  dailyRate           Decimal      @default(1400.00) @map("daily_rate") @db.Decimal(10, 2)
   isOperator          Boolean  @default(false) @map("is_operator")
   status              String   @default("active")
   createdAt           DateTime @default(now()) @map("created_at")
@@ -544,18 +547,21 @@ model MF_OP_TimeEntry {
 }
 
 model MF_OP_LaborActivitySplit {
-  id             String   @id @default(uuid()) @map("labor_activity_split_id")
-  timeEntryId    String   @map("time_entry_id")
-  activityCodeId String   @map("activity_code_id")
-  hours          Decimal  @default(0.00) @db.Decimal(5, 2)
-  createdAt      DateTime @default(now()) @map("created_at")
+  id                       String   @id @default(uuid()) @map("labor_activity_split_id")
+  timeEntryId              String   @map("time_entry_id")
+  activityCodeId           String   @map("activity_code_id")
+  chargedBusinessPartnerId String?  @map("charged_business_partner_id")
+  hours                    Decimal  @default(0.00) @db.Decimal(5, 2)
+  createdAt                DateTime @default(now()) @map("created_at")
 
-  timeEntry    MF_OP_TimeEntry   @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
-  activityCode MF_P_ActivityCode @relation(fields: [activityCodeId], references: [id])
+  timeEntry              MF_OP_TimeEntry       @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  activityCode           MF_P_ActivityCode     @relation(fields: [activityCodeId], references: [id])
+  chargedBusinessPartner MF_G_BusinessPartner? @relation("ActivitySplitChargedBP", fields: [chargedBusinessPartnerId], references: [id])
 
-  @@unique([timeEntryId, activityCodeId], name: "timeEntryId_activityCodeId")
+  @@index([timeEntryId, activityCodeId])
   @@index([timeEntryId])
   @@index([activityCodeId])
+  @@index([chargedBusinessPartnerId])
   @@map("MF_L_LABOR_ACTIVITY_SPLIT")
 }
 
@@ -573,4 +579,44 @@ model MF_OP_OperatorEquipmentSplit {
   @@index([timeEntryId])
   @@index([equipmentId])
   @@map("MF_L_OPERATOR_EQUIPMENT_SPLIT")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ENUMS & PROJECT-LEVEL TRADE RATES
+// ═════════════════════════════════════════════════════════════════════════════
+
+enum EmployeeType {
+  INTERNAL
+  FOREIGN
+  EXTERNAL_SUPPLY
+  EXTERNAL_SUBCONTRACTOR
+}
+
+enum SkillLevel {
+  SKILLED
+  UNSKILLED
+}
+
+model MF_P_TradeRate {
+  id                       String   @id @default(uuid()) @map("project_trade_rate_id")
+  projectId                String   @map("project_id")
+  tradeGroupId             String   @map("trade_group_id")
+  internalSkilledRate      Decimal  @default(0.00) @map("internal_skilled_rate") @db.Decimal(10, 2)
+  internalUnskilledRate    Decimal  @default(0.00) @map("internal_unskilled_rate") @db.Decimal(10, 2)
+  foreignSkilledRate       Decimal  @default(0.00) @map("foreign_skilled_rate") @db.Decimal(10, 2)
+  foreignUnskilledRate     Decimal  @default(0.00) @map("foreign_unskilled_rate") @db.Decimal(10, 2)
+  supplySkilledRate        Decimal  @default(0.00) @map("supply_skilled_rate") @db.Decimal(10, 2)
+  supplyUnskilledRate      Decimal  @default(0.00) @map("supply_unskilled_rate") @db.Decimal(10, 2)
+  subcontractorSkilledRate   Decimal @default(0.00) @map("subcontractor_skilled_rate") @db.Decimal(10, 2)
+  subcontractorUnskilledRate Decimal @default(0.00) @map("subcontractor_unskilled_rate") @db.Decimal(10, 2)
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  project    MF_P_Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tradeGroup MF_G_TradeGroup @relation(fields: [tradeGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, tradeGroupId])
+  @@index([projectId])
+  @@index([tradeGroupId])
+  @@map("project_trade_rates")
 }

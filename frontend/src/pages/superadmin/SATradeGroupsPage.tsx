@@ -22,26 +22,22 @@ import {
 import api from '../../config/api';
 import SACsvImportModal from '../../components/SACsvImportModal';
 
-const TG_SAMPLE_HEADERS = ['code', 'name', 'currency', 'standardDailyRate'];
+const TG_SAMPLE_HEADERS = ['code', 'name'];
 const TG_SAMPLE_DATA = [
-  { code: 'MMS', name: 'Mason (Local)', currency: 'LKR', standardDailyRate: '2000.00' },
-  { code: 'USD-MMS', name: 'USD - Mason', currency: 'USD', standardDailyRate: '20.00' },
-  { code: 'INR-MMS', name: 'INR - Mason', currency: 'INR', standardDailyRate: '1500.00' },
-  { code: 'ASP', name: 'Asphalt Laying', currency: 'LKR', standardDailyRate: '800.00' },
-  { code: 'MAL', name: 'Aluminium Fabricator', currency: 'LKR', standardDailyRate: '880.00' },
-  { code: 'MBB', name: 'Bar Bender', currency: 'LKR', standardDailyRate: '880.00' },
-  { code: 'MDR', name: 'Driver', currency: 'LKR', standardDailyRate: '680.00' },
-  { code: 'MEX', name: 'Excavator Operator', currency: 'LKR', standardDailyRate: '1200.00' },
+  { code: 'MMS', name: 'Mason' },
+  { code: 'ASP', name: 'Asphalt Laying' },
+  { code: 'MAL', name: 'Aluminium Fabricator' },
+  { code: 'MBB', name: 'Bar Bender' },
+  { code: 'MDR', name: 'Driver' },
+  { code: 'MEX', name: 'Excavator Operator' },
 ];
-const TG_REQUIRED_FIELDS = ['code', 'name', 'standardDailyRate'];
+const TG_REQUIRED_FIELDS = ['code', 'name'];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TradeGroup {
   id: string;
   code: string;
   name: string;
-  currency?: string;
-  standardDailyRate: number;
   status: string;
   createdAt: string;
 }
@@ -60,36 +56,12 @@ export function formatRateWithCurrency(rate: number, currency: string = 'LKR'): 
   }
 }
 
-function CurrencyBadge({ currency = 'LKR' }: { currency?: string }) {
-  const cur = (currency || 'LKR').toUpperCase();
-  if (cur === 'USD') {
-    return (
-      <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-        USD ($)
-      </span>
-    );
-  }
-  if (cur === 'INR') {
-    return (
-      <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
-        INR (₹)
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-200">
-      LKR
-    </span>
-  );
-}
-
 // ── Skeleton Row ──────────────────────────────────────────────────────────────
 function SkeletonRow() {
   return (
     <tr className="animate-pulse">
       <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-20" /></td>
       <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-32" /></td>
-      <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-24" /></td>
       <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-16" /></td>
       <td className="px-4 py-3"><div className="h-4 bg-violet-50 rounded w-8" /></td>
     </tr>
@@ -124,8 +96,7 @@ export default function SATradeGroupsPage() {
   const filtered = tradeGroups.filter(
     (tg) =>
       tg.name.toLowerCase().includes(search.toLowerCase()) ||
-      tg.code.toLowerCase().includes(search.toLowerCase()) ||
-      (tg.currency || 'LKR').toLowerCase().includes(search.toLowerCase()),
+      tg.code.toLowerCase().includes(search.toLowerCase()),
   );
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -133,8 +104,6 @@ export default function SATradeGroupsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formCode, setFormCode] = useState('');
   const [formName, setFormName] = useState('');
-  const [formCurrency, setFormCurrency] = useState('LKR');
-  const [formDailyRate, setFormDailyRate] = useState('2000');
   const [formError, setFormError] = useState('');
 
   const handleSaveTradeGroup = async (e: React.FormEvent) => {
@@ -146,14 +115,10 @@ export default function SATradeGroupsPage() {
     setIsSubmitting(true);
     setFormError('');
     try {
-      const dailyVal = parseFloat(formDailyRate) || (formCurrency === 'USD' ? 20 : 2000);
-
       if (editingTradeGroup) {
         const res = await api.put(`/corporate/trade-groups/${editingTradeGroup.id}`, {
           code: formCode.trim().toUpperCase(),
           name: formName.trim(),
-          currency: formCurrency,
-          standardDailyRate: dailyVal,
         });
         if (res.data?.tradeGroup) {
           setTradeGroups((prev) =>
@@ -166,16 +131,12 @@ export default function SATradeGroupsPage() {
         const res = await api.post('/corporate/trade-groups', {
           code: formCode.trim().toUpperCase(),
           name: formName.trim(),
-          currency: formCurrency,
-          standardDailyRate: dailyVal,
         });
         if (res.data?.tradeGroup) {
           setTradeGroups((prev) => [res.data.tradeGroup, ...prev]);
           setIsModalOpen(false);
           setFormCode('');
           setFormName('');
-          setFormCurrency('LKR');
-          setFormDailyRate('2000');
         }
       }
     } catch (err: any) {
@@ -196,7 +157,7 @@ export default function SATradeGroupsPage() {
             <h1 className="text-base font-semibold text-slate-800">Trade Groups</h1>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Manage corporate job categories and their standard daily rates (LKR, USD, INR)
+            Master list of corporate trade categories (rates are configured per project)
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -217,8 +178,6 @@ export default function SATradeGroupsPage() {
               setEditingTradeGroup(null);
               setFormCode('');
               setFormName('');
-              setFormDailyRate('2000');
-              setFormCurrency('LKR');
               setFormError('');
               setIsModalOpen(true);
             }}
@@ -258,7 +217,6 @@ export default function SATradeGroupsPage() {
               <tr className="border-b border-violet-100 bg-violet-50/90">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Code</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Trade Designation</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Daily Rate</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -269,28 +227,20 @@ export default function SATradeGroupsPage() {
                 : filtered.length === 0
                 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={4} className="px-4 py-12 text-center text-sm text-slate-400">
                       No trade groups found.
                     </td>
                   </tr>
                 )
                 : filtered.map((tg) => {
-                    const daily = Number(tg.standardDailyRate || 1400);
-
                     return (
                       <tr key={tg.id} className="hover:bg-violet-50/30 transition-colors">
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold">
-                              {tg.code}
-                            </span>
-                            <CurrencyBadge currency={tg.currency} />
-                          </div>
+                          <span className="font-mono text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded font-semibold">
+                            {tg.code}
+                          </span>
                         </td>
                         <td className="px-4 py-3 font-medium text-slate-800">{tg.name}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-slate-900 tabular-nums">
-                          {formatRateWithCurrency(daily, tg.currency)}
-                        </td>
                         <td className="px-4 py-3 text-center">
                           {tg.status === 'active' ? (
                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
@@ -309,8 +259,6 @@ export default function SATradeGroupsPage() {
                               setEditingTradeGroup(tg);
                               setFormCode(tg.code);
                               setFormName(tg.name);
-                              setFormCurrency(tg.currency || 'LKR');
-                              setFormDailyRate(String(Number(tg.standardDailyRate) || 0));
                               setFormError('');
                               setIsModalOpen(true);
                             }}
@@ -349,8 +297,8 @@ export default function SATradeGroupsPage() {
             </h2>
             <p className="text-xs text-slate-500 mb-4">
               {editingTradeGroup
-                ? 'Update trade group code, designation, and standard daily rate.'
-                : 'Define a standard trade designation, currency, and daily rate.'}
+                ? 'Update trade group code and designation.'
+                : 'Define a master trade designation (rates are set per project).'}
             </p>
 
             {formError && (
@@ -382,42 +330,6 @@ export default function SATradeGroupsPage() {
                   className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
                   required
                 />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Currency *</label>
-                  <select
-                    value={formCurrency}
-                    onChange={(e) => {
-                      const c = e.target.value;
-                      setFormCurrency(c);
-                      if (c === 'USD') setFormDailyRate('20.00');
-                      else if (c === 'INR') setFormDailyRate('1500.00');
-                      else setFormDailyRate('2000.00');
-                    }}
-                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
-                  >
-                    <option value="LKR">LKR (Rs.)</option>
-                    <option value="USD">USD ($)</option>
-                    <option value="INR">INR (₹)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Daily Rate ({formCurrency}) *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder={formCurrency === 'USD' ? 'e.g. 20.00' : 'e.g. 2000.00'}
-                    value={formDailyRate}
-                    onChange={(e) => setFormDailyRate(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:bg-white focus:text-slate-900 focus:ring-2 focus:ring-violet-400 focus:outline-none"
-                    required
-                  />
-                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3">
@@ -454,8 +366,6 @@ export default function SATradeGroupsPage() {
         columnLabels={{
           code: 'Trade Group Code',
           name: 'Trade Name / Designation',
-          currency: 'Currency (LKR / USD / INR)',
-          standardDailyRate: 'Daily Rate',
         }}
         onSuccess={() => {
           api.get('/corporate/trade-groups').then((res) => {

@@ -43,6 +43,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  DollarSign,
 } from 'lucide-react';
 
 // ── Nav item definition ────────────────────────────────────────────────────────
@@ -79,6 +80,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   { label: 'Approvals',         to: '/admin/approvals',         icon: <CheckCircle2 size={18} /> },
   { label: 'Reports',           to: '/admin/reports',           icon: <BarChart3 size={18} /> },
+  { label: 'Price Model',       to: '/admin/price-model',       icon: <DollarSign size={18} /> },
   { label: 'Settings',          to: '/admin/settings',          icon: <Settings size={18} /> },
 ];
 
@@ -365,12 +367,12 @@ export default function AdminLayout() {
   }, []);
 
   return (
-    <div className="flex h-screen h-[100dvh] overflow-hidden bg-slate-50">
+    <div className="flex h-screen h-[100dvh] overflow-hidden bg-slate-50 print:block print:h-auto print:overflow-visible print:bg-white">
 
       {/* ── Desktop sidebar (fixed full screen height on md+) ────────────────── */}
       <aside
         className={[
-          'hidden md:flex md:flex-col h-full bg-gradient-to-b from-[#091D36] via-[#07172B] to-[#051120] border-r border-blue-500/20 shadow-xl flex-shrink-0 text-slate-100 z-20 select-none transition-all duration-300 ease-in-out overscroll-contain',
+          'hidden md:flex md:flex-col h-full bg-gradient-to-b from-[#091D36] via-[#07172B] to-[#051120] border-r border-blue-500/20 shadow-xl flex-shrink-0 text-slate-100 z-20 select-none transition-all duration-300 ease-in-out overscroll-contain print:hidden',
           isCollapsed ? 'md:w-[68px]' : 'md:w-[210px]',
         ].join(' ')}
         aria-label="Admin sidebar"
@@ -422,13 +424,15 @@ export default function AdminLayout() {
       </aside>
 
       {/* ── Main area (Only this area scrolls) ──────────────────────────────── */}
-      <div className="flex flex-col flex-1 h-full min-w-0 overflow-hidden">
+      <div className="flex flex-col flex-1 h-full min-w-0 overflow-hidden print:block print:h-auto print:overflow-visible">
 
         {/* Standard top header bar (Context, Notifications, User profile) */}
-        <AdminHeader onOpenMobileNav={() => setDrawerOpen(true)} />
+        <div className="print:hidden">
+          <AdminHeader onOpenMobileNav={() => setDrawerOpen(true)} />
+        </div>
 
         {/* Page content from nested routes */}
-        <main className="flex-1 h-full min-h-0 overflow-y-auto focus:outline-none flex flex-col overscroll-contain">
+        <main className="flex-1 h-full min-h-0 overflow-y-auto focus:outline-none flex flex-col overscroll-contain print:block print:h-auto print:overflow-visible">
           <Outlet />
         </main>
       </div>

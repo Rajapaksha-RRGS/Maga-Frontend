@@ -17,7 +17,7 @@ import calendarRoutes from './routes/calendarRoutes';
 import tenantRoutes from './routes/tenantRoutes';
 import corporateRoutes from './routes/corporateRoutes';
 import uploadRoutes from './routes/uploadRoutes';
-
+import practiceRouter from './routes/practiceRouter';
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -60,6 +60,7 @@ app.use('/api/equipment', equipmentRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/tenants', tenantRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/practice',practiceRouter);
 
 // Static uploads serving for uploaded document scans and dossiers
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

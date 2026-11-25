@@ -10,6 +10,7 @@
  *   - Quick search + sortable summary columns (Employee, Trade, BP, Total Hrs, Total OT).
  *   - Summary row with date-by-date grand totals at bottom.
  */
+import { formatEmployeeTypeLabel, isExternalEmployeeTypeClient } from '../../../utils/employeeTypes';
 import { Fragment, useState, useMemo, useDeferredValue, useCallback } from 'react';
 import {
   useReactTable,
@@ -246,12 +247,12 @@ export default function DayOtSummaryTable({ data }: Props) {
                           {row.employeeType && (
                             <span
                               className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-semibold uppercase tracking-wide border ${
-                                row.employeeType === 'internal'
+                                !isExternalEmployeeTypeClient(row.employeeType)
                                   ? 'bg-sky-50 text-sky-700 border-sky-200'
                                   : 'bg-violet-50 text-violet-700 border-violet-200'
                               }`}
                             >
-                              {row.employeeType}
+                              {formatEmployeeTypeLabel(row.employeeType)}
                             </span>
                           )}
                         </div>

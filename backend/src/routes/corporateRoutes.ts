@@ -25,6 +25,8 @@ import {
   createCorporateTradeGroup,
   bulkImportCorporateTradeGroups,
   updateCorporateTradeGroup,
+  getProjectTradeRates,
+  upsertProjectTradeRates,
   getCorporateBusinessPartners,
   createCorporateBusinessPartner,
   updateCorporateBusinessPartner,
@@ -98,6 +100,10 @@ router.get('/trade-groups', getCorporateTradeGroups);
 router.post('/trade-groups', createCorporateTradeGroup);
 router.post('/trade-groups/bulk-import', bulkImportCorporateTradeGroups);
 router.put('/trade-groups/:id', updateCorporateTradeGroup);
+
+// Project-Level Trade Rates
+router.get('/projects/:projectId/trade-rates', getProjectTradeRates);
+router.put('/projects/:projectId/trade-rates', upsertProjectTradeRates);
 
 // Global Business Partners
 router.get('/business-partners/pending', getPendingBusinessPartners);

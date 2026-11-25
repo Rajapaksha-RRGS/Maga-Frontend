@@ -30,6 +30,8 @@ export interface ApprovalWorkerActivity {
   code: string;
   description: string;
   hours: number;
+  chargedBusinessPartnerId?: string | null;
+  chargedBusinessPartnerName?: string | null;
 }
 
 export interface ApprovalWorkerItem {
@@ -255,6 +257,7 @@ export interface AdminAdjustSplitPayload {
   activityCodeId?: string;
   activityCode?: string;
   hours: number;
+  chargedBusinessPartnerId?: string | null;
 }
 
 /**
