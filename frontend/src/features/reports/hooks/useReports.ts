@@ -174,7 +174,7 @@ export function useReports() {
       (tab === 'operator-erp-upload' && !!operatorErpData && operatorErpData.rows.length > 0)
     );
     setHasQueried(hasResult);
-  }, [summaryData, dayOtData, bpBillData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData, operatorErpData]);
+  }, [summaryData, dayOtData, bpBillData, subcontractorDeductionData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData, operatorErpData]);
 
   // Execute report query for the active tab
   const runQuery = useCallback(async () => {

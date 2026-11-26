@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Users, Clock, DollarSign, AlertCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Users, Clock, DollarSign, AlertCircle, Printer } from 'lucide-react';
 import type { SubcontractorDeductionResponse } from '../services/reportService';
+import { useAuth } from '../../../context/AuthContext';
+import { printSubcontractorDeductionBill } from '../utils/printBpBill';
 
 interface Props {
   data: SubcontractorDeductionResponse;
@@ -10,6 +12,7 @@ const fmtLkr = (n: number) =>
   n.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function SubcontractorDeductionTable({ data }: Props) {
+  const { user, tenant } = useAuth();
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
     data.groups.forEach((g) => {
@@ -114,6 +117,39 @@ export default function SubcontractorDeductionTable({ data }: Props) {
                       LKR {fmtLkr(grp.totalDeductionAmount)}
                     </div>
                   </div>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      printSubcontractorDeductionBill({
+                        group: grp,
+                        dateFrom: data.dateFrom,
+                        dateTo: data.dateTo,
+                        projectName: tenant?.name,
+                        projectCode: tenant?.code,
+                        preparedBy: user?.fullName,
+                      });
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        printSubcontractorDeductionBill({
+                          group: grp,
+                          dateFrom: data.dateFrom,
+                          dateTo: data.dateTo,
+                          projectName: tenant?.name,
+                          projectCode: tenant?.code,
+                          preparedBy: user?.fullName,
+                        });
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white border border-red-200 hover:bg-red-100/70 text-red-700 font-semibold shadow-2xs transition-colors cursor-pointer"
+                  >
+                    <Printer size={13} />
+                    <span>Print / PDF</span>
+                  </span>
                 </div>
               </button>
 
