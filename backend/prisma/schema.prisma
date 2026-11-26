@@ -230,6 +230,8 @@ model MF_P_Project {
   email          String?
   status         String   @default("active")
   equipmentAssignBySupervisor Boolean @default(false) @map("equipment_assign_by_supervisor")
+  laborAssignBySupervisor     Boolean @default(false) @map("labor_assign_by_supervisor")
+  operatorAssignBySupervisor  Boolean @default(false) @map("operator_assign_by_supervisor")
   lunchBreakEnabled           Boolean  @default(true)  @map("lunch_break_enabled")
   lunchStartTime              String   @default("12:00") @map("lunch_start_time")
   lunchEndTime                String   @default("13:00") @map("lunch_end_time")
@@ -618,5 +620,5 @@ model MF_P_TradeRate {
   @@unique([projectId, tradeGroupId])
   @@index([projectId])
   @@index([tradeGroupId])
-  @@map("project_trade_rates")
+  @@map("MF_L_TRADE_RATE")
 }
