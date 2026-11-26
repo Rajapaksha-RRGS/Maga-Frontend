@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { getDefaultProjectId, getDefaultTenantId } from '../utils/tenantHelper';
-import { isExternalEmployeeType } from '../utils/tradeRateHelper';
+import { isExternalEmployeeType, pickRateFromTradeRateRow } from '../utils/tradeRateHelper';
 
 function buildEmployeeTypeWhere(employeeType?: string) {
   if (!employeeType) return undefined;
@@ -3281,5 +3281,559 @@ export const getSubcontractorDeductionReport = async (req: Request, res: Respons
   } catch (error) {
     console.error('Error generating subcontractor deduction report:', error);
     res.status(500).json({ error: 'Failed to generate subcontractor deduction report' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. COST BI DASHBOARD ANALYTICS
+// GET /api/reports/cost-dashboard?tenantId=&month=&year=&dateFrom=&dateTo=&includeDrafts=
+// ─────────────────────────────────────────────────────────────────────────────
+function resolveCostDashboardRange(
+  dateFrom?: string,
+  dateTo?: string,
+  month?: string,
+  year?: string
+): { from: string; to: string; prevFrom: string; prevTo: string } {
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+
+  if (dateFrom && dateTo) {
+    const start = new Date(`${dateFrom}T00:00:00Z`);
+    const end = new Date(`${dateTo}T00:00:00Z`);
+    const spanDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+    const prevEnd = new Date(start.getTime() - 86400000);
+    const prevStart = new Date(prevEnd.getTime() - (spanDays - 1) * 86400000);
+    return { from: dateFrom, to: dateTo, prevFrom: fmt(prevStart), prevTo: fmt(prevEnd) };
+  }
+
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    const [y, m] = month.split('-').map(Number);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(y, m, 0));
+    const prevStart = new Date(Date.UTC(y, m - 2, 1));
+    const prevEnd = new Date(Date.UTC(y, m - 1, 0));
+    return { from: fmt(start), to: fmt(end), prevFrom: fmt(prevStart), prevTo: fmt(prevEnd) };
+  }
+
+  if (year && /^\d{4}$/.test(year)) {
+    const y = Number(year);
+    return {
+      from: `${y}-01-01`,
+      to: `${y}-12-31`,
+      prevFrom: `${y - 1}-01-01`,
+      prevTo: `${y - 1}-12-31`,
+    };
+  }
+
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const start = new Date(Date.UTC(y, m, 1));
+  const end = new Date(Date.UTC(y, m + 1, 0));
+  const prevStart = new Date(Date.UTC(y, m - 1, 1));
+  const prevEnd = new Date(Date.UTC(y, m, 0));
+  return { from: fmt(start), to: fmt(end), prevFrom: fmt(prevStart), prevTo: fmt(prevEnd) };
+}
+
+function calcPctChange(current: number, previous: number): number | null {
+  if (previous <= 0) return current > 0 ? 100 : null;
+  return Math.round(((current - previous) / previous) * 1000) / 10;
+}
+
+export const getCostDashboardAnalytics = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const projectId = await resolveProjectId(req);
+    const dateFrom = qStr(req.query.dateFrom);
+    const dateTo = qStr(req.query.dateTo);
+    const month = qStr(req.query.month);
+    const year = qStr(req.query.year);
+    const includeDrafts = qStr(req.query.includeDrafts) === 'true';
+
+    const { from, to, prevFrom, prevTo } = resolveCostDashboardRange(dateFrom, dateTo, month, year);
+    const currentDateFilter = buildDateFilter(from, to)!;
+    const prevDateFilter = buildDateFilter(prevFrom, prevTo)!;
+    const allowedStatuses = includeDrafts ? ['draft', 'submitted', 'approved'] : ['submitted', 'approved'];
+
+    const [
+      project,
+      tradeRates,
+      currentCalendarMap,
+      prevCalendarMap,
+      timeEntries,
+      prevTimeEntries,
+      equipAssignments,
+      prevEquipAssignments,
+    ] = await Promise.all([
+      prisma.mF_P_Project.findUnique({
+        where: { id: projectId },
+        select: { currency: true, projectName: true, projectCode: true },
+      }),
+      prisma.mF_P_TradeRate.findMany({ where: { projectId } }),
+      getProjectCalendarDayMap(projectId, from, to),
+      getProjectCalendarDayMap(projectId, prevFrom, prevTo),
+      prisma.mF_OP_TimeEntry.findMany({
+        where: { projectId, date: currentDateFilter, status: { in: allowedStatuses } },
+        include: {
+          effectiveDayType: true,
+          appliedBusinessPartner: true,
+          employee: {
+            include: {
+              corporateEmployee: { include: { corporateBusinessPartner: true } },
+              tradeGroup: true,
+              businessPartner: true,
+            },
+          },
+          activitySplits: {
+            include: {
+              activityCode: true,
+              chargedBusinessPartner: true,
+            },
+          },
+        },
+      }),
+      prisma.mF_OP_TimeEntry.findMany({
+        where: { projectId, date: prevDateFilter, status: { in: allowedStatuses } },
+        include: {
+          effectiveDayType: true,
+          employee: { include: { corporateEmployee: true } },
+        },
+      }),
+      prisma.mF_OP_DailyEquipmentAssignment.findMany({
+        where: {
+          dailySheet: {
+            projectId,
+            date: currentDateFilter,
+            status: { in: allowedStatuses },
+          },
+          dailyLog: { isNot: null },
+        },
+        include: {
+          dailySheet: { select: { date: true } },
+          equipment: {
+            include: {
+              corporateEquipment: true,
+              ownerPartner: true,
+            },
+          },
+          dailyLog: {
+            include: {
+              activities: { include: { activityCode: true } },
+            },
+          },
+        },
+      }),
+      prisma.mF_OP_DailyEquipmentAssignment.findMany({
+        where: {
+          dailySheet: {
+            projectId,
+            date: prevDateFilter,
+            status: { in: allowedStatuses },
+          },
+          dailyLog: { isNot: null },
+        },
+        include: {
+          equipment: { include: { corporateEquipment: true } },
+          dailyLog: { include: { activities: true } },
+        },
+      }),
+    ]);
+
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const tradeRateMap = new Map(tradeRates.map((tr) => [tr.tradeGroupId, tr]));
+
+    const resolveEffectiveDailyRate = (
+      appliedDailyRate: unknown,
+      emp: {
+        dailyRate: unknown;
+        tradeGroupId: string | null;
+        employeeType: any;
+        skillLevel: any;
+      }
+    ): number => {
+      if (appliedDailyRate !== null && appliedDailyRate !== undefined && Number(appliedDailyRate) > 0) {
+        return Number(appliedDailyRate);
+      }
+      if (Number(emp.dailyRate) > 0) {
+        return Number(emp.dailyRate);
+      }
+      if (emp.tradeGroupId && tradeRateMap.has(emp.tradeGroupId)) {
+        return pickRateFromTradeRateRow(tradeRateMap.get(emp.tradeGroupId), emp.employeeType, emp.skillLevel);
+      }
+      return 0;
+    };
+
+    const computeEntryLaborCost = (
+      entry: {
+        date: Date;
+        inTime: string | null;
+        outTime: string | null;
+        hours: unknown;
+        shiftHours: unknown;
+        overtimeHours: unknown;
+        appliedDailyRate: unknown;
+        effectiveDayType: { code?: string | null; name?: string | null; rateMultiplier?: any } | null;
+        employee: {
+          dailyRate: unknown;
+          tradeGroupId: string | null;
+          employeeType: any;
+          skillLevel: any;
+          corporateEmployee?: { employeeType?: any } | null;
+        };
+      },
+      calMap: Map<string, DayTypeRuleInfo>
+    ) => {
+      const dateKey = entry.date.toISOString().split('T')[0];
+      const dayRule = resolveDayTypeRule(dateKey, calMap, entry.effectiveDayType);
+      const empType = entry.employee.employeeType || entry.employee.corporateEmployee?.employeeType || 'INTERNAL';
+      const { workHours, otHours } = computeAttendanceHoursAndOt(
+        entry.inTime,
+        entry.outTime,
+        Number(entry.hours || 0),
+        dayRule.standardCap,
+        dayRule.isAllOvertime,
+        entry.shiftHours !== null && entry.shiftHours !== undefined ? Number(entry.shiftHours) : null,
+        entry.overtimeHours !== null && entry.overtimeHours !== undefined ? Number(entry.overtimeHours) : null,
+        isExternalEmployeeType(empType)
+      );
+      const dailyRate = resolveEffectiveDailyRate(entry.appliedDailyRate, entry.employee);
+      const hourlyRate = dailyRate / 8;
+      const normalHours = dayRule.isAllOvertime ? 0 : Math.max(0, workHours - otHours);
+      const regularCost = normalHours * hourlyRate;
+      const otCost = otHours * hourlyRate * dayRule.rateMultiplier;
+      return {
+        dateKey,
+        empType: String(empType),
+        workHours,
+        normalHours,
+        otHours,
+        regularCost,
+        otCost,
+        totalCost: regularCost + otCost,
+      };
+    };
+
+    const computeEquipLogUtil = (log: any): number => {
+      if (!log) return 0;
+      if (Array.isArray(log.activities) && log.activities.length > 0) {
+        const actSum = log.activities.reduce((s: number, a: any) => s + (Number(a.utilization) || 0), 0);
+        if (actSum > 0) return actSum;
+      }
+      if (Number(log.totalUtilization) > 0) return Number(log.totalUtilization);
+      if (Number(log.netRunningHours) > 0) return Number(log.netRunningHours);
+      return (Number(log.workingHours) || 0) + (Number(log.idleHours) || 0);
+    };
+
+    const resolveEquipCostRate = (eq: { costRate: unknown; corporateEquipment?: { costRate?: unknown } | null }): number => {
+      if (Number(eq.costRate) > 0) return Number(eq.costRate);
+      if (Number(eq.corporateEquipment?.costRate) > 0) return Number(eq.corporateEquipment?.costRate);
+      return 0;
+    };
+
+    // Aggregators for current period
+    let regularLaborCost = 0;
+    let otLaborCost = 0;
+    let totalLaborHours = 0;
+    let totalOtHours = 0;
+
+    const dailyMap = new Map<string, { date: string; laborCost: number; regularCost: number; otCost: number; equipmentCost: number }>();
+    const ensureDay = (dateKey: string) => {
+      if (!dailyMap.has(dateKey)) {
+        dailyMap.set(dateKey, { date: dateKey, laborCost: 0, regularCost: 0, otCost: 0, equipmentCost: 0 });
+      }
+      return dailyMap.get(dateKey)!;
+    };
+
+    const resourceMixMap = new Map<string, { key: string; label: string; cost: number; hours: number; ids: Set<string> }>([
+      ['INTERNAL', { key: 'INTERNAL', label: 'Internal Labor', cost: 0, hours: 0, ids: new Set() }],
+      ['FOREIGN', { key: 'FOREIGN', label: 'Foreign Labor', cost: 0, hours: 0, ids: new Set() }],
+      ['EXTERNAL_SUPPLY', { key: 'EXTERNAL_SUPPLY', label: 'External Supply', cost: 0, hours: 0, ids: new Set() }],
+      ['EXTERNAL_SUBCONTRACTOR', { key: 'EXTERNAL_SUBCONTRACTOR', label: 'Subcontractor', cost: 0, hours: 0, ids: new Set() }],
+      ['EQUIPMENT', { key: 'EQUIPMENT', label: 'Equipment', cost: 0, hours: 0, ids: new Set() }],
+    ]);
+
+    const activityMap = new Map<string, { code: string; description: string; laborCost: number; equipmentCost: number; laborHours: number; equipmentUtil: number }>();
+    const ensureActivity = (code: string, description: string) => {
+      if (!activityMap.has(code)) {
+        activityMap.set(code, { code, description, laborCost: 0, equipmentCost: 0, laborHours: 0, equipmentUtil: 0 });
+      }
+      return activityMap.get(code)!;
+    };
+
+    const tradeGroupMap = new Map<string, { tradeGroup: string; skilledCost: number; unskilledCost: number; totalHours: number }>();
+    const bpMap = new Map<string, { partnerId: string; partnerName: string; partnerCode: string; laborCost: number; equipmentCost: number; workerIds: Set<string>; equipIds: Set<string> }>();
+    const ensureBp = (partnerId: string, partnerName: string, partnerCode: string) => {
+      if (!bpMap.has(partnerId)) {
+        bpMap.set(partnerId, { partnerId, partnerName, partnerCode, laborCost: 0, equipmentCost: 0, workerIds: new Set(), equipIds: new Set() });
+      }
+      return bpMap.get(partnerId)!;
+    };
+
+    // 1. Process current period labor entries
+    for (const entry of timeEntries) {
+      const calc = computeEntryLaborCost(entry, currentCalendarMap);
+      regularLaborCost += calc.regularCost;
+      otLaborCost += calc.otCost;
+      totalLaborHours += calc.workHours;
+      totalOtHours += calc.otHours;
+
+      const day = ensureDay(calc.dateKey);
+      day.laborCost += calc.totalCost;
+      day.regularCost += calc.regularCost;
+      day.otCost += calc.otCost;
+
+      const mixBucket = resourceMixMap.get(calc.empType) || resourceMixMap.get('INTERNAL')!;
+      mixBucket.cost += calc.totalCost;
+      mixBucket.hours += calc.workHours;
+      mixBucket.ids.add(entry.employeeId);
+
+      const tgName = entry.employee.tradeGroup?.name || 'Unassigned Trade';
+      if (!tradeGroupMap.has(tgName)) {
+        tradeGroupMap.set(tgName, { tradeGroup: tgName, skilledCost: 0, unskilledCost: 0, totalHours: 0 });
+      }
+      const tg = tradeGroupMap.get(tgName)!;
+      if (entry.employee.skillLevel === 'UNSKILLED') {
+        tg.unskilledCost += calc.totalCost;
+      } else {
+        tg.skilledCost += calc.totalCost;
+      }
+      tg.totalHours += calc.workHours;
+
+      const effectiveBp =
+        entry.appliedBusinessPartner ||
+        entry.employee.businessPartner ||
+        entry.employee.corporateEmployee?.corporateBusinessPartner;
+      if (effectiveBp) {
+        const bp = ensureBp(effectiveBp.id, effectiveBp.name, effectiveBp.code);
+        bp.laborCost += calc.totalCost;
+        bp.workerIds.add(entry.employeeId);
+      }
+
+      if (entry.activitySplits.length > 0) {
+        const splitHoursSum = entry.activitySplits.reduce((s, sp) => s + Number(sp.hours || 0), 0);
+        for (const sp of entry.activitySplits) {
+          const spHrs = Number(sp.hours || 0);
+          const ratio = splitHoursSum > 0 ? spHrs / splitHoursSum : 1 / entry.activitySplits.length;
+          const act = ensureActivity(sp.activityCode.code, sp.activityCode.description || '');
+          act.laborCost += calc.totalCost * ratio;
+          act.laborHours += spHrs;
+        }
+      }
+    }
+
+    // 2. Process current period equipment logs
+    let equipmentCost = 0;
+    let totalEquipmentFuelLiters = 0;
+    let totalIdleHours = 0;
+    let totalBreakdownHours = 0;
+    let estimatedIdleCost = 0;
+
+    const equipEffMap = new Map<string, {
+      id: string;
+      code: string;
+      name: string;
+      condition: string;
+      unit: string;
+      workingHours: number;
+      idleHours: number;
+      breakdownHours: number;
+      fuelLiters: number;
+      utilization: number;
+      cost: number;
+    }>();
+
+    for (const asgn of equipAssignments) {
+      const log = asgn.dailyLog;
+      if (!log) continue;
+
+      const dateKey = asgn.dailySheet.date.toISOString().split('T')[0];
+      const util = computeEquipLogUtil(log);
+      const rate = resolveEquipCostRate(asgn.equipment);
+      const cost = util * rate;
+      const workingHrs = Number(log.workingHours || 0);
+      const idleHrs = Number(log.idleHours || 0);
+      const breakdownHrs = Number(log.breakdownHours || 0);
+      const fuel = Number(log.fuelLiters || 0);
+      const unit = (log.unitCode || asgn.equipment.meterUnitCode || asgn.equipment.corporateEquipment.unit || 'hrs').toLowerCase();
+
+      equipmentCost += cost;
+      totalEquipmentFuelLiters += fuel;
+      totalIdleHours += idleHrs;
+      totalBreakdownHours += breakdownHrs;
+      if (unit === 'hrs' || unit === 'hr' || unit === 'hours') {
+        estimatedIdleCost += (idleHrs + breakdownHrs) * rate;
+      }
+
+      const day = ensureDay(dateKey);
+      day.equipmentCost += cost;
+
+      const eqMix = resourceMixMap.get('EQUIPMENT')!;
+      eqMix.cost += cost;
+      eqMix.hours += util;
+      eqMix.ids.add(asgn.equipmentId);
+
+      if (asgn.equipment.ownerPartner) {
+        const op = asgn.equipment.ownerPartner;
+        const bp = ensureBp(op.id, op.name, op.code);
+        bp.equipmentCost += cost;
+        bp.equipIds.add(asgn.equipmentId);
+      }
+
+      if (log.activities.length > 0) {
+        const actUtilSum = log.activities.reduce((s, a) => s + Number(a.utilization || 0), 0);
+        for (const a of log.activities) {
+          const aUtil = Number(a.utilization || 0);
+          const ratio = actUtilSum > 0 ? aUtil / actUtilSum : 1 / log.activities.length;
+          const act = ensureActivity(a.activityCode.code, a.activityCode.description || '');
+          act.equipmentCost += cost * ratio;
+          act.equipmentUtil += aUtil;
+        }
+      }
+
+      const eqId = asgn.equipmentId;
+      if (!equipEffMap.has(eqId)) {
+        equipEffMap.set(eqId, {
+          id: eqId,
+          code: asgn.equipment.corporateEquipment.standardEquipmentNumber || asgn.equipment.corporateEquipment.vehicleNo || '—',
+          name: asgn.equipment.corporateEquipment.equipmentName,
+          condition: asgn.equipment.condition || 'DRY',
+          unit,
+          workingHours: 0,
+          idleHours: 0,
+          breakdownHours: 0,
+          fuelLiters: 0,
+          utilization: 0,
+          cost: 0,
+        });
+      }
+      const eqAgg = equipEffMap.get(eqId)!;
+      eqAgg.workingHours += workingHrs;
+      eqAgg.idleHours += idleHrs;
+      eqAgg.breakdownHours += breakdownHrs;
+      eqAgg.fuelLiters += fuel;
+      eqAgg.utilization += util;
+      eqAgg.cost += cost;
+    }
+
+    // 3. Previous period totals for trend comparison
+    let prevLaborCost = 0;
+    for (const entry of prevTimeEntries) {
+      prevLaborCost += computeEntryLaborCost(entry, prevCalendarMap).totalCost;
+    }
+    let prevEquipmentCost = 0;
+    for (const asgn of prevEquipAssignments) {
+      prevEquipmentCost += computeEquipLogUtil(asgn.dailyLog) * resolveEquipCostRate(asgn.equipment);
+    }
+
+    const laborCost = regularLaborCost + otLaborCost;
+    const totalCost = laborCost + equipmentCost;
+    const prevTotalCost = prevLaborCost + prevEquipmentCost;
+
+    const dailyTrend = Array.from(dailyMap.values())
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((d) => ({
+        date: d.date,
+        laborCost: round2(d.laborCost),
+        regularCost: round2(d.regularCost),
+        otCost: round2(d.otCost),
+        equipmentCost: round2(d.equipmentCost),
+        totalCost: round2(d.laborCost + d.equipmentCost),
+      }));
+
+    const resourceMix = Array.from(resourceMixMap.values()).map((r) => ({
+      key: r.key,
+      label: r.label,
+      cost: round2(r.cost),
+      hours: round2(r.hours),
+      count: r.ids.size,
+    }));
+
+    const activityCosts = Array.from(activityMap.values())
+      .map((a) => ({
+        code: a.code,
+        description: a.description,
+        laborCost: round2(a.laborCost),
+        equipmentCost: round2(a.equipmentCost),
+        totalCost: round2(a.laborCost + a.equipmentCost),
+        laborHours: round2(a.laborHours),
+        equipmentUtil: round2(a.equipmentUtil),
+      }))
+      .sort((a, b) => b.totalCost - a.totalCost)
+      .slice(0, 12);
+
+    const tradeGroupCosts = Array.from(tradeGroupMap.values())
+      .map((t) => ({
+        tradeGroup: t.tradeGroup,
+        skilledCost: round2(t.skilledCost),
+        unskilledCost: round2(t.unskilledCost),
+        totalCost: round2(t.skilledCost + t.unskilledCost),
+        totalHours: round2(t.totalHours),
+      }))
+      .sort((a, b) => b.totalCost - a.totalCost);
+
+    const businessPartnerSpend = Array.from(bpMap.values())
+      .map((b) => ({
+        partnerId: b.partnerId,
+        partnerName: b.partnerName,
+        partnerCode: b.partnerCode,
+        laborCost: round2(b.laborCost),
+        equipmentCost: round2(b.equipmentCost),
+        totalCost: round2(b.laborCost + b.equipmentCost),
+        workerCount: b.workerIds.size,
+        equipmentCount: b.equipIds.size,
+      }))
+      .sort((a, b) => b.totalCost - a.totalCost);
+
+    const equipmentEfficiency = Array.from(equipEffMap.values())
+      .map((e) => ({
+        ...e,
+        workingHours: round2(e.workingHours),
+        idleHours: round2(e.idleHours),
+        breakdownHours: round2(e.breakdownHours),
+        fuelLiters: round2(e.fuelLiters),
+        utilization: round2(e.utilization),
+        cost: round2(e.cost),
+      }))
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 12);
+
+    res.json({
+      period: {
+        from,
+        to,
+        previousFrom: prevFrom,
+        previousTo: prevTo,
+        currency: project?.currency || 'LKR',
+        projectName: project?.projectName || '',
+        projectCode: project?.projectCode || '',
+        includeDrafts,
+      },
+      kpis: {
+        totalCost: round2(totalCost),
+        previousTotalCost: round2(prevTotalCost),
+        totalCostChangePct: calcPctChange(totalCost, prevTotalCost),
+        laborCost: round2(laborCost),
+        regularLaborCost: round2(regularLaborCost),
+        otLaborCost: round2(otLaborCost),
+        previousLaborCost: round2(prevLaborCost),
+        laborCostChangePct: calcPctChange(laborCost, prevLaborCost),
+        equipmentCost: round2(equipmentCost),
+        previousEquipmentCost: round2(prevEquipmentCost),
+        equipmentCostChangePct: calcPctChange(equipmentCost, prevEquipmentCost),
+        totalLaborHours: round2(totalLaborHours),
+        totalOtHours: round2(totalOtHours),
+        totalEquipmentFuelLiters: round2(totalEquipmentFuelLiters),
+        totalIdleHours: round2(totalIdleHours),
+        totalBreakdownHours: round2(totalBreakdownHours),
+        estimatedIdleCost: round2(estimatedIdleCost),
+      },
+      dailyTrend,
+      resourceMix,
+      activityCosts,
+      tradeGroupCosts,
+      businessPartnerSpend,
+      equipmentEfficiency,
+    });
+  } catch (error) {
+    console.error('Error generating cost dashboard analytics:', error);
+    res.status(500).json({ error: 'Failed to generate cost dashboard analytics' });
   }
 };

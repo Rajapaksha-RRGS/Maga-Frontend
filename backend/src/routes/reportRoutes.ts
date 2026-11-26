@@ -13,6 +13,7 @@ import {
   getEquipmentErpUploadReport,
   getOperatorErpUploadReport,
   getSubcontractorDeductionReport,
+  getCostDashboardAnalytics,
 } from '../controllers/reportController';
 
 const router = Router();
@@ -46,6 +47,7 @@ router.get('/equipment-erp-upload', getEquipmentErpUploadReport);
 router.get('/operator-erp-upload', getOperatorErpUploadReport);
 router.get('/subcontractor-deduction', getSubcontractorDeductionReport);
 router.get('/time-card', getTimeCardReport);
+router.get('/cost-dashboard', getCostDashboardAnalytics);
 
 export default router;
 
