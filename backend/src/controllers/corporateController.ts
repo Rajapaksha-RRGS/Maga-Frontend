@@ -9,6 +9,7 @@ import {
   isExternalEmployeeType,
   resolveProjectTradeRate,
   validateProjectTradeRatesPayload,
+  saveProjectTradeRatesAndSyncEmployees,
 } from '../utils/tradeRateHelper';
 import {
   sendTransferRequestedEmail,
@@ -2309,42 +2310,17 @@ export const upsertProjectTradeRates = async (req: Request, res: Response): Prom
       return;
     }
 
-    await prisma.$transaction(
-      validation.items.map((r) =>
-        prisma.mF_P_TradeRate.upsert({
-          where: {
-            projectId_tradeGroupId: {
-              projectId,
-              tradeGroupId: r.tradeGroupId,
-            },
-          },
-          update: {
-            internalSkilledRate: r.internalSkilledRate,
-            internalUnskilledRate: r.internalUnskilledRate,
-            foreignSkilledRate: r.foreignSkilledRate,
-            foreignUnskilledRate: r.foreignUnskilledRate,
-            supplySkilledRate: r.supplySkilledRate,
-            supplyUnskilledRate: r.supplyUnskilledRate,
-            subcontractorSkilledRate: r.subcontractorSkilledRate,
-            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
-          },
-          create: {
-            projectId,
-            tradeGroupId: r.tradeGroupId,
-            internalSkilledRate: r.internalSkilledRate,
-            internalUnskilledRate: r.internalUnskilledRate,
-            foreignSkilledRate: r.foreignSkilledRate,
-            foreignUnskilledRate: r.foreignUnskilledRate,
-            supplySkilledRate: r.supplySkilledRate,
-            supplyUnskilledRate: r.supplyUnskilledRate,
-            subcontractorSkilledRate: r.subcontractorSkilledRate,
-            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
-          },
-        })
-      )
+    const { savedCount, updatedEmployeesCount } = await saveProjectTradeRatesAndSyncEmployees(
+      projectId,
+      validation.items
     );
 
-    res.json({ success: true, count: validation.items.length, message: 'Project trade rates updated successfully' });
+    res.json({
+      success: true,
+      count: savedCount,
+      updatedEmployeesCount,
+      message: 'Project trade rates updated successfully',
+    });
   } catch (error: any) {
     console.error('Error updating project trade rates:', error);
     res.status(500).json({ error: error.message || 'Failed to update project trade rates' });

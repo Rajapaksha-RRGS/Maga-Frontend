@@ -2280,7 +2280,7 @@ export const getEquipmentRunningChartReport = async (req: Request, res: Response
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10. EQUIPMENT SUMMARY REPORT (EQUIPMENT ENTRY SHEET - Maga Format)
+// 10. EQUIPMENT SUMMARY REPORT (EQUIPMENT ENTRY SHEET )
 // GET /api/reports/equipment-summary?month=&dateFrom=&dateTo=&condition=&equipmentQuery=&tenantId=
 // ─────────────────────────────────────────────────────────────────────────────
 export const getEquipmentSummaryReport = async (req: Request, res: Response): Promise<void> => {

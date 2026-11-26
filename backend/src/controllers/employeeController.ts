@@ -8,6 +8,7 @@ import {
   isExternalEmployeeType,
   resolveProjectTradeRate,
   validateProjectTradeRatesPayload,
+  saveProjectTradeRatesAndSyncEmployees,
 } from '../utils/tradeRateHelper';
 
 // Re-export getDefaultTenantId for backwards compatibility
@@ -1472,44 +1473,15 @@ export const upsertCurrentProjectTradeRates = async (req: Request, res: Response
       return;
     }
 
-    const saved = await prisma.$transaction(
-      validation.items.map((r) =>
-        prisma.mF_P_TradeRate.upsert({
-          where: {
-            projectId_tradeGroupId: {
-              projectId,
-              tradeGroupId: r.tradeGroupId,
-            },
-          },
-          update: {
-            internalSkilledRate: r.internalSkilledRate,
-            internalUnskilledRate: r.internalUnskilledRate,
-            foreignSkilledRate: r.foreignSkilledRate,
-            foreignUnskilledRate: r.foreignUnskilledRate,
-            supplySkilledRate: r.supplySkilledRate,
-            supplyUnskilledRate: r.supplyUnskilledRate,
-            subcontractorSkilledRate: r.subcontractorSkilledRate,
-            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
-          },
-          create: {
-            projectId,
-            tradeGroupId: r.tradeGroupId,
-            internalSkilledRate: r.internalSkilledRate,
-            internalUnskilledRate: r.internalUnskilledRate,
-            foreignSkilledRate: r.foreignSkilledRate,
-            foreignUnskilledRate: r.foreignUnskilledRate,
-            supplySkilledRate: r.supplySkilledRate,
-            supplyUnskilledRate: r.supplyUnskilledRate,
-            subcontractorSkilledRate: r.subcontractorSkilledRate,
-            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
-          },
-        })
-      )
+    const { savedCount, updatedEmployeesCount } = await saveProjectTradeRatesAndSyncEmployees(
+      projectId,
+      validation.items
     );
 
     res.json({
       success: true,
-      count: saved.length,
+      count: savedCount,
+      updatedEmployeesCount,
       message: 'Project trade rates saved successfully',
     });
   } catch (error: any) {

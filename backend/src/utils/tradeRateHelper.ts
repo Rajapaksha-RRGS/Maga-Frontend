@@ -175,3 +175,108 @@ export async function validateProjectTradeRatesPayload(
 
   return { valid: true, items: validated };
 }
+
+/**
+ * Upsert project trade rates and sync `dailyRate` on all existing `MF_P_Employee`
+ * records in the project whose effective trade group matches an updated rate row.
+ */
+export async function saveProjectTradeRatesAndSyncEmployees(
+  projectId: string,
+  items: ValidatedTradeRateInput[]
+): Promise<{ savedCount: number; updatedEmployeesCount: number }> {
+  const rateByTradeGroup = new Map<string, ValidatedTradeRateInput>();
+  for (const item of items) {
+    rateByTradeGroup.set(item.tradeGroupId, item);
+  }
+  const tradeGroupIds = Array.from(rateByTradeGroup.keys());
+
+  return prisma.$transaction(
+    async (tx) => {
+      for (const r of items) {
+        await tx.mF_P_TradeRate.upsert({
+          where: {
+            projectId_tradeGroupId: {
+              projectId,
+              tradeGroupId: r.tradeGroupId,
+            },
+          },
+          update: {
+            internalSkilledRate: r.internalSkilledRate,
+            internalUnskilledRate: r.internalUnskilledRate,
+            foreignSkilledRate: r.foreignSkilledRate,
+            foreignUnskilledRate: r.foreignUnskilledRate,
+            supplySkilledRate: r.supplySkilledRate,
+            supplyUnskilledRate: r.supplyUnskilledRate,
+            subcontractorSkilledRate: r.subcontractorSkilledRate,
+            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
+          },
+          create: {
+            projectId,
+            tradeGroupId: r.tradeGroupId,
+            internalSkilledRate: r.internalSkilledRate,
+            internalUnskilledRate: r.internalUnskilledRate,
+            foreignSkilledRate: r.foreignSkilledRate,
+            foreignUnskilledRate: r.foreignUnskilledRate,
+            supplySkilledRate: r.supplySkilledRate,
+            supplyUnskilledRate: r.supplyUnskilledRate,
+            subcontractorSkilledRate: r.subcontractorSkilledRate,
+            subcontractorUnskilledRate: r.subcontractorUnskilledRate,
+          },
+        });
+      }
+
+      const projectEmployees = await tx.mF_P_Employee.findMany({
+        where: {
+          projectId,
+          OR: [
+            { tradeGroupId: { in: tradeGroupIds } },
+            { tradeGroupId: null, corporateEmployee: { tradeGroupId: { in: tradeGroupIds } } },
+          ],
+        },
+        select: {
+          id: true,
+          tradeGroupId: true,
+          employeeType: true,
+          skillLevel: true,
+          dailyRate: true,
+          corporateEmployee: {
+            select: {
+              tradeGroupId: true,
+            },
+          },
+        },
+      });
+
+      const idsByNewRate = new Map<number, string[]>();
+      let updatedEmployeesCount = 0;
+
+      for (const emp of projectEmployees) {
+        const effectiveTgId = emp.tradeGroupId || emp.corporateEmployee?.tradeGroupId;
+        if (!effectiveTgId) continue;
+        const rateRow = rateByTradeGroup.get(effectiveTgId);
+        if (!rateRow) continue;
+
+        const newRate = pickRateFromTradeRateRow(rateRow, emp.employeeType, emp.skillLevel);
+        if (Number(emp.dailyRate) === newRate) continue;
+
+        const bucket = idsByNewRate.get(newRate);
+        if (bucket) {
+          bucket.push(emp.id);
+        } else {
+          idsByNewRate.set(newRate, [emp.id]);
+        }
+        updatedEmployeesCount++;
+      }
+
+      for (const [newRate, ids] of idsByNewRate.entries()) {
+        await tx.mF_P_Employee.updateMany({
+          where: { id: { in: ids } },
+          data: { dailyRate: newRate },
+        });
+      }
+
+      return { savedCount: items.length, updatedEmployeesCount };
+    },
+    { timeout: 15000 }
+  );
+}

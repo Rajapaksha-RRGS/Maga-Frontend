@@ -273,7 +273,7 @@ export default function PriceModelPage() {
                           <input
                             type="number"
                             min="0"
-                            step="0.01"
+                            step="100"
                             value={Number(item[f.key] ?? 0)}
                             onChange={(e) =>
                               handleRateChange(item.tradeGroupId, f.key, e.target.value)
