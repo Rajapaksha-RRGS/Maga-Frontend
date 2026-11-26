@@ -27,10 +27,10 @@ import { API_URL, apiFetch } from '../../../config/api';
 import { cacheManager } from '../../../utils/cacheManager';
 
 export const FIXED_DAY_TYPES: DayType[] = [
-  { id: 'dt-normal',   name: 'Normal day',     code: 'normal',   rateMultiplier: 1.0 },
-  { id: 'dt-saturday', name: 'Saturday',       code: 'saturday', rateMultiplier: 1.0 },
+  { id: 'dt-normal',   name: 'Normal day',     code: 'normal',   rateMultiplier: 1.5 },
+  { id: 'dt-saturday', name: 'Saturday',       code: 'saturday', rateMultiplier: 1.5 },
   { id: 'dt-sunday',   name: 'Sunday',         code: 'sunday',   rateMultiplier: 1.5 },
-  { id: 'dt-shutdown', name: 'Shutdown',       code: 'shutdown', rateMultiplier: 1.0 },
+  { id: 'dt-shutdown', name: 'Shutdown',       code: 'shutdown', rateMultiplier: 1.5 },
   { id: 'dt-poya',     name: 'Poya Day',       code: 'poya',           rateMultiplier: 2.0 },
   { id: 'dt-holiday',  name: 'Public Holiday', code: 'public_holiday', rateMultiplier: 2.0 },
 ];
@@ -81,7 +81,7 @@ export function normalizeDayTypes(rawTypes: DayType[]): DayType[] {
         id: dt.id || 'dt-poya',
         name: 'Poya Day',
         code: 'poya',
-        rateMultiplier: 2.0,
+        rateMultiplier: dt.rateMultiplier ?? 2.0,
       });
     } else if (name.includes('poya') && name.includes('holiday')) {
       // Split the combined "Poya / Holiday" into Poya Day and Public Holiday!
@@ -91,7 +91,7 @@ export function normalizeDayTypes(rawTypes: DayType[]): DayType[] {
         id: dt.id || 'dt-poya',
         name: 'Poya Day',
         code: 'poya',
-        rateMultiplier: 2.0,
+        rateMultiplier: dt.rateMultiplier ?? 2.0,
       });
       hasHoliday = true;
       normalized.push({
@@ -107,10 +107,13 @@ export function normalizeDayTypes(rawTypes: DayType[]): DayType[] {
         id: dt.id || 'dt-holiday',
         name: 'Public Holiday',
         code: 'public_holiday',
-        rateMultiplier: 2.0,
+        rateMultiplier: dt.rateMultiplier ?? 2.0,
       });
     } else {
-      normalized.push(dt);
+      normalized.push({
+        ...dt,
+        rateMultiplier: dt.rateMultiplier ?? 1.5,
+      });
     }
   }
 

@@ -21,9 +21,20 @@ export function useSupervisors() {
       setIsLoading(true);
     }
     try {
-      const [sups, emps] = await Promise.all([svc.getAll(forceRefresh), svc.getAvailableEmployees()]);
-      setSupervisors(sups);
-      setEmployees(emps);
+      const [supsRes, empsRes] = await Promise.allSettled([
+        svc.getAll(forceRefresh),
+        svc.getAvailableEmployees(),
+      ]);
+      if (supsRes.status === 'fulfilled') {
+        setSupervisors(supsRes.value);
+      } else {
+        console.error('Failed to load supervisors:', supsRes.reason);
+      }
+      if (empsRes.status === 'fulfilled') {
+        setEmployees(empsRes.value);
+      } else {
+        console.error('Failed to load available employees:', empsRes.reason);
+      }
     } finally {
       if (!silent) {
         setIsLoading(false);

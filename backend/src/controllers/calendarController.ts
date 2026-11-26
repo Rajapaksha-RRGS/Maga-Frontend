@@ -4,12 +4,12 @@ import prisma from '../config/prisma';
 import '../middleware/tenantMiddleware';
 import { getDefaultTenantId } from '../utils/tenantHelper';
 
-// Standard fixed day types used in construction
+// Standard fixed day types used in construction (rateMultiplier = OT hourly multiplier)
 const DEFAULT_DAY_TYPES = [
-  { name: 'Normal Day',     code: 'NORMAL',         rateMultiplier: 1.0 },
-  { name: 'Saturday',       code: 'SATURDAY',       rateMultiplier: 1.0 },
+  { name: 'Normal Day',     code: 'NORMAL',         rateMultiplier: 1.5 },
+  { name: 'Saturday',       code: 'SATURDAY',       rateMultiplier: 1.5 },
   { name: 'Sunday',         code: 'SUNDAY',         rateMultiplier: 1.5 },
-  { name: 'Shutdown',       code: 'SHUTDOWN',       rateMultiplier: 1.0 },
+  { name: 'Shutdown',       code: 'SHUTDOWN',       rateMultiplier: 1.5 },
   { name: 'Poya Day',       code: 'POYA',           rateMultiplier: 2.0 },
   { name: 'Public Holiday', code: 'PUBLIC_HOLIDAY', rateMultiplier: 2.0 },
 ];
@@ -28,10 +28,8 @@ async function ensureSeedDayTypes(): Promise<void> {
   for (const dt of DEFAULT_DAY_TYPES) {
     await prisma.mF_G_DayType.upsert({
       where: { code: dt.code },
-      update: {
-        name: dt.name,
-        rateMultiplier: dt.rateMultiplier,
-      },
+      // Do not overwrite DB-configured rateMultiplier on existing rows
+      update: {},
       create: {
         code: dt.code,
         name: dt.name,
@@ -71,7 +69,7 @@ export async function getDayTypeRulesAndId(projectId: string, date: Date) {
   }
 
   const code = (dayType?.code || 'NORMAL').toUpperCase();
-  const mult = Number(dayType?.rateMultiplier ?? 1.0);
+  const mult = Number(dayType?.rateMultiplier ?? 1.5);
   const isSaturday = code === 'SATURDAY';
   const isSunday = code === 'SUNDAY';
   const isAllOvertime = isSunday || code === 'POYA' || code === 'PUBLIC_HOLIDAY' || code === 'HOLIDAY';
@@ -101,6 +99,7 @@ async function recalculateUnapprovedEntriesForDate(projectId: string, date: Date
     where: {
       projectId,
       date,
+      status: { not: 'approved' },
     },
     select: {
       id: true,

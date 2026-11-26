@@ -885,6 +885,36 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
       });
       const targetTradeGroupId = await resolveTradeGroup(tradeGroup);
 
+      // Resolve daily rate: explicit input -> corporate employee rate -> project trade rate (no silent 1400 default)
+      let resolvedSiteDailyRate: number | null = null;
+      if (dailyRate !== undefined && dailyRate !== null && String(dailyRate).trim() !== '') {
+        const parsed = parseFloat(String(dailyRate));
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          throw Object.assign(new Error('Daily rate must be a valid number greater than 0'), { statusCode: 400 });
+        }
+        resolvedSiteDailyRate = parsed;
+      } else if (corpEmp.dailyRate !== null && Number(corpEmp.dailyRate) > 0) {
+        resolvedSiteDailyRate = Number(corpEmp.dailyRate);
+      } else {
+        const effectiveTgId = targetTradeGroupId || corpEmp.tradeGroupId;
+        const tradeRate = await resolveProjectTradeRate(
+          targetProjectId,
+          effectiveTgId,
+          corpEmp.employeeType,
+          corpEmp.skillLevel
+        );
+        if (tradeRate !== null && tradeRate > 0) {
+          resolvedSiteDailyRate = tradeRate;
+        }
+      }
+
+      if (resolvedSiteDailyRate === null || resolvedSiteDailyRate <= 0) {
+        throw Object.assign(
+          new Error('Daily rate is required. Please configure a Project Trade Rate or provide a valid daily rate.'),
+          { statusCode: 400 }
+        );
+      }
+
       // Upsert into target site
       const siteEmp = await tx.mF_P_Employee.upsert({
         where: {
@@ -895,7 +925,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
         },
         update: {
           callingName: callingName.trim(),
-          dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : (corpEmp.dailyRate ?? 1400.0),
+          dailyRate: resolvedSiteDailyRate,
           tradeGroupId: targetTradeGroupId,
           businessPartnerId: targetBpId,
           status: 'active',
@@ -904,7 +934,7 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
           projectId: targetProjectId,
           corporateEmployeeId: corpEmp.id,
           callingName: callingName.trim(),
-          dailyRate: dailyRate !== undefined ? parseFloat(dailyRate) : (corpEmp.dailyRate ?? 1400.0),
+          dailyRate: resolvedSiteDailyRate,
           tradeGroupId: targetTradeGroupId,
           businessPartnerId: targetBpId,
           status: 'active',
@@ -921,6 +951,10 @@ export const transferEmployee = async (req: Request, res: Response): Promise<voi
       employee: formatEmployee(result),
     });
   } catch (error: any) {
+    if (error?.statusCode) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('Error transferring employee:', error);
     res.status(500).json({ error: 'Failed to transfer employee' });
   }

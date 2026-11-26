@@ -893,6 +893,7 @@ export interface SubcontractorDeductionItem {
   employeeCode: string;
   employeeName: string;
   employeeType: string;
+  sourcePartnerCode?: string;
   sourcePartner: string;
   tradeGroup: string;
   inTime: string;

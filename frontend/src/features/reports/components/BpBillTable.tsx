@@ -33,8 +33,11 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  Printer,
 } from 'lucide-react';
 import { ReportTablePagination, SortableHeader } from './ReportTableControls';
+import { useAuth } from '../../../context/AuthContext';
+import { printBpBill } from '../utils/printBpBill';
 
 interface Props {
   data: BpBillResponse;
@@ -67,9 +70,23 @@ interface BpBillGroupCardProps {
   group: BpBillGroup;
   filteredItems: BpBillEmployeeItem[];
   dates: string[];
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  projectName?: string;
+  projectCode?: string;
+  preparedBy?: string;
 }
 
-function BpBillGroupCard({ group, filteredItems, dates }: BpBillGroupCardProps) {
+function BpBillGroupCard({
+  group,
+  filteredItems,
+  dates,
+  dateFrom,
+  dateTo,
+  projectName,
+  projectCode,
+  preparedBy,
+}: BpBillGroupCardProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -131,6 +148,25 @@ function BpBillGroupCard({ group, filteredItems, dates }: BpBillGroupCardProps) 
           <span className="text-blue-700 font-semibold">
             Cost: <span className="tabular-nums">LKR {formatLKR(group.subtotalCost)}</span>
           </span>
+          <button
+            type="button"
+            onClick={() =>
+              printBpBill({
+                group,
+                items: filteredItems,
+                dates,
+                dateFrom,
+                dateTo,
+                projectName,
+                projectCode,
+                preparedBy,
+              })
+            }
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white border border-slate-300 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 text-slate-700 font-semibold shadow-2xs transition-colors cursor-pointer"
+          >
+            <Printer size={13} />
+            <span>Print / PDF Bill</span>
+          </button>
         </div>
       </div>
 
@@ -272,6 +308,7 @@ function BpBillGroupCard({ group, filteredItems, dates }: BpBillGroupCardProps) 
 }
 
 export default function BpBillTable({ data }: Props) {
+  const { user, tenant } = useAuth();
   const {
     dates,
     groups,
@@ -448,6 +485,11 @@ export default function BpBillTable({ data }: Props) {
               group={group}
               filteredItems={filteredItems}
               dates={dates}
+              dateFrom={data.dateFrom}
+              dateTo={data.dateTo}
+              projectName={tenant?.name}
+              projectCode={tenant?.code}
+              preparedBy={user?.fullName}
             />
           ))}
         </div>

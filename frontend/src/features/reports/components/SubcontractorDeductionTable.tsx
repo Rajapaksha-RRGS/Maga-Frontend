@@ -145,7 +145,16 @@ export default function SubcontractorDeductionTable({ data }: Props) {
                               {item.employeeCode} · {item.tradeGroup}
                             </div>
                           </td>
-                          <td className="py-2 px-3 text-slate-600">{item.sourcePartner}</td>
+                          <td className="py-2 px-3">
+                            {item.sourcePartnerCode ? (
+                              <>
+                                <div className="font-mono font-semibold text-slate-900">{item.sourcePartnerCode}</div>
+                                <div className="text-[10px] text-slate-500">{item.sourcePartner}</div>
+                              </>
+                            ) : (
+                              <span className="text-slate-600">{item.sourcePartner}</span>
+                            )}
+                          </td>
                           <td className="py-2 px-3">
                             <span className="font-mono font-semibold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">
                               {item.activityCode}

@@ -57,10 +57,10 @@ async function resolveProjectId(req: Request): Promise<string> {
   return await getDefaultProjectId();
 }
 
-// ─── Helper: resolve status filter (defaults to submitted + approved) ────────
+// ─── Helper: resolve status filter (defaults to approved only) ─────────────────
 function resolveStatusFilter(statusParam?: string) {
   if (!statusParam || statusParam === 'all') {
-    return { in: ['submitted', 'approved'] };
+    return 'approved';
   }
   return statusParam;
 }
@@ -174,20 +174,14 @@ async function getProjectCalendarDayMap(
   }
 }
 
-// ─── Helper: Day type OT rules (checks Calendar first, then DB entry, then Day-of-Week) ─
+// ─── Helper: Day type OT rules (Time Entry effectiveDayType is final, then Calendar, then Day-of-Week) ─
 function resolveDayTypeRule(
   dateStr: string,
   calendarMap?: Map<string, DayTypeRuleInfo>,
   entryDayType?: { code?: string | null; name?: string | null; rateMultiplier?: any } | null
 ): DayTypeRuleInfo {
-  // 1. Project Calendar overrides ALWAYS TAKE TOP PRIORITY!
-  // (The Site Calendar Planner explicitly defines Poya, Public Holiday, Shutdown for that project & date)
-  if (calendarMap?.has(dateStr)) {
-    return calendarMap.get(dateStr)!;
-  }
-
-  // 2. If entry has explicit special effectiveDayType from DB (e.g. POYA, SUNDAY, PUBLIC_HOLIDAY)
-  if (entryDayType?.code && entryDayType.code !== 'NORMAL') {
+  // 1. Time Entry's own saved effectiveDayType is the final source of truth
+  if (entryDayType?.code) {
     const code = entryDayType.code.toUpperCase();
     const name = entryDayType.name || code;
     const isSaturday = code === 'SATURDAY';
@@ -196,13 +190,18 @@ function resolveDayTypeRule(
     return {
       code,
       name,
-      rateMultiplier: Number(entryDayType.rateMultiplier ?? 1.0),
+      rateMultiplier: Number(entryDayType.rateMultiplier ?? 1.5),
       isAllOvertime,
       isSaturday,
       isSunday,
       standardCap: isAllOvertime ? 0.0 : isSaturday ? 5.5 : 8.0,
       label: name,
     };
+  }
+
+  // 2. Fallback: Project Calendar overrides
+  if (calendarMap?.has(dateStr)) {
+    return calendarMap.get(dateStr)!;
   }
 
   // 3. Fallback: Parse date safely (UTC) to avoid timezone shifts
@@ -226,7 +225,7 @@ function resolveDayTypeRule(
     return {
       code: 'SATURDAY',
       name: 'Saturday',
-      rateMultiplier: 1.0,
+      rateMultiplier: 1.5,
       isAllOvertime: false,
       isSaturday: true,
       isSunday: false,
@@ -237,7 +236,7 @@ function resolveDayTypeRule(
   return {
     code: 'NORMAL',
     name: 'Normal Day',
-    rateMultiplier: 1.0,
+    rateMultiplier: 1.5,
     isAllOvertime: false,
     isSaturday: false,
     isSunday: false,
@@ -1240,7 +1239,7 @@ export const getErpUploadReport = async (req: Request, res: Response): Promise<v
     const entries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
-        status: { in: ['submitted', 'approved'] },
+        status: 'approved',
         ...(dateFilter ? { date: dateFilter } : {}),
         ...(activityFilter ?? {}),
         ...(empFilter ? { employee: empFilter } : {}),
@@ -1824,6 +1823,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
     const timeEntries = await prisma.mF_OP_TimeEntry.findMany({
       where: {
         projectId,
+        status: {in: ['approved','submitted']},
         date: { gte: startDate, lte: endDate },
         ...(employeeId ? { employeeId } : {}),
       },
@@ -1912,6 +1912,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
       const days = [];
       let totalDays = 0;
       let totalOtHours = 0;
+      let totalOtPay = 0;
 
       for (let dayNum = 1; dayNum <= 31; dayNum++) {
         if (dayNum > daysInMonth) {
@@ -1982,8 +1983,10 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
           }
 
           dayOt = Math.round(sumOtHours * 100) / 100;
+          const dayOtRate = Math.round((dailyRateVal / 8 * dayRule.rateMultiplier) * 100) / 100;
           totalDays += dayWorked;
           totalOtHours += dayOt;
+          totalOtPay += Math.round(dayOt * dayOtRate * 100) / 100;
         }
 
         days.push({
@@ -2006,7 +2009,7 @@ export const getTimeCardReport = async (req: Request, res: Response): Promise<vo
       }
 
       const basicPay = Math.round(totalDays * dailyRateVal * 100) / 100;
-      const otPay = Math.round(totalOtHours * hourlyOtRate * 100) / 100;
+      const otPay = Math.round(totalOtPay * 100) / 100;
       const allowances = 0;
       const otherEarnings = 0;
       const grossPay = Math.round((basicPay + otPay + allowances + otherEarnings) * 100) / 100;
@@ -2676,7 +2679,7 @@ export const getEquipmentErpUploadReport = async (req: Request, res: Response): 
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 12. OPERATOR ERP UPLOAD EXPORT (Matches Maga SAP/ERP Operator Upload Spec)
+// 12. OPERATOR ERP UPLOAD EXPORT 
 // GET /api/reports/operator-erp-upload?month=&dateFrom=&dateTo=&businessPartner=&employeeQuery=&tenantId=
 // ─────────────────────────────────────────────────────────────────────────────
 export const getOperatorErpUploadReport = async (req: Request, res: Response): Promise<void> => {
@@ -3127,6 +3130,7 @@ export const getSubcontractorDeductionReport = async (req: Request, res: Respons
       ],
     });
 
+    const calendarMap = await getProjectCalendarDayMap(projectId, dateFrom, dateTo);
     const round2 = (v: number) => Math.round(v * 100) / 100;
 
     type DeductionItem = {
@@ -3136,6 +3140,7 @@ export const getSubcontractorDeductionReport = async (req: Request, res: Respons
       employeeCode: string;
       employeeName: string;
       employeeType: string;
+      sourcePartnerCode: string;
       sourcePartner: string;
       tradeGroup: string;
       inTime: string;
@@ -3202,13 +3207,16 @@ export const getSubcontractorDeductionReport = async (req: Request, res: Respons
       const normalHours = round2(dayNormalHours * proportion);
       const otHours = round2(dayOtHours * proportion);
 
+      const dateKey = te.date.toISOString().split('T')[0];
+      const dayRule = resolveDayTypeRule(dateKey, calendarMap, te.effectiveDayType);
+
       const dailyRate =
         te.appliedDailyRate !== null && Number(te.appliedDailyRate) > 0
           ? Number(te.appliedDailyRate)
           : Number(emp.dailyRate || 0);
 
       const hourlyRate = round2(dailyRate / 8);
-      const hourlyOtRate = round2((dailyRate / 8) * 1.5);
+      const hourlyOtRate = round2((dailyRate / 8) * dayRule.rateMultiplier);
       const normalAmount = round2(normalHours * hourlyRate);
       const otAmount = round2(otHours * hourlyOtRate);
       const deductionAmount = round2(normalAmount + otAmount);
@@ -3225,6 +3233,7 @@ export const getSubcontractorDeductionReport = async (req: Request, res: Respons
         employeeCode: emp.corporateEmployee?.employeeCode || '',
         employeeName: emp.corporateEmployee?.fullName || emp.callingName || '',
         employeeType: emp.employeeType || emp.corporateEmployee?.employeeType || 'INTERNAL',
+        sourcePartnerCode: emp.businessPartner?.code || '',
         sourcePartner: emp.businessPartner?.name || 'Maga (Direct)',
         tradeGroup: emp.tradeGroup?.name || '',
         inTime: te.inTime || '-',

@@ -67,6 +67,8 @@ function mapPartner(raw: any): BusinessPartner {
     brNumber: raw.brNumber || raw.br_number || undefined,
     documentUrl: raw.documentUrl || raw.document_url || undefined,
     status: raw.status || 'active',
+    type: raw.type || undefined,
+    rating: raw.rating || undefined,
     createdAt: raw.createdAt || raw.created_at || undefined,
     employeeCount: raw.employeeCount ?? raw._count?.employees ?? undefined,
     equipmentCount: raw.equipmentCount ?? raw._count?.equipment ?? undefined,
