@@ -276,7 +276,7 @@ export function useReports() {
     if (activeTab === 'equipment-erp-upload') return !!equipmentErpData && equipmentErpData.rows.length > 0;
     if (activeTab === 'operator-erp-upload') return !!operatorErpData && operatorErpData.rows.length > 0;
     return false;
-  }, [activeTab, summaryData, dayOtData, bpBillData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData, operatorErpData]);
+  }, [activeTab, summaryData, dayOtData, bpBillData, subcontractorDeductionData, erpData, runningChartData, equipmentRunningChartData, equipmentSummaryData, equipmentErpData, operatorErpData]);
 
   return {
     activeTab,
