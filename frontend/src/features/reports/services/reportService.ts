@@ -160,14 +160,21 @@ export interface DayOtSummaryResponse {
 export interface BpBillEmployeeItem {
   id: string;
   employeeId: string;
+  employeeCode?: string;
   employeeName: string;
   tradeGroup: string;
   dailyHours: Record<string, number>; // keyed by date 'YYYY-MM-DD'
   totalHours: number;
+  dailyRate?: number; // LKR
   hourlyRate: number; // LKR
   totalHourlyPayment: number; // totalHours * hourlyRate
   overhead: number; // 10% of totalHourlyPayment
   totalCost: number; // totalHourlyPayment + overhead
+  isPayable?: boolean;
+  payrollStatus?: string;
+  lockReason?: string;
+  isEmployeeApproved?: boolean;
+  isPartnerApproved?: boolean;
 }
 
 export interface BpBillGroup {
@@ -181,6 +188,8 @@ export interface BpBillGroup {
 
 export interface BpBillResponse {
   dates: string[];
+  dateFrom?: string;
+  dateTo?: string;
   groups: BpBillGroup[];
   grandTotalHours: number;
   grandTotalPayment: number;

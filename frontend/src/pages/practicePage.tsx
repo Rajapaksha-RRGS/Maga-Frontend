@@ -1,6 +1,6 @@
 // frontend/src/pages/PracticePage.tsx
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../config/api';
 import { RefreshCw, Database, AlertCircle } from 'lucide-react';
 

@@ -308,7 +308,7 @@ function BpBillGroupCard({
 }
 
 export default function BpBillTable({ data }: Props) {
-  const { user, tenant } = useAuth();
+  const { user, tenantName } = useAuth();
   const {
     dates,
     groups,
@@ -487,8 +487,7 @@ export default function BpBillTable({ data }: Props) {
               dates={dates}
               dateFrom={data.dateFrom}
               dateTo={data.dateTo}
-              projectName={tenant?.name}
-              projectCode={tenant?.code}
+              projectName={tenantName || undefined}
               preparedBy={user?.fullName}
             />
           ))}
